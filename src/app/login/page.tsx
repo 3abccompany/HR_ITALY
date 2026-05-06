@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,8 +12,10 @@ import { useFirebase } from "@/firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { getActiveMembershipsByUid } from "@/services/membership.service";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -46,14 +49,30 @@ export default function LoginPage() {
       const userDoc = await getDoc(userDocRef);
       
       if (!userDoc.exists()) {
-        setError(`Profil utilisateur non trouvé (users/${uid}).`);
+        setError("User profile not found.");
       } else {
         const userData = userDoc.data();
         if (userData.status !== "active") {
-          setError("Ce compte utilisateur est désactivé.");
+          setError("User disabled.");
         } else {
           setSuccess(true);
-          console.log("Connexion réussie");
+          
+          // 1. Check for Super Admin
+          if (userData.platformRole === "superAdmin") {
+            router.push("/super-admin");
+            return;
+          }
+
+          // 2. Check memberships for standard users
+          const memberships = await getActiveMembershipsByUid(uid);
+          
+          if (memberships.length === 0) {
+            router.push("/no-access");
+          } else if (memberships.length === 1) {
+            router.push(`/entity/${memberships[0].entityId}/dashboard`);
+          } else {
+            router.push("/select-entity");
+          }
         }
       }
     } catch (err: any) {
@@ -125,7 +144,7 @@ export default function LoginPage() {
               <Alert className="border-green-500 text-green-600 bg-green-50">
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
                 <AlertTitle>Succès</AlertTitle>
-                <AlertDescription>Connexion réussie.</AlertDescription>
+                <AlertDescription>Connexion réussie. Redirection...</AlertDescription>
               </Alert>
             )}
             <div className="space-y-2">
