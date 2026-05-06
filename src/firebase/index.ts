@@ -10,6 +10,12 @@ let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
 
+const isConfigValid = 
+  firebaseConfig.apiKey && 
+  firebaseConfig.apiKey !== 'placeholder-key' &&
+  firebaseConfig.projectId &&
+  firebaseConfig.projectId !== '';
+
 export function initializeFirebase() {
   try {
     if (!getApps().length) {
@@ -18,13 +24,14 @@ export function initializeFirebase() {
       app = getApps()[0];
     }
     
-    // Defensive initialization
-    if (app && firebaseConfig.apiKey !== 'placeholder-key') {
+    if (app && isConfigValid) {
       auth = getAuth(app);
       db = getFirestore(app);
+    } else {
+      console.warn("Firebase configuration is missing or invalid. Authentication and Firestore will be unavailable.");
     }
   } catch (error) {
-    console.warn("Firebase initialization failed. Check your environment variables.", error);
+    console.error("Firebase initialization failed:", error);
   }
 
   return { 
