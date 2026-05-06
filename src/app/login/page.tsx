@@ -2,12 +2,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
-import { LogIn, Loader2, AlertCircle } from "lucide-react";
+import { LogIn, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { useFirebase } from "@/firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
@@ -18,40 +17,60 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<boolean>(false);
   
-  const router = useRouter();
   const { auth, db } = useFirebase();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSuccess(false);
     setLoading(true);
 
     if (!auth || !db) {
-      setError("Le service Firebase n'est pas configuré. Veuillez vérifier vos variables d'environnement.");
+      setError("Le service Firebase n'est pas configuré. Veuillez vérifier vos variables d'environnement (NEXT_PUBLIC_FIREBASE_*).");
       setLoading(false);
       return;
     }
 
     try {
+      // 1. Authenticate with Firebase Auth
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const uid = userCredential.user.uid;
 
-      // Check if user profile exists in Firestore
-      const userDoc = await getDoc(doc(db, "users", uid));
+      // 2. Fetch user profile from Firestore
+      const userDocRef = doc(db, "users", uid);
+      const userDoc = await getDoc(userDocRef);
       
       if (!userDoc.exists()) {
         setError("Profil utilisateur non trouvé dans la base de données.");
+        // We might want to sign out here if the profile is missing
       } else {
         const userData = userDoc.data();
-        console.log("User profile found:", userData);
-        router.push("/select-entity"); 
+        
+        // 3. Verify user status
+        if (userData.status !== "active") {
+          setError("Ce compte utilisateur est désactivé.");
+        } else {
+          setSuccess(true);
+          console.log("Connexion réussie pour:", userData.email);
+          // Redirection logic will be implemented in the next step
+        }
       }
     } catch (err: any) {
-      console.error("Login error:", err);
-      let message = "Erreur de connexion. Veuillez vérifier vos identifiants.";
-      if (err.code === "auth/invalid-credential") message = "Identifiants invalides.";
-      if (err.code === "auth/user-not-found") message = "Utilisateur non trouvé.";
+      console.error("Erreur de connexion:", err);
+      let message = "Une erreur est survenue lors de la connexion.";
+      
+      if (err.code === "auth/invalid-credential") {
+        message = "Identifiants invalides. Veuillez vérifier votre email et votre mot de passe.";
+      } else if (err.code === "auth/user-not-found") {
+        message = "Utilisateur non trouvé.";
+      } else if (err.code === "auth/wrong-password") {
+        message = "Mot de passe incorrect.";
+      } else if (err.code === "auth/too-many-requests") {
+        message = "Trop de tentatives infructueuses. Veuillez réessayer plus tard.";
+      }
+      
       setError(message);
     } finally {
       setLoading(false);
@@ -77,6 +96,13 @@ export default function LoginPage() {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+            {success && (
+              <Alert className="border-green-500 text-green-600 bg-green-50">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <AlertTitle>Succès</AlertTitle>
+                <AlertDescription>Connexion réussie. Redirection en cours...</AlertDescription>
+              </Alert>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Adresse Email</Label>
               <Input 
@@ -87,7 +113,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="bg-secondary/30"
-                disabled={loading}
+                disabled={loading || success}
               />
             </div>
             <div className="space-y-2">
@@ -99,18 +125,18 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="bg-secondary/30"
-                disabled={loading}
+                disabled={loading || success}
               />
             </div>
-            <Button type="submit" className="w-full h-12 text-md font-semibold" disabled={loading}>
+            <Button type="submit" className="w-full h-12 text-md font-semibold" disabled={loading || success}>
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-              {loading ? "Chargement..." : "Connexion"}
+              {loading ? "Chargement..." : "Se connecter"}
             </Button>
           </form>
         </CardContent>
         <CardFooter className="flex flex-col space-y-4">
           <p className="text-center text-xs text-muted-foreground">
-            Contactez le support technique au +33 1 00 00 00 00
+            HR Nexus Studio - Gestion Multi-entités
           </p>
         </CardFooter>
       </Card>
