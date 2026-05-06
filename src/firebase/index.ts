@@ -6,21 +6,32 @@ import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { firebaseConfig } from './config';
 
-let app: FirebaseApp;
-let auth: Auth;
-let db: Firestore;
+let app: FirebaseApp | undefined;
+let auth: Auth | undefined;
+let db: Firestore | undefined;
 
 export function initializeFirebase() {
-  if (!getApps().length) {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-  } else {
-    app = getApps()[0];
-    auth = getAuth(app);
-    db = getFirestore(app);
+  try {
+    if (!getApps().length) {
+      app = initializeApp(firebaseConfig);
+    } else {
+      app = getApps()[0];
+    }
+    
+    // Defensive initialization
+    if (app && firebaseConfig.apiKey !== 'placeholder-key') {
+      auth = getAuth(app);
+      db = getFirestore(app);
+    }
+  } catch (error) {
+    console.warn("Firebase initialization failed. Check your environment variables.", error);
   }
-  return { app, auth, db };
+
+  return { 
+    app: app as FirebaseApp, 
+    auth: auth as Auth, 
+    db: db as Firestore 
+  };
 }
 
 export { FirebaseProvider, useFirebase, useFirebaseApp, useAuth, useFirestore } from './provider';

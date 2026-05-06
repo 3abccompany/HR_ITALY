@@ -7,9 +7,9 @@ import { Auth } from 'firebase/auth';
 import { Firestore } from 'firebase/firestore';
 
 interface FirebaseContextType {
-  app: FirebaseApp;
-  auth: Auth;
-  db: Firestore;
+  app: FirebaseApp | undefined;
+  auth: Auth | undefined;
+  db: Firestore | undefined;
 }
 
 const FirebaseContext = createContext<FirebaseContextType | undefined>(undefined);
@@ -21,9 +21,9 @@ export function FirebaseProvider({
   db,
 }: {
   children: React.ReactNode;
-  app: FirebaseApp;
-  auth: Auth;
-  db: Firestore;
+  app: FirebaseApp | undefined;
+  auth: Auth | undefined;
+  db: Firestore | undefined;
 }) {
   return (
     <FirebaseContext.Provider value={{ app, auth, db }}>
@@ -39,13 +39,17 @@ export function useFirebase() {
 }
 
 export function useFirebaseApp() {
-  return useFirebase().app;
+  return useFirebase().app!;
 }
 
 export function useAuth() {
-  return useFirebase().auth;
+  const auth = useFirebase().auth;
+  if (!auth) throw new Error('Firebase Auth is not initialized. Check your configuration.');
+  return auth;
 }
 
 export function useFirestore() {
-  return useFirebase().db;
+  const db = useFirebase().db;
+  if (!db) throw new Error('Firestore is not initialized. Check your configuration.');
+  return db;
 }
