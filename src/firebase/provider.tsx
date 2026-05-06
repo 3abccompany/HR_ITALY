@@ -10,6 +10,7 @@ interface FirebaseContextType {
   app: FirebaseApp | undefined;
   auth: Auth | undefined;
   db: Firestore | undefined;
+  missingVars: string[];
 }
 
 const FirebaseContext = createContext<FirebaseContextType | undefined>(undefined);
@@ -19,14 +20,16 @@ export function FirebaseProvider({
   app,
   auth,
   db,
+  missingVars = [],
 }: {
   children: React.ReactNode;
   app: FirebaseApp | undefined;
   auth: Auth | undefined;
   db: Firestore | undefined;
+  missingVars?: string[];
 }) {
   return (
-    <FirebaseContext.Provider value={{ app, auth, db }}>
+    <FirebaseContext.Provider value={{ app, auth, db, missingVars }}>
       {children}
     </FirebaseContext.Provider>
   );
@@ -39,7 +42,9 @@ export function useFirebase() {
 }
 
 export function useFirebaseApp() {
-  return useFirebase().app!;
+  const app = useFirebase().app;
+  if (!app) throw new Error('Firebase App is not initialized.');
+  return app;
 }
 
 export function useAuth() {

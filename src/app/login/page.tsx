@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -10,7 +11,6 @@ import { useFirebase } from "@/firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -24,7 +24,7 @@ export default function LoginPage() {
   const [testLoading, setTestLoading] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   
-  const { auth, db } = useFirebase();
+  const { auth, db, missingVars } = useFirebase();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +33,7 @@ export default function LoginPage() {
     setLoading(true);
 
     if (!auth || !db) {
-      setError("Le service Firebase n'est pas configuré. Veuillez vérifier vos variables d'environnement.");
+      setError(`Configuration Firebase incomplète. Variables manquantes: ${missingVars.join(', ')}`);
       setLoading(false);
       return;
     }
@@ -46,23 +46,21 @@ export default function LoginPage() {
       const userDoc = await getDoc(userDocRef);
       
       if (!userDoc.exists()) {
-        setError("Profil utilisateur non trouvé dans la base de données (users/" + uid + ").");
+        setError(`Profil utilisateur non trouvé (users/${uid}).`);
       } else {
         const userData = userDoc.data();
         if (userData.status !== "active") {
           setError("Ce compte utilisateur est désactivé.");
         } else {
           setSuccess(true);
-          console.log("Connexion réussie pour:", userData.email);
+          console.log("Connexion réussie");
         }
       }
     } catch (err: any) {
       console.error("Erreur de connexion:", err);
       let message = "Une erreur est survenue lors de la connexion.";
       if (err.code === "auth/invalid-credential") {
-        message = "Identifiants invalides. Vérifiez votre email et mot de passe.";
-      } else if (err.code === "auth/too-many-requests") {
-        message = "Trop de tentatives. Veuillez réessayer plus tard.";
+        message = "Identifiants invalides.";
       } else if (err.message) {
         message = err.message;
       }
@@ -78,20 +76,18 @@ export default function LoginPage() {
     setTestLoading(true);
 
     if (!db) {
-      setTestError("Firestore n'est pas initialisé.");
-      setLoading(false);
+      setTestError(`Firestore n'est pas initialisé. Variables manquantes: ${missingVars.join(', ')}`);
+      setTestLoading(false);
       return;
     }
 
     try {
-      // 1. Write document
       const testRef = doc(db, "debug", "firestoreConnectionTest");
       await setDoc(testRef, {
         status: "connected",
         createdAt: serverTimestamp(),
       });
 
-      // 2. Read document back
       const snap = await getDoc(testRef);
       if (snap.exists() && snap.data().status === "connected") {
         setTestMessage("Firestore connected successfully");
@@ -129,7 +125,7 @@ export default function LoginPage() {
               <Alert className="border-green-500 text-green-600 bg-green-50">
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
                 <AlertTitle>Succès</AlertTitle>
-                <AlertDescription>Connexion réussie. Redirection en cours...</AlertDescription>
+                <AlertDescription>Connexion réussie.</AlertDescription>
               </Alert>
             )}
             <div className="space-y-2">
