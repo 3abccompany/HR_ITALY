@@ -1,0 +1,79 @@
+
+{
+  "entities": {
+    "AppUser": {
+      "title": "AppUser",
+      "description": "Platform-level user profile.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "platformRole": { "type": "string", "enum": ["superAdmin", "user"] },
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] }
+      },
+      "required": ["uid", "email", "platformRole", "status"]
+    },
+    "Membership": {
+      "title": "Membership",
+      "description": "Link between a user and an entity with a specific role.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "entityId": { "type": "string" },
+        "roleId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
+        "permissions": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["uid", "entityId", "roleId", "status", "permissions"]
+    },
+    "Entity": {
+      "title": "Entity",
+      "description": "An organization or company in the system.",
+      "type": "object",
+      "properties": {
+        "entityId": { "type": "string" },
+        "name": { "type": "string" },
+        "legalName": { "type": "string" },
+        "type": { "type": "string", "enum": ["internal_entity", "supplier", "customer", "other"] },
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] }
+      },
+      "required": ["entityId", "name", "type", "status"]
+    },
+    "Person": {
+      "title": "Person",
+      "description": "Core identity for candidates and employees.",
+      "type": "object",
+      "properties": {
+        "personId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "currentLifecycleStatus": { "type": "string", "enum": ["prospect", "candidate", "interviewing", "accepted", "employee", "former_employee", "archived"] }
+      },
+      "required": ["personId", "entityId", "firstName", "lastName", "email", "currentLifecycleStatus"]
+    }
+  },
+  "auth": {
+    "providers": ["password"]
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/AppUser" },
+      "description": "User profile data."
+    },
+    "/memberships/{id}": {
+      "schema": { "$ref": "#/entities/Membership" },
+      "description": "User memberships to entities."
+    },
+    "/entities/{entityId}": {
+      "schema": { "$ref": "#/entities/Entity" },
+      "description": "Entity details."
+    },
+    "/entities/{entityId}/persons/{personId}": {
+      "schema": { "$ref": "#/entities/Person" },
+      "description": "Persons belonging to an entity."
+    }
+  }
+}
