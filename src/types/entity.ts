@@ -1,3 +1,4 @@
+
 import { FieldValue } from "firebase/firestore";
 
 export type EntityStatus = "active" | "inactive" | "archived";
@@ -10,9 +11,14 @@ export interface Entity {
   type: EntityType;
   status: EntityStatus;
   
-  // Required Company Fields (Matching backend.json)
-  legalName: string;
-  name: string;
+  // Required Company Fields (Approved Specification)
+  raisonSociale: string;
+  nomEntreprise: string;
+  
+  // Compatibility Aliases (Matching legacy backend.json)
+  legalName?: string;
+  name?: string;
+
   numeroTVA: string;
   codeFiscalEntreprise: string;
   

@@ -1,3 +1,4 @@
+
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -36,7 +37,7 @@ export async function createEntity(data: Omit<Entity, 'entityId' | 'status' | 'c
       action: "entity.created",
       resourceType: "entity",
       resourceId: entityId,
-      details: { name: data.name, type: data.type }
+      details: { name: data.nomEntreprise || data.name, type: data.type }
     });
   } catch (err) {
     console.warn("Audit log failed:", err);
@@ -45,10 +46,10 @@ export async function createEntity(data: Omit<Entity, 'entityId' | 'status' | 'c
   return entityId;
 }
 
-export async function updateEntity(entityId: string, data: Partial<Entity>) {
+export async function updateEntity(documentId: string, data: Partial<Entity>) {
   if (!db) throw new Error("Firestore not initialized");
   
-  const entityRef = doc(db, "entities", entityId);
+  const entityRef = doc(db, "entities", documentId);
   const userId = data.updatedBy || "system";
 
   await updateDoc(entityRef, {
@@ -59,10 +60,10 @@ export async function updateEntity(entityId: string, data: Partial<Entity>) {
   try {
     await createAuditLog({
       userId: userId,
-      entityId: entityId,
+      entityId: documentId,
       action: "entity.updated",
       resourceType: "entity",
-      resourceId: entityId,
+      resourceId: documentId,
       details: data
     });
   } catch (err) {
@@ -70,10 +71,10 @@ export async function updateEntity(entityId: string, data: Partial<Entity>) {
   }
 }
 
-export async function disableEntity(entityId: string, userId: string) {
+export async function disableEntity(documentId: string, userId: string) {
   if (!db) throw new Error("Firestore not initialized");
   
-  const entityRef = doc(db, "entities", entityId);
+  const entityRef = doc(db, "entities", documentId);
   const actorUid = userId || "system";
   
   await updateDoc(entityRef, {
@@ -87,10 +88,10 @@ export async function disableEntity(entityId: string, userId: string) {
   try {
     await createAuditLog({
       userId: actorUid,
-      entityId: entityId,
+      entityId: documentId,
       action: "entity.disabled",
       resourceType: "entity",
-      resourceId: entityId,
+      resourceId: documentId,
     });
   } catch (auditErr) {
     console.warn("Failed to write audit log for entity disable:", auditErr);

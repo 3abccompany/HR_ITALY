@@ -33,12 +33,31 @@
       "type": "object",
       "properties": {
         "entityId": { "type": "string" },
+        "nomEntreprise": { "type": "string" },
+        "raisonSociale": { "type": "string" },
         "name": { "type": "string" },
         "legalName": { "type": "string" },
+        "numeroTVA": { "type": "string" },
+        "codeFiscalEntreprise": { "type": "string" },
+        "adresseSiegeSocial": { "type": "string" },
+        "codePostal": { "type": "string" },
+        "ville": { "type": "string" },
+        "province": { "type": "string" },
+        "telephone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "pec": { "type": "string" },
+        "referentEntreprise": { "type": "string" },
         "type": { "type": "string", "enum": ["internal_entity", "supplier", "customer", "other"] },
-        "status": { "type": "string", "enum": ["active", "inactive", "archived"] }
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" },
+        "disabledAt": { "type": "object" },
+        "disabledBy": { "type": "string" }
       },
-      "required": ["entityId", "name", "type", "status"]
+      "required": ["entityId", "type", "status"]
     },
     "Person": {
       "title": "Person",

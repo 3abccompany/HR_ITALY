@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
@@ -22,8 +23,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const initialForm: Omit<Entity, 'entityId' | 'status' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
-  legalName: "",
-  name: "",
+  raisonSociale: "",
+  nomEntreprise: "",
   numeroTVA: "",
   codeFiscalEntreprise: "",
   adresseSiegeSocial: "",
@@ -69,18 +70,18 @@ export default function EntitiesManagementPage() {
 
   const handleEdit = (entity: Entity) => {
     setFormData({
-      legalName: entity.legalName,
-      name: entity.name,
-      numeroTVA: entity.numeroTVA,
-      codeFiscalEntreprise: entity.codeFiscalEntreprise,
-      adresseSiegeSocial: entity.adresseSiegeSocial,
-      codePostal: entity.codePostal,
-      ville: entity.ville,
-      province: entity.province,
-      telephone: entity.telephone,
-      email: entity.email,
-      pec: entity.pec,
-      referentEntreprise: entity.referentEntreprise,
+      raisonSociale: entity.raisonSociale || entity.legalName || "",
+      nomEntreprise: entity.nomEntreprise || entity.name || "",
+      numeroTVA: entity.numeroTVA || "",
+      codeFiscalEntreprise: entity.codeFiscalEntreprise || "",
+      adresseSiegeSocial: entity.adresseSiegeSocial || "",
+      codePostal: entity.codePostal || "",
+      ville: entity.ville || "",
+      province: entity.province || "",
+      telephone: entity.telephone || "",
+      email: entity.email || "",
+      pec: entity.pec || "",
+      referentEntreprise: entity.referentEntreprise || "",
       type: entity.type,
       notes: entity.notes || ""
     });
@@ -99,10 +100,22 @@ export default function EntitiesManagementPage() {
     try {
       const actorUid = user?.uid || "system";
       if (editingId) {
-        await updateEntity(editingId, { ...formData, updatedBy: actorUid });
+        await updateEntity(editingId, { 
+          ...formData, 
+          updatedBy: actorUid,
+          // Sync aliases for compatibility if needed
+          legalName: formData.raisonSociale,
+          name: formData.nomEntreprise
+        });
         toast({ title: "Modifiée", description: "L'entreprise a été mise à jour." });
       } else {
-        await createEntity({ ...formData, createdBy: actorUid });
+        await createEntity({ 
+          ...formData, 
+          createdBy: actorUid,
+          // Sync aliases
+          legalName: formData.raisonSociale,
+          name: formData.nomEntreprise
+        });
         toast({ title: "Créée", description: "L'entreprise a été ajoutée au système." });
       }
       handleReset();
@@ -117,7 +130,7 @@ export default function EntitiesManagementPage() {
     }
   };
 
-  const handleDisable = async (entityId: string) => {
+  const handleDisable = async (documentId: string) => {
     if (!db) {
       toast({ variant: "destructive", title: "Erreur", description: "Firestore n'est pas initialisé." });
       return;
@@ -128,7 +141,7 @@ export default function EntitiesManagementPage() {
     setLoading(true);
     try {
       const actorUid = user?.uid || "system";
-      await disableEntity(entityId, actorUid);
+      await disableEntity(documentId, actorUid);
       toast({ title: "Désactivée", description: "L'entreprise est désormais inactive." });
     } catch (err: any) {
       toast({ 
@@ -144,8 +157,8 @@ export default function EntitiesManagementPage() {
   const filteredEntities = useMemo(() => {
     const term = search.toLowerCase();
     return entities?.filter(e => {
-      const nom = (e.name || "").toLowerCase();
-      const raison = (e.legalName || "").toLowerCase();
+      const nom = (e.nomEntreprise || e.name || "").toLowerCase();
+      const raison = (e.raisonSociale || e.legalName || "").toLowerCase();
       const tva = (e.numeroTVA || "").toLowerCase();
       return nom.includes(term) || raison.includes(term) || tva.includes(term);
     }) || [];
@@ -196,12 +209,12 @@ export default function EntitiesManagementPage() {
             <form onSubmit={handleSave} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="legalName">Raison Sociale</Label>
-                  <Input id="legalName" value={formData.legalName} onChange={handleInputChange} required />
+                  <Label htmlFor="raisonSociale">Raison Sociale</Label>
+                  <Input id="raisonSociale" value={formData.raisonSociale} onChange={handleInputChange} required />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="name">Nom Commercial</Label>
-                  <Input id="name" value={formData.name} onChange={handleInputChange} required />
+                  <Label htmlFor="nomEntreprise">Nom Commercial</Label>
+                  <Input id="nomEntreprise" value={formData.nomEntreprise} onChange={handleInputChange} required />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="type">Type</Label>
@@ -308,8 +321,8 @@ export default function EntitiesManagementPage() {
                 filteredEntities.map((entity) => (
                   <TableRow key={entity.id || entity.entityId}>
                     <TableCell>
-                      <div className="font-bold">{entity.name}</div>
-                      <div className="text-xs text-muted-foreground uppercase">{entity.legalName}</div>
+                      <div className="font-bold">{entity.nomEntreprise || entity.name}</div>
+                      <div className="text-xs text-muted-foreground uppercase">{entity.raisonSociale || entity.legalName}</div>
                       <div className="text-[10px] font-mono mt-1">TVA: {entity.numeroTVA}</div>
                     </TableCell>
                     <TableCell>
