@@ -2,11 +2,11 @@
 
 import { EntityPlaceholderPage } from "@/components/EntityPlaceholderPage";
 
-export default function EntityDashboardPage() {
+export default function MedicalVisitsPlaceholderPage() {
   return (
     <EntityPlaceholderPage 
-      title="Tableau de Bord" 
-      requiredPermission="dashboard.read" 
+      title="Visites Médicales" 
+      requiredPermission="medicalVisits.read" 
     />
   );
 }

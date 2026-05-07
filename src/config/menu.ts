@@ -1,22 +1,41 @@
+import { 
+  LayoutDashboard, 
+  Users, 
+  Search, 
+  Calendar, 
+  UserCheck, 
+  FileText, 
+  FolderOpen, 
+  Clock, 
+  Plane, 
+  GraduationCap, 
+  ShieldAlert, 
+  Stethoscope, 
+  BarChart, 
+  Settings,
+  LucideIcon
+} from "lucide-react";
+
 export interface MenuItem {
   label: string;
   href: string;
   permission: string;
-  icon?: string;
+  icon: LucideIcon;
 }
 
 export const entityMenu: MenuItem[] = [
-  { label: "Dashboard", href: "dashboard", permission: "dashboard.read" },
-  { label: "Personnes", href: "persons", permission: "persons.read" },
-  { label: "Candidats", href: "candidates", permission: "candidates.read" },
-  { label: "Entretiens", href: "interviews", permission: "interviews.read" },
-  { label: "Employés", href: "employees", permission: "employees.read" },
-  { label: "Contrats", href: "contracts", permission: "contracts.read" },
-  { label: "Documents", href: "documents", permission: "documents.read" },
-  { label: "Présences", href: "attendances", permission: "attendances.read" },
-  { label: "Absences / Congés", href: "leaveRequests", permission: "leaveRequests.read" },
-  { label: "Rémunération", href: "payroll", permission: "payroll.read" },
-  { label: "Rapports", href: "reports", permission: "reports.read" },
-  { label: "Notifications", href: "notifications", permission: "notifications.read" },
-  { label: "Paramètres", href: "settings", permission: "settings.read" },
+  { label: "Tableau de bord", href: "dashboard", permission: "dashboard.read", icon: LayoutDashboard },
+  { label: "Personnes", href: "persons", permission: "persons.read", icon: Users },
+  { label: "Candidats", href: "candidates", permission: "candidates.read", icon: Search },
+  { label: "Entretiens", href: "interviews", permission: "interviews.read", icon: Calendar },
+  { label: "Employés", href: "employees", permission: "employees.read", icon: UserCheck },
+  { label: "Contrats", href: "contracts", permission: "contracts.read", icon: FileText },
+  { label: "Documents", href: "documents", permission: "documents.read", icon: FolderOpen },
+  { label: "Présences", href: "attendances", permission: "attendances.read", icon: Clock },
+  { label: "Congés / Absences", href: "leave-requests", permission: "leaveRequests.read", icon: Plane },
+  { label: "Formation", href: "training", permission: "training.read", icon: GraduationCap },
+  { label: "Sécurité / DPI", href: "safety", permission: "safety.read", icon: ShieldAlert },
+  { label: "Visites médicales", href: "medical-visits", permission: "medicalVisits.read", icon: Stethoscope },
+  { label: "Rapports", href: "reports", permission: "reports.read", icon: BarChart },
+  { label: "Paramètres", href: "settings", permission: "settings.read", icon: Settings },
 ];
