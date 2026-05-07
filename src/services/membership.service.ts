@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -13,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { Membership } from "@/types/membership";
 import { createAuditLog } from "./audit.service";
+import { getEntityById } from "./entity.service";
 
 export async function createMembership(data: {
   uid: string;
@@ -147,6 +147,41 @@ export async function getActiveMembershipsByUid(uid: string): Promise<Membership
   );
   const snapshot = await getDocs(q);
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Membership));
+}
+
+/**
+ * Fetches active memberships and verifies that the linked entity is also active.
+ */
+export async function getValidActiveMembershipsByUid(uid: string): Promise<Membership[]> {
+  const activeMemberships = await getActiveMembershipsByUid(uid);
+  const validMemberships: Membership[] = [];
+
+  for (const m of activeMemberships) {
+    const entity = await getEntityById(m.entityId);
+    if (entity && entity.status === "active") {
+      validMemberships.push(m);
+    }
+  }
+
+  return validMemberships;
+}
+
+/**
+ * Fetches a specific membership and verifies both membership and entity are active.
+ */
+export async function getActiveMembershipForEntity(uid: string, entityId: string): Promise<{ membership: Membership, entity: any } | null> {
+  if (!db) return null;
+  const membershipId = `${uid}_${entityId}`;
+  const mSnap = await getDoc(doc(db, "memberships", membershipId));
+  
+  if (!mSnap.exists()) return null;
+  const membership = mSnap.data() as Membership;
+  if (membership.status !== "active") return null;
+
+  const entity = await getEntityById(entityId);
+  if (!entity || entity.status !== "active") return null;
+
+  return { membership, entity };
 }
 
 export async function getAllMemberships(): Promise<Membership[]> {

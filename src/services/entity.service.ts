@@ -1,10 +1,10 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
   doc, 
   setDoc, 
   updateDoc, 
+  getDoc,
   getDocs, 
   serverTimestamp, 
   query, 
@@ -134,4 +134,11 @@ export async function getAllEntities(): Promise<Entity[]> {
   const q = query(collection(db, "entities"), orderBy("createdAt", "desc"));
   const snapshot = await getDocs(q);
   return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Entity));
+}
+
+export async function getEntityById(entityId: string): Promise<Entity | null> {
+  if (!db) return null;
+  const entityRef = doc(db, "entities", entityId);
+  const snap = await getDoc(entityRef);
+  return snap.exists() ? (snap.data() as Entity) : null;
 }

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from "react";
@@ -12,7 +11,7 @@ import { useFirebase } from "@/firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { getActiveMembershipsByUid } from "@/services/membership.service";
+import { getValidActiveMembershipsByUid } from "@/services/membership.service";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -49,11 +48,11 @@ export default function LoginPage() {
       const userDoc = await getDoc(userDocRef);
       
       if (!userDoc.exists()) {
-        setError("User profile not found.");
+        setError("Profil utilisateur introuvable dans Firestore.");
       } else {
         const userData = userDoc.data();
         if (userData.status !== "active") {
-          setError("User disabled.");
+          setError("Votre compte est désactivé.");
         } else {
           setSuccess(true);
           
@@ -64,7 +63,8 @@ export default function LoginPage() {
           }
 
           // 2. Check memberships for standard users
-          const memberships = await getActiveMembershipsByUid(uid);
+          // Use the new valid check which verifies linked entity status too
+          const memberships = await getValidActiveMembershipsByUid(uid);
           
           if (memberships.length === 0) {
             router.push("/no-access");
@@ -80,6 +80,8 @@ export default function LoginPage() {
       let message = "Une erreur est survenue lors de la connexion.";
       if (err.code === "auth/invalid-credential") {
         message = "Identifiants invalides.";
+      } else if (err.code === "auth/user-not-found") {
+        message = "Utilisateur non trouvé.";
       } else if (err.message) {
         message = err.message;
       }
@@ -109,7 +111,7 @@ export default function LoginPage() {
 
       const snap = await getDoc(testRef);
       if (snap.exists() && snap.data().status === "connected") {
-        setTestMessage("Firestore connected successfully");
+        setTestMessage("Firestore connecté avec succès");
       } else {
         setTestError("Impossible de vérifier les données après écriture.");
       }
