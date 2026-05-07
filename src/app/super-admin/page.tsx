@@ -22,7 +22,14 @@ export default function SuperAdminPage() {
             active
           />
         </Link>
-        <AdminCard icon={Users} title="Utilisateurs" description="Contrôler les comptes utilisateurs globaux." />
+        <Link href="/super-admin/users">
+          <AdminCard 
+            icon={Users} 
+            title="Utilisateurs" 
+            description="Contrôler les comptes utilisateurs globaux." 
+            active
+          />
+        </Link>
         <AdminCard icon={Lock} title="Rôles & Permissions" description="Définir la matrice d'accès du système." />
         <AdminCard icon={FileText} title="Abonnements" description="Gérer les memberships uid/entity." />
         <AdminCard icon={Activity} title="Audit Logs" description="Consulter les logs d'activité système." />
