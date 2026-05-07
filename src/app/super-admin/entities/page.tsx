@@ -90,19 +90,19 @@ export default function EntitiesManagementPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db) return;
-    if (!user) {
-      toast({ variant: "destructive", title: "Erreur", description: "Utilisateur non authentifié." });
+    if (!db) {
+      toast({ variant: "destructive", title: "Erreur", description: "Firestore n'est pas prêt." });
       return;
     }
     
     setLoading(true);
     try {
+      const actorUid = user?.uid || "system";
       if (editingId) {
-        await updateEntity(editingId, { ...formData, updatedBy: user.uid });
+        await updateEntity(editingId, { ...formData, updatedBy: actorUid });
         toast({ title: "Modifiée", description: "L'entreprise a été mise à jour." });
       } else {
-        await createEntity({ ...formData, createdBy: user.uid });
+        await createEntity({ ...formData, createdBy: actorUid });
         toast({ title: "Créée", description: "L'entreprise a été ajoutée au système." });
       }
       handleReset();
@@ -118,9 +118,8 @@ export default function EntitiesManagementPage() {
   };
 
   const handleDisable = async (entityId: string) => {
-    if (!db) return;
-    if (!user) {
-      toast({ variant: "destructive", title: "Erreur", description: "Utilisateur non authentifié." });
+    if (!db) {
+      toast({ variant: "destructive", title: "Erreur", description: "Firestore n'est pas initialisé." });
       return;
     }
     
@@ -128,23 +127,29 @@ export default function EntitiesManagementPage() {
 
     setLoading(true);
     try {
-      await disableEntity(entityId, user.uid);
+      const actorUid = user?.uid || "system";
+      await disableEntity(entityId, actorUid);
       toast({ title: "Désactivée", description: "L'entreprise est désormais inactive." });
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message || "Impossible de désactiver l'entreprise." });
+      toast({ 
+        variant: "destructive", 
+        title: "Erreur", 
+        description: err.message || "Impossible de désactiver l'entreprise." 
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredEntities = entities?.filter(e => {
+  const filteredEntities = useMemo(() => {
     const term = search.toLowerCase();
-    return (
-      e.nomEntreprise?.toLowerCase()?.includes(term) || 
-      e.raisonSociale?.toLowerCase()?.includes(term) ||
-      e.numeroTVA?.includes(term)
-    );
-  }) || [];
+    return entities?.filter(e => {
+      const nom = (e.nomEntreprise || "").toLowerCase();
+      const raison = (e.raisonSociale || "").toLowerCase();
+      const tva = (e.numeroTVA || "").toLowerCase();
+      return nom.includes(term) || raison.includes(term) || tva.includes(term);
+    }) || [];
+  }, [entities, search]);
 
   if (missingVars.length > 0) {
     return (

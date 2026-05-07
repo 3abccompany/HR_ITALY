@@ -66,22 +66,27 @@ export async function disableEntity(entityId: string, userId: string) {
   if (!db) throw new Error("Firestore not initialized");
   
   const entityRef = doc(db, "entities", entityId);
+  const actorUid = userId || "system";
   
   await updateDoc(entityRef, {
     status: "inactive",
     disabledAt: serverTimestamp(),
-    disabledBy: userId,
+    disabledBy: actorUid,
     updatedAt: serverTimestamp(),
-    updatedBy: userId,
+    updatedBy: actorUid,
   });
 
-  await createAuditLog({
-    userId: userId,
-    entityId: entityId,
-    action: "entity.disabled",
-    resourceType: "entity",
-    resourceId: entityId,
-  });
+  try {
+    await createAuditLog({
+      userId: actorUid,
+      entityId: entityId,
+      action: "entity.disabled",
+      resourceType: "entity",
+      resourceId: entityId,
+    });
+  } catch (auditErr) {
+    console.warn("Failed to write audit log for entity disable:", auditErr);
+  }
 }
 
 export async function getAllEntities(): Promise<Entity[]> {
