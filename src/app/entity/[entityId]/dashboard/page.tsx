@@ -1,8 +1,8 @@
 import { LayoutDashboard, Users, UserCheck, CalendarDays, ClipboardList, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function EntityDashboardPage({ params }: { params: { entityId: string } }) {
-  const { entityId } = params;
+export default async function EntityDashboardPage({ params }: { params: Promise<{ entityId: string }> }) {
+  const { entityId } = await params;
 
   return (
     <div className="p-8">
