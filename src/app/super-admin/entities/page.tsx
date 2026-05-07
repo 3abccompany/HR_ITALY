@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { 
   Building, Plus, Loader2, Search, ArrowLeft, 
-  AlertCircle, Save, X, Edit, PowerOff, CheckCircle2 
+  AlertCircle, Save, X, Edit, PowerOff 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -90,7 +90,11 @@ export default function EntitiesManagementPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !user) return;
+    if (!db) return;
+    if (!user) {
+      toast({ variant: "destructive", title: "Erreur", description: "Utilisateur non authentifié." });
+      return;
+    }
     
     setLoading(true);
     try {
@@ -114,23 +118,33 @@ export default function EntitiesManagementPage() {
   };
 
   const handleDisable = async (entityId: string) => {
-    if (!db || !user || !confirm("Êtes-vous sûr de vouloir désactiver cette entreprise ?")) return;
+    if (!db) return;
+    if (!user) {
+      toast({ variant: "destructive", title: "Erreur", description: "Utilisateur non authentifié." });
+      return;
+    }
+    
+    if (!confirm("Êtes-vous sûr de vouloir désactiver cette entreprise ?")) return;
+
     setLoading(true);
     try {
       await disableEntity(entityId, user.uid);
       toast({ title: "Désactivée", description: "L'entreprise est désormais inactive." });
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
+      toast({ variant: "destructive", title: "Erreur", description: err.message || "Impossible de désactiver l'entreprise." });
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredEntities = entities?.filter(e => 
-    e.nomEntreprise?.toLowerCase().includes(search.toLowerCase()) || 
-    e.raisonSociale?.toLowerCase().includes(search.toLowerCase()) ||
-    e.numeroTVA?.includes(search)
-  ) || [];
+  const filteredEntities = entities?.filter(e => {
+    const term = search.toLowerCase();
+    return (
+      e.nomEntreprise?.toLowerCase()?.includes(term) || 
+      e.raisonSociale?.toLowerCase()?.includes(term) ||
+      e.numeroTVA?.includes(term)
+    );
+  }) || [];
 
   if (missingVars.length > 0) {
     return (
@@ -309,11 +323,11 @@ export default function EntitiesManagementPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(entity)}>
+                        <Button variant="ghost" size="sm" onClick={() => handleEdit(entity)} disabled={loading}>
                           <Edit className="w-4 h-4" />
                         </Button>
                         {entity.status === 'active' && (
-                          <Button variant="ghost" size="sm" onClick={() => handleDisable(entity.entityId)} className="text-red-500 hover:text-red-600">
+                          <Button variant="ghost" size="sm" onClick={() => handleDisable(entity.entityId)} className="text-red-500 hover:text-red-600" disabled={loading}>
                             <PowerOff className="w-4 h-4" />
                           </Button>
                         )}
