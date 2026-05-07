@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { 
   LayoutDashboard, 
   Building, 
@@ -9,13 +11,16 @@ import {
   Link as LinkIcon, 
   History, 
   Settings,
-  Shield
+  Shield,
+  LogOut,
+  Loader2
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -25,6 +30,8 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
+import { logout } from "@/services/auth.service";
+import { useToast } from "@/hooks/use-toast";
 
 const navItems = [
   {
@@ -41,10 +48,9 @@ const navItems = [
   },
   {
     title: "Utilisateurs",
-    url: "#",
+    url: "/super-admin/users",
     icon: Users,
-    isActive: false,
-    label: "À venir",
+    isActive: true,
   },
   {
     title: "Rôles",
@@ -85,6 +91,25 @@ const navItems = [
 
 export function AdminSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { toast } = useToast();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await logout();
+      router.push("/login");
+    } catch (error: any) {
+      console.error("Logout error:", error);
+      toast({
+        variant: "destructive",
+        title: "Erreur de déconnexion",
+        description: "Une erreur est survenue lors de la tentative de déconnexion.",
+      });
+      setIsLoggingOut(false);
+    }
+  };
 
   return (
     <Sidebar collapsible="icon">
@@ -138,6 +163,26 @@ export function AdminSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      <SidebarFooter className="p-2 border-t">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton 
+              onClick={handleLogout} 
+              disabled={isLoggingOut}
+              className="w-full justify-start gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+              tooltip="Déconnexion"
+            >
+              {isLoggingOut ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <LogOut className="w-4 h-4" />
+              )}
+              <span className="group-data-[collapsible=icon]:hidden">Déconnexion</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   );
