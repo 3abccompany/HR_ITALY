@@ -8,9 +8,21 @@
       "properties": {
         "uid": { "type": "string" },
         "displayName": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
         "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
         "platformRole": { "type": "string", "enum": ["superAdmin", "user"] },
-        "status": { "type": "string", "enum": ["active", "inactive", "archived"] }
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" },
+        "disabledAt": { "type": "object" },
+        "disabledBy": { "type": "string" },
+        "reactivatedAt": { "type": "object" },
+        "reactivatedBy": { "type": "string" }
       },
       "required": ["uid", "email", "platformRole", "status"]
     },
@@ -55,7 +67,9 @@
         "updatedAt": { "type": "object" },
         "updatedBy": { "type": "string" },
         "disabledAt": { "type": "object" },
-        "disabledBy": { "type": "string" }
+        "disabledBy": { "type": "string" },
+        "reactivatedAt": { "type": "object" },
+        "reactivatedBy": { "type": "string" }
       },
       "required": ["entityId", "type", "status"]
     },

@@ -40,4 +40,6 @@ export interface Entity {
   updatedBy?: string;
   disabledAt?: Date | FieldValue;
   disabledBy?: string;
+  reactivatedAt?: Date | FieldValue;
+  reactivatedBy?: string;
 }

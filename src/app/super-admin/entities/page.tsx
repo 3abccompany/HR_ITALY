@@ -1,9 +1,10 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
 import { 
   Building, Plus, Loader2, Search, ArrowLeft, 
-  AlertCircle, Save, X, Edit, PowerOff 
+  AlertCircle, Save, X, Edit, PowerOff, RefreshCcw 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
-import { createEntity, updateEntity, disableEntity } from "@/services/entity.service";
+import { createEntity, updateEntity, disableEntity, reactivateEntity } from "@/services/entity.service";
 import { Entity, EntityType } from "@/types/entity";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
@@ -59,6 +60,7 @@ export default function EntitiesManagementPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [disablingId, setDisablingId] = useState<string | null>(null);
+  const [reactivatingId, setReactivatingId] = useState<string | null>(null);
 
   const entitiesQuery = useMemo(() => {
     if (!db) return null;
@@ -156,6 +158,26 @@ export default function EntitiesManagementPage() {
     } finally {
       setLoading(false);
       setDisablingId(null);
+    }
+  };
+
+  const confirmReactivate = async () => {
+    if (!db || !reactivatingId) return;
+
+    setLoading(true);
+    try {
+      const actorUid = user?.uid || "system";
+      await reactivateEntity(reactivatingId, actorUid);
+      toast({ title: "Réactivée", description: "L'entreprise est à nouveau active." });
+    } catch (err: any) {
+      toast({ 
+        variant: "destructive", 
+        title: "Erreur", 
+        description: err.message || "Impossible de réactiver l'entreprise." 
+      });
+    } finally {
+      setLoading(false);
+      setReactivatingId(null);
     }
   };
 
@@ -323,47 +345,61 @@ export default function EntitiesManagementPage() {
               ) : filteredEntities.length === 0 ? (
                 <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground">Aucune entreprise trouvée.</TableCell></TableRow>
               ) : (
-                filteredEntities.map((entity) => (
-                  <TableRow key={entity.id || (entity as any).entityId}>
-                    <TableCell>
-                      <div className="font-bold">{entity.nomEntreprise || entity.name}</div>
-                      <div className="text-xs text-muted-foreground uppercase">{entity.raisonSociale || entity.legalName}</div>
-                      <div className="text-[10px] font-mono mt-1">TVA: {entity.numeroTVA}</div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-sm font-medium">{entity.referentEntreprise}</div>
-                      <div className="text-xs text-muted-foreground">{entity.ville} ({entity.province})</div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="capitalize text-[10px]">
-                        {entity.type?.replace('_', ' ')}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={entity.status === 'active' ? 'default' : 'outline'} className={entity.status === 'active' ? "bg-green-500 hover:bg-green-600 text-white border-none" : "bg-red-50 text-red-600 border-red-200"}>
-                        {entity.status === 'active' ? "Active" : "Inactive"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(entity)} disabled={loading}>
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        {entity.status === 'active' && (
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={() => setDisablingId(entity.id || (entity as any).entityId)} 
-                            className="text-red-500 hover:text-red-600" 
-                            disabled={loading}
-                          >
-                            <PowerOff className="w-4 h-4" />
+                filteredEntities.map((entity) => {
+                  const docId = entity.id || (entity as any).entityId;
+                  return (
+                    <TableRow key={docId}>
+                      <TableCell>
+                        <div className="font-bold">{entity.nomEntreprise || entity.name}</div>
+                        <div className="text-xs text-muted-foreground uppercase">{entity.raisonSociale || entity.legalName}</div>
+                        <div className="text-[10px] font-mono mt-1">TVA: {entity.numeroTVA}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm font-medium">{entity.referentEntreprise}</div>
+                        <div className="text-xs text-muted-foreground">{entity.ville} ({entity.province})</div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="capitalize text-[10px]">
+                          {entity.type?.replace('_', ' ')}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={entity.status === 'active' ? 'default' : 'outline'} className={entity.status === 'active' ? "bg-green-500 hover:bg-green-600 text-white border-none" : "bg-red-50 text-red-600 border-red-200"}>
+                          {entity.status === 'active' ? "Active" : entity.status === 'inactive' ? "Inactive" : "Archivée"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="sm" onClick={() => handleEdit(entity)} disabled={loading}>
+                            <Edit className="w-4 h-4" />
                           </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+                          {entity.status === 'active' && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => setDisablingId(docId)} 
+                              className="text-red-500 hover:text-red-600" 
+                              disabled={loading}
+                            >
+                              <PowerOff className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {entity.status === 'inactive' && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => setReactivatingId(docId)} 
+                              className="text-green-600 hover:text-green-700 hover:bg-green-50" 
+                              disabled={loading}
+                            >
+                              <RefreshCcw className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
@@ -389,6 +425,30 @@ export default function EntitiesManagementPage() {
               disabled={loading}
             >
               {loading ? "Désactivation..." : "Confirmer la désactivation"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!reactivatingId} onOpenChange={(open) => !open && setReactivatingId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmer la réactivation</AlertDialogTitle>
+            <AlertDialogDescription>
+              Êtes-vous sûr de vouloir réactiver cette entreprise ? Elle redeviendra "Active" dans le système.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault();
+                confirmReactivate();
+              }}
+              className="bg-green-600 hover:bg-green-700 text-white"
+              disabled={loading}
+            >
+              {loading ? "Réactivation..." : "Confirmer la réactivation"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

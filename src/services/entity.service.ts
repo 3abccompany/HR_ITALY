@@ -1,3 +1,4 @@
+
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -98,6 +99,33 @@ export async function disableEntity(documentId: string, userId: string) {
     });
   } catch (auditErr) {
     console.warn("Failed to write audit log for entity disable:", auditErr);
+  }
+}
+
+export async function reactivateEntity(documentId: string, userId: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  
+  const entityRef = doc(db, "entities", documentId);
+  const actorUid = userId || "system";
+  
+  await updateDoc(entityRef, {
+    status: "active",
+    reactivatedAt: serverTimestamp(),
+    reactivatedBy: actorUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  try {
+    await createAuditLog({
+      userId: actorUid,
+      entityId: documentId,
+      action: "entity.reactivated",
+      resourceType: "entity",
+      resourceId: documentId,
+    });
+  } catch (auditErr) {
+    console.warn("Failed to write audit log for entity reactivation:", auditErr);
   }
 }
 

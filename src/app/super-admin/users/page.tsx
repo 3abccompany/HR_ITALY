@@ -1,9 +1,10 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
 import { 
   Users, Plus, Loader2, Search, ArrowLeft, 
-  AlertCircle, Save, X, Edit, PowerOff, ShieldCheck 
+  AlertCircle, Save, X, Edit, PowerOff, ShieldCheck, RefreshCcw 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
-import { createUserProfile, updateUserProfile, disableUserProfile } from "@/services/user.service";
+import { createUserProfile, updateUserProfile, disableUserProfile, reactivateUserProfile } from "@/services/user.service";
 import { AppUser, PlatformRole } from "@/types/user";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
@@ -53,6 +54,7 @@ export default function UsersManagementPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [disablingUid, setDisablingUid] = useState<string | null>(null);
+  const [reactivatingUid, setReactivatingUid] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState(false);
 
   const usersQuery = useMemo(() => {
@@ -138,6 +140,20 @@ export default function UsersManagementPage() {
     }
   };
 
+  const confirmReactivate = async () => {
+    if (!db || !user || !reactivatingUid) return;
+    setLoading(true);
+    try {
+      await reactivateUserProfile(reactivatingUid, user.uid);
+      toast({ title: "Réactivé", description: "Le profil utilisateur est à nouveau actif." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setLoading(false);
+      setReactivatingUid(null);
+    }
+  };
+
   const filteredUsers = users?.filter(u => 
     u.displayName?.toLowerCase().includes(search.toLowerCase()) || 
     u.email?.toLowerCase().includes(search.toLowerCase()) ||
@@ -190,13 +206,14 @@ export default function UsersManagementPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="uid">UID Firebase Auth existant</Label>
-                  <Input 
+                  <input 
                     id="uid" 
                     value={formData.uid} 
                     onChange={handleInputChange} 
                     required 
                     disabled={!!editingId}
                     placeholder="Coller l'UID depuis la console"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   {!editingId && <p className="text-[10px] text-muted-foreground">Requis : doit correspondre à un utilisateur Auth existant.</p>}
                 </div>
@@ -294,12 +311,12 @@ export default function UsersManagementPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant={u.status === 'active' ? 'default' : 'outline'} className={u.status === 'active' ? "bg-green-500 hover:bg-green-600 text-white border-none" : "bg-red-50 text-red-600 border-red-200"}>
-                        {u.status === 'active' ? "Actif" : "Inactif"}
+                        {u.status === 'active' ? "Actif" : u.status === 'inactive' ? "Inactif" : "Archivé"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(u)}>
+                        <Button variant="ghost" size="sm" onClick={() => handleEdit(u)} disabled={loading}>
                           <Edit className="w-4 h-4" />
                         </Button>
                         {u.status === 'active' && u.uid !== user?.uid && (
@@ -308,8 +325,20 @@ export default function UsersManagementPage() {
                             size="sm" 
                             onClick={() => setDisablingUid(u.uid)} 
                             className="text-red-500 hover:text-red-600"
+                            disabled={loading}
                           >
                             <PowerOff className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {u.status === 'inactive' && (
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => setReactivatingUid(u.uid)} 
+                            className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                            disabled={loading}
+                          >
+                            <RefreshCcw className="w-4 h-4" />
                           </Button>
                         )}
                       </div>
@@ -342,6 +371,30 @@ export default function UsersManagementPage() {
               disabled={loading}
             >
               {loading ? "Désactivation..." : "Confirmer la désactivation"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!reactivatingUid} onOpenChange={(open) => !open && setReactivatingUid(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmer la réactivation</AlertDialogTitle>
+            <AlertDialogDescription>
+              Êtes-vous sûr de vouloir réactiver ce profil utilisateur ? Il redeviendra "Actif".
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault();
+                confirmReactivate();
+              }}
+              className="bg-green-600 hover:bg-green-700 text-white"
+              disabled={loading}
+            >
+              {loading ? "Réactivation..." : "Confirmer la réactivation"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,3 +1,4 @@
+
 import { FieldValue } from "firebase/firestore";
 
 export type PlatformRole = "superAdmin" | "user";
@@ -19,5 +20,7 @@ export interface AppUser {
   updatedBy: string;
   disabledAt?: Date | FieldValue;
   disabledBy?: string;
+  reactivatedAt?: Date | FieldValue;
+  reactivatedBy?: string;
   notes?: string;
 }

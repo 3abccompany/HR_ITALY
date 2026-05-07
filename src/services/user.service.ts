@@ -1,3 +1,4 @@
+
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -89,6 +90,30 @@ export async function disableUserProfile(uid: string, adminUid: string) {
     resourceType: "user",
     resourceId: uid,
   });
+}
+
+export async function reactivateUserProfile(uid: string, adminUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  
+  const userRef = doc(db, "users", uid);
+  await updateDoc(userRef, {
+    status: "active",
+    reactivatedAt: serverTimestamp(),
+    reactivatedBy: adminUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminUid,
+  });
+
+  try {
+    await createAuditLog({
+      userId: adminUid,
+      action: "user.reactivated",
+      resourceType: "user",
+      resourceId: uid,
+    });
+  } catch (auditErr) {
+    console.warn("Failed to write audit log for user reactivation:", auditErr);
+  }
 }
 
 export async function getAllUserProfiles(): Promise<AppUser[]> {
