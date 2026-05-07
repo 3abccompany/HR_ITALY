@@ -20,6 +20,16 @@ import { AppUser, PlatformRole } from "@/types/user";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const initialForm: Omit<AppUser, 'uid' | 'status' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'> & { uid: string } = {
   uid: "",
@@ -42,6 +52,8 @@ export default function UsersManagementPage() {
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [disablingUid, setDisablingUid] = useState<string | null>(null);
+  const [pendingSave, setPendingSave] = useState(false);
 
   const usersQuery = useMemo(() => {
     if (!db) return null;
@@ -82,20 +94,25 @@ export default function UsersManagementPage() {
     
     // Platform Role Confirmation
     if (formData.platformRole === "superAdmin") {
-      const confirmAdmin = confirm("Êtes-vous sûr de vouloir accorder le rôle Super Admin ? Cet utilisateur aura un contrôle total sur la plateforme.");
-      if (!confirmAdmin) return;
+      setPendingSave(true);
+      return;
     }
 
+    await executeSave();
+  };
+
+  const executeSave = async () => {
     setLoading(true);
     try {
       if (editingId) {
-        await updateUserProfile(editingId, formData, user.uid);
+        await updateUserProfile(editingId, formData, user!.uid);
         toast({ title: "Mis à jour", description: "Le profil utilisateur a été mis à jour." });
       } else {
-        await createUserProfile(formData, user.uid);
+        await createUserProfile(formData, user!.uid);
         toast({ title: "Profil créé", description: "Le profil Firestore a été créé avec succès." });
       }
       handleReset();
+      setPendingSave(false);
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -107,16 +124,17 @@ export default function UsersManagementPage() {
     }
   };
 
-  const handleDisable = async (uid: string) => {
-    if (!db || !user || !confirm("Êtes-vous sûr de vouloir désactiver cet utilisateur ?")) return;
+  const confirmDisable = async () => {
+    if (!db || !user || !disablingUid) return;
     setLoading(true);
     try {
-      await disableUserProfile(uid, user.uid);
+      await disableUserProfile(disablingUid, user.uid);
       toast({ title: "Désactivé", description: "L'utilisateur est désormais inactif." });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
+      setDisablingUid(null);
     }
   };
 
@@ -285,7 +303,12 @@ export default function UsersManagementPage() {
                           <Edit className="w-4 h-4" />
                         </Button>
                         {u.status === 'active' && u.uid !== user?.uid && (
-                          <Button variant="ghost" size="sm" onClick={() => handleDisable(u.uid)} className="text-red-500 hover:text-red-600">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => setDisablingUid(u.uid)} 
+                            className="text-red-500 hover:text-red-600"
+                          >
                             <PowerOff className="w-4 h-4" />
                           </Button>
                         )}
@@ -298,6 +321,54 @@ export default function UsersManagementPage() {
           </Table>
         </Card>
       </div>
+
+      {/* Confirmation Dialogs */}
+      <AlertDialog open={!!disablingUid} onOpenChange={(open) => !open && setDisablingUid(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmer la désactivation</AlertDialogTitle>
+            <AlertDialogDescription>
+              Êtes-vous sûr de vouloir désactiver cet utilisateur ? Son statut passera à "Inactif".
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault();
+                confirmDisable();
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={loading}
+            >
+              {loading ? "Désactivation..." : "Confirmer la désactivation"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={pendingSave} onOpenChange={setPendingSave}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmer l'attribution du rôle</AlertDialogTitle>
+            <AlertDialogDescription>
+              Êtes-vous sûr de vouloir accorder le rôle Super Admin ? Cet utilisateur aura un contrôle total sur la plateforme.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault();
+                executeSave();
+              }}
+              disabled={loading}
+            >
+              {loading ? "Enregistrement..." : "Confirmer et Enregistrer"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
