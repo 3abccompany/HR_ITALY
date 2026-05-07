@@ -19,5 +19,5 @@ export interface Entity {
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
-  updatedBy: string;
+  updatedBy?: string;
 }
