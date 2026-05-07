@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -13,7 +14,8 @@ import {
   Settings,
   Shield,
   LogOut,
-  Loader2
+  Loader2,
+  Database
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
@@ -51,6 +53,13 @@ const navItems = [
     url: "/super-admin/users",
     icon: Users,
     isActive: true,
+  },
+  {
+    title: "Catalogue Permissions",
+    url: "/super-admin/permissions-seed",
+    icon: Database,
+    isActive: true,
+    label: "Admin",
   },
   {
     title: "Rôles",

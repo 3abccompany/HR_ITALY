@@ -1,0 +1,85 @@
+
+import { PermissionScope } from "@/types/permission";
+
+export interface PermissionDefinition {
+  code: string;
+  module: string;
+  action: string;
+  label: string;
+  description: string;
+  scope: PermissionScope;
+}
+
+export const MVP_PERMISSIONS: PermissionDefinition[] = [
+  // --- Platform Permissions ---
+  { code: "platform.dashboard.read", module: "dashboard", action: "read", label: "Voir Dashboard Plateforme", description: "Accès au tableau de bord global super admin.", scope: "platform" },
+  { code: "platform.entities.read", module: "entities", action: "read", label: "Voir les entités", description: "Liste et consultation des fiches entreprises.", scope: "platform" },
+  { code: "platform.entities.create", module: "entities", action: "create", label: "Créer une entité", description: "Ajout de nouvelles entreprises au système.", scope: "platform" },
+  { code: "platform.entities.update", module: "entities", action: "update", label: "Modifier une entité", description: "Mise à jour des informations d'une entreprise.", scope: "platform" },
+  { code: "platform.entities.disable", module: "entities", action: "disable", label: "Désactiver une entité", description: "Changement de statut vers inactif ou archivé.", scope: "platform" },
+  { code: "platform.users.read", module: "users", action: "read", label: "Voir les utilisateurs", description: "Liste des profils applicatifs.", scope: "platform" },
+  { code: "platform.users.create", module: "users", action: "create", label: "Créer un utilisateur", description: "Création de profils Firestore pour les UID Auth.", scope: "platform" },
+  { code: "platform.users.update", module: "users", action: "update", label: "Modifier un utilisateur", description: "Mise à jour des profils utilisateurs.", scope: "platform" },
+  { code: "platform.users.disable", module: "users", action: "disable", label: "Désactiver un utilisateur", description: "Désactivation d'accès plateforme.", scope: "platform" },
+  { code: "platform.roles.read", module: "roles", action: "read", label: "Voir les rôles", description: "Liste des templates de rôles.", scope: "platform" },
+  { code: "platform.roles.create", module: "roles", action: "create", label: "Créer un rôle", description: "Définition de nouveaux templates de rôles.", scope: "platform" },
+  { code: "platform.roles.update", module: "roles", action: "update", label: "Modifier un rôle", description: "Mise à jour des templates de rôles.", scope: "platform" },
+  { code: "platform.permissions.read", module: "permissions", action: "read", label: "Voir les permissions", description: "Consultation du catalogue des permissions.", scope: "platform" },
+  { code: "platform.permissions.update", module: "permissions", action: "update", label: "Modifier les permissions", description: "Maintenance du catalogue des permissions.", scope: "platform" },
+  { code: "platform.memberships.read", module: "memberships", action: "read", label: "Voir les affectations", description: "Liste des liens utilisateurs-entités.", scope: "platform" },
+  { code: "platform.memberships.create", module: "memberships", action: "create", label: "Créer une affectation", description: "Lier un utilisateur à une entreprise.", scope: "platform" },
+  { code: "platform.memberships.update", module: "memberships", action: "update", label: "Modifier une affectation", description: "Mise à jour des rôles et permissions d'un membre.", scope: "platform" },
+  { code: "platform.memberships.disable", module: "memberships", action: "disable", label: "Désactiver une affectation", description: "Retirer l'accès d'un utilisateur à une entité.", scope: "platform" },
+  { code: "platform.audit.read", module: "audit", action: "read", label: "Voir les logs d'audit", description: "Consultation des historiques d'actions globales.", scope: "platform" },
+  { code: "platform.settings.manage", module: "settings", action: "manage", label: "Gérer les paramètres", description: "Configuration globale du système.", scope: "platform" },
+
+  // --- Entity Permissions ---
+  { code: "dashboard.read", module: "dashboard", action: "read", label: "Voir Dashboard Entité", description: "Accès au tableau de bord de l'entreprise.", scope: "entity" },
+  { code: "persons.read", module: "persons", action: "read", label: "Voir les personnes", description: "Liste des fiches identités (candidats/employés).", scope: "entity" },
+  { code: "persons.create", module: "persons", action: "create", label: "Créer une personne", description: "Ajout d'une nouvelle identité root.", scope: "entity" },
+  { code: "persons.update", module: "persons", action: "update", label: "Modifier une personne", description: "Mise à jour des informations d'identité.", scope: "entity" },
+  { code: "candidates.read", module: "candidates", action: "read", label: "Voir les candidats", description: "Gestion du flux de recrutement.", scope: "entity" },
+  { code: "candidates.create", module: "candidates", action: "create", label: "Créer un candidat", description: "Ajout d'un parcours de candidature.", scope: "entity" },
+  { code: "candidates.update", module: "candidates", action: "update", label: "Modifier un candidat", description: "Mise à jour du statut de candidature.", scope: "entity" },
+  { code: "interviews.read", module: "interviews", action: "read", label: "Voir les entretiens", description: "Liste des rendez-vous de recrutement.", scope: "entity" },
+  { code: "interviews.create", module: "interviews", action: "create", label: "Créer un entretien", description: "Planification d'un nouvel échange.", scope: "entity" },
+  { code: "interviews.update", module: "interviews", action: "update", label: "Modifier un entretien", description: "Mise à jour des notes d'entretien.", scope: "entity" },
+  { code: "interviews.decide", module: "interviews", action: "decide", label: "Décider (RH)", description: "Valider ou rejeter un candidat après entretien.", scope: "entity" },
+  { code: "employees.read", module: "employees", action: "read", label: "Voir les employés", description: "Accès à la liste du personnel actif.", scope: "entity" },
+  { code: "employees.create", module: "employees", action: "create", label: "Créer un employé", description: "Embauche directe ou conversion de candidat.", scope: "entity" },
+  { code: "employees.update", module: "employees", action: "update", label: "Modifier un employé", description: "Mise à jour des données contractuelles/RH.", scope: "entity" },
+  { code: "employees.archive", module: "employees", action: "archive", label: "Archiver un employé", description: "Gestion des fins de contrats.", scope: "entity" },
+  { code: "contracts.read", module: "contracts", action: "read", label: "Voir les contrats", description: "Consultation des documents contractuels.", scope: "entity" },
+  { code: "contracts.create", module: "contracts", action: "create", label: "Créer un contrat", description: "Établissement d'un nouveau contrat.", scope: "entity" },
+  { code: "contracts.update", module: "contracts", action: "update", label: "Modifier un contrat", description: "Mise à jour des termes contractuels.", scope: "entity" },
+  { code: "contracts.renew", module: "contracts", action: "renew", label: "Renouveler un contrat", description: "Prolongation d'un contrat existant.", scope: "entity" },
+  { code: "contracts.terminate", module: "contracts", action: "terminate", label: "Résilier un contrat", description: "Clôture anticipée d'un contrat.", scope: "entity" },
+  { code: "documents.read", module: "documents", action: "read", label: "Voir les documents", description: "Consultation de la GED de l'entité.", scope: "entity" },
+  { code: "documents.upload", module: "documents", action: "upload", label: "Téléverser des documents", description: "Ajout de fichiers au dossier employé/entité.", scope: "entity" },
+  { code: "documents.download", module: "documents", action: "download", label: "Télécharger des documents", description: "Récupération des pièces jointes.", scope: "entity" },
+  { code: "documents.archive", module: "documents", action: "archive", label: "Archiver des documents", description: "Clôture de validité de documents.", scope: "entity" },
+  { code: "attendances.read", module: "attendances", action: "read", label: "Voir les présences", description: "Consultation des pointages.", scope: "entity" },
+  { code: "attendances.create", module: "attendances", action: "create", label: "Déclarer présence", description: "Saisie d'heures ou de pointage.", scope: "entity" },
+  { code: "attendances.update", module: "attendances", action: "update", label: "Modifier présence", description: "Mise à jour manuelle des heures.", scope: "entity" },
+  { code: "attendances.validate", module: "attendances", action: "validate", label: "Valider présences", description: "Approbation managériale des heures.", scope: "entity" },
+  { code: "attendances.correct", module: "attendances", action: "correct", label: "Corriger présences", description: "Rectification après validation.", scope: "entity" },
+  { code: "leaveRequests.read", module: "leaveRequests", action: "read", label: "Voir les congés", description: "Consultation des demandes d'absence.", scope: "entity" },
+  { code: "leaveRequests.create", module: "leaveRequests", action: "create", label: "Demander congé", description: "Saisie d'une nouvelle absence.", scope: "entity" },
+  { code: "leaveRequests.update", module: "leaveRequests", action: "update", label: "Modifier demande", description: "Changement de dates ou type d'absence.", scope: "entity" },
+  { code: "leaveRequests.approve", module: "leaveRequests", action: "approve", label: "Approuver congés", description: "Validation managériale des absences.", scope: "entity" },
+  { code: "training.read", module: "training", action: "read", label: "Voir les formations", description: "Suivi des compétences et stages.", scope: "entity" },
+  { code: "training.create", module: "training", action: "create", label: "Ajouter formation", description: "Enregistrement d'une nouvelle session.", scope: "entity" },
+  { code: "training.update", module: "training", action: "update", label: "Modifier formation", description: "Mise à jour des acquis.", scope: "entity" },
+  { code: "safety.read", module: "safety", action: "read", label: "Voir sécurité", description: "Consultation des habilitations sécurité.", scope: "entity" },
+  { code: "safety.create", module: "safety", action: "create", label: "Ajouter sécurité", description: "Saisie de nouveaux équipements ou titres.", scope: "entity" },
+  { code: "safety.update", module: "safety", action: "update", label: "Modifier sécurité", description: "Mise à jour des dates de validité.", scope: "entity" },
+  { code: "medicalVisits.read", module: "medicalVisits", action: "read", label: "Voir visites médicales", description: "Suivi de l'aptitude médicale.", scope: "entity" },
+  { code: "medicalVisits.create", module: "medicalVisits", action: "create", label: "Ajouter visite", description: "Saisie d'une nouvelle convocation/résultat.", scope: "entity" },
+  { code: "medicalVisits.update", module: "medicalVisits", action: "update", label: "Modifier visite", description: "Mise à jour des aptitudes.", scope: "entity" },
+  { code: "reports.read", module: "reports", action: "read", label: "Voir les rapports", description: "Accès aux tableaux de bord analytiques.", scope: "entity" },
+  { code: "reports.generate", module: "reports", action: "generate", label: "Générer rapports", description: "Lancer le calcul de nouvelles synthèses.", scope: "entity" },
+  { code: "reports.export", module: "reports", action: "export", label: "Exporter rapports", description: "Extraction de données (PDF/Excel).", scope: "entity" },
+  { code: "settings.read", module: "settings", action: "read", label: "Voir paramètres", description: "Consultation de la configuration entité.", scope: "entity" },
+  { code: "settings.manage", module: "settings", action: "manage", label: "Gérer paramètres", description: "Mise à jour des réglages de l'entité.", scope: "entity" },
+  { code: "audit.read", module: "audit", action: "read", label: "Voir audit entité", description: "Historique des actions locales.", scope: "entity" },
+];

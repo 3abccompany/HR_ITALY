@@ -73,6 +73,25 @@
       },
       "required": ["entityId", "type", "status"]
     },
+    "Permission": {
+      "title": "Permission",
+      "description": "System permission definition.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "module": { "type": "string" },
+        "action": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "scope": { "type": "string", "enum": ["platform", "entity"] },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["code", "module", "action", "label", "scope", "status"]
+    },
     "Person": {
       "title": "Person",
       "description": "Core identity for candidates and employees.",
@@ -103,6 +122,10 @@
     "/entities/{entityId}": {
       "schema": { "$ref": "#/entities/Entity" },
       "description": "Entity details."
+    },
+    "/permissions/{code}": {
+      "schema": { "$ref": "#/entities/Permission" },
+      "description": "System permissions catalogue."
     },
     "/entities/{entityId}/persons/{personId}": {
       "schema": { "$ref": "#/entities/Person" },
