@@ -48,7 +48,6 @@ export async function createEntity(data: Omit<Entity, 'entityId' | 'status' | 'c
 export async function updateEntity(documentId: string, data: Partial<Entity>) {
   if (!db) throw new Error("Firestore not initialized");
   
-  console.log("[entity-service] updateEntity", { documentId, data });
   const entityRef = doc(db, "entities", documentId);
   const userId = data.updatedBy || "system";
 
@@ -74,7 +73,6 @@ export async function updateEntity(documentId: string, data: Partial<Entity>) {
 export async function disableEntity(documentId: string, userId: string) {
   if (!db) throw new Error("Firestore not initialized");
   
-  console.log("[entity-service] disableEntity start", { documentId, userId });
   const entityRef = doc(db, "entities", documentId);
   const actorUid = userId || "system";
   
@@ -86,9 +84,7 @@ export async function disableEntity(documentId: string, userId: string) {
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
     });
-    console.log("[entity-service] disableEntity Firestore update successful");
   } catch (error) {
-    console.error("[entity-service] disableEntity updateDoc failed", error);
     throw error;
   }
 

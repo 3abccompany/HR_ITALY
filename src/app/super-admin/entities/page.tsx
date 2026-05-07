@@ -20,6 +20,16 @@ import { Entity, EntityType } from "@/types/entity";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const initialForm: Omit<Entity, 'entityId' | 'status' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
   raisonSociale: "",
@@ -48,6 +58,7 @@ export default function EntitiesManagementPage() {
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [disablingId, setDisablingId] = useState<string | null>(null);
 
   const entitiesQuery = useMemo(() => {
     if (!db) return null;
@@ -69,7 +80,6 @@ export default function EntitiesManagementPage() {
 
   const handleEdit = (entity: Entity) => {
     const documentId = entity.id || (entity as any).entityId;
-    console.log("[entity-edit] Editing entity", { documentId, entity });
     setFormData({
       raisonSociale: entity.raisonSociale || entity.legalName || "",
       nomEntreprise: entity.nomEntreprise || entity.name || "",
@@ -101,7 +111,6 @@ export default function EntitiesManagementPage() {
     try {
       const actorUid = user?.uid || "system";
       if (editingId) {
-        console.log("[entity-save] Updating existing entity", { editingId, formData });
         await updateEntity(editingId, { 
           ...formData, 
           updatedBy: actorUid,
@@ -110,7 +119,6 @@ export default function EntitiesManagementPage() {
         });
         toast({ title: "Modifiée", description: "L'entreprise a été mise à jour." });
       } else {
-        console.log("[entity-save] Creating new entity", { formData });
         await createEntity({ 
           ...formData, 
           createdBy: actorUid,
@@ -121,7 +129,6 @@ export default function EntitiesManagementPage() {
       }
       handleReset();
     } catch (err: any) {
-      console.error("[entity-save] Failed", err);
       toast({
         variant: "destructive",
         title: "Erreur",
@@ -132,28 +139,15 @@ export default function EntitiesManagementPage() {
     }
   };
 
-  const handleDisable = async (documentId: string) => {
-    console.log("[entity-disable] Clicked", { documentId });
-    if (!db) {
-      console.error("[entity-disable] Firestore not initialized");
-      toast({ variant: "destructive", title: "Erreur", description: "Firestore n'est pas initialisé." });
-      return;
-    }
-    
-    if (!confirm("Êtes-vous sûr de vouloir désactiver cette entreprise ?")) {
-      console.log("[entity-disable] Cancelled by user");
-      return;
-    }
+  const confirmDisable = async () => {
+    if (!db || !disablingId) return;
 
     setLoading(true);
     try {
       const actorUid = user?.uid || "system";
-      console.log("[entity-disable] Calling service", { documentId, actorUid });
-      await disableEntity(documentId, actorUid);
-      console.log("[entity-disable] Success");
+      await disableEntity(disablingId, actorUid);
       toast({ title: "Désactivée", description: "L'entreprise est désormais inactive." });
     } catch (err: any) {
-      console.error("[entity-disable] Failed", err);
       toast({ 
         variant: "destructive", 
         title: "Erreur", 
@@ -161,6 +155,7 @@ export default function EntitiesManagementPage() {
       });
     } finally {
       setLoading(false);
+      setDisablingId(null);
     }
   };
 
@@ -358,7 +353,7 @@ export default function EntitiesManagementPage() {
                           <Button 
                             variant="ghost" 
                             size="sm" 
-                            onClick={() => handleDisable(entity.id || (entity as any).entityId)} 
+                            onClick={() => setDisablingId(entity.id || (entity as any).entityId)} 
                             className="text-red-500 hover:text-red-600" 
                             disabled={loading}
                           >
@@ -374,6 +369,30 @@ export default function EntitiesManagementPage() {
           </Table>
         </Card>
       </div>
+
+      <AlertDialog open={!!disablingId} onOpenChange={(open) => !open && setDisablingId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmer la désactivation</AlertDialogTitle>
+            <AlertDialogDescription>
+              Êtes-vous sûr de vouloir désactiver cette entreprise ? Elle passera en statut "Inactive".
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault();
+                confirmDisable();
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={loading}
+            >
+              {loading ? "Désactivation..." : "Confirmer la désactivation"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
