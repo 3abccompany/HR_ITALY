@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -18,11 +17,11 @@ export async function createEntity(data: Omit<Entity, 'entityId' | 'status' | 'c
   
   const entityCollectionRef = collection(db, "entities");
   const newEntityRef = doc(entityCollectionRef);
-  const entityId = newEntityRef.id;
+  const documentId = newEntityRef.id;
 
   const entityData: Entity = {
     ...data,
-    entityId,
+    entityId: documentId,
     status: "active",
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -33,22 +32,23 @@ export async function createEntity(data: Omit<Entity, 'entityId' | 'status' | 'c
   try {
     await createAuditLog({
       userId: data.createdBy,
-      entityId: entityId,
+      entityId: documentId,
       action: "entity.created",
       resourceType: "entity",
-      resourceId: entityId,
+      resourceId: documentId,
       details: { name: data.nomEntreprise || data.name, type: data.type }
     });
   } catch (err) {
     console.warn("Audit log failed:", err);
   }
 
-  return entityId;
+  return documentId;
 }
 
 export async function updateEntity(documentId: string, data: Partial<Entity>) {
   if (!db) throw new Error("Firestore not initialized");
   
+  console.log("[entity-service] updateEntity", { documentId, data });
   const entityRef = doc(db, "entities", documentId);
   const userId = data.updatedBy || "system";
 
@@ -74,16 +74,23 @@ export async function updateEntity(documentId: string, data: Partial<Entity>) {
 export async function disableEntity(documentId: string, userId: string) {
   if (!db) throw new Error("Firestore not initialized");
   
+  console.log("[entity-service] disableEntity start", { documentId, userId });
   const entityRef = doc(db, "entities", documentId);
   const actorUid = userId || "system";
   
-  await updateDoc(entityRef, {
-    status: "inactive",
-    disabledAt: serverTimestamp(),
-    disabledBy: actorUid,
-    updatedAt: serverTimestamp(),
-    updatedBy: actorUid,
-  });
+  try {
+    await updateDoc(entityRef, {
+      status: "inactive",
+      disabledAt: serverTimestamp(),
+      disabledBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
+    console.log("[entity-service] disableEntity Firestore update successful");
+  } catch (error) {
+    console.error("[entity-service] disableEntity updateDoc failed", error);
+    throw error;
+  }
 
   try {
     await createAuditLog({

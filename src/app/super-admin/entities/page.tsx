@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -69,6 +68,8 @@ export default function EntitiesManagementPage() {
   };
 
   const handleEdit = (entity: Entity) => {
+    const documentId = entity.id || (entity as any).entityId;
+    console.log("[entity-edit] Editing entity", { documentId, entity });
     setFormData({
       raisonSociale: entity.raisonSociale || entity.legalName || "",
       nomEntreprise: entity.nomEntreprise || entity.name || "",
@@ -85,7 +86,7 @@ export default function EntitiesManagementPage() {
       type: entity.type,
       notes: entity.notes || ""
     });
-    setEditingId(entity.id || entity.entityId);
+    setEditingId(documentId);
     setIsFormVisible(true);
   };
 
@@ -100,19 +101,19 @@ export default function EntitiesManagementPage() {
     try {
       const actorUid = user?.uid || "system";
       if (editingId) {
+        console.log("[entity-save] Updating existing entity", { editingId, formData });
         await updateEntity(editingId, { 
           ...formData, 
           updatedBy: actorUid,
-          // Sync aliases for compatibility if needed
           legalName: formData.raisonSociale,
           name: formData.nomEntreprise
         });
         toast({ title: "Modifiée", description: "L'entreprise a été mise à jour." });
       } else {
+        console.log("[entity-save] Creating new entity", { formData });
         await createEntity({ 
           ...formData, 
           createdBy: actorUid,
-          // Sync aliases
           legalName: formData.raisonSociale,
           name: formData.nomEntreprise
         });
@@ -120,6 +121,7 @@ export default function EntitiesManagementPage() {
       }
       handleReset();
     } catch (err: any) {
+      console.error("[entity-save] Failed", err);
       toast({
         variant: "destructive",
         title: "Erreur",
@@ -131,19 +133,27 @@ export default function EntitiesManagementPage() {
   };
 
   const handleDisable = async (documentId: string) => {
+    console.log("[entity-disable] Clicked", { documentId });
     if (!db) {
+      console.error("[entity-disable] Firestore not initialized");
       toast({ variant: "destructive", title: "Erreur", description: "Firestore n'est pas initialisé." });
       return;
     }
     
-    if (!confirm("Êtes-vous sûr de vouloir désactiver cette entreprise ?")) return;
+    if (!confirm("Êtes-vous sûr de vouloir désactiver cette entreprise ?")) {
+      console.log("[entity-disable] Cancelled by user");
+      return;
+    }
 
     setLoading(true);
     try {
       const actorUid = user?.uid || "system";
+      console.log("[entity-disable] Calling service", { documentId, actorUid });
       await disableEntity(documentId, actorUid);
+      console.log("[entity-disable] Success");
       toast({ title: "Désactivée", description: "L'entreprise est désormais inactive." });
     } catch (err: any) {
+      console.error("[entity-disable] Failed", err);
       toast({ 
         variant: "destructive", 
         title: "Erreur", 
@@ -319,7 +329,7 @@ export default function EntitiesManagementPage() {
                 <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground">Aucune entreprise trouvée.</TableCell></TableRow>
               ) : (
                 filteredEntities.map((entity) => (
-                  <TableRow key={entity.id || entity.entityId}>
+                  <TableRow key={entity.id || (entity as any).entityId}>
                     <TableCell>
                       <div className="font-bold">{entity.nomEntreprise || entity.name}</div>
                       <div className="text-xs text-muted-foreground uppercase">{entity.raisonSociale || entity.legalName}</div>
@@ -345,7 +355,13 @@ export default function EntitiesManagementPage() {
                           <Edit className="w-4 h-4" />
                         </Button>
                         {entity.status === 'active' && (
-                          <Button variant="ghost" size="sm" onClick={() => handleDisable(entity.id || entity.entityId)} className="text-red-500 hover:text-red-600" disabled={loading}>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => handleDisable(entity.id || (entity as any).entityId)} 
+                            className="text-red-500 hover:text-red-600" 
+                            disabled={loading}
+                          >
                             <PowerOff className="w-4 h-4" />
                           </Button>
                         )}
