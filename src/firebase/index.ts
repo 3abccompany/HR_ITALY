@@ -3,11 +3,13 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import { getStorage, FirebaseStorage } from 'firebase/storage';
 import { firebaseConfig } from './config';
 
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
+let storage: FirebaseStorage | undefined;
 
 export function initializeFirebase() {
   const exactMissing: string[] = [];
@@ -27,15 +29,19 @@ export function initializeFirebase() {
       }
       auth = getAuth(app);
       db = getFirestore(app);
+      storage = getStorage(app);
     } catch (error) {
       console.error("Firebase initialization failed:", error);
     }
+  } else {
+    console.warn("Firebase configuration is incomplete. Missing:", exactMissing.join(', '));
   }
 
   return { 
     app: app as FirebaseApp, 
     auth: auth as Auth, 
     db: db as Firestore,
+    storage: storage as FirebaseStorage,
     missingVars: exactMissing
   };
 }

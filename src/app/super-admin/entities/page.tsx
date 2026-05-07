@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Building, Plus, Loader2, Search, ArrowLeft } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Building, Plus, Loader2, Search, ArrowLeft, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,15 +9,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { useFirestore, useCollection, useUser } from "@/firebase";
+import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
 import { createEntity } from "@/services/entity.service";
 import { EntityType } from "@/types/entity";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export default function EntitiesManagementPage() {
-  const { db } = useFirestore();
+  const { db, missingVars } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   
@@ -27,12 +28,16 @@ export default function EntitiesManagementPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
-  const entitiesQuery = query(collection(db, "entities"), orderBy("createdAt", "desc"));
+  const entitiesQuery = useMemo(() => {
+    if (!db) return null;
+    return query(collection(db, "entities"), orderBy("createdAt", "desc"));
+  }, [db]);
+
   const { data: entities, loading: loadingEntities } = useCollection(entitiesQuery);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !legalName) return;
+    if (!name || !legalName || !db) return;
     
     setLoading(true);
     try {
@@ -63,9 +68,26 @@ export default function EntitiesManagementPage() {
   };
 
   const filteredEntities = entities?.filter(e => 
-    e.name.toLowerCase().includes(search.toLowerCase()) || 
-    e.legalName.toLowerCase().includes(search.toLowerCase())
+    e.name?.toLowerCase().includes(search.toLowerCase()) || 
+    e.legalName?.toLowerCase().includes(search.toLowerCase())
   ) || [];
+
+  if (missingVars.length > 0) {
+    return (
+      <div className="p-8 max-w-2xl mx-auto">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Configuration Firebase Incomplète</AlertTitle>
+          <AlertDescription>
+            Les variables suivantes sont manquantes dans .env.local :
+            <ul className="list-disc ml-6 mt-2">
+              {missingVars.map(v => <li key={v} className="font-mono text-xs">{v}</li>)}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -127,7 +149,7 @@ export default function EntitiesManagementPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>
+                <Button type="submit" className="w-full" disabled={loading || !db}>
                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Building className="w-4 h-4 mr-2" />}
                   Créer l'entité
                 </Button>
@@ -180,11 +202,11 @@ export default function EntitiesManagementPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="capitalize">
-                          {entity.type.replace('_', ' ')}
+                          {entity.type?.replace('_', ' ')}
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={entity.status === 'active' ? 'default' : 'outline'} className="bg-green-500 hover:bg-green-600 text-white border-none">
+                        <Badge variant={entity.status === 'active' ? 'default' : 'outline'} className={entity.status === 'active' ? "bg-green-500 hover:bg-green-600 text-white border-none" : ""}>
                           {entity.status}
                         </Badge>
                       </TableCell>
