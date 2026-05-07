@@ -15,7 +15,8 @@ import {
   Shield,
   LogOut,
   Loader2,
-  Database
+  Database,
+  Lock
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
@@ -58,6 +59,13 @@ const navItems = [
     title: "Catalogue Permissions",
     url: "/super-admin/permissions-seed",
     icon: Database,
+    isActive: true,
+    label: "Admin",
+  },
+  {
+    title: "Initialisation Rôles",
+    url: "/super-admin/roles-seed",
+    icon: Lock,
     isActive: true,
     label: "Admin",
   },

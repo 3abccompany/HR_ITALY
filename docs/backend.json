@@ -92,6 +92,25 @@
       },
       "required": ["code", "module", "action", "label", "scope", "status"]
     },
+    "Role": {
+      "title": "Role",
+      "description": "Role template defining a set of permissions.",
+      "type": "object",
+      "properties": {
+        "roleId": { "type": "string" },
+        "name": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "scope": { "type": "string", "enum": ["platform", "entity"] },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["roleId", "name", "label", "scope", "permissions", "status"]
+    },
     "Person": {
       "title": "Person",
       "description": "Core identity for candidates and employees.",
@@ -126,6 +145,10 @@
     "/permissions/{code}": {
       "schema": { "$ref": "#/entities/Permission" },
       "description": "System permissions catalogue."
+    },
+    "/roles/{roleId}": {
+      "schema": { "$ref": "#/entities/Role" },
+      "description": "Role templates catalogue."
     },
     "/entities/{entityId}/persons/{personId}": {
       "schema": { "$ref": "#/entities/Person" },
