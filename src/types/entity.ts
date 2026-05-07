@@ -4,20 +4,33 @@ export type EntityStatus = "active" | "inactive" | "archived";
 export type EntityType = "internal_entity" | "supplier" | "customer" | "other";
 
 export interface Entity {
+  // Identification
   entityId: string;
-  name: string;
-  legalName: string;
   type: EntityType;
-  taxNumber?: string;
-  fiscalCode?: string;
-  address?: string;
-  city?: string;
-  country?: string;
-  email?: string;
-  phone?: string;
   status: EntityStatus;
+  
+  // Required Company Fields
+  raisonSociale: string;
+  nomEntreprise: string;
+  numeroTVA: string;
+  codeFiscalEntreprise: string;
+  
+  // Address & Contact
+  adresseSiegeSocial: string;
+  codePostal: string;
+  ville: string;
+  province: string;
+  telephone: string;
+  email: string;
+  pec: string;
+  referentEntreprise: string;
+  
+  // Metadata & Audit
+  notes?: string;
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
   updatedBy?: string;
+  disabledAt?: Date | FieldValue;
+  disabledBy?: string;
 }
