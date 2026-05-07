@@ -1,14 +1,30 @@
+
 import { FieldValue } from "firebase/firestore";
 
 export type MembershipStatus = "active" | "inactive" | "archived";
 
 export interface Membership {
-  id: string; // format: {uid}_{entityId}
+  id?: string; // standard firestore document id alias
+  membershipId: string; // format: {uid}_{entityId}
   uid: string;
+  userId: string; // alias for uid
+  userDisplayName: string;
+  userEmail: string;
   entityId: string;
+  entityName: string;
   roleId: string;
-  status: MembershipStatus;
+  roleLabel: string;
   permissions: string[];
+  status: MembershipStatus;
+  notes?: string;
+  
+  // Metadata
   createdAt: Date | FieldValue;
+  createdBy: string;
   updatedAt: Date | FieldValue;
+  updatedBy: string;
+  disabledAt?: Date | FieldValue;
+  disabledBy?: string;
+  reactivatedAt?: Date | FieldValue;
+  reactivatedBy?: string;
 }

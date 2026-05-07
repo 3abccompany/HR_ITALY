@@ -28,16 +28,31 @@
     },
     "Membership": {
       "title": "Membership",
-      "description": "Link between a user and an entity with a specific role.",
+      "description": "Link between a user and an entity with a specific role and effective permissions.",
       "type": "object",
       "properties": {
+        "membershipId": { "type": "string" },
         "uid": { "type": "string" },
+        "userId": { "type": "string" },
+        "userDisplayName": { "type": "string" },
+        "userEmail": { "type": "string" },
         "entityId": { "type": "string" },
+        "entityName": { "type": "string" },
         "roleId": { "type": "string" },
+        "roleLabel": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } },
         "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
-        "permissions": { "type": "array", "items": { "type": "string" } }
+        "notes": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" },
+        "disabledAt": { "type": "object" },
+        "disabledBy": { "type": "string" },
+        "reactivatedAt": { "type": "object" },
+        "reactivatedBy": { "type": "string" }
       },
-      "required": ["uid", "entityId", "roleId", "status", "permissions"]
+      "required": ["membershipId", "uid", "entityId", "roleId", "status", "permissions"]
     },
     "Entity": {
       "title": "Entity",
@@ -71,7 +86,7 @@
         "reactivatedAt": { "type": "object" },
         "reactivatedBy": { "type": "string" }
       },
-      "required": ["entityId", "type", "status"]
+      "required": ["entityId", "type", "status", "nomEntreprise", "raisonSociale"]
     },
     "Permission": {
       "title": "Permission",
@@ -134,7 +149,7 @@
       "schema": { "$ref": "#/entities/AppUser" },
       "description": "User profile data."
     },
-    "/memberships/{id}": {
+    "/memberships/{membershipId}": {
       "schema": { "$ref": "#/entities/Membership" },
       "description": "User memberships to entities."
     },

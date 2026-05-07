@@ -56,6 +56,12 @@ const navItems = [
     isActive: true,
   },
   {
+    title: "Affectations",
+    url: "/super-admin/memberships",
+    icon: LinkIcon,
+    isActive: true,
+  },
+  {
     title: "Catalogue Permissions",
     url: "/super-admin/permissions-seed",
     icon: Database,
@@ -80,13 +86,6 @@ const navItems = [
     title: "Permissions",
     url: "#",
     icon: Key,
-    isActive: false,
-    label: "À venir",
-  },
-  {
-    title: "Affectations",
-    url: "#",
-    icon: LinkIcon,
     isActive: false,
     label: "À venir",
   },
