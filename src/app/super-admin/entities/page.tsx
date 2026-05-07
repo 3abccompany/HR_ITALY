@@ -22,8 +22,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const initialForm: Omit<Entity, 'entityId' | 'status' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
-  raisonSociale: "",
-  nomEntreprise: "",
+  legalName: "",
+  name: "",
   numeroTVA: "",
   codeFiscalEntreprise: "",
   adresseSiegeSocial: "",
@@ -69,8 +69,8 @@ export default function EntitiesManagementPage() {
 
   const handleEdit = (entity: Entity) => {
     setFormData({
-      raisonSociale: entity.raisonSociale,
-      nomEntreprise: entity.nomEntreprise,
+      legalName: entity.legalName,
+      name: entity.name,
       numeroTVA: entity.numeroTVA,
       codeFiscalEntreprise: entity.codeFiscalEntreprise,
       adresseSiegeSocial: entity.adresseSiegeSocial,
@@ -84,7 +84,7 @@ export default function EntitiesManagementPage() {
       type: entity.type,
       notes: entity.notes || ""
     });
-    setEditingId(entity.entityId);
+    setEditingId(entity.id || entity.entityId);
     setIsFormVisible(true);
   };
 
@@ -144,8 +144,8 @@ export default function EntitiesManagementPage() {
   const filteredEntities = useMemo(() => {
     const term = search.toLowerCase();
     return entities?.filter(e => {
-      const nom = (e.nomEntreprise || "").toLowerCase();
-      const raison = (e.raisonSociale || "").toLowerCase();
+      const nom = (e.name || "").toLowerCase();
+      const raison = (e.legalName || "").toLowerCase();
       const tva = (e.numeroTVA || "").toLowerCase();
       return nom.includes(term) || raison.includes(term) || tva.includes(term);
     }) || [];
@@ -196,12 +196,12 @@ export default function EntitiesManagementPage() {
             <form onSubmit={handleSave} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="raisonSociale">Raison Sociale</Label>
-                  <Input id="raisonSociale" value={formData.raisonSociale} onChange={handleInputChange} required />
+                  <Label htmlFor="legalName">Raison Sociale</Label>
+                  <Input id="legalName" value={formData.legalName} onChange={handleInputChange} required />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="nomEntreprise">Nom Commercial</Label>
-                  <Input id="nomEntreprise" value={formData.nomEntreprise} onChange={handleInputChange} required />
+                  <Label htmlFor="name">Nom Commercial</Label>
+                  <Input id="name" value={formData.name} onChange={handleInputChange} required />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="type">Type</Label>
@@ -306,10 +306,10 @@ export default function EntitiesManagementPage() {
                 <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground">Aucune entreprise trouvée.</TableCell></TableRow>
               ) : (
                 filteredEntities.map((entity) => (
-                  <TableRow key={entity.entityId}>
+                  <TableRow key={entity.id || entity.entityId}>
                     <TableCell>
-                      <div className="font-bold">{entity.nomEntreprise}</div>
-                      <div className="text-xs text-muted-foreground uppercase">{entity.raisonSociale}</div>
+                      <div className="font-bold">{entity.name}</div>
+                      <div className="text-xs text-muted-foreground uppercase">{entity.legalName}</div>
                       <div className="text-[10px] font-mono mt-1">TVA: {entity.numeroTVA}</div>
                     </TableCell>
                     <TableCell>
@@ -332,7 +332,7 @@ export default function EntitiesManagementPage() {
                           <Edit className="w-4 h-4" />
                         </Button>
                         {entity.status === 'active' && (
-                          <Button variant="ghost" size="sm" onClick={() => handleDisable(entity.entityId)} className="text-red-500 hover:text-red-600" disabled={loading}>
+                          <Button variant="ghost" size="sm" onClick={() => handleDisable(entity.id || entity.entityId)} className="text-red-500 hover:text-red-600" disabled={loading}>
                             <PowerOff className="w-4 h-4" />
                           </Button>
                         )}

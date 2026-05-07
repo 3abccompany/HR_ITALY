@@ -29,14 +29,18 @@ export async function createEntity(data: Omit<Entity, 'entityId' | 'status' | 'c
 
   await setDoc(newEntityRef, entityData);
 
-  await createAuditLog({
-    userId: data.createdBy,
-    entityId: entityId,
-    action: "entity.created",
-    resourceType: "entity",
-    resourceId: entityId,
-    details: { nomEntreprise: data.nomEntreprise, type: data.type }
-  });
+  try {
+    await createAuditLog({
+      userId: data.createdBy,
+      entityId: entityId,
+      action: "entity.created",
+      resourceType: "entity",
+      resourceId: entityId,
+      details: { name: data.name, type: data.type }
+    });
+  } catch (err) {
+    console.warn("Audit log failed:", err);
+  }
 
   return entityId;
 }
@@ -52,14 +56,18 @@ export async function updateEntity(entityId: string, data: Partial<Entity>) {
     updatedAt: serverTimestamp(),
   });
 
-  await createAuditLog({
-    userId: userId,
-    entityId: entityId,
-    action: "entity.updated",
-    resourceType: "entity",
-    resourceId: entityId,
-    details: data
-  });
+  try {
+    await createAuditLog({
+      userId: userId,
+      entityId: entityId,
+      action: "entity.updated",
+      resourceType: "entity",
+      resourceId: entityId,
+      details: data
+    });
+  } catch (err) {
+    console.warn("Audit log failed:", err);
+  }
 }
 
 export async function disableEntity(entityId: string, userId: string) {
@@ -93,5 +101,5 @@ export async function getAllEntities(): Promise<Entity[]> {
   if (!db) return [];
   const q = query(collection(db, "entities"), orderBy("createdAt", "desc"));
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => doc.data() as Entity);
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Entity));
 }

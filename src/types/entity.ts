@@ -4,14 +4,15 @@ export type EntityStatus = "active" | "inactive" | "archived";
 export type EntityType = "internal_entity" | "supplier" | "customer" | "other";
 
 export interface Entity {
+  id?: string;
   // Identification
   entityId: string;
   type: EntityType;
   status: EntityStatus;
   
-  // Required Company Fields
-  raisonSociale: string;
-  nomEntreprise: string;
+  // Required Company Fields (Matching backend.json)
+  legalName: string;
+  name: string;
   numeroTVA: string;
   codeFiscalEntreprise: string;
   
