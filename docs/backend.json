@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "AppUser": {
@@ -240,6 +241,8 @@
         "departmentId": { "type": "string" },
         "jobTitleId": { "type": "string" },
         "issueDate": { "type": "string" },
+        "version": { "type": "number" },
+        "versionLabel": { "type": "string" },
         "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" },
@@ -247,6 +250,20 @@
         "updatedBy": { "type": "string" }
       },
       "required": ["jobProfileId", "entityId", "departmentId", "jobTitleId", "status"]
+    },
+    "JobProfileVersion": {
+      "title": "JobProfileVersion",
+      "description": "Snapshot of a job profile at a specific version.",
+      "type": "object",
+      "properties": {
+        "versionId": { "type": "string" },
+        "jobProfileId": { "type": "string" },
+        "version": { "type": "number" },
+        "versionLabel": { "type": "string" },
+        "snapshot": { "type": "object" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" }
+      }
     },
     "JobProfileCatalogItem": {
       "title": "JobProfileCatalogItem",
@@ -310,6 +327,10 @@
     "/entities/{entityId}/jobProfiles/{jobProfileId}": {
       "schema": { "$ref": "#/entities/JobProfile" },
       "description": "Formal job descriptions."
+    },
+    "/entities/{entityId}/jobProfiles/{jobProfileId}/versions/{versionId}": {
+      "schema": { "$ref": "#/entities/JobProfileVersion" },
+      "description": "Job profile version snapshots."
     },
     "/entities/{entityId}/jobProfileCatalogItems/{itemId}": {
       "schema": { "$ref": "#/entities/JobProfileCatalogItem" },

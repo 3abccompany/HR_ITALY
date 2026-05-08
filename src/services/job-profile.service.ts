@@ -1,3 +1,4 @@
+
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -12,7 +13,7 @@ import {
   writeBatch,
   increment
 } from "firebase/firestore";
-import { JobProfile, JobProfileCatalogItem, CatalogItemType } from "@/types/job-profile";
+import { JobProfile, JobProfileCatalogItem, CatalogItemType, JobProfileVersion } from "@/types/job-profile";
 import { createAuditLog } from "./audit.service";
 
 /**
@@ -24,7 +25,7 @@ async function syncCatalogItems(entityId: string, type: CatalogItemType, labels:
   const catalogRef = collection(db, `entities/${entityId}/jobProfileCatalogItems`);
 
   for (const label of labels) {
-    // Check if item exists (simple case-insensitive check could be added if needed)
+    // Check if item exists
     const q = query(catalogRef, where("type", "==", type), where("label", "==", label));
     const snap = await getDocs(q);
 
@@ -44,7 +45,6 @@ async function syncCatalogItems(entityId: string, type: CatalogItemType, labels:
       };
       batch.set(newItemRef, item);
       
-      // Log item creation
       await createAuditLog({
         userId: actorUid,
         entityId,
@@ -54,7 +54,6 @@ async function syncCatalogItems(entityId: string, type: CatalogItemType, labels:
         details: { label, type }
       });
     } else {
-      // Increment usage count
       batch.update(snap.docs[0].ref, {
         usageCount: increment(1),
         updatedAt: serverTimestamp(),
@@ -63,6 +62,38 @@ async function syncCatalogItems(entityId: string, type: CatalogItemType, labels:
     }
   }
   await batch.commit();
+}
+
+/**
+ * Internal helper to create a version snapshot
+ */
+async function createVersionSnapshot(entityId: string, jobProfileId: string, data: JobProfile, actorUid: string) {
+  if (!db) return;
+  const versionsRef = collection(db, `entities/${entityId}/jobProfiles/${jobProfileId}/versions`);
+  const versionDocRef = doc(versionsRef);
+  
+  const versionData: JobProfileVersion = {
+    versionId: versionDocRef.id,
+    entityId,
+    jobProfileId,
+    version: data.version,
+    versionLabel: data.versionLabel,
+    snapshot: { ...data },
+    createdAt: serverTimestamp(),
+    createdBy: actorUid,
+    changeSummary: data.version === 1 ? "Version initiale" : "Mise à jour du document"
+  };
+
+  await setDoc(versionDocRef, versionData);
+  
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "jobProfile.versionCreated",
+    resourceType: "jobProfile",
+    resourceId: jobProfileId,
+    details: { version: data.version, versionLabel: data.versionLabel }
+  });
 }
 
 export async function createJobProfile(entityId: string, data: Partial<JobProfile>, actorUid: string) {
@@ -76,6 +107,10 @@ export async function createJobProfile(entityId: string, data: Partial<JobProfil
     jobProfileId,
     entityId,
     status: "active",
+    version: 1,
+    versionLabel: "V1",
+    lastModifiedAt: serverTimestamp(),
+    lastModifiedBy: actorUid,
     createdAt: serverTimestamp(),
     createdBy: actorUid,
     updatedAt: serverTimestamp(),
@@ -100,6 +135,9 @@ export async function createJobProfile(entityId: string, data: Partial<JobProfil
     }
   }
 
+  // Create initial snapshot
+  await createVersionSnapshot(entityId, jobProfileId, profileData, actorUid);
+
   await createAuditLog({
     userId: actorUid,
     entityId,
@@ -115,15 +153,29 @@ export async function createJobProfile(entityId: string, data: Partial<JobProfil
 export async function updateJobProfile(entityId: string, jobProfileId: string, data: Partial<JobProfile>, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   const profileRef = doc(db, `entities/${entityId}/jobProfiles`, jobProfileId);
+  
+  const snap = await getDoc(profileRef);
+  if (!snap.exists()) throw new Error("Document introuvable");
+  const current = snap.data() as JobProfile;
 
-  await updateDoc(profileRef, {
+  const nextVersion = (current.version || 1) + 1;
+  const nextLabel = `V${nextVersion}`;
+
+  const updatedData = {
     ...data,
+    version: nextVersion,
+    versionLabel: nextLabel,
+    lastModifiedAt: serverTimestamp(),
+    lastModifiedBy: actorUid,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  });
+  };
 
-  // Note: We don't re-sync catalog items on update for this MVP to avoid complex usageCount logic, 
-  // but we could trigger it for strictly NEW items added in the update.
+  await updateDoc(profileRef, updatedData);
+
+  // Create new snapshot with merged data
+  const fullSnap = { ...current, ...updatedData } as JobProfile;
+  await createVersionSnapshot(entityId, jobProfileId, fullSnap, actorUid);
 
   await createAuditLog({
     userId: actorUid,
@@ -131,7 +183,7 @@ export async function updateJobProfile(entityId: string, jobProfileId: string, d
     action: "jobProfile.updated",
     resourceType: "jobProfile",
     resourceId: jobProfileId,
-    details: data
+    details: { nextVersion, nextLabel }
   });
 }
 

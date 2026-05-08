@@ -1,3 +1,4 @@
+
 import { FieldValue } from "firebase/firestore";
 
 export type JobProfileStatus = "active" | "inactive" | "archived";
@@ -29,6 +30,13 @@ export interface JobProfile {
   softSkills: string[];
   status: JobProfileStatus;
   notes?: string;
+  
+  // Versioning
+  version: number;
+  versionLabel: string;
+  lastModifiedAt?: Date | FieldValue;
+  lastModifiedBy?: string;
+
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
@@ -37,6 +45,18 @@ export interface JobProfile {
   disabledBy?: string;
   reactivatedAt?: Date | FieldValue;
   reactivatedBy?: string;
+}
+
+export interface JobProfileVersion {
+  versionId: string;
+  entityId: string;
+  jobProfileId: string;
+  version: number;
+  versionLabel: string;
+  snapshot: Partial<JobProfile>;
+  changeSummary?: string;
+  createdAt: Date | FieldValue;
+  createdBy: string;
 }
 
 export interface JobProfileCatalogItem {

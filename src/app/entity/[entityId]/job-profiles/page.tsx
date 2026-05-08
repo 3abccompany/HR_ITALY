@@ -1,11 +1,12 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { 
   FileBadge, Plus, Search, Edit, PowerOff, RefreshCcw, 
-  Loader2, Calendar, Building2, UserCircle, Users, 
-  AlertCircle, ShieldCheck, MoreVertical, X, Check
+  Loader2, Calendar, Building2, Eye,
+  AlertCircle, ShieldCheck, MoreVertical, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,11 +65,12 @@ const initialForm = {
 
 export default function JobProfilesManagementPage() {
   const params = useParams();
+  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { membership, entity, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { entity, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   // State
   const [isFormVisible, setIsFormVisible] = useState(false);
@@ -172,7 +174,7 @@ export default function JobProfilesManagementPage() {
 
       if (editingId) {
         await updateJobProfile(entityId, editingId, payload, user.uid);
-        toast({ title: "Mise à jour", description: "La fiche de poste a été modifiée." });
+        toast({ title: "Mise à jour", description: "La fiche de poste a été modifiée (nouvelle version créée)." });
       } else {
         await createJobProfile(entityId, payload, user.uid);
         toast({ title: "Créée", description: "La fiche de poste a été enregistrée." });
@@ -217,13 +219,11 @@ export default function JobProfilesManagementPage() {
     const label = newCatalogLabels[type].trim();
     if (!label) return;
     
-    // Add to current form if not already there
     const current = formData[field] as string[];
     if (!current.includes(label)) {
       setFormData(prev => ({ ...prev, [field]: [...(prev[field] as string[]), label] }));
     }
     
-    // Reset search
     setNewCatalogLabels(prev => ({ ...prev, [type]: "" }));
   };
 
@@ -241,6 +241,12 @@ export default function JobProfilesManagementPage() {
       case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300">Inactif</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
+  };
+
+  const formatDate = (val: any) => {
+    if (!val) return "N/A";
+    const d = val.toDate ? val.toDate() : new Date(val);
+    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
@@ -263,8 +269,8 @@ export default function JobProfilesManagementPage() {
     <div className="p-8 max-w-7xl mx-auto pb-24">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-headline font-bold text-primary">Liste des fiches de postes</h1>
-          <p className="text-muted-foreground text-sm">Gestion des référentiels métiers de l'entité.</p>
+          <h1 className="text-3xl font-headline font-bold text-primary">Gestion des fiches de postes</h1>
+          <p className="text-muted-foreground text-sm">Référentiel documentaire des métiers et responsabilités.</p>
         </div>
         {canCreate && (
           <Button onClick={() => setIsFormVisible(true)} className="gap-2">
@@ -290,16 +296,17 @@ export default function JobProfilesManagementPage() {
               <TableRow className="bg-secondary/20">
                 <TableHead>Intitulé de poste</TableHead>
                 <TableHead>Département</TableHead>
-                <TableHead>Date d'émission</TableHead>
+                <TableHead>Version</TableHead>
+                <TableHead>Dernière modification</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loadingProfiles ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
               ) : filteredProfiles.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground">Aucune fiche de poste trouvée.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">Aucune fiche de poste trouvée.</TableCell></TableRow>
               ) : (
                 filteredProfiles.map((p) => (
                   <TableRow key={p.jobProfileId}>
@@ -313,35 +320,46 @@ export default function JobProfilesManagementPage() {
                        </div>
                     </TableCell>
                     <TableCell>
+                       <Badge variant="outline" className="font-bold">{p.versionLabel || "V1"}</Badge>
+                    </TableCell>
+                    <TableCell>
                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                         <Calendar className="w-3.5 h-3.5" /> {new Date(p.issueDate).toLocaleDateString('fr-FR')}
+                         <Calendar className="w-3.5 h-3.5" /> {formatDate(p.lastModifiedAt || p.updatedAt)}
                        </div>
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(p.status)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {canUpdate && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handleEdit(p)} className="gap-2">
-                              <Edit className="w-4 h-4" /> Modifier
-                            </DropdownMenuItem>
-                            {p.status === 'active' ? (
-                              <DropdownMenuItem onClick={() => setStatusChange({ id: p.jobProfileId, action: 'disable' })} className="gap-2 text-destructive">
-                                <PowerOff className="w-4 h-4" /> Désactiver
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem 
+                            onClick={() => router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`)}
+                            className="gap-2 text-primary font-semibold"
+                          >
+                            <Eye className="w-4 h-4" /> Consulter / Imprimer
+                          </DropdownMenuItem>
+                          {canUpdate && (
+                            <>
+                              <DropdownMenuItem onClick={() => handleEdit(p)} className="gap-2">
+                                <Edit className="w-4 h-4" /> Modifier
                               </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem onClick={() => setStatusChange({ id: p.jobProfileId, action: 'reactivate' })} className="gap-2 text-green-600">
-                                <RefreshCcw className="w-4 h-4" /> Réactiver
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
+                              {p.status === 'active' ? (
+                                <DropdownMenuItem onClick={() => setStatusChange({ id: p.jobProfileId, action: 'disable' })} className="gap-2 text-destructive">
+                                  <PowerOff className="w-4 h-4" /> Désactiver
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onClick={() => setStatusChange({ id: p.jobProfileId, action: 'reactivate' })} className="gap-2 text-green-600">
+                                  <RefreshCcw className="w-4 h-4" /> Réactiver
+                                </DropdownMenuItem>
+                              )}
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))
@@ -356,28 +374,35 @@ export default function JobProfilesManagementPage() {
         <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="p-6 pb-2 border-b">
             <DialogTitle>{editingId ? "Modifier la fiche de poste" : "Nouvelle fiche de poste"}</DialogTitle>
-            <DialogDescription>Définissez le périmètre et les exigences du poste.</DialogDescription>
+            <DialogDescription>
+              {editingId ? "Une nouvelle version (snapshot) sera automatiquement générée après sauvegarde." : "Définissez le périmètre et les exigences du poste."}
+            </DialogDescription>
           </DialogHeader>
           
           <ScrollArea className="flex-1 p-6">
             <form onSubmit={handleSave} className="space-y-8 pb-8">
-              {/* Header Info */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <Label>Entreprise</Label>
                   <Input value={entity?.nomEntreprise || ""} readOnly className="bg-secondary/20" />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="issueDate">Date d'émission</Label>
+                  <Label htmlFor="issueDate">Date d'émission initiale</Label>
                   <Input id="issueDate" type="date" value={formData.issueDate} onChange={(e) => setFormData(p => ({...p, issueDate: e.target.value}))} required />
                 </div>
                 <div className="space-y-2">
-                  <Label>Statut</Label>
-                  <div className="pt-2">{editingId ? getStatusBadge(profiles?.find(p => p.jobProfileId === editingId)?.status || 'active') : <Badge className="bg-green-500">Nouveau</Badge>}</div>
+                  <Label>État du document</Label>
+                  <div className="pt-2">
+                    {editingId ? (
+                      <div className="flex items-center gap-2">
+                        {getStatusBadge(profiles?.find(p => p.jobProfileId === editingId)?.status || 'active')}
+                        <Badge variant="outline" className="bg-primary/5">Future {`V${(profiles?.find(p => p.jobProfileId === editingId)?.version || 1) + 1}`}</Badge>
+                      </div>
+                    ) : <Badge className="bg-green-500">Nouveau (V1)</Badge>}
+                  </div>
                 </div>
               </div>
 
-              {/* Org Structure */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t">
                 <div className="space-y-2">
                   <Label>Département</Label>
@@ -399,7 +424,6 @@ export default function JobProfilesManagementPage() {
                 </div>
               </div>
 
-              {/* Hierarchy */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t">
                 <div className="space-y-2">
                   <Label>Supérieur hiérarchique direct</Label>
@@ -427,7 +451,6 @@ export default function JobProfilesManagementPage() {
                 </div>
               </div>
 
-              {/* Catalog Sections */}
               <CatalogSection 
                 title="Missions et responsabilités" 
                 type="missionResponsibility"
@@ -503,7 +526,7 @@ export default function JobProfilesManagementPage() {
               disabled={loading || !formData.jobTitleId || !formData.departmentId}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-              {editingId ? "Enregistrer les modifications" : "Créer la fiche de poste"}
+              {editingId ? "Mettre à jour (Nouvelle Version)" : "Créer la fiche de poste"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -556,7 +579,7 @@ function CatalogSection({
       
       <div className="flex gap-2">
         <Input 
-          placeholder={`Ajouter un nouvel élément de type ${title.toLowerCase()}...`}
+          placeholder={`Ajouter un nouvel élément...`}
           value={newLabel}
           onChange={(e) => setNewLabel(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), onAdd())}
