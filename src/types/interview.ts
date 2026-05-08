@@ -1,31 +1,53 @@
+
 import { FieldValue } from "firebase/firestore";
+
+export type InterviewStatus =
+  | "scheduled"
+  | "completed"
+  | "cancelled"
+  | "no_show"
+  | "inactive"
+  | "archived";
 
 export type InterviewDecision =
   | "pending"
   | "accepted"
   | "rejected"
-  | "second_interview_required"
-  | "cancelled";
+  | "on_hold";
 
 export type InterviewType =
-  | "phone_screening"
-  | "first_interview"
-  | "technical_interview"
-  | "final_interview"
-  | "other";
+  | "phone"
+  | "video"
+  | "onsite"
+  | "technical"
+  | "hr"
+  | "final";
 
 export interface Interview {
   interviewId: string;
+  entityId: string;
   personId: string;
   candidateId: string;
-  entityId: string;
-  interviewDate: string;
-  interviewerUserId: string;
+  candidateDisplayName: string;
+  positionApplied: string;
+  scheduledAt: string; // ISO format for easy sorting and DatePicker use
   interviewType: InterviewType;
-  score?: number;
+  interviewerName: string;
+  interviewerUid: string;
+  location: string;
+  status: InterviewStatus;
   decision: InterviewDecision;
-  hiredEmployeeId?: string;
+  score?: number;
+  feedback?: string;
   notes?: string;
+  hiredEmployeeId: string | null;
+  previousStatus?: InterviewStatus;
   createdAt: Date | FieldValue;
+  createdBy: string;
   updatedAt: Date | FieldValue;
+  updatedBy: string;
+  disabledAt?: Date | FieldValue;
+  disabledBy?: string;
+  reactivatedAt?: Date | FieldValue;
+  reactivatedBy?: string;
 }

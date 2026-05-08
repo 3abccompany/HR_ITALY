@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "AppUser": {
@@ -164,6 +165,26 @@
       },
       "required": ["candidateId", "entityId", "personId", "status"]
     },
+    "Interview": {
+      "title": "Interview",
+      "description": "Candidate evaluation session.",
+      "type": "object",
+      "properties": {
+        "interviewId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "personId": { "type": "string" },
+        "candidateId": { "type": "string" },
+        "scheduledAt": { "type": "string" },
+        "interviewType": { "type": "string" },
+        "interviewerName": { "type": "string" },
+        "status": { "type": "string" },
+        "decision": { "type": "string" },
+        "score": { "type": "number" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["interviewId", "entityId", "personId", "candidateId", "status", "decision"]
+    },
     "PersonTimeline": {
       "title": "PersonTimeline",
       "description": "History of events for a person within an entity.",
@@ -214,6 +235,10 @@
     "/entities/{entityId}/candidates/{candidateId}": {
       "schema": { "$ref": "#/entities/Candidate" },
       "description": "Recruitment pipeline records."
+    },
+    "/entities/{entityId}/interviews/{interviewId}": {
+      "schema": { "$ref": "#/entities/Interview" },
+      "description": "Candidate interviews."
     },
     "/entities/{entityId}/personTimeline/{eventId}": {
       "schema": { "$ref": "#/entities/PersonTimeline" },
