@@ -251,6 +251,16 @@ export default function PersonsManagementPage() {
     ) || [];
   }, [persons, search]);
 
+  const getLifecycleLabel = (status: string | undefined) => {
+    switch (status) {
+      case 'candidate': return "Candidat";
+      case 'employee': return "Employé";
+      case 'former_employee': return "Ancien employé";
+      case 'person': return "Personne";
+      default: return "Personne";
+    }
+  };
+
   if (membershipLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -308,15 +318,16 @@ export default function PersonsManagementPage() {
                 <TableHead>Identifiant National</TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Localisation</TableHead>
+                <TableHead>Situation RH</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loadingPersons ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
               ) : filteredPersons.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">Aucun résultat trouvé.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">Aucun résultat trouvé.</TableCell></TableRow>
               ) : (
                 filteredPersons.map((p) => (
                   <TableRow key={p.personId}>
@@ -345,6 +356,11 @@ export default function PersonsManagementPage() {
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <MapPin className="w-3 h-3" /> {p.city}, {p.province}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="capitalize font-medium text-[10px]">
+                        {getLifecycleLabel(p.currentLifecycleStatus)}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant={p.status === 'active' ? 'default' : 'outline'} className={p.status === 'active' ? "bg-green-500 hover:bg-green-600 border-none" : "bg-red-50 text-red-600 border-red-200"}>
