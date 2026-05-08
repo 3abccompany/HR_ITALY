@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -132,6 +133,13 @@ export default function JobProfilesManagementPage() {
     setFormData(initialForm);
     setEditingId(null);
     setIsFormVisible(false);
+    setNewCatalogLabels({
+      missionResponsibility: "",
+      objective: "",
+      trainingRequirement: "",
+      professionalExperience: "",
+      softSkill: ""
+    });
   };
 
   const handleEdit = (p: JobProfile) => {
@@ -139,7 +147,7 @@ export default function JobProfilesManagementPage() {
       issueDate: p.issueDate,
       departmentId: p.departmentId,
       jobTitleId: p.jobTitleId,
-      directSupervisorJobTitleId: p.directSupervisorJobTitleId,
+      directSupervisorJobTitleId: p.directSupervisorJobTitleId || "",
       collaboratorJobTitleIds: p.collaboratorJobTitleIds || [],
       missionsAndResponsibilities: p.missionsAndResponsibilities || [],
       objectives: p.objectives || [],
@@ -372,15 +380,16 @@ export default function JobProfilesManagementPage() {
       {/* Form Dialog */}
       <Dialog open={isFormVisible} onOpenChange={(open) => !open && handleReset()}>
         <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-hidden flex flex-col p-0">
-          <DialogHeader className="p-6 pb-2 border-b">
+          <DialogHeader className="p-6 pb-2 border-b shrink-0">
             <DialogTitle>{editingId ? "Modifier la fiche de poste" : "Nouvelle fiche de poste"}</DialogTitle>
             <DialogDescription>
               {editingId ? "Une nouvelle version (snapshot) sera automatiquement générée après sauvegarde." : "Définissez le périmètre et les exigences du poste."}
             </DialogDescription>
           </DialogHeader>
           
-          <ScrollArea className="flex-1 p-6">
-            <form onSubmit={handleSave} className="space-y-8 pb-8">
+          <ScrollArea className="flex-1 min-h-0">
+            <form id="job-profile-form" onSubmit={handleSave} className="p-6 space-y-8 pb-12">
+              {/* Main Fields Section */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <Label>Entreprise</Label>
@@ -403,6 +412,7 @@ export default function JobProfilesManagementPage() {
                 </div>
               </div>
 
+              {/* Organization Section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t">
                 <div className="space-y-2">
                   <Label>Département</Label>
@@ -424,12 +434,14 @@ export default function JobProfilesManagementPage() {
                 </div>
               </div>
 
+              {/* Hierarchy Section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t">
                 <div className="space-y-2">
                   <Label>Supérieur hiérarchique direct</Label>
                   <Select value={formData.directSupervisorJobTitleId} onValueChange={(v) => setFormData(p => ({...p, directSupervisorJobTitleId: v}))}>
                     <SelectTrigger><SelectValue placeholder="Choisir le poste du N+1" /></SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="none">Aucun</SelectItem>
                       {activeJobTitles.map(j => <SelectItem key={j.jobTitleId} value={j.jobTitleId}>{j.title} ({j.departmentName})</SelectItem>)}
                     </SelectContent>
                   </Select>
@@ -451,6 +463,7 @@ export default function JobProfilesManagementPage() {
                 </div>
               </div>
 
+              {/* Catalog Sections */}
               <CatalogSection 
                 title="Missions et responsabilités" 
                 type="missionResponsibility"
@@ -512,17 +525,25 @@ export default function JobProfilesManagementPage() {
                 onAdd={() => addCatalogItem('softSkill', 'softSkills')}
               />
 
+              {/* Notes Section */}
               <div className="space-y-2 pt-4 border-t">
-                <Label htmlFor="notes">Notes Internes</Label>
-                <Input id="notes" value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} placeholder="Observations complémentaires..." />
+                <Label htmlFor="notes" className="text-primary font-bold">Notes Internes / Observations complémentaires</Label>
+                <Textarea 
+                  id="notes" 
+                  value={formData.notes} 
+                  onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} 
+                  placeholder="Observations libres sur le poste..."
+                  className="min-h-[100px]"
+                />
               </div>
             </form>
           </ScrollArea>
 
-          <DialogFooter className="p-6 pt-2 border-t bg-secondary/10">
+          <DialogFooter className="p-6 pt-4 border-t bg-secondary/10 shrink-0">
             <Button variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
             <Button 
-              onClick={handleSave} 
+              form="job-profile-form"
+              type="submit"
               disabled={loading || !formData.jobTitleId || !formData.departmentId}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
@@ -582,7 +603,12 @@ function CatalogSection({
           placeholder={`Ajouter un nouvel élément...`}
           value={newLabel}
           onChange={(e) => setNewLabel(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), onAdd())}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onAdd();
+            }
+          }}
         />
         <Button type="button" size="sm" onClick={onAdd} disabled={!newLabel.trim()} variant="secondary">
           <Plus className="w-4 h-4 mr-1" /> Ajouter
