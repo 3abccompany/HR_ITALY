@@ -191,6 +191,46 @@
       },
       "required": ["interviewId", "entityId", "personId", "candidateId", "status", "decision"]
     },
+    "Department": {
+      "title": "Department",
+      "description": "Organizational unit within an entity.",
+      "type": "object",
+      "properties": {
+        "departmentId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "description": { "type": "string" },
+        "responsibleName": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["departmentId", "entityId", "name", "code", "status"]
+    },
+    "JobTitle": {
+      "title": "JobTitle",
+      "description": "Professional title associated with a department.",
+      "type": "object",
+      "properties": {
+        "jobTitleId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["jobTitleId", "entityId", "departmentId", "title", "status"]
+    },
     "PersonTimeline": {
       "title": "PersonTimeline",
       "description": "History of events for a person within an entity.",
@@ -245,6 +285,14 @@
     "/entities/{entityId}/interviews/{interviewId}": {
       "schema": { "$ref": "#/entities/Interview" },
       "description": "Candidate interviews."
+    },
+    "/entities/{entityId}/departments/{departmentId}": {
+      "schema": { "$ref": "#/entities/Department" },
+      "description": "Company departments."
+    },
+    "/entities/{entityId}/jobTitles/{jobTitleId}": {
+      "schema": { "$ref": "#/entities/JobTitle" },
+      "description": "Job titles catalog."
     },
     "/entities/{entityId}/personTimeline/{eventId}": {
       "schema": { "$ref": "#/entities/PersonTimeline" },
