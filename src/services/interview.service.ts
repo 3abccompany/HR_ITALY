@@ -6,7 +6,8 @@ import {
   runTransaction, 
   serverTimestamp, 
   updateDoc,
-  getDoc
+  getDoc,
+  setDoc
 } from "firebase/firestore";
 import { Interview, InterviewDecision } from "@/types/interview";
 import { Candidate } from "@/types/candidate";
@@ -146,6 +147,7 @@ export async function recordInterviewDecision(
   if (!interviewSnap.exists()) throw new Error("Entretien introuvable.");
   const interview = interviewSnap.data() as Interview;
 
+  // 1. Update the interview document
   await updateDoc(interviewRef, {
     ...decisionData,
     status: "completed",
@@ -153,13 +155,7 @@ export async function recordInterviewDecision(
     updatedBy: actorUid,
   });
 
-  // Timeline Event
-  const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-  await updateDoc(timelineRef, { // Using setDoc for new timeline event
-      // We need a new event ID
-  });
-  
-  // Implementation note: better to use transactional/batch or separate call for timeline
+  // 2. Create personTimeline event (History)
   const newTimelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
   const timelineData = {
     eventId: newTimelineRef.id,
@@ -175,14 +171,13 @@ export async function recordInterviewDecision(
     createdBy: actorUid,
   };
 
-  // Simplified sequential execution for MVP (Timeline is secondary)
   try {
-    const { setDoc } = await import("firebase/firestore");
     await setDoc(newTimelineRef, timelineData);
   } catch(e) {
     console.warn("Failed to write timeline for decision", e);
   }
 
+  // 3. Audit log
   await createAuditLog({
     userId: actorUid,
     entityId,
