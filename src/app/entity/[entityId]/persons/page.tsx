@@ -97,7 +97,8 @@ export default function PersonsManagementPage() {
   const provinceOptions = useMemo(() => {
     return ITALIAN_PROVINCES.map(p => ({
       label: `${p.code} — ${p.name}`,
-      value: p.code
+      value: p.code,
+      searchText: `${p.code} ${p.name}`
     }));
   }, []);
 
@@ -157,9 +158,34 @@ export default function PersonsManagementPage() {
     e.preventDefault();
     if (!user || !entityId) return;
 
+    // 1. National Identity Check
     if (!formData.codiceFiscale) {
       toast({ variant: "destructive", title: "Incomplet", description: "L'identifiant national est obligatoire." });
       return;
+    }
+
+    // 2. Email Validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      toast({ 
+        variant: "destructive", 
+        title: "Format d'email invalide", 
+        description: "Veuillez saisir une adresse email valide." 
+      });
+      return;
+    }
+
+    // 3. Phone Validation (Digits Only)
+    if (formData.phone) {
+      const phoneRegex = /^\d+$/;
+      if (!phoneRegex.test(formData.phone)) {
+        toast({ 
+          variant: "destructive", 
+          title: "Format de téléphone invalide", 
+          description: "Le numéro de téléphone doit contenir uniquement des chiffres." 
+        });
+        return;
+      }
     }
 
     setLoading(true);
@@ -433,7 +459,7 @@ export default function PersonsManagementPage() {
 
             <div className="space-y-2">
               <Label htmlFor="phone">Téléphone</Label>
-              <Input id="phone" value={formData.phone} onChange={handleInputChange} />
+              <Input id="phone" value={formData.phone} onChange={handleInputChange} placeholder="Ex: 0601020304" />
             </div>
 
             <div className="space-y-2">
