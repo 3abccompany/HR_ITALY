@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { listenToAuthState } from "@/services/auth.service";
 import { getValidActiveMembershipsByUid } from "@/services/membership.service";
+import { getUserProfile } from "@/services/user.service";
 import { Membership } from "@/types/membership";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Building2, Loader2, AlertCircle, KeyRound, ChevronRight } from "lucide-react";
-import { useFirebase } from "@/firebase";
+import { useFirebase, useUser } from "@/firebase";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 
@@ -17,37 +17,49 @@ export default function SelectEntityPage() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const { auth } = useFirebase();
+  const { user, loading: authLoading } = useUser();
 
   useEffect(() => {
-    if (!auth) {
-      setError("Le service d'authentification n'est pas configuré.");
-      setLoading(false);
+    if (authLoading) return;
+
+    if (!user) {
+      router.push("/login");
       return;
     }
 
-    return listenToAuthState(async (user) => {
-      if (!user) {
-        router.push("/login");
-        return;
-      }
+    async function checkAndLoad() {
       try {
-        // Load only valid memberships where linked entity is also active
-        const list = await getValidActiveMembershipsByUid(user.uid);
+        // 1. Check if user is Super Admin
+        const profile = await getUserProfile(user!.uid);
+        if (profile?.platformRole === 'superAdmin') {
+          router.push('/super-admin');
+          return;
+        }
+
+        if (profile?.status !== 'active') {
+          router.push('/no-access');
+          return;
+        }
+
+        // 2. Load valid active memberships
+        const list = await getValidActiveMembershipsByUid(user!.uid);
         if (list.length === 0) {
           router.push("/no-access");
           return;
         }
         setMemberships(list);
-      } catch (e) {
-        console.error("Error loading valid memberships:", e);
-        router.push("/no-access");
+      } catch (e: any) {
+        console.error("Error loading entity selector context:", e);
+        setError("Impossible de charger vos accès.");
       } finally {
         setLoading(false);
       }
-    });
-  }, [router, auth]);
+    }
 
-  if (loading) {
+    checkAndLoad();
+  }, [user, authLoading, router]);
+
+  if (loading || authLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -61,7 +73,7 @@ export default function SelectEntityPage() {
       <div className="flex items-center justify-center min-h-screen p-4">
         <Alert variant="destructive" className="max-w-md">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Erreur de Configuration</AlertTitle>
+          <AlertTitle>Erreur</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       </div>
