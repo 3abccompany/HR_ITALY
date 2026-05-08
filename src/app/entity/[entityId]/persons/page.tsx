@@ -43,8 +43,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ITALIAN_PROVINCES, getCitiesForProvince } from "@/config/geo-italy";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 const initialForm = {
   firstName: "",
@@ -94,9 +94,19 @@ export default function PersonsManagementPage() {
   const { data: persons, loading: loadingPersons } = useCollection<Person>(personsQuery);
 
   // Dynamic city list
-  const availableCities = useMemo(() => {
+  const provinceOptions = useMemo(() => {
+    return ITALIAN_PROVINCES.map(p => ({
+      label: `${p.code} — ${p.name}`,
+      value: p.code
+    }));
+  }, []);
+
+  const cityOptions = useMemo(() => {
     if (!formData.province) return [];
-    return getCitiesForProvince(formData.province);
+    const cities = getCitiesForProvince(formData.province);
+    const options = cities.map(c => ({ label: c, value: c }));
+    options.push({ label: "Autre ville...", value: "OTHER" });
+    return options;
   }, [formData.province]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -378,37 +388,28 @@ export default function PersonsManagementPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t">
               <div className="space-y-2">
                 <Label>Province (IT)</Label>
-                <Select 
-                  value={formData.province} 
+                <SearchableSelect 
+                  options={provinceOptions}
+                  value={formData.province}
                   onValueChange={(v) => setFormData(p => ({...p, province: v, city: ""}))}
-                >
-                  <SelectTrigger><SelectValue placeholder="Choisir une province" /></SelectTrigger>
-                  <SelectContent>
-                    {ITALIAN_PROVINCES.map(p => (
-                      <SelectItem key={p.code} value={p.code}>{p.code} — {p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Choisir une province"
+                  searchPlaceholder="Rechercher une province..."
+                />
               </div>
               <div className="space-y-2">
                 <Label>Ville</Label>
-                <Select 
-                  value={formData.city} 
+                <SearchableSelect 
+                  options={cityOptions}
+                  value={formData.city}
                   onValueChange={(v) => {
                     setFormData(p => ({...p, city: v}));
                     setIsOtherCity(v === "OTHER");
                     if (v !== "OTHER") setCustomCityName("");
                   }}
+                  placeholder={formData.province ? "Choisir une ville" : "Sélectionnez d'abord une province"}
                   disabled={!formData.province}
-                >
-                  <SelectTrigger><SelectValue placeholder={formData.province ? "Choisir une ville" : "Sélectionnez d'abord une province"} /></SelectTrigger>
-                  <SelectContent>
-                    {availableCities.map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                    <SelectItem value="OTHER" className="font-bold text-primary">Autre ville...</SelectItem>
-                  </SelectContent>
-                </Select>
+                  searchPlaceholder="Rechercher une ville..."
+                />
               </div>
             </div>
 
