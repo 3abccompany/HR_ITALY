@@ -140,6 +140,8 @@
         "email": { "type": "string", "format": "email" },
         "phone": { "type": "string" },
         "currentLifecycleStatus": { "type": "string", "enum": ["person", "candidate", "employee", "former_employee", "archived"] },
+        "currentCandidateId": { "type": "string" },
+        "currentEmployeeId": { "type": "string" },
         "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" },

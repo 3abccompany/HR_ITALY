@@ -34,8 +34,8 @@ export interface Person {
 
   // Lifecycle
   currentLifecycleStatus: PersonLifecycleStatus;
-  currentCandidateId?: string;
-  currentEmployeeId?: string;
+  currentCandidateId: string | null;
+  currentEmployeeId: string | null;
 
   // Status & Metadata
   status: PersonStatus;

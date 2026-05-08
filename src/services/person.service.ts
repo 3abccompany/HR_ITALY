@@ -48,6 +48,8 @@ export async function createPerson(entityId: string, data: Partial<Person>, acto
     personId,
     entityId,
     currentLifecycleStatus: "person",
+    currentCandidateId: null,
+    currentEmployeeId: null,
     status: "active",
     createdAt: serverTimestamp(),
     createdBy: actorUid,
