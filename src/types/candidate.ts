@@ -3,25 +3,37 @@ import { FieldValue } from "firebase/firestore";
 export type CandidateStatus =
   | "new"
   | "screening"
-  | "interview_scheduled"
-  | "interview_done"
-  | "accepted"
-  | "rejected"
+  | "interview"
+  | "offered"
   | "hired"
+  | "rejected"
+  | "withdrawn"
+  | "inactive"
   | "archived";
 
 export interface Candidate {
   candidateId: string;
-  personId: string;
   entityId: string;
-  positionApplied: string;
+  personId: string;
+  displayName: string;
+  email: string;
+  phone: string;
   source: string;
+  positionApplied: string;
+  department: string;
   applicationDate: string;
+  availabilityDate: string;
+  expectedSalary: string;
   status: CandidateStatus;
-  latestInterviewId?: string;
-  interviewIds: string[];
+  previousStatus?: CandidateStatus;
   employeeId?: string;
   notes?: string;
   createdAt: Date | FieldValue;
+  createdBy: string;
   updatedAt: Date | FieldValue;
+  updatedBy: string;
+  disabledAt?: Date | FieldValue;
+  disabledBy?: string;
+  reactivatedAt?: Date | FieldValue;
+  reactivatedBy?: string;
 }

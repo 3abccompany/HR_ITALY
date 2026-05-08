@@ -147,6 +147,23 @@
       },
       "required": ["personId", "entityId", "firstName", "lastName", "email", "currentLifecycleStatus", "status"]
     },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "Recruitment process for a person.",
+      "type": "object",
+      "properties": {
+        "candidateId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "personId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "positionApplied": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["candidateId", "entityId", "personId", "status"]
+    },
     "PersonTimeline": {
       "title": "PersonTimeline",
       "description": "History of events for a person within an entity.",
@@ -193,6 +210,10 @@
     "/entities/{entityId}/persons/{personId}": {
       "schema": { "$ref": "#/entities/Person" },
       "description": "Persons belonging to an entity."
+    },
+    "/entities/{entityId}/candidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/Candidate" },
+      "description": "Recruitment pipeline records."
     },
     "/entities/{entityId}/personTimeline/{eventId}": {
       "schema": { "$ref": "#/entities/PersonTimeline" },
