@@ -1,4 +1,3 @@
-
 import { PermissionScope } from "@/types/permission";
 
 export interface PermissionDefinition {
@@ -51,6 +50,12 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "jobTitles.read", module: "jobTitles", action: "read", label: "Voir les intitulés de poste", description: "Consulter le catalogue des métiers.", scope: "entity" },
   { code: "jobTitles.create", module: "jobTitles", action: "create", label: "Créer un intitulé de poste", description: "Ajouter un nouveau métier.", scope: "entity" },
   { code: "jobTitles.update", module: "jobTitles", action: "update", label: "Modifier un intitulé de poste", description: "Mise à jour des métiers.", scope: "entity" },
+  { code: "jobProfiles.read", module: "jobProfiles", action: "read", label: "Voir les fiches de postes", description: "Accès à la liste des profils de postes.", scope: "entity" },
+  { code: "jobProfiles.create", module: "jobProfiles", action: "create", label: "Créer une fiche de poste", description: "Définition d'un nouveau profil de poste.", scope: "entity" },
+  { code: "jobProfiles.update", module: "jobProfiles", action: "update", label: "Modifier une fiche de poste", description: "Mise à jour d'un profil de poste.", scope: "entity" },
+  { code: "jobProfileCatalog.read", module: "jobProfileCatalog", action: "read", label: "Voir le catalogue fiches de postes", description: "Consulter les missions et compétences réutilisables.", scope: "entity" },
+  { code: "jobProfileCatalog.create", module: "jobProfileCatalog", action: "create", label: "Ajouter au catalogue fiches de postes", description: "Créer de nouvelles compétences ou missions réutilisables.", scope: "entity" },
+  { code: "jobProfileCatalog.update", module: "jobProfileCatalog", action: "update", label: "Gérer le catalogue fiches de postes", description: "Maintenance du catalogue des compétences et missions.", scope: "entity" },
   { code: "employees.read", module: "employees", action: "read", label: "Voir les employés", description: "Accès à la liste du personnel actif.", scope: "entity" },
   { code: "employees.create", module: "employees", action: "create", label: "Créer un employé", description: "Embauche directe ou conversion de candidat.", scope: "entity" },
   { code: "employees.update", module: "employees", action: "update", label: "Modifier un employé", description: "Mise à jour des données contractuelles/RH.", scope: "entity" },

@@ -206,11 +206,7 @@
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" },
         "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" },
-        "disabledAt": { "type": "object" },
-        "disabledBy": { "type": "string" },
-        "reactivatedAt": { "type": "object" },
-        "reactivatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" }
       },
       "required": ["departmentId", "entityId", "name", "code", "status"]
     },
@@ -230,31 +226,41 @@
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" },
         "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" },
-        "disabledAt": { "type": "object" },
-        "disabledBy": { "type": "string" },
-        "reactivatedAt": { "type": "object" },
-        "reactivatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" }
       },
       "required": ["jobTitleId", "entityId", "departmentId", "title", "status"]
     },
-    "PersonTimeline": {
-      "title": "PersonTimeline",
-      "description": "History of events for a person within an entity.",
+    "JobProfile": {
+      "title": "JobProfile",
+      "description": "Structured job description and requirements.",
       "type": "object",
       "properties": {
-        "eventId": { "type": "string" },
+        "jobProfileId": { "type": "string" },
         "entityId": { "type": "string" },
-        "personId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "jobTitleId": { "type": "string" },
+        "issueDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["jobProfileId", "entityId", "departmentId", "jobTitleId", "status"]
+    },
+    "JobProfileCatalogItem": {
+      "title": "JobProfileCatalogItem",
+      "description": "Reusable element for job profiles.",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "entityId": { "type": "string" },
         "type": { "type": "string" },
         "label": { "type": "string" },
-        "description": { "type": "string" },
-        "sourceCollection": { "type": "string" },
-        "sourceId": { "type": "string" },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" }
+        "status": { "type": "string" },
+        "usageCount": { "type": "number" }
       },
-      "required": ["eventId", "entityId", "personId", "type", "createdAt"]
+      "required": ["itemId", "entityId", "type", "label", "status"]
     }
   },
   "auth": {
@@ -301,9 +307,13 @@
       "schema": { "$ref": "#/entities/JobTitle" },
       "description": "Job titles catalog."
     },
-    "/entities/{entityId}/personTimeline/{eventId}": {
-      "schema": { "$ref": "#/entities/PersonTimeline" },
-      "description": "Event logs for a specific person."
+    "/entities/{entityId}/jobProfiles/{jobProfileId}": {
+      "schema": { "$ref": "#/entities/JobProfile" },
+      "description": "Formal job descriptions."
+    },
+    "/entities/{entityId}/jobProfileCatalogItems/{itemId}": {
+      "schema": { "$ref": "#/entities/JobProfileCatalogItem" },
+      "description": "Skills and missions database."
     }
   }
 }
