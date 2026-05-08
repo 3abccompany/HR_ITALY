@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type OrganizationStatus = "active" | "inactive" | "archived";

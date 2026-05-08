@@ -1,18 +1,17 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { 
   Building2, Plus, Edit, PowerOff, RefreshCcw, 
-  Loader2, Briefcase, User, Info, MoreVertical,
-  AlertCircle, ShieldCheck, ChevronRight, ChevronDown
+  Loader2, Briefcase, Info, MoreVertical,
+  AlertCircle, ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
@@ -84,13 +83,12 @@ export default function DepartmentsManagementPage() {
   const [isJobFormVisible, setIsJobFormVisible] = useState(false);
   const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
-  const [activeDeptId, setActiveDeptId] = useState<string | null>(null); // For adding a job to a specific dept
+  const [activeDeptId, setActiveDeptId] = useState<string | null>(null);
   
   const [deptFormData, setDeptFormData] = useState(initialDeptForm);
   const [jobFormData, setJobFormData] = useState(initialJobForm);
   const [loading, setLoading] = useState(false);
 
-  // Status management IDs
   const [statusChange, setStatusChange] = useState<{ id: string, type: 'dept' | 'job', action: 'disable' | 'reactivate' } | null>(null);
 
   // Permissions

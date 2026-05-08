@@ -1,4 +1,3 @@
-
 {
   "entities": {
     "AppUser": {
@@ -207,7 +206,11 @@
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" },
         "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" },
+        "disabledAt": { "type": "object" },
+        "disabledBy": { "type": "string" },
+        "reactivatedAt": { "type": "object" },
+        "reactivatedBy": { "type": "string" }
       },
       "required": ["departmentId", "entityId", "name", "code", "status"]
     },
@@ -227,7 +230,11 @@
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" },
         "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" },
+        "disabledAt": { "type": "object" },
+        "disabledBy": { "type": "string" },
+        "reactivatedAt": { "type": "object" },
+        "reactivatedBy": { "type": "string" }
       },
       "required": ["jobTitleId", "entityId", "departmentId", "title", "status"]
     },

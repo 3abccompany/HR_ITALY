@@ -1,11 +1,9 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
   doc, 
   setDoc, 
   updateDoc, 
-  getDoc,
   serverTimestamp
 } from "firebase/firestore";
 import { JobTitle } from "@/types/organization";
