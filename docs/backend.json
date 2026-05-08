@@ -1,4 +1,3 @@
-
 {
   "entities": {
     "AppUser": {
@@ -135,10 +134,36 @@
         "entityId": { "type": "string" },
         "firstName": { "type": "string" },
         "lastName": { "type": "string" },
+        "displayName": { "type": "string" },
+        "codiceFiscale": { "type": "string" },
         "email": { "type": "string", "format": "email" },
-        "currentLifecycleStatus": { "type": "string", "enum": ["prospect", "candidate", "interviewing", "accepted", "employee", "former_employee", "archived"] }
+        "phone": { "type": "string" },
+        "currentLifecycleStatus": { "type": "string", "enum": ["person", "candidate", "employee", "former_employee", "archived"] },
+        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "updatedBy": { "type": "string" }
       },
-      "required": ["personId", "entityId", "firstName", "lastName", "email", "currentLifecycleStatus"]
+      "required": ["personId", "entityId", "firstName", "lastName", "email", "currentLifecycleStatus", "status"]
+    },
+    "PersonTimeline": {
+      "title": "PersonTimeline",
+      "description": "History of events for a person within an entity.",
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "personId": { "type": "string" },
+        "type": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "sourceCollection": { "type": "string" },
+        "sourceId": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["eventId", "entityId", "personId", "type", "createdAt"]
     }
   },
   "auth": {
@@ -168,6 +193,10 @@
     "/entities/{entityId}/persons/{personId}": {
       "schema": { "$ref": "#/entities/Person" },
       "description": "Persons belonging to an entity."
+    },
+    "/entities/{entityId}/personTimeline/{eventId}": {
+      "schema": { "$ref": "#/entities/PersonTimeline" },
+      "description": "Event logs for a specific person."
     }
   }
 }

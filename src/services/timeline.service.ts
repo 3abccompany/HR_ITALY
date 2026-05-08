@@ -1,20 +1,22 @@
 import { db } from "@/lib/firebase/client";
 import { collection, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { PersonTimelineEvent } from "@/types/timeline";
 
-export interface TimelineEventInput {
-  entityId: string;
-  personId: string;
-  type: string;
-  title: string;
-  description?: string;
-  data?: any;
-  createdBy: string;
-}
+export async function createPersonTimelineEvent(
+  entityId: string, 
+  data: Omit<PersonTimelineEvent, 'eventId' | 'createdAt'>
+) {
+  if (!db) throw new Error("Firestore not initialized");
 
-export async function createPersonTimelineEvent(input: TimelineEventInput) {
-  const timelineRef = doc(collection(db, `entities/${input.entityId}/personTimeline`));
-  await setDoc(timelineRef, {
-    ...input,
-    timestamp: serverTimestamp(),
-  });
+  const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+  const eventId = timelineRef.id;
+
+  const event: PersonTimelineEvent = {
+    ...data,
+    eventId,
+    createdAt: serverTimestamp(),
+  };
+
+  await setDoc(timelineRef, event);
+  return eventId;
 }
