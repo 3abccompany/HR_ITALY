@@ -18,7 +18,8 @@ export interface Person {
   firstName: string;
   lastName: string;
   displayName: string;
-  codiceFiscale: string; // Italian tax code
+  /** National Identifier (e.g., Italian Codice Fiscale, ID number, etc.) */
+  codiceFiscale: string; 
   dateOfBirth?: string;
   placeOfBirth?: string;
   gender?: "M" | "F" | "other";

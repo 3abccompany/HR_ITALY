@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
   Users, UserPlus, Search, Edit, PowerOff, RefreshCcw, 
@@ -22,7 +22,7 @@ import {
   disablePerson, 
   reactivatePerson 
 } from "@/services/person.service";
-import { Person, PersonStatus } from "@/types/person";
+import { Person } from "@/types/person";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
@@ -43,6 +43,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ITALIAN_PROVINCES, getCitiesForProvince } from "@/config/geo-italy";
 
 const initialForm = {
   firstName: "",
@@ -74,6 +76,10 @@ export default function PersonsManagementPage() {
   const [disablingId, setDisablingId] = useState<string | null>(null);
   const [reactivatingId, setReactivatingId] = useState<string | null>(null);
 
+  // Geo UI State
+  const [isOtherCity, setIsOtherCity] = useState(false);
+  const [customCityName, setCustomCityName] = useState("");
+
   // Permissions
   const canRead = hasPermission("persons.read");
   const canCreate = hasPermission("persons.create");
@@ -87,6 +93,12 @@ export default function PersonsManagementPage() {
 
   const { data: persons, loading: loadingPersons } = useCollection<Person>(personsQuery);
 
+  // Dynamic city list
+  const availableCities = useMemo(() => {
+    if (!formData.province) return [];
+    return getCitiesForProvince(formData.province);
+  }, [formData.province]);
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target;
     setFormData(prev => ({ ...prev, [id]: value }));
@@ -96,9 +108,16 @@ export default function PersonsManagementPage() {
     setFormData(initialForm);
     setEditingId(null);
     setIsFormVisible(false);
+    setIsOtherCity(false);
+    setCustomCityName("");
   };
 
   const handleEdit = (p: Person) => {
+    const provinceCode = p.province || "";
+    const cityName = p.city || "";
+    const citiesInList = provinceCode ? getCitiesForProvince(provinceCode) : [];
+    const isInList = citiesInList.includes(cityName);
+
     setFormData({
       firstName: p.firstName,
       lastName: p.lastName,
@@ -106,11 +125,20 @@ export default function PersonsManagementPage() {
       email: p.email,
       phone: p.phone || "",
       address: p.address || "",
-      city: p.city || "",
-      province: p.province || "",
+      city: isInList ? cityName : (cityName ? "OTHER" : ""),
+      province: provinceCode,
       postalCode: p.postalCode || "",
       notes: p.notes || ""
     });
+    
+    if (!isInList && cityName) {
+      setIsOtherCity(true);
+      setCustomCityName(cityName);
+    } else {
+      setIsOtherCity(false);
+      setCustomCityName("");
+    }
+
     setEditingId(p.personId);
     setIsFormVisible(true);
   };
@@ -119,16 +147,27 @@ export default function PersonsManagementPage() {
     e.preventDefault();
     if (!user || !entityId) return;
 
+    if (!formData.codiceFiscale) {
+      toast({ variant: "destructive", title: "Incomplet", description: "L'identifiant national est obligatoire." });
+      return;
+    }
+
     setLoading(true);
     try {
       const actorUid = user.uid;
       const displayName = `${formData.firstName} ${formData.lastName}`;
       
+      const finalPayload = {
+        ...formData,
+        displayName,
+        city: formData.city === "OTHER" ? customCityName : formData.city
+      };
+      
       if (editingId) {
-        await updatePerson(entityId, editingId, { ...formData, displayName }, actorUid);
+        await updatePerson(entityId, editingId, finalPayload, actorUid);
         toast({ title: "Modifiée", description: "La fiche identité a été mise à jour." });
       } else {
-        await createPerson(entityId, { ...formData, displayName }, actorUid);
+        await createPerson(entityId, finalPayload, actorUid);
         toast({ title: "Créée", description: "La personne a été ajoutée à l'entreprise." });
       }
       handleReset();
@@ -219,7 +258,7 @@ export default function PersonsManagementPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input 
             className="pl-10" 
-            placeholder="Rechercher par nom, email ou code fiscal..." 
+            placeholder="Rechercher par nom, email ou identifiant..." 
             value={search} 
             onChange={(e) => setSearch(e.target.value)} 
           />
@@ -230,9 +269,9 @@ export default function PersonsManagementPage() {
             <TableHeader>
               <TableRow className="bg-secondary/20">
                 <TableHead>Identité</TableHead>
-                <TableHead>Code Fiscal</TableHead>
+                <TableHead>Identifiant National</TableHead>
                 <TableHead>Contact</TableHead>
-                <TableHead>Lifecycle</TableHead>
+                <TableHead>Localisation</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -252,7 +291,7 @@ export default function PersonsManagementPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="font-mono text-sm uppercase">{p.codiceFiscale || "N/A"}</span>
+                      <span className="font-mono text-sm uppercase font-bold">{p.codiceFiscale || "N/A"}</span>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-0.5">
@@ -267,9 +306,9 @@ export default function PersonsManagementPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="capitalize text-[10px]">
-                        {p.currentLifecycleStatus.replace('_', ' ')}
-                      </Badge>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <MapPin className="w-3 h-3" /> {p.city}, {p.province}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant={p.status === 'active' ? 'default' : 'outline'} className={p.status === 'active' ? "bg-green-500 hover:bg-green-600 border-none" : "bg-red-50 text-red-600 border-red-200"}>
@@ -309,10 +348,10 @@ export default function PersonsManagementPage() {
 
       {/* Create / Edit Dialog */}
       <Dialog open={isFormVisible} onOpenChange={(open) => !open && handleReset()}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingId ? "Modifier la personne" : "Ajouter une personne"}</DialogTitle>
-            <DialogDescription>Saisissez les informations d'identité et de contact.</DialogDescription>
+            <DialogDescription>Saisissez les informations d'identité et de localisation.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSave} className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -327,38 +366,80 @@ export default function PersonsManagementPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="codiceFiscale">Code Fiscal (Optionnel)</Label>
-                <Input id="codiceFiscale" value={formData.codiceFiscale} onChange={handleInputChange} className="font-mono uppercase" placeholder="XXXXXX00X00X000X" />
+                <Label htmlFor="codiceFiscale">Identifiant national (ex: Code Fiscal)</Label>
+                <Input id="codiceFiscale" value={formData.codiceFiscale} onChange={handleInputChange} className="font-mono uppercase font-bold" placeholder="XXXXXX00X00X000X" required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input id="email" type="email" value={formData.email} onChange={handleInputChange} required />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="phone">Téléphone</Label>
-              <Input id="phone" value={formData.phone} onChange={handleInputChange} />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t">
+              <div className="space-y-2">
+                <Label>Province (IT)</Label>
+                <Select 
+                  value={formData.province} 
+                  onValueChange={(v) => setFormData(p => ({...p, province: v, city: ""}))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Choisir une province" /></SelectTrigger>
+                  <SelectContent>
+                    {ITALIAN_PROVINCES.map(p => (
+                      <SelectItem key={p.code} value={p.code}>{p.code} — {p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Ville</Label>
+                <Select 
+                  value={formData.city} 
+                  onValueChange={(v) => {
+                    setFormData(p => ({...p, city: v}));
+                    setIsOtherCity(v === "OTHER");
+                    if (v !== "OTHER") setCustomCityName("");
+                  }}
+                  disabled={!formData.province}
+                >
+                  <SelectTrigger><SelectValue placeholder={formData.province ? "Choisir une ville" : "Sélectionnez d'abord une province"} /></SelectTrigger>
+                  <SelectContent>
+                    {availableCities.map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                    <SelectItem value="OTHER" className="font-bold text-primary">Autre ville...</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+
+            {isOtherCity && (
+              <div className="space-y-2 bg-secondary/20 p-3 rounded-lg border border-dashed border-primary/20 animate-in fade-in slide-in-from-top-1">
+                <Label htmlFor="customCity">Nom de la ville personnalisée</Label>
+                <Input id="customCity" value={customCityName} onChange={(e) => setCustomCityName(e.target.value)} placeholder="Entrez le nom de la ville" required />
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2 space-y-2">
                 <Label htmlFor="address">Adresse</Label>
                 <Input id="address" value={formData.address} onChange={handleInputChange} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="city">Ville</Label>
-                <Input id="city" value={formData.city} onChange={handleInputChange} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="province">Province (PR)</Label>
-                <Input id="province" value={formData.province} onChange={handleInputChange} maxLength={2} />
-              </div>
-              <div className="space-y-2">
                 <Label htmlFor="postalCode">Code Postal</Label>
                 <Input id="postalCode" value={formData.postalCode} onChange={handleInputChange} />
               </div>
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="phone">Téléphone</Label>
+              <Input id="phone" value={formData.phone} onChange={handleInputChange} />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notes Internes</Label>
+              <Input id="notes" value={formData.notes} onChange={handleInputChange} placeholder="Observations..." />
+            </div>
+
             <DialogFooter className="pt-4 border-t">
               <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
               <Button type="submit" disabled={loading}>

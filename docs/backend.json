@@ -136,19 +136,23 @@
         "firstName": { "type": "string" },
         "lastName": { "type": "string" },
         "displayName": { "type": "string" },
-        "codiceFiscale": { "type": "string" },
+        "codiceFiscale": { "type": "string", "description": "National identifier (e.g., Italian Codice Fiscale)." },
         "email": { "type": "string", "format": "email" },
         "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "province": { "type": "string" },
+        "postalCode": { "type": "string" },
         "currentLifecycleStatus": { "type": "string", "enum": ["person", "candidate", "employee", "former_employee", "archived"] },
-        "currentCandidateId": { "type": "string" },
-        "currentEmployeeId": { "type": "string" },
+        "currentCandidateId": { "type": "string", "nullable": true },
+        "currentEmployeeId": { "type": "string", "nullable": true },
         "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" },
         "updatedAt": { "type": "object" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["personId", "entityId", "firstName", "lastName", "email", "currentLifecycleStatus", "status"]
+      "required": ["personId", "entityId", "firstName", "lastName", "email", "codiceFiscale", "currentLifecycleStatus", "status"]
     },
     "Candidate": {
       "title": "Candidate",
