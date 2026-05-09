@@ -1,3 +1,4 @@
+
 import { 
   LayoutDashboard, 
   Users, 
@@ -5,6 +6,7 @@ import {
   Calendar, 
   Building2,
   FileBadge,
+  Briefcase,
   UserCheck, 
   FileText, 
   FolderOpen, 
@@ -32,6 +34,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Entretiens", href: "interviews", permission: "interviews.read", icon: Calendar },
   { label: "Départements", href: "departments", permission: "departments.read", icon: Building2 },
   { label: "Fiches de postes", href: "job-profiles", permission: "jobProfiles.read", icon: FileBadge },
+  { label: "Besoins RH", href: "recruitment-needs", permission: "recruitmentNeeds.read", icon: Briefcase },
   { label: "Employés", href: "employees", permission: "employees.read", icon: UserCheck },
   { label: "Contrats", href: "contracts", permission: "contracts.read", icon: FileText },
   { label: "Documents", href: "documents", permission: "documents.read", icon: FolderOpen },

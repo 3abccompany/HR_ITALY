@@ -278,6 +278,21 @@
         "usageCount": { "type": "number" }
       },
       "required": ["itemId", "entityId", "type", "label", "status"]
+    },
+    "RecruitmentNeed": {
+      "title": "RecruitmentNeed",
+      "description": "A formal request for hiring including headcount and job offer details.",
+      "type": "object",
+      "properties": {
+        "needId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "jobProfileId": { "type": "string" },
+        "requestedHeadcount": { "type": "number" },
+        "fulfilledHeadcount": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" }
+      }
     }
   },
   "auth": {
@@ -335,6 +350,10 @@
     "/entities/{entityId}/jobProfileCatalogItems/{itemId}": {
       "schema": { "$ref": "#/entities/JobProfileCatalogItem" },
       "description": "Skills and missions database."
+    },
+    "/entities/{entityId}/recruitmentNeeds/{needId}": {
+      "schema": { "$ref": "#/entities/RecruitmentNeed" },
+      "description": "Hiring requests and job offer definitions."
     }
   }
 }

@@ -1,3 +1,4 @@
+
 import { RoleScope } from "@/types/role";
 import { MVP_PERMISSIONS } from "./permissions";
 
@@ -39,8 +40,8 @@ export const MVP_ROLES: RoleDefinition[] = [
       const hrModules = [
         "dashboard", "persons", "candidates", "interviews", 
         "departments", "jobTitles", "jobProfiles", "jobProfileCatalog",
-        "employees", "contracts", "documents", "attendances", 
-        "leaveRequests", "reports"
+        "recruitmentNeeds", "employees", "contracts", "documents", 
+        "attendances", "leaveRequests", "reports"
       ];
       return MVP_PERMISSIONS
         .filter(p => p.scope === "entity" && hrModules.includes(p.module))
@@ -85,7 +86,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     scope: "entity",
     getPermissions: () => 
       MVP_PERMISSIONS
-        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog"))
+        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds"))
         .filter(p => p.action === "read")
         .map(p => p.code)
   }

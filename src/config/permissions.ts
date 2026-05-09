@@ -1,3 +1,4 @@
+
 import { PermissionScope } from "@/types/permission";
 
 export interface PermissionDefinition {
@@ -56,6 +57,10 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "jobProfileCatalog.read", module: "jobProfileCatalog", action: "read", label: "Voir le catalogue fiches de postes", description: "Consulter les missions et compétences réutilisables.", scope: "entity" },
   { code: "jobProfileCatalog.create", module: "jobProfileCatalog", action: "create", label: "Ajouter au catalogue fiches de postes", description: "Créer de nouvelles compétences ou missions réutilisables.", scope: "entity" },
   { code: "jobProfileCatalog.update", module: "jobProfileCatalog", action: "update", label: "Gérer le catalogue fiches de postes", description: "Maintenance du catalogue des compétences et missions.", scope: "entity" },
+  { code: "recruitmentNeeds.read", module: "recruitmentNeeds", action: "read", label: "Voir les besoins RH", description: "Liste des demandes de recrutement.", scope: "entity" },
+  { code: "recruitmentNeeds.create", module: "recruitmentNeeds", action: "create", label: "Créer un besoin RH", description: "Saisie d'une nouvelle demande de personnel.", scope: "entity" },
+  { code: "recruitmentNeeds.update", module: "recruitmentNeeds", action: "update", label: "Modifier un besoin RH", description: "Mise à jour des détails d'un besoin.", scope: "entity" },
+  { code: "recruitmentNeeds.cancel", module: "recruitmentNeeds", action: "cancel", label: "Annuler un besoin RH", description: "Clôture anticipée d'une demande.", scope: "entity" },
   { code: "employees.read", module: "employees", action: "read", label: "Voir les employés", description: "Accès à la liste du personnel actif.", scope: "entity" },
   { code: "employees.create", module: "employees", action: "create", label: "Créer un employé", description: "Embauche directe ou conversion de candidat.", scope: "entity" },
   { code: "employees.update", module: "employees", action: "update", label: "Modifier un employé", description: "Mise à jour des données contractuelles/RH.", scope: "entity" },
