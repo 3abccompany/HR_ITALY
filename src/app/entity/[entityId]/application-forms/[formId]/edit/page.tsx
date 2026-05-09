@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -8,7 +7,7 @@ import {
   Settings, LayoutDashboard, Plus, Trash2,
   Eye, Clock, Globe, AlertCircle, Info,
   ListTodo, CheckSquare, Type, Calendar, Hash,
-  ChevronDown, X
+  ChevronDown, X, ChevronUp
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,6 +101,27 @@ export default function EditApplicationFormPage() {
     });
   };
 
+  const moveField = (index: number, direction: 'up' | 'down') => {
+    setFormData(prev => {
+      if (!prev.fields) return prev;
+      // Sort first to work on a predictable indexed array
+      const sortedFields = [...prev.fields].sort((a, b) => a.order - b.order);
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+
+      if (targetIndex < 0 || targetIndex >= sortedFields.length) return prev;
+
+      // Swap elements
+      const temp = sortedFields[index];
+      sortedFields[index] = sortedFields[targetIndex];
+      sortedFields[targetIndex] = temp;
+
+      // Recalculate all orders to be sequential and clean
+      const reorderedFields = sortedFields.map((f, i) => ({ ...f, order: i + 1 }));
+
+      return { ...prev, fields: reorderedFields };
+    });
+  };
+
   const addOption = () => {
     if (!currentOption.trim()) return;
     setNewField(prev => ({
@@ -156,10 +176,14 @@ export default function EditApplicationFormPage() {
   };
 
   const deleteField = (fieldId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      fields: prev.fields?.filter(f => f.fieldId !== fieldId || f.systemField)
-    }));
+    setFormData(prev => {
+      const filtered = prev.fields?.filter(f => f.fieldId !== fieldId || f.systemField) || [];
+      // Re-order remaining fields to maintain a clean sequence
+      const reordered = filtered
+        .sort((a, b) => a.order - b.order)
+        .map((f, i) => ({ ...f, order: i + 1 }));
+      return { ...prev, fields: reordered };
+    });
   };
 
   const canUpdate = hasPermission("applicationForms.update");
@@ -307,16 +331,38 @@ export default function EditApplicationFormPage() {
             </div>
 
             <div className="space-y-3">
-              {formData.fields?.sort((a,b) => a.order - b.order).map((field) => (
+              {formData.fields?.sort((a,b) => a.order - b.order).map((field, index) => (
                 <Card key={field.fieldId} className={`border-l-4 transition-all ${field.enabled ? 'border-l-accent border-primary/10' : 'border-l-muted opacity-50 bg-secondary/10'}`}>
                   <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-4 flex-1">
-                      <div className="bg-secondary p-2 rounded text-xs font-bold text-muted-foreground w-8 h-8 flex items-center justify-center">
+                      {/* Move Controls */}
+                      <div className="flex flex-col gap-0.5">
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-6 w-6 hover:bg-secondary" 
+                          disabled={index === 0}
+                          onClick={() => moveField(index, 'up')}
+                        >
+                          <ChevronUp className="w-3 h-3 text-muted-foreground" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-6 w-6 hover:bg-secondary" 
+                          disabled={index === (formData.fields?.length || 0) - 1}
+                          onClick={() => moveField(index, 'down')}
+                        >
+                          <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                        </Button>
+                      </div>
+
+                      <div className="bg-secondary p-2 rounded text-xs font-bold text-muted-foreground w-8 h-8 flex items-center justify-center shrink-0">
                         {field.order}
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold text-sm text-primary">{field.label}</p>
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-bold text-sm text-primary truncate max-w-[200px]">{field.label}</p>
                           {field.systemField ? (
                             <Badge variant="outline" className="text-[8px] h-3 uppercase py-0 leading-none">Système</Badge>
                           ) : (
@@ -352,7 +398,7 @@ export default function EditApplicationFormPage() {
                       )}
 
                       {!field.systemField && (
-                        <Button variant="ghost" size="icon" onClick={() => deleteField(field.fieldId)} className="text-destructive">
+                        <Button variant="ghost" size="icon" onClick={() => deleteField(field.fieldId)} className="text-destructive shrink-0">
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
