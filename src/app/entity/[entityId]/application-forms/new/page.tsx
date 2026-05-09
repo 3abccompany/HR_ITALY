@@ -1,11 +1,10 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { 
   Loader2, ShieldCheck, ArrowLeft, Briefcase, 
-  Info, FileCode, Search
+  Info, FileCode, Search, AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -35,17 +34,19 @@ export default function NewApplicationFormPage() {
 
   // Queries
   const needsQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    // Only attempt to query if user has the read permission to avoid Firestore Permission Denied errors
+    if (!db || !entityId || !hasPermission("recruitmentNeeds.read")) return null;
     return query(
       collection(db, `entities/${entityId}/recruitmentNeeds`), 
       where("status", "in", ["open", "partially_fulfilled"]),
       orderBy("createdAt", "desc")
     );
-  }, [db, entityId]);
+  }, [db, entityId, hasPermission]);
 
   const { data: needs, loading: loadingNeeds } = useCollection<RecruitmentNeed>(needsQuery);
 
   const canCreate = hasPermission("applicationForms.create");
+  const canReadNeeds = hasPermission("recruitmentNeeds.read");
 
   const selectedNeed = useMemo(() => 
     needs?.find(n => n.needId === selectedNeedId), 
@@ -72,7 +73,21 @@ export default function NewApplicationFormPage() {
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
-  if (!canCreate) return <div className="p-8 text-center">Accès refusé.</div>;
+  if (!canCreate || !canReadNeeds) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <Card className="bg-destructive/5 border-destructive/20">
+          <CardContent className="flex flex-col items-center py-12 text-center">
+            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
+            <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
+            <p className="text-muted-foreground">
+              {!canCreate ? "Vous n'avez pas la permission de créer des formulaires." : "Vous n'avez pas la permission de consulter les besoins RH source."}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-4xl mx-auto pb-24">

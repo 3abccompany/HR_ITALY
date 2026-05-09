@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- Helper Functions ---
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isPlatformAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.platformRole == 'superAdmin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function hasPermission(entityId, permission) {
+      let membershipId = request.auth.uid + "_" + entityId;
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/memberships/$(membershipId)) &&
+        get(/databases/$(database)/documents/memberships/$(membershipId)).data.status == 'active' &&
+        permission in get(/databases/$(database)/documents/memberships/$(membershipId)).data.permissions;
+    }
+
+    // --- Platform Level Rules ---
+
+    match /users/{uid} {
+      allow read: if isAuthenticated() && (request.auth.uid == uid || isPlatformAdmin());
+      allow write: if isPlatformAdmin();
+    }
+
+    match /memberships/{membershipId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.uid || isPlatformAdmin());
+      allow write: if isPlatformAdmin();
+    }
+
+    match /entities/{entityId} {
+      allow read: if isAuthenticated() && (hasPermission(entityId, 'dashboard.read') || isPlatformAdmin());
+      allow write: if isPlatformAdmin();
+
+      // --- Entity Specific Sub-collections ---
+
+      match /persons/{personId} {
+        allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'persons.create') || hasPermission(entityId, 'persons.update') || isPlatformAdmin();
+      }
+
+      match /candidates/{candidateId} {
+        allow read: if hasPermission(entityId, 'candidates.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'candidates.create') || hasPermission(entityId, 'candidates.update') || isPlatformAdmin();
+      }
+
+      match /interviews/{interviewId} {
+        allow read: if hasPermission(entityId, 'interviews.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'interviews.create') || hasPermission(entityId, 'interviews.update') || hasPermission(entityId, 'interviews.decide') || isPlatformAdmin();
+      }
+
+      match /departments/{departmentId} {
+        allow read: if hasPermission(entityId, 'departments.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'departments.update') || isPlatformAdmin();
+      }
+
+      match /jobTitles/{jobId} {
+        allow read: if hasPermission(entityId, 'jobTitles.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'jobTitles.update') || isPlatformAdmin();
+      }
+
+      match /jobProfiles/{profileId} {
+        allow read: if hasPermission(entityId, 'jobProfiles.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'jobProfiles.create') || hasPermission(entityId, 'jobProfiles.update') || isPlatformAdmin();
+        
+        match /versions/{versionId} {
+          allow read: if hasPermission(entityId, 'jobProfiles.read') || isPlatformAdmin();
+          allow write: if hasPermission(entityId, 'jobProfiles.update') || isPlatformAdmin();
+        }
+      }
+
+      match /jobProfileCatalogItems/{itemId} {
+        allow read: if hasPermission(entityId, 'jobProfileCatalog.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'jobProfileCatalog.create') || hasPermission(entityId, 'jobProfileCatalog.update') || isPlatformAdmin();
+      }
+
+      match /recruitmentNeeds/{needId} {
+        allow read: if hasPermission(entityId, 'recruitmentNeeds.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'recruitmentNeeds.create') || hasPermission(entityId, 'recruitmentNeeds.update') || hasPermission(entityId, 'recruitmentNeeds.cancel') || isPlatformAdmin();
+      }
+
+      match /applicationForms/{formId} {
+        allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'applicationForms.create') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'applicationForms.update') || hasPermission(entityId, 'applicationForms.publish') || isPlatformAdmin();
+      }
+      
+      match /personTimeline/{eventId} {
+        allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
+        allow create: if isAuthenticated();
+      }
+    }
+
+    // --- Global Reference Data ---
+
+    match /roles/{roleId} {
+      allow read: if isAuthenticated();
+      allow write: if isPlatformAdmin();
+    }
+
+    match /permissions/{code} {
+      allow read: if isAuthenticated();
+      allow write: if isPlatformAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isPlatformAdmin();
+      allow create: if isAuthenticated();
+    }
+    
+    // --- Standard Debug Collection ---
+    match /debug/{id} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}
