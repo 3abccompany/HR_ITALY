@@ -3,7 +3,7 @@
 
 import { useParams } from "next/navigation";
 import { useUser, useDoc, useFirebase } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { doc, DocumentReference } from "firebase/firestore";
 import { JobProfile } from "@/types/job-profile";
 import { JobProfileForm } from "@/components/job-profiles/JobProfileForm";
 import { useActiveMembership } from "@/hooks/use-active-membership";
@@ -21,7 +21,7 @@ export default function EditJobProfilePage() {
 
   const profileRef = useMemo(() => {
     if (!db || !entityId || !jobProfileId) return null;
-    return doc(db, `entities/${entityId}/jobProfiles`, jobProfileId);
+    return doc(db, `entities/${entityId}/jobProfiles`, jobProfileId) as DocumentReference<JobProfile>;
   }, [db, entityId, jobProfileId]);
 
   const { data: profile, loading: loadingProfile } = useDoc<JobProfile>(profileRef);

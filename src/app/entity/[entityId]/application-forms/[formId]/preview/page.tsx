@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useFirebase, useDoc } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { doc, DocumentReference } from "firebase/firestore";
 import { ApplicationForm } from "@/types/application-form";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,7 @@ export default function ApplicationFormPreviewPage() {
   const { db } = useFirebase();
 
   const formRef = useMemo(() => 
-    db && entityId && formId ? doc(db, `entities/${entityId}/applicationForms`, formId) : null,
+    db && entityId && formId ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
   [db, entityId, formId]);
 
   const { data: form, loading } = useDoc<ApplicationForm>(formRef);

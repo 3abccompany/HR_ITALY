@@ -1,8 +1,9 @@
+
 "use client";
 
 import { useParams } from "next/navigation";
 import { useUser, useDoc, useFirebase } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { doc, DocumentReference } from "firebase/firestore";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { RecruitmentNeedForm } from "@/components/recruitment-needs/RecruitmentNeedForm";
 import { useActiveMembership } from "@/hooks/use-active-membership";
@@ -20,7 +21,7 @@ export default function EditRecruitmentNeedPage() {
 
   const needRef = useMemo(() => {
     if (!db || !entityId || !needId) return null;
-    return doc(db, `entities/${entityId}/recruitmentNeeds`, needId);
+    return doc(db, `entities/${entityId}/recruitmentNeeds`, needId) as DocumentReference<RecruitmentNeed>;
   }, [db, entityId, needId]);
 
   const { data: need, loading: loadingNeed } = useDoc<RecruitmentNeed>(needRef);

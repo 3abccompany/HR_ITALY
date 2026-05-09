@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useFirebase, useDoc } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { doc, DocumentReference } from "firebase/firestore";
 import { JobProfile } from "@/types/job-profile";
 import { Badge } from "@/components/ui/badge";
 
@@ -23,7 +23,7 @@ export default function JobProfilePreviewPage() {
 
   const profileRef = useMemo(() => {
     if (!db || !entityId || !jobProfileId) return null;
-    return doc(db, `entities/${entityId}/jobProfiles`, jobProfileId);
+    return doc(db, `entities/${entityId}/jobProfiles`, jobProfileId) as DocumentReference<JobProfile>;
   }, [db, entityId, jobProfileId]);
 
   const { data: profile, loading } = useDoc<JobProfile>(profileRef);

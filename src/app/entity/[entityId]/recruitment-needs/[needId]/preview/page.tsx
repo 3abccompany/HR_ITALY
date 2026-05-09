@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useFirebase, useDoc } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { doc, DocumentReference } from "firebase/firestore";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -29,7 +29,7 @@ export default function RecruitmentNeedPreviewPage() {
 
   const needRef = useMemo(() => {
     if (!db || !entityId || !needId) return null;
-    return doc(db, `entities/${entityId}/recruitmentNeeds`, needId);
+    return doc(db, `entities/${entityId}/recruitmentNeeds`, needId) as DocumentReference<RecruitmentNeed>;
   }, [db, entityId, needId]);
 
   const { data: need, loading } = useDoc<RecruitmentNeed>(needRef);

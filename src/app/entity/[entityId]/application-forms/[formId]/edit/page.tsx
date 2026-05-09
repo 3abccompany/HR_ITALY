@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useFirebase, useDoc, useUser } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { doc, DocumentReference } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { ApplicationForm, ApplicationFormField, ApplicationFormFieldType } from "@/types/application-form";
 import { updateApplicationForm } from "@/services/application-form.service";
@@ -93,7 +93,7 @@ export default function EditApplicationFormPage() {
   const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const formRef = useMemo(() => 
-    db && entityId && formId ? doc(db, `entities/${entityId}/applicationForms`, formId) : null,
+    db && entityId && formId ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
   [db, entityId, formId]);
 
   const { data: form, loading: loadingForm } = useDoc<ApplicationForm>(formRef);
