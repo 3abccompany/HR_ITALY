@@ -1,3 +1,4 @@
+
 import { PermissionScope } from "@/types/permission";
 
 export interface PermissionDefinition {
@@ -60,6 +61,10 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "recruitmentNeeds.create", module: "recruitmentNeeds", action: "create", label: "Créer un besoin RH", description: "Saisie d'une nouvelle demande de personnel.", scope: "entity" },
   { code: "recruitmentNeeds.update", module: "recruitmentNeeds", action: "update", label: "Modifier un besoin RH", description: "Mise à jour des détails d'un besoin.", scope: "entity" },
   { code: "recruitmentNeeds.cancel", module: "recruitmentNeeds", action: "cancel", label: "Annuler un besoin RH", description: "Clôture anticipée d'une demande.", scope: "entity" },
+  { code: "applicationForms.read", module: "applicationForms", action: "read", label: "Voir les formulaires", description: "Consulter les formulaires de candidature.", scope: "entity" },
+  { code: "applicationForms.create", module: "applicationForms", action: "create", label: "Créer un formulaire", description: "Ajouter un nouveau formulaire.", scope: "entity" },
+  { code: "applicationForms.update", module: "applicationForms", action: "update", label: "Gérer les formulaires", description: "Modifier, fermer ou archiver des formulaires.", scope: "entity" },
+  { code: "applicationForms.publish", module: "applicationForms", action: "publish", label: "Publier un formulaire", description: "Rendre un formulaire public.", scope: "entity" },
   { code: "employees.read", module: "employees", action: "read", label: "Voir les employés", description: "Accès à la liste du personnel actif.", scope: "entity" },
   { code: "employees.create", module: "employees", action: "create", label: "Créer un employé", description: "Embauche directe ou conversion de candidat.", scope: "entity" },
   { code: "employees.update", module: "employees", action: "update", label: "Modifier un employé", description: "Mise à jour des données contractuelles/RH.", scope: "entity" },

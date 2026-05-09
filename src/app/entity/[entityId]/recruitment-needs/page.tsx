@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
@@ -6,7 +7,7 @@ import {
   Plus, Search, Edit, PowerOff, Loader2, 
   Calendar, Building2, MapPin, Users,
   AlertCircle, MoreVertical, Archive, Eye,
-  Clock, FileText, Briefcase
+  Clock, FileText, Briefcase, FileCode
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +57,7 @@ export default function RecruitmentNeedsPage() {
   const canCreate = hasPermission("recruitmentNeeds.create");
   const canUpdate = hasPermission("recruitmentNeeds.update");
   const canCancel = hasPermission("recruitmentNeeds.cancel");
+  const canCreateForm = hasPermission("applicationForms.create");
 
   // Queries
   const needsQuery = useMemo(() => {
@@ -105,20 +107,6 @@ export default function RecruitmentNeedsPage() {
   };
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
-
-  if (!canRead) {
-    return (
-      <div className="p-8">
-        <Card className="bg-destructive/5 border-destructive/20">
-          <CardContent className="flex flex-col items-center py-12 text-center">
-            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
-            <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
-            <p className="text-muted-foreground">Vous n'avez pas la permission de consulter les besoins RH.</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-24">
@@ -177,7 +165,6 @@ export default function RecruitmentNeedsPage() {
                          <div className="flex items-center gap-1.5 text-sm font-medium">
                            <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> {n.worksiteName}
                          </div>
-                         <div className="text-[9px] text-muted-foreground mt-0.5 truncate max-w-[150px]">{n.jobOfferLocation}</div>
                       </TableCell>
                       <TableCell>
                          <div className="flex items-center justify-between mb-1 text-[10px] font-bold">
@@ -211,6 +198,14 @@ export default function RecruitmentNeedsPage() {
                             >
                               <Eye className="w-4 h-4" /> Consulter
                             </DropdownMenuItem>
+                            {canCreateForm && ["open", "partially_fulfilled"].includes(n.status) && (
+                              <DropdownMenuItem 
+                                onClick={() => router.push(`/entity/${entityId}/application-forms/new?recruitmentNeedId=${n.needId}`)}
+                                className="gap-2 font-bold text-accent"
+                              >
+                                <FileCode className="w-4 h-4" /> Créer formulaire
+                              </DropdownMenuItem>
+                            )}
                             {canUpdate && (
                               <DropdownMenuItem 
                                 onClick={() => router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/edit`)}

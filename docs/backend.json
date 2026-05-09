@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "AppUser": {
@@ -292,6 +293,21 @@
         "createdAt": { "type": "object" },
         "createdBy": { "type": "string" }
       }
+    },
+    "ApplicationForm": {
+      "title": "ApplicationForm",
+      "description": "Configurable candidate application form linked to a recruitment need.",
+      "type": "object",
+      "properties": {
+        "formId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "recruitmentNeedId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published", "closed", "archived"] },
+        "fields": { "type": "array" },
+        "createdAt": { "type": "object" }
+      }
     }
   },
   "auth": {
@@ -353,6 +369,10 @@
     "/entities/{entityId}/recruitmentNeeds/{needId}": {
       "schema": { "$ref": "#/entities/RecruitmentNeed" },
       "description": "Hiring requests and job offer definitions."
+    },
+    "/entities/{entityId}/applicationForms/{formId}": {
+      "schema": { "$ref": "#/entities/ApplicationForm" },
+      "description": "Candidate application form configurations."
     }
   }
 }

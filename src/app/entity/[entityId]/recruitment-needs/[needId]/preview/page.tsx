@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo } from "react";
@@ -5,7 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   ArrowLeft, Edit, FileText, Calendar, Building2, 
   MapPin, Users, Loader2, Briefcase, Info, 
-  CheckCircle2, AlertCircle, Clock, LayoutDashboard
+  CheckCircle2, AlertCircle, Clock, LayoutDashboard,
+  FileCode
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +35,7 @@ export default function RecruitmentNeedPreviewPage() {
   const { data: need, loading } = useDoc<RecruitmentNeed>(needRef);
 
   const canUpdate = hasPermission("recruitmentNeeds.update");
+  const canCreateForm = hasPermission("applicationForms.create");
 
   if (loading || membershipLoading) {
     return (
@@ -98,6 +101,16 @@ export default function RecruitmentNeedPreviewPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {canCreateForm && ["open", "partially_fulfilled"].includes(need.status) && (
+             <Button 
+               variant="outline" 
+               size="sm" 
+               className="gap-2 text-accent border-accent/20 hover:bg-accent/10"
+               onClick={() => router.push(`/entity/${entityId}/application-forms/new?recruitmentNeedId=${needId}`)}
+             >
+               <FileCode className="w-4 h-4" /> Créer formulaire de candidature
+             </Button>
+          )}
           {canUpdate && (need.status === 'open' || need.status === 'partially_fulfilled') && (
             <Button size="sm" onClick={() => router.push(`/entity/${entityId}/recruitment-needs/${needId}/edit`)} className="gap-2">
               <Edit className="w-4 h-4" /> Modifier le besoin
