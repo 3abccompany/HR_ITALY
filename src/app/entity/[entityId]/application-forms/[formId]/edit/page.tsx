@@ -39,6 +39,16 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function EditApplicationFormPage() {
   const params = useParams();
@@ -60,6 +70,7 @@ export default function EditApplicationFormPage() {
   const [formData, setFormData] = useState<Partial<ApplicationForm>>({});
   const [saving, setSaving] = useState(false);
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
+  const [fieldToDelete, setFieldToDelete] = useState<string | null>(null);
 
   // New Field State
   const [newField, setNewField] = useState<{
@@ -176,14 +187,27 @@ export default function EditApplicationFormPage() {
   };
 
   const deleteField = (fieldId: string) => {
+    const field = formData.fields?.find(f => f.fieldId === fieldId);
+    if (!field || field.required) return;
+
     setFormData(prev => {
-      const filtered = prev.fields?.filter(f => f.fieldId !== fieldId || f.systemField) || [];
-      // Re-order remaining fields to maintain a clean sequence
-      const reordered = filtered
-        .sort((a, b) => a.order - b.order)
-        .map((f, i) => ({ ...f, order: i + 1 }));
-      return { ...prev, fields: reordered };
+      if (field.systemField) {
+        // System non-required: mark as disabled (Retirer)
+        const newFields = prev.fields?.map(f => 
+          f.fieldId === fieldId ? { ...f, enabled: false } : f
+        );
+        return { ...prev, fields: newFields };
+      } else {
+        // Custom non-required: actual removal
+        const filtered = prev.fields?.filter(f => f.fieldId !== fieldId) || [];
+        // Re-order remaining fields to maintain a clean sequence
+        const reordered = filtered
+          .sort((a, b) => a.order - b.order)
+          .map((f, i) => ({ ...f, order: i + 1 }));
+        return { ...prev, fields: reordered };
+      }
     });
+    setFieldToDelete(null);
   };
 
   const canUpdate = hasPermission("applicationForms.update");
@@ -193,7 +217,7 @@ export default function EditApplicationFormPage() {
   if (!form) return <div className="p-8 text-center">Formulaire introuvable.</div>;
 
   const isRequiredIdentity = (key: string) => 
-    ["firstName", "lastName", "email", "phone", "nationalId", "consent"].includes(key);
+    ["firstName", "lastName", "email", "phone", "nationalId", "cv", "consent"].includes(key);
 
   return (
     <div className="p-8 max-w-5xl mx-auto pb-32">
@@ -397,8 +421,8 @@ export default function EditApplicationFormPage() {
                         </div>
                       )}
 
-                      {!field.systemField && (
-                        <Button variant="ghost" size="icon" onClick={() => deleteField(field.fieldId)} className="text-destructive shrink-0">
+                      {!field.required && (
+                        <Button variant="ghost" size="icon" onClick={() => setFieldToDelete(field.fieldId)} className="text-destructive shrink-0">
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
@@ -419,20 +443,20 @@ export default function EditApplicationFormPage() {
             <CardContent className="p-4 space-y-4 text-xs">
               <div className="space-y-1">
                 <p className="text-muted-foreground font-bold uppercase text-[9px]">Poste</p>
-                <p className="font-bold text-primary">{form.jobTitleName}</p>
+                <p className="font-bold text-primary">{form?.jobTitleName || "N/A"}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground font-bold uppercase text-[9px]">Département</p>
-                <p className="font-semibold">{form.departmentName}</p>
+                <p className="font-semibold">{form?.departmentName || "N/A"}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground font-bold uppercase text-[9px]">Site</p>
-                <p className="font-semibold">{form.worksiteName}</p>
+                <p className="font-semibold">{form?.worksiteName || "N/A"}</p>
               </div>
               <Separator />
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Clock className="w-3.5 h-3.5" />
-                <span>Statut: {form.status}</span>
+                <span>Statut: {form?.status}</span>
               </div>
             </CardContent>
           </Card>
@@ -451,6 +475,21 @@ export default function EditApplicationFormPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={!!fieldToDelete} onOpenChange={() => setFieldToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer la question ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cette action retirera la question du formulaire. {formData.fields?.find(f => f.fieldId === fieldToDelete)?.systemField ? "Elle restera accessible dans la configuration mais sera masquée pour les candidats." : "Cette action est irréversible pour les questions personnalisées."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if(fieldToDelete) { deleteField(fieldToDelete); } }}>Confirmer</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
