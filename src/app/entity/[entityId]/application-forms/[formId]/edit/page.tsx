@@ -6,7 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ShieldCheck, ArrowLeft, Save, 
   Settings, LayoutDashboard, Plus, Trash2,
-  CheckCircle2, AlertCircle, Info, Eye
+  CheckCircle2, AlertCircle, Info, Eye,
+  Clock, Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,11 +18,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useFirebase, useDoc, useUser } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { ApplicationForm, ApplicationFormField, ApplicationFormFieldType } from "@/types/application-form";
+import { ApplicationForm, ApplicationFormField } from "@/types/application-form";
 import { updateApplicationForm } from "@/services/application-form.service";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 
 export default function EditApplicationFormPage() {
