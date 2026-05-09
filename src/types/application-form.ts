@@ -12,6 +12,7 @@ export type ApplicationFormFieldType =
   | "date" 
   | "select" 
   | "checkbox" 
+  | "checkboxGroup" 
   | "file";
 
 export interface ApplicationFormField {

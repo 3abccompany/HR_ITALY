@@ -8,7 +8,7 @@ import {
   Loader2, Upload, AlertCircle, Send, Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { useFirebase, useDoc } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { ApplicationForm } from "@/types/application-form";
@@ -85,7 +85,7 @@ export default function ApplicationFormPreviewPage() {
             <CardContent className="p-8 space-y-8">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {enabledFields.map((field) => (
-                  <div key={field.fieldId} className={field.type === 'textarea' || field.type === 'checkbox' || field.type === 'file' ? "col-span-full space-y-2" : "space-y-2"}>
+                  <div key={field.fieldId} className={field.type === 'textarea' || field.type === 'checkbox' || field.type === 'checkboxGroup' || field.type === 'file' ? "col-span-full space-y-2" : "space-y-2"}>
                     <div className="flex items-center gap-1">
                       <Label className="text-sm font-bold text-slate-700">{field.label}</Label>
                       {field.required && <span className="text-red-500 text-lg">*</span>}
@@ -95,12 +95,22 @@ export default function ApplicationFormPreviewPage() {
                       <Textarea placeholder="..." className="min-h-[120px] rounded-xl bg-slate-50/50 border-slate-200" disabled />
                     ) : field.type === 'select' ? (
                       <div className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 flex items-center text-slate-400 text-sm">
-                        Sélectionner une option...
+                        {field.options && field.options.length > 0 ? "Sélectionner une option..." : "Aucune option configurée"}
                       </div>
                     ) : field.type === 'checkbox' ? (
                       <div className="flex items-center gap-3 p-4 rounded-xl border border-slate-100 bg-slate-50/30">
                         <div className="w-5 h-5 rounded border-2 border-slate-300" />
                         <span className="text-xs text-slate-600 leading-tight">{field.label}</span>
+                      </div>
+                    ) : field.type === 'checkboxGroup' ? (
+                      <div className="space-y-2 p-4 rounded-xl border border-slate-100 bg-slate-50/30">
+                        {field.options?.map((opt, i) => (
+                          <div key={i} className="flex items-center gap-3">
+                            <div className="w-4 h-4 rounded border-2 border-slate-300" />
+                            <span className="text-xs text-slate-600">{opt}</span>
+                          </div>
+                        ))}
+                        {(!field.options || field.options.length === 0) && <p className="text-xs text-muted-foreground italic">Aucune option configurée.</p>}
                       </div>
                     ) : field.type === 'file' ? (
                       <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 flex flex-col items-center justify-center gap-3 bg-slate-50/30 hover:bg-slate-50 transition-colors">

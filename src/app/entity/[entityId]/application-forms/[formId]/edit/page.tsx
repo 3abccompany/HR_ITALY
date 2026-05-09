@@ -4,10 +4,11 @@
 import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  Loader2, ShieldCheck, ArrowLeft, Save, 
+  Loader2, ArrowLeft, Save, 
   Settings, LayoutDashboard, Plus, Trash2,
-  CheckCircle2, AlertCircle, Info, Eye,
-  Clock, Globe
+  Eye, Clock, Globe, AlertCircle, Info,
+  ListTodo, CheckSquare, Type, Calendar, Hash,
+  ChevronDown, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,11 +19,27 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useFirebase, useDoc, useUser } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { ApplicationForm, ApplicationFormField } from "@/types/application-form";
+import { ApplicationForm, ApplicationFormField, ApplicationFormFieldType } from "@/types/application-form";
 import { updateApplicationForm } from "@/services/application-form.service";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogFooter,
+  DialogDescription,
+  DialogTrigger
+} from "@/components/ui/dialog";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
 
 export default function EditApplicationFormPage() {
   const params = useParams();
@@ -43,6 +60,21 @@ export default function EditApplicationFormPage() {
 
   const [formData, setFormData] = useState<Partial<ApplicationForm>>({});
   const [saving, setSaving] = useState(false);
+  const [isBuilderOpen, setIsBuilderOpen] = useState(false);
+
+  // New Field State
+  const [newField, setNewField] = useState<{
+    label: string;
+    type: ApplicationFormFieldType;
+    required: boolean;
+    options: string[];
+  }>({
+    label: "",
+    type: "text",
+    required: false,
+    options: []
+  });
+  const [currentOption, setCurrentOption] = useState("");
 
   useEffect(() => {
     if (form) setFormData(form);
@@ -70,19 +102,57 @@ export default function EditApplicationFormPage() {
     });
   };
 
-  const addCustomField = () => {
+  const addOption = () => {
+    if (!currentOption.trim()) return;
+    setNewField(prev => ({
+      ...prev,
+      options: [...prev.options, currentOption.trim()]
+    }));
+    setCurrentOption("");
+  };
+
+  const removeOption = (index: number) => {
+    setNewField(prev => ({
+      ...prev,
+      options: prev.options.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleAddNewQuestion = () => {
+    if (!newField.label.trim()) {
+      toast({ variant: "destructive", title: "Erreur", description: "Le libellé est obligatoire." });
+      return;
+    }
+
+    if ((newField.type === 'select' || newField.type === 'checkboxGroup') && newField.options.length === 0) {
+      toast({ variant: "destructive", title: "Erreur", description: "Veuillez ajouter au moins une option." });
+      return;
+    }
+
     const fieldId = `c${Date.now()}`;
-    const newField: ApplicationFormField = {
+    const safeKey = `custom_${newField.label.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
+    
+    const field: ApplicationFormField = {
       fieldId,
-      key: `custom_${fieldId}`,
-      label: "Nouvelle question",
-      type: "text",
-      required: false,
+      key: safeKey,
+      label: newField.label.trim(),
+      type: newField.type,
+      required: newField.required,
       systemField: false,
       enabled: true,
+      options: newField.options.length > 0 ? newField.options : undefined,
       order: (formData.fields?.length || 0) + 1
     };
-    setFormData(prev => ({ ...prev, fields: [...(prev.fields || []), newField] }));
+
+    setFormData(prev => ({
+      ...prev,
+      fields: [...(prev.fields || []), field]
+    }));
+
+    // Reset
+    setNewField({ label: "", type: "text", required: false, options: [] });
+    setIsBuilderOpen(false);
+    toast({ title: "Question ajoutée" });
   };
 
   const deleteField = (fieldId: string) => {
@@ -151,9 +221,89 @@ export default function EditApplicationFormPage() {
               <h2 className="text-lg font-bold text-primary flex items-center gap-2">
                 <LayoutDashboard className="w-5 h-5" /> Configuration des champs
               </h2>
-              <Button onClick={addCustomField} variant="outline" size="sm" className="gap-1">
-                <Plus className="w-3 h-3" /> Question personnalisée
-              </Button>
+              
+              <Dialog open={isBuilderOpen} onOpenChange={setIsBuilderOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1">
+                    <Plus className="w-3 h-3" /> Question personnalisée
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[450px]">
+                  <DialogHeader>
+                    <DialogTitle>Nouvelle question</DialogTitle>
+                    <DialogDescription>Ajoutez un champ spécifique pour ce recrutement.</DialogDescription>
+                  </DialogHeader>
+                  
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label>Libellé de la question</Label>
+                      <Input 
+                        placeholder="Ex: Pourquoi souhaitez-vous nous rejoindre ?" 
+                        value={newField.label} 
+                        onChange={(e) => setNewField(p => ({...p, label: e.target.value}))}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Type de réponse</Label>
+                      <Select 
+                        value={newField.type} 
+                        onValueChange={(v) => setNewField(p => ({...p, type: v as ApplicationFormFieldType, options: []}))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">Réponse courte</SelectItem>
+                          <SelectItem value="textarea">Réponse longue</SelectItem>
+                          <SelectItem value="date">Date</SelectItem>
+                          <SelectItem value="number">Nombre</SelectItem>
+                          <SelectItem value="select">Liste déroulante</SelectItem>
+                          <SelectItem value="checkbox">Case à cocher simple</SelectItem>
+                          <SelectItem value="checkboxGroup">Cases à cocher multiples</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {(newField.type === 'select' || newField.type === 'checkboxGroup') && (
+                      <div className="space-y-3 p-3 bg-secondary/20 rounded-lg border">
+                        <Label className="text-xs font-bold uppercase">Options</Label>
+                        <div className="flex gap-2">
+                          <Input 
+                            placeholder="Valeur..." 
+                            value={currentOption} 
+                            onChange={(e) => setCurrentOption(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addOption()}
+                          />
+                          <Button type="button" size="sm" onClick={addOption} variant="secondary">Ajouter</Button>
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {newField.options.map((opt, i) => (
+                            <Badge key={i} variant="secondary" className="gap-1">
+                              {opt}
+                              <button onClick={() => removeOption(i)}><X className="w-3 h-3" /></button>
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <Checkbox 
+                        id="new-req" 
+                        checked={newField.required} 
+                        onCheckedChange={(checked) => setNewField(p => ({...p, required: !!checked}))}
+                      />
+                      <Label htmlFor="new-req">Réponse obligatoire</Label>
+                    </div>
+                  </div>
+
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setIsBuilderOpen(false)}>Annuler</Button>
+                    <Button onClick={handleAddNewQuestion}>Ajouter au formulaire</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
 
             <div className="space-y-3">
@@ -167,7 +317,11 @@ export default function EditApplicationFormPage() {
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <p className="font-bold text-sm text-primary">{field.label}</p>
-                          {field.systemField && <Badge variant="outline" className="text-[8px] h-3 uppercase py-0 leading-none">Système</Badge>}
+                          {field.systemField ? (
+                            <Badge variant="outline" className="text-[8px] h-3 uppercase py-0 leading-none">Système</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-[8px] h-3 uppercase py-0 leading-none bg-accent/10 text-accent-foreground border-accent/20">Personnalisée</Badge>
+                          )}
                           {field.required && <Badge variant="secondary" className="text-[8px] h-3 uppercase py-0 leading-none bg-red-50 text-red-700">Requis</Badge>}
                         </div>
                         <p className="text-[10px] text-muted-foreground uppercase font-mono">Type: {field.type}</p>
