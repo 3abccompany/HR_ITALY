@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -50,6 +51,36 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+/**
+ * Utility to find and report undefined values in a payload before Firestore write.
+ */
+function findUndefinedPaths(value: unknown, basePath = "payload"): string[] {
+  const paths: string[] = [];
+  if (value === undefined) {
+    paths.push(basePath);
+    return paths;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      paths.push(...findUndefinedPaths(item, `${basePath}[${index}]`));
+    });
+    return paths;
+  }
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    Object.entries(value as Record<string, unknown>).forEach(([key, val]) => {
+      paths.push(...findUndefinedPaths(val, `${basePath}.${key}`));
+    });
+  }
+  return paths;
+}
+
+/**
+ * Normalizes an object by removing undefined properties.
+ */
+function sanitizePayload<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj, (key, value) => (value === undefined ? null : value)));
+}
+
 export default function EditApplicationFormPage() {
   const params = useParams();
   const router = useRouter();
@@ -93,10 +124,21 @@ export default function EditApplicationFormPage() {
   const handleSave = async () => {
     if (!user || !entityId || !formId) return;
     setSaving(true);
+    
     try {
-      await updateApplicationForm(entityId, formId, formData, user.uid);
+      // 1. Diagnosis
+      const undefinedPaths = findUndefinedPaths(formData);
+      if (undefinedPaths.length > 0) {
+        console.warn("Undefined values found and sanitized:", undefinedPaths);
+      }
+
+      // 2. Normalization
+      const cleanData = sanitizePayload(formData);
+
+      await updateApplicationForm(entityId, formId, cleanData, user.uid);
       toast({ title: "Configuration enregistrée" });
     } catch (err: any) {
+      console.error("Save error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setSaving(false);
@@ -115,20 +157,16 @@ export default function EditApplicationFormPage() {
   const moveField = (index: number, direction: 'up' | 'down') => {
     setFormData(prev => {
       if (!prev.fields) return prev;
-      // Sort first to work on a predictable indexed array
       const sortedFields = [...prev.fields].sort((a, b) => a.order - b.order);
       const targetIndex = direction === 'up' ? index - 1 : index + 1;
 
       if (targetIndex < 0 || targetIndex >= sortedFields.length) return prev;
 
-      // Swap elements
       const temp = sortedFields[index];
       sortedFields[index] = sortedFields[targetIndex];
       sortedFields[targetIndex] = temp;
 
-      // Recalculate all orders to be sequential and clean
       const reorderedFields = sortedFields.map((f, i) => ({ ...f, order: i + 1 }));
-
       return { ...prev, fields: reorderedFields };
     });
   };
@@ -171,7 +209,7 @@ export default function EditApplicationFormPage() {
       required: newField.required,
       systemField: false,
       enabled: true,
-      options: newField.options.length > 0 ? newField.options : undefined,
+      options: newField.options.length > 0 ? newField.options : [],
       order: (formData.fields?.length || 0) + 1
     };
 
@@ -180,7 +218,6 @@ export default function EditApplicationFormPage() {
       fields: [...(prev.fields || []), field]
     }));
 
-    // Reset
     setNewField({ label: "", type: "text", required: false, options: [] });
     setIsBuilderOpen(false);
     toast({ title: "Question ajoutée" });
@@ -192,15 +229,12 @@ export default function EditApplicationFormPage() {
 
     setFormData(prev => {
       if (field.systemField) {
-        // System non-required: mark as disabled (Retirer)
         const newFields = prev.fields?.map(f => 
           f.fieldId === fieldId ? { ...f, enabled: false } : f
         );
         return { ...prev, fields: newFields };
       } else {
-        // Custom non-required: actual removal
         const filtered = prev.fields?.filter(f => f.fieldId !== fieldId) || [];
-        // Re-order remaining fields to maintain a clean sequence
         const reordered = filtered
           .sort((a, b) => a.order - b.order)
           .map((f, i) => ({ ...f, order: i + 1 }));
@@ -210,10 +244,7 @@ export default function EditApplicationFormPage() {
     setFieldToDelete(null);
   };
 
-  const canUpdate = hasPermission("applicationForms.update");
-
   if (membershipLoading || loadingForm) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
-
   if (!form) return <div className="p-8 text-center">Formulaire introuvable.</div>;
 
   const isRequiredIdentity = (key: string) => 
@@ -244,7 +275,6 @@ export default function EditApplicationFormPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
-          {/* Identity Section */}
           <Card className="border-primary/10 shadow-sm">
             <CardHeader className="bg-primary/5 border-b">
               <CardTitle className="text-sm font-bold flex items-center gap-2">
@@ -263,7 +293,6 @@ export default function EditApplicationFormPage() {
             </CardContent>
           </Card>
 
-          {/* Fields Section */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-primary flex items-center gap-2">
@@ -359,7 +388,6 @@ export default function EditApplicationFormPage() {
                 <Card key={field.fieldId} className={`border-l-4 transition-all ${field.enabled ? 'border-l-accent border-primary/10' : 'border-l-muted opacity-50 bg-secondary/10'}`}>
                   <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-4 flex-1">
-                      {/* Move Controls */}
                       <div className="flex flex-col gap-0.5">
                         <Button 
                           variant="ghost" 
@@ -434,7 +462,6 @@ export default function EditApplicationFormPage() {
           </div>
         </div>
 
-        {/* Info Column */}
         <div className="space-y-6">
           <Card className="border-accent/20 bg-accent/5">
             <CardHeader className="bg-accent/10 border-b">

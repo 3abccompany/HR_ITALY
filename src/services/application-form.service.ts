@@ -17,31 +17,31 @@ import { createAuditLog } from "./audit.service";
  */
 export function getInitialSystemFields(): ApplicationFormField[] {
   const fields: Omit<ApplicationFormField, 'order'>[] = [
-    { fieldId: "f1", key: "firstName", label: "Prénom", type: "text", required: true, systemField: true, enabled: true },
-    { fieldId: "f2", key: "lastName", label: "Nom", type: "text", required: true, systemField: true, enabled: true },
-    { fieldId: "f3", key: "email", label: "Email", type: "email", required: true, systemField: true, enabled: true },
-    { fieldId: "f4", key: "phone", label: "Téléphone", type: "phone", required: true, systemField: true, enabled: true },
-    { fieldId: "f5", key: "nationalId", label: "Identifiant national", type: "text", required: true, systemField: true, enabled: true },
-    { fieldId: "f6", key: "birthDate", label: "Date de naissance", type: "date", required: false, systemField: true, enabled: true },
-    { fieldId: "f7", key: "address", label: "Adresse", type: "text", required: false, systemField: true, enabled: true },
-    { fieldId: "f8", key: "city", label: "Ville", type: "text", required: false, systemField: true, enabled: true },
-    { fieldId: "f9", key: "province", label: "Province", type: "text", required: false, systemField: true, enabled: true },
-    { fieldId: "f10", key: "country", label: "Pays", type: "text", required: false, systemField: true, enabled: true },
+    { fieldId: "f1", key: "firstName", label: "Prénom", type: "text", required: true, systemField: true, enabled: true, options: [] },
+    { fieldId: "f2", key: "lastName", label: "Nom", type: "text", required: true, systemField: true, enabled: true, options: [] },
+    { fieldId: "f3", key: "email", label: "Email", type: "email", required: true, systemField: true, enabled: true, options: [] },
+    { fieldId: "f4", key: "phone", label: "Téléphone", type: "phone", required: true, systemField: true, enabled: true, options: [] },
+    { fieldId: "f5", key: "nationalId", label: "Identifiant national", type: "text", required: true, systemField: true, enabled: true, options: [] },
+    { fieldId: "f6", key: "birthDate", label: "Date de naissance", type: "date", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f7", key: "address", label: "Adresse", type: "text", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f8", key: "city", label: "Ville", type: "text", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f9", key: "province", label: "Province", type: "text", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f10", key: "country", label: "Pays", type: "text", required: false, systemField: true, enabled: true, options: [] },
     { 
       fieldId: "f11", key: "availability", label: "Disponibilité", type: "select", required: true, systemField: true, enabled: true,
       options: ["Immédiate", "15 jours", "1 mois", "Autre"]
     },
-    { fieldId: "f12", key: "availableFrom", label: "Disponible à partir du", type: "date", required: false, systemField: true, enabled: true },
-    { fieldId: "f13", key: "experienceYears", label: "Années d'expérience", type: "number", required: false, systemField: true, enabled: true },
+    { fieldId: "f12", key: "availableFrom", label: "Disponible à partir du", type: "date", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f13", key: "experienceYears", label: "Années d'expérience", type: "number", required: false, systemField: true, enabled: true, options: [] },
     { 
       fieldId: "f14", key: "educationLevel", label: "Niveau d'étude", type: "select", required: false, systemField: true, enabled: true,
       options: ["Sans diplôme", "Bac", "Bac+2", "Bac+3", "Bac+5", "Autre"]
     },
-    { fieldId: "f15", key: "currentPosition", label: "Poste actuel ou dernier poste occupé", type: "text", required: false, systemField: true, enabled: true },
-    { fieldId: "f16", key: "motivationMessage", label: "Message de motivation", type: "textarea", required: false, systemField: true, enabled: true },
-    { fieldId: "f17", key: "cv", label: "CV", type: "file", required: true, systemField: true, enabled: true },
-    { fieldId: "f18", key: "coverLetter", label: "Lettre de motivation", type: "file", required: false, systemField: true, enabled: true },
-    { fieldId: "f19", key: "consent", label: "J'accepte que mes données soient utilisées pour le traitement de ma candidature.", type: "checkbox", required: true, systemField: true, enabled: true },
+    { fieldId: "f15", key: "currentPosition", label: "Poste actuel ou dernier poste occupé", type: "text", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f16", key: "motivationMessage", label: "Message de motivation", type: "textarea", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f17", key: "cv", label: "CV", type: "file", required: true, systemField: true, enabled: true, options: [] },
+    { fieldId: "f18", key: "coverLetter", label: "Lettre de motivation", type: "file", required: false, systemField: true, enabled: true, options: [] },
+    { fieldId: "f19", key: "consent", label: "J'accepte que mes données soient utilisées pour le traitement de ma candidature.", type: "checkbox", required: true, systemField: true, enabled: true, options: [] },
   ];
 
   return fields.map((f, i) => ({ ...f, order: i + 1 }));
@@ -68,7 +68,7 @@ export async function createApplicationForm(entityId: string, need: RecruitmentN
     worksiteName: need.worksiteName,
     title: need.jobTitleName,
     description: need.jobOfferText || "",
-    publicSlug: "", // Generated on publish
+    publicSlug: "", 
     status: "draft",
     fields: getInitialSystemFields(),
     createdAt: serverTimestamp(),
