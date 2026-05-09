@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useUser } from '@/firebase';
 import { getActiveMembershipForEntity } from '@/services/membership.service';
 import { Membership } from '@/types/membership';
@@ -50,10 +50,10 @@ export function useActiveMembership(entityId: string) {
     load();
   }, [user, userLoading, entityId]);
 
-  const hasPermission = (permissionCode: string) => {
+  const hasPermission = useCallback((permissionCode: string) => {
     if (!membership) return false;
     return membership.permissions.includes(permissionCode);
-  };
+  }, [membership]);
 
   return {
     loading: loading || userLoading,

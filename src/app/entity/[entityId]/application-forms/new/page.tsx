@@ -8,8 +8,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, where, orderBy } from "firebase/firestore";
+import { useFirebase, useUser } from "@/firebase";
+import { collection, query, where, orderBy, getDocs } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { createApplicationForm } from "@/services/application-form.service";
@@ -32,21 +32,41 @@ export default function NewApplicationFormPage() {
   const [selectedNeedId, setSelectedNeedId] = useState<string>(preselectedNeedId || "");
   const [loading, setLoading] = useState(false);
 
-  // Queries
-  const needsQuery = useMemo(() => {
-    // Only attempt to query if user has the read permission to avoid Firestore Permission Denied errors
-    if (!db || !entityId || !hasPermission("recruitmentNeeds.read")) return null;
-    return query(
-      collection(db, `entities/${entityId}/recruitmentNeeds`), 
-      where("status", "in", ["open", "partially_fulfilled"]),
-      orderBy("createdAt", "desc")
-    );
-  }, [db, entityId, hasPermission]);
-
-  const { data: needs, loading: loadingNeeds } = useCollection<RecruitmentNeed>(needsQuery);
+  // Manual state for one-time fetch to avoid listener crashes
+  const [needs, setNeeds] = useState<RecruitmentNeed[]>([]);
+  const [loadingNeeds, setLoadingNeeds] = useState(false);
+  const [needsError, setNeedsError] = useState<string | null>(null);
 
   const canCreate = hasPermission("applicationForms.create");
   const canReadNeeds = hasPermission("recruitmentNeeds.read");
+
+  useEffect(() => {
+    async function fetchNeeds() {
+      if (!db || !entityId || !canReadNeeds) return;
+      
+      setLoadingNeeds(true);
+      setNeedsError(null);
+      
+      try {
+        const q = query(
+          collection(db, `entities/${entityId}/recruitmentNeeds`), 
+          where("status", "in", ["open", "partially_fulfilled"]),
+          orderBy("createdAt", "desc")
+        );
+        
+        const snap = await getDocs(q);
+        const data = snap.docs.map(doc => ({ ...doc.data(), needId: doc.id } as RecruitmentNeed));
+        setNeeds(data);
+      } catch (err: any) {
+        console.error("Error fetching recruitment needs:", err);
+        setNeedsError(err.message || "Impossible de charger les besoins de recrutement.");
+      } finally {
+        setLoadingNeeds(false);
+      }
+    }
+
+    fetchNeeds();
+  }, [db, entityId, canReadNeeds]);
 
   const selectedNeed = useMemo(() => 
     needs?.find(n => n.needId === selectedNeedId), 
@@ -109,6 +129,13 @@ export default function NewApplicationFormPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
+            {needsError && (
+              <div className="bg-destructive/10 text-destructive p-3 rounded-md text-sm flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                {needsError}
+              </div>
+            )}
+
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase text-muted-foreground">Besoin RH source</label>
               <Select value={selectedNeedId} onValueChange={setSelectedNeedId}>
@@ -121,7 +148,7 @@ export default function NewApplicationFormPage() {
                       {n.jobTitleName} — {n.worksiteName} ({n.remainingHeadcount} postes restants)
                     </SelectItem>
                   ))}
-                  {needs?.length === 0 && (
+                  {!loadingNeeds && needs?.length === 0 && (
                     <div className="p-4 text-center text-xs text-muted-foreground">Aucun besoin ouvert trouvé.</div>
                   )}
                 </SelectContent>
