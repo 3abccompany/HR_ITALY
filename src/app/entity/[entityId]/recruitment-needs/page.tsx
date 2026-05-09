@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Plus, Search, Edit, PowerOff, Loader2, 
   Calendar, Building2, MapPin, Users,
-  AlertCircle, MoreVertical, Archive, ArrowUpRight,
+  AlertCircle, MoreVertical, Archive, Eye,
   Clock, FileText, Briefcase
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -205,6 +205,12 @@ export default function RecruitmentNeedsPage() {
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem 
+                              onClick={() => router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/preview`)}
+                              className="gap-2 text-primary font-semibold"
+                            >
+                              <Eye className="w-4 h-4" /> Consulter
+                            </DropdownMenuItem>
                             {canUpdate && (
                               <DropdownMenuItem 
                                 onClick={() => router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/edit`)}
