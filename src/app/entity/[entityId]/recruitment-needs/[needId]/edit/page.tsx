@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useParams } from "next/navigation";
@@ -69,7 +68,6 @@ export default function EditRecruitmentNeedPage() {
       <RecruitmentNeedForm 
         entityId={entityId}
         entityName={entity?.nomEntreprise || "Entreprise"}
-        requesterName={user?.displayName || "Collaborateur"}
         userId={user?.uid || ""}
         initialData={need}
         isEditing={true}

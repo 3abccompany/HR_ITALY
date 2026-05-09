@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type RecruitmentNeedStatus = 
@@ -13,8 +12,11 @@ export interface RecruitmentNeed {
   needId: string;
   entityId: string;
   entityName: string;
+
+  // Requester
   requesterUid: string;
   requesterName: string;
+  requesterSourceJobProfileId: string;
 
   // Headcount
   requestedHeadcount: number;
@@ -56,18 +58,17 @@ export interface RecruitmentNeed {
   notes?: string;
 
   // Job offer fields
-  jobOfferTitle: string;
-  jobOfferSummary: string;
-  jobOfferDescription: string;
-  jobOfferMissions: string;
-  jobOfferSkills: string;
-  jobOfferExperience: string;
-  jobOfferTraining: string;
+  jobOfferText: string;
   jobOfferLocation: string;
-  jobOfferSalaryRange: string;
+  jobOfferPlanning: string;
   jobOfferBenefits: string;
-  jobOfferWorkingHours: string;
   jobOfferApplicationInstructions: string;
+
+  // Snapshot fields from Job Profile
+  jobOfferMissions: string[];
+  jobOfferSkills: string[];
+  jobOfferExperience: string[];
+  jobOfferTraining: string[];
 
   // Audit fields
   createdAt: Date | FieldValue;

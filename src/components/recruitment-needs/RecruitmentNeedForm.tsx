@@ -1,11 +1,10 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { 
-  Plus, Loader2, ShieldCheck, ArrowLeft, Building2, Briefcase, 
-  MapPin, Calendar, Clock, FileText, Info
+  Loader2, ShieldCheck, ArrowLeft, Building2, Briefcase, 
+  MapPin, Calendar, FileText, Info, UserCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,24 +13,27 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFirebase, useCollection } from "@/firebase";
-import { collection, query, orderBy } from "firebase/firestore";
+import { collection, query, orderBy, doc, getDoc } from "firebase/firestore";
 import { createRecruitmentNeed, updateRecruitmentNeed } from "@/services/recruitment-need.service";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { JobProfile } from "@/types/job-profile";
+import { AppUser } from "@/types/user";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 
 interface RecruitmentNeedFormProps {
   entityId: string;
   entityName: string;
-  requesterName: string;
   userId: string;
   initialData?: RecruitmentNeed;
   isEditing?: boolean;
 }
 
 const initialForm = {
+  requesterUid: "",
   requesterName: "",
+  requesterSourceJobProfileId: "",
   requestedHeadcount: 1,
   worksiteId: null as string | null,
   worksiteName: "Site principal",
@@ -47,27 +49,26 @@ const initialForm = {
   reason: "",
   notes: "",
   // Offer fields
-  jobOfferTitle: "",
-  jobOfferSummary: "",
-  jobOfferDescription: "",
-  jobOfferMissions: "",
-  jobOfferSkills: "",
-  jobOfferExperience: "",
-  jobOfferTraining: "",
+  jobOfferText: "",
   jobOfferLocation: "",
-  jobOfferSalaryRange: "",
+  jobOfferPlanning: "",
   jobOfferBenefits: "",
-  jobOfferWorkingHours: "",
-  jobOfferApplicationInstructions: ""
+  jobOfferApplicationInstructions: "",
+  // Snapshots
+  jobOfferMissions: [] as string[],
+  jobOfferSkills: [] as string[],
+  jobOfferExperience: [] as string[],
+  jobOfferTraining: [] as string[]
 };
 
-export function RecruitmentNeedForm({ entityId, entityName, requesterName, userId, initialData, isEditing = false }: RecruitmentNeedFormProps) {
+export function RecruitmentNeedForm({ entityId, entityName, userId, initialData, isEditing = false }: RecruitmentNeedFormProps) {
   const router = useRouter();
   const { db } = useFirebase();
   const { toast } = useToast();
   
-  const [formData, setFormData] = useState({ ...initialForm, requesterName });
+  const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
+  const [loadingRequester, setLoadingRequester] = useState(false);
 
   // Queries
   const profilesQuery = useMemo(() => {
@@ -82,11 +83,13 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
   useEffect(() => {
     if (initialData) {
       setFormData({
+        requesterUid: initialData.requesterUid,
         requesterName: initialData.requesterName,
+        requesterSourceJobProfileId: initialData.requesterSourceJobProfileId,
         requestedHeadcount: initialData.requestedHeadcount,
         worksiteId: initialData.worksiteId,
-        worksiteName: initialData.worksiteName,
-        customWorksiteName: initialData.worksiteId ? "" : (["Site principal", "À définir"].includes(initialData.worksiteName) ? "" : initialData.worksiteName),
+        worksiteName: initialData.worksiteId ? "Autre site" : initialData.worksiteName,
+        customWorksiteName: !initialData.worksiteId && !["Site principal", "À définir"].includes(initialData.worksiteName) ? initialData.worksiteName : "",
         contractType: initialData.contractType,
         employmentType: initialData.employmentType,
         workingTime: initialData.workingTime,
@@ -97,35 +100,50 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
         priority: initialData.priority,
         reason: initialData.reason || "",
         notes: initialData.notes || "",
-        jobOfferTitle: initialData.jobOfferTitle || "",
-        jobOfferSummary: initialData.jobOfferSummary || "",
-        jobOfferDescription: initialData.jobOfferDescription || "",
-        jobOfferMissions: initialData.jobOfferMissions || "",
-        jobOfferSkills: initialData.jobOfferSkills || "",
-        jobOfferExperience: initialData.jobOfferExperience || "",
-        jobOfferTraining: initialData.jobOfferTraining || "",
+        jobOfferText: initialData.jobOfferText || "",
         jobOfferLocation: initialData.jobOfferLocation || "",
-        jobOfferSalaryRange: initialData.jobOfferSalaryRange || "",
+        jobOfferPlanning: initialData.jobOfferPlanning || "",
         jobOfferBenefits: initialData.jobOfferBenefits || "",
-        jobOfferWorkingHours: initialData.jobOfferWorkingHours || "",
-        jobOfferApplicationInstructions: initialData.jobOfferApplicationInstructions || ""
+        jobOfferApplicationInstructions: initialData.jobOfferApplicationInstructions || "",
+        jobOfferMissions: initialData.jobOfferMissions || [],
+        jobOfferSkills: initialData.jobOfferSkills || [],
+        jobOfferExperience: initialData.jobOfferExperience || [],
+        jobOfferTraining: initialData.jobOfferTraining || []
       });
     }
   }, [initialData]);
 
-  const handleProfileChange = (profileId: string) => {
+  const handleProfileChange = async (profileId: string) => {
     const profile = activeProfiles.find(p => p.jobProfileId === profileId);
-    if (!profile) return;
+    if (!profile || !db) return;
+
+    setLoadingRequester(true);
+    let requesterName = profile.createdBy; // Fallback
+
+    try {
+      const userSnap = await getDoc(doc(db, "users", profile.createdBy));
+      if (userSnap.exists()) {
+        requesterName = userSnap.data().displayName || userSnap.data().email;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch requester name", e);
+    } finally {
+      setLoadingRequester(false);
+    }
 
     setFormData(prev => ({
       ...prev,
       jobProfileId: profileId,
-      jobOfferTitle: profile.jobTitleName,
-      jobOfferMissions: profile.missionsAndResponsibilities?.join("\n• ") || "",
-      jobOfferSkills: profile.softSkills?.join(", ") || "",
-      jobOfferExperience: profile.professionalExperience?.join("\n") || "",
-      jobOfferTraining: profile.initialAndProfessionalTraining?.join("\n") || "",
-      jobOfferLocation: prev.worksiteName === "Autre site" ? prev.customWorksiteName : prev.worksiteName
+      requesterUid: profile.createdBy,
+      requesterName: requesterName,
+      requesterSourceJobProfileId: profile.jobProfileId,
+      // Snapshots
+      jobOfferMissions: profile.missionsAndResponsibilities || [],
+      jobOfferSkills: profile.softSkills || [],
+      jobOfferExperience: profile.professionalExperience || [],
+      jobOfferTraining: profile.initialAndProfessionalTraining || [],
+      // Base offer text hint
+      jobOfferText: prev.jobOfferText || `Poste de ${profile.jobTitleName} au sein du département ${profile.departmentName}.`
     }));
   };
 
@@ -149,7 +167,6 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
         ...formData,
         entityName,
         companyName: entityName,
-        requesterUid: userId,
         worksiteName: finalWorksiteName,
         jobProfileTitle: profile.jobTitleName,
         jobProfileVersion: profile.versionLabel,
@@ -203,7 +220,7 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left Column: Demande */}
+        {/* Left Column */}
         <div className="md:col-span-1 space-y-6">
           <Card className="border-primary/10">
             <CardHeader className="bg-primary/5">
@@ -212,9 +229,26 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 pt-6">
+               <div className="space-y-2">
+                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Fiche de Poste de Référence</Label>
+                <Select value={formData.jobProfileId} onValueChange={handleProfileChange}>
+                  <SelectTrigger><SelectValue placeholder="Sélectionner une fiche active" /></SelectTrigger>
+                  <SelectContent>
+                    {activeProfiles.map(p => (
+                      <SelectItem key={p.jobProfileId} value={p.jobProfileId}>
+                        {p.jobTitleName} ({p.versionLabel})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-2">
-                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Demandeur</Label>
-                <Input value={formData.requesterName} readOnly className="bg-secondary/20" />
+                <Label className="text-[10px] uppercase text-muted-foreground font-bold flex items-center gap-1">
+                  <UserCircle className="w-3 h-3" /> Demandeur (Origine FDP)
+                </Label>
+                <div className="flex items-center gap-2 h-10 px-3 rounded-md border bg-secondary/20 text-sm font-medium">
+                  {loadingRequester ? <Loader2 className="w-3 h-3 animate-spin" /> : formData.requesterName || "Sél. une fiche"}
+                </div>
               </div>
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Nombre de personnes</Label>
@@ -243,7 +277,7 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
                 <Textarea 
                   value={formData.reason} 
                   onChange={(e) => setFormData(p => ({...p, reason: e.target.value}))} 
-                  placeholder="Ex: Remplacement de M. Dupont..."
+                  placeholder="Ex: Remplacement..."
                   className="min-h-[80px]"
                 />
               </div>
@@ -266,14 +300,14 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
                 <Input type="date" value={formData.desiredAvailabilityDate} onChange={(e) => setFormData(p => ({...p, desiredAvailabilityDate: e.target.value}))} required />
               </div>
               <div className="space-y-2">
-                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Date limite candidature (Optionnel)</Label>
+                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Date limite (Optionnel)</Label>
                 <Input type="date" value={formData.applicationDeadline} onChange={(e) => setFormData(p => ({...p, applicationDeadline: e.target.value}))} />
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Right Column: Poste & Offre */}
+        {/* Right Column */}
         <div className="md:col-span-2 space-y-6">
           <Card className="border-primary/10">
             <CardHeader className="bg-primary/5">
@@ -308,63 +342,50 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Fiche de Poste de Référence</Label>
-                <Select value={formData.jobProfileId} onValueChange={handleProfileChange}>
-                  <SelectTrigger><SelectValue placeholder="Sélectionner une fiche de poste active" /></SelectTrigger>
-                  <SelectContent>
-                    {activeProfiles.map(p => (
-                      <SelectItem key={p.jobProfileId} value={p.jobProfileId}>
-                        {p.jobTitleName} — {p.departmentName} ({p.versionLabel})
-                      </SelectItem>
-                    ))}
-                    {activeProfiles.length === 0 && <div className="p-2 text-xs text-muted-foreground">Aucune fiche de poste active trouvée.</div>}
-                  </SelectContent>
-                </Select>
-              </div>
-
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Type de contrat</Label>
+                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Contrat</Label>
                   <Select value={formData.contractType} onValueChange={(v) => setFormData(p => ({...p, contractType: v}))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="CDI">CDI</SelectItem>
-                      <SelectItem value="CDD">CDD</SelectItem>
-                      <SelectItem value="Intérim">Intérim</SelectItem>
-                      <SelectItem value="Stage">Stage</SelectItem>
-                      <SelectItem value="Apprentissage">Apprentissage</SelectItem>
-                      <SelectItem value="Freelance">Freelance</SelectItem>
-                      <SelectItem value="Autre">Autre</SelectItem>
+                      {["CDI", "CDD", "Intérim", "Stage", "Apprentissage", "Freelance", "Autre"].map(v => (
+                        <SelectItem key={v} value={v}>{v}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Type d'emploi</Label>
+                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Emploi</Label>
                   <Select value={formData.employmentType} onValueChange={(v) => setFormData(p => ({...p, employmentType: v}))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Nouveau poste">Nouveau poste</SelectItem>
-                      <SelectItem value="Remplacement">Remplacement</SelectItem>
-                      <SelectItem value="Renfort temporaire">Renfort temporaire</SelectItem>
-                      <SelectItem value="Mobilité interne">Mobilité interne</SelectItem>
-                      <SelectItem value="Autre">Autre</SelectItem>
+                      {["Nouveau poste", "Remplacement", "Renfort temporaire", "Mobilité interne", "Autre"].map(v => (
+                        <SelectItem key={v} value={v}>{v}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Temps de travail</Label>
+                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Temps</Label>
                   <Select value={formData.workingTime} onValueChange={(v) => setFormData(p => ({...p, workingTime: v}))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Temps plein">Temps plein</SelectItem>
-                      <SelectItem value="Temps partiel">Temps partiel</SelectItem>
-                      <SelectItem value="Horaire flexible">Horaire flexible</SelectItem>
-                      <SelectItem value="Travail posté">Travail posté</SelectItem>
-                      <SelectItem value="Autre">Autre</SelectItem>
+                      {["Temps plein", "Temps partiel", "Horaire flexible", "Travail posté", "Autre"].map(v => (
+                        <SelectItem key={v} value={v}>{v}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              <div className="p-4 rounded-lg bg-secondary/10 border border-dashed border-primary/20">
+                 <p className="text-[10px] uppercase font-bold text-primary mb-3">Snapshots de la fiche de poste</p>
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <SnapshotList label="Missions" items={formData.jobOfferMissions} />
+                    <SnapshotList label="Savoir-être" items={formData.jobOfferSkills} />
+                    <SnapshotList label="Expérience" items={formData.jobOfferExperience} />
+                    <SnapshotList label="Formation" items={formData.jobOfferTraining} />
+                 </div>
               </div>
             </CardContent>
           </Card>
@@ -372,83 +393,34 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
           <Card className="border-accent/20 overflow-hidden shadow-md">
             <CardHeader className="bg-accent/10 border-b">
               <CardTitle className="text-md font-black flex items-center gap-2 text-accent-foreground">
-                <FileText className="w-5 h-5" /> Contenu de l'Offre d'Emploi
+                <FileText className="w-5 h-5" /> Offre d’emploi
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6 pt-6 bg-accent/5">
               <div className="space-y-2">
-                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Titre de l'annonce</Label>
-                <Input value={formData.jobOfferTitle} onChange={(e) => setFormData(p => ({...p, jobOfferTitle: e.target.value}))} placeholder="Ex: Développeur Senior (H/F)..." />
-              </div>
-              
-              <div className="space-y-2">
-                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Résumé court</Label>
+                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Texte de l'annonce</Label>
                 <Textarea 
-                  value={formData.jobOfferSummary} 
-                  onChange={(e) => setFormData(p => ({...p, jobOfferSummary: e.target.value}))} 
-                  placeholder="Une phrase d'accroche pour la liste des offres..."
-                  className="min-h-[60px]"
+                  value={formData.jobOfferText} 
+                  onChange={(e) => setFormData(p => ({...p, jobOfferText: e.target.value}))} 
+                  placeholder="Décrivez l'offre, le contexte, l'équipe..."
+                  className="min-h-[150px]"
                 />
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Description de l'entreprise</Label>
-                  <Textarea 
-                    value={formData.jobOfferDescription} 
-                    onChange={(e) => setFormData(p => ({...p, jobOfferDescription: e.target.value}))} 
-                    placeholder="Présentez l'entité et le contexte..."
-                    className="min-h-[120px]"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Missions détaillées</Label>
-                  <Textarea 
-                    value={formData.jobOfferMissions} 
-                    onChange={(e) => setFormData(p => ({...p, jobOfferMissions: e.target.value}))} 
-                    placeholder="Quelles seront les activités quotidiennes ?"
-                    className="min-h-[120px]"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Compétences / Soft Skills</Label>
-                  <Textarea 
-                    value={formData.jobOfferSkills} 
-                    onChange={(e) => setFormData(p => ({...p, jobOfferSkills: e.target.value}))} 
-                    placeholder="Profil recherché..."
-                    className="min-h-[100px]"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Expérience & Formation</Label>
-                  <Textarea 
-                    value={formData.jobOfferExperience} 
-                    onChange={(e) => setFormData(p => ({...p, jobOfferExperience: e.target.value}))} 
-                    placeholder="Pré-requis techniques et diplômes..."
-                    className="min-h-[100px]"
-                  />
-                </div>
-              </div>
-
-              <Separator className="bg-accent/20" />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <div className="space-y-2">
                     <Label className="text-[10px] uppercase text-muted-foreground font-bold flex items-center gap-1"><MapPin className="w-3 h-3" /> Localisation précise</Label>
-                    <Input value={formData.jobOfferLocation} onChange={(e) => setFormData(p => ({...p, jobOfferLocation: e.target.value}))} placeholder="Ex: Paris 8e ou Télétravail..." />
+                    <Input value={formData.jobOfferLocation} onChange={(e) => setFormData(p => ({...p, jobOfferLocation: e.target.value}))} placeholder="Ex: 2ème étage..." />
                  </div>
                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase text-muted-foreground font-bold flex items-center gap-1"><Info className="w-3 h-3" /> Fourchette salariale</Label>
-                    <Input value={formData.jobOfferSalaryRange} onChange={(e) => setFormData(p => ({...p, jobOfferSalaryRange: e.target.value}))} placeholder="Ex: 45k - 55k €" />
+                    <Label className="text-[10px] uppercase text-muted-foreground font-bold">Planning / Horaires</Label>
+                    <Input value={formData.jobOfferPlanning} onChange={(e) => setFormData(p => ({...p, jobOfferPlanning: e.target.value}))} placeholder="Ex: Lundi-Vendredi 09:00-17:00" />
                  </div>
               </div>
 
               <div className="space-y-2">
-                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Avantages (Benefits)</Label>
-                <Input value={formData.jobOfferBenefits} onChange={(e) => setFormData(p => ({...p, jobOfferBenefits: e.target.value}))} placeholder="Mutuelle, Tickets resto, Prime..." />
+                <Label className="text-[10px] uppercase text-muted-foreground font-bold">Avantages</Label>
+                <Input value={formData.jobOfferBenefits} onChange={(e) => setFormData(p => ({...p, jobOfferBenefits: e.target.value}))} placeholder="Mutuelle, Tickets resto..." />
               </div>
 
               <div className="space-y-2">
@@ -464,14 +436,11 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
           </Card>
 
           <Card className="border-primary/10">
-            <CardHeader>
-              <CardTitle className="text-sm font-bold">Notes Internes</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-sm font-bold">Notes Internes</CardTitle></CardHeader>
             <CardContent>
               <Textarea 
                 value={formData.notes} 
                 onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} 
-                placeholder="Informations confidentielles sur ce recrutement..."
                 className="min-h-[100px]"
               />
             </CardContent>
@@ -479,5 +448,19 @@ export function RecruitmentNeedForm({ entityId, entityName, requesterName, userI
         </div>
       </div>
     </form>
+  );
+}
+
+function SnapshotList({ label, items }: { label: string, items: string[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <span className="text-[9px] uppercase font-bold text-muted-foreground">{label}</span>
+      <div className="flex flex-wrap gap-1">
+        {items.map((it, i) => (
+          <Badge key={i} variant="outline" className="text-[8px] py-0 h-4 bg-white/50">{it}</Badge>
+        ))}
+      </div>
+    </div>
   );
 }

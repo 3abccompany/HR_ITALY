@@ -1,12 +1,12 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  Briefcase, Plus, Search, Edit, PowerOff, Loader2, 
+  Plus, Search, Edit, PowerOff, Loader2, 
   Calendar, Building2, MapPin, Users,
-  AlertCircle, MoreVertical, Archive, ArrowUpRight
+  AlertCircle, MoreVertical, Archive, ArrowUpRight,
+  Clock, FileText, Briefcase
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,9 +87,9 @@ export default function RecruitmentNeedsPage() {
   const filteredNeeds = useMemo(() => {
     const term = search.toLowerCase();
     return needs?.filter(n => 
-      n.jobOfferTitle?.toLowerCase().includes(term) || 
       n.jobTitleName?.toLowerCase().includes(term) ||
-      n.departmentName?.toLowerCase().includes(term)
+      n.departmentName?.toLowerCase().includes(term) ||
+      n.worksiteName?.toLowerCase().includes(term)
     ) || [];
   }, [needs, search]);
 
@@ -100,7 +100,6 @@ export default function RecruitmentNeedsPage() {
       case 'fulfilled': return <Badge className="bg-green-500 hover:bg-green-600 border-none">Pourvu</Badge>;
       case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Annulé</Badge>;
       case 'archived': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300">Archivé</Badge>;
-      case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200">Brouillon</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
@@ -126,7 +125,7 @@ export default function RecruitmentNeedsPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Besoins RH</h1>
-          <p className="text-muted-foreground text-sm">Ouverture de postes, planification des effectifs et contenu des offres.</p>
+          <p className="text-muted-foreground text-sm">Ouverture de postes, planification et offres d'emploi.</p>
         </div>
         {canCreate && (
           <Button onClick={() => router.push(`/entity/${entityId}/recruitment-needs/new`)} className="gap-2">
@@ -150,11 +149,11 @@ export default function RecruitmentNeedsPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-secondary/20">
-                <TableHead>Poste & Offre</TableHead>
-                <TableHead>Département / Site</TableHead>
-                <TableHead>Objectif</TableHead>
+                <TableHead>Poste & Département</TableHead>
+                <TableHead>Site / Localisation</TableHead>
+                <TableHead>Progression</TableHead>
                 <TableHead>Statut</TableHead>
-                <TableHead>Dates clés</TableHead>
+                <TableHead>Calendrier</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -169,18 +168,16 @@ export default function RecruitmentNeedsPage() {
                   return (
                     <TableRow key={n.needId}>
                       <TableCell>
-                        <div className="font-bold text-primary">{n.jobOfferTitle || n.jobTitleName}</div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase font-mono mt-1">
-                          <FileText className="w-3 h-3" /> Fiche: {n.jobProfileTitle} ({n.jobProfileVersion})
+                        <div className="font-bold text-primary truncate max-w-[200px]">{n.jobTitleName}</div>
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase mt-1">
+                          <Building2 className="w-3 h-3" /> {n.departmentName}
                         </div>
                       </TableCell>
                       <TableCell>
                          <div className="flex items-center gap-1.5 text-sm font-medium">
-                           <Building2 className="w-3.5 h-3.5 text-muted-foreground" /> {n.departmentName}
+                           <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> {n.worksiteName}
                          </div>
-                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
-                           <MapPin className="w-3 h-3" /> {n.worksiteName}
-                         </div>
+                         <div className="text-[9px] text-muted-foreground mt-0.5 truncate max-w-[150px]">{n.jobOfferLocation}</div>
                       </TableCell>
                       <TableCell>
                          <div className="flex items-center justify-between mb-1 text-[10px] font-bold">
@@ -216,9 +213,6 @@ export default function RecruitmentNeedsPage() {
                                 <Edit className="w-4 h-4" /> Modifier
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem className="gap-2">
-                               <ArrowUpRight className="w-4 h-4" /> Voir Offre (Public)
-                            </DropdownMenuItem>
                             {canCancel && !["cancelled", "archived", "fulfilled"].includes(n.status) && (
                                <DropdownMenuItem 
                                  onClick={() => setStatusChange({ id: n.needId, action: 'cancel' })} 
@@ -247,14 +241,13 @@ export default function RecruitmentNeedsPage() {
         </Card>
       </div>
 
-      {/* Confirmation Dialog */}
       <AlertDialog open={!!statusChange} onOpenChange={() => setStatusChange(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmation de l'action</AlertDialogTitle>
             <AlertDialogDescription>
               {statusChange?.action === 'cancel' 
-                ? "Êtes-vous sûr de vouloir annuler ce besoin RH ? L'offre ne sera plus visible."
+                ? "Êtes-vous sûr de vouloir annuler ce besoin RH ? L'offre ne sera plus active."
                 : "Voulez-vous archiver cette demande de recrutement ?"}
             </AlertDialogDescription>
           </AlertDialogHeader>

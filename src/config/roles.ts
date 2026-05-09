@@ -1,4 +1,3 @@
-
 import { RoleScope } from "@/types/role";
 import { MVP_PERMISSIONS } from "./permissions";
 

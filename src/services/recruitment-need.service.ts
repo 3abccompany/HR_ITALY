@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -23,7 +22,7 @@ export async function createRecruitmentNeed(entityId: string, data: Partial<Recr
     ...(data as any),
     needId,
     entityId,
-    status: data.status || "open",
+    status: "open",
     requestedHeadcount,
     fulfilledHeadcount: 0,
     remainingHeadcount: requestedHeadcount,

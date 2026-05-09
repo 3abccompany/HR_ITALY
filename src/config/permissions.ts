@@ -1,4 +1,3 @@
-
 import { PermissionScope } from "@/types/permission";
 
 export interface PermissionDefinition {
