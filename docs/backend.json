@@ -88,225 +88,32 @@
       },
       "required": ["entityId", "type", "status", "nomEntreprise", "raisonSociale"]
     },
-    "Permission": {
-      "title": "Permission",
-      "description": "System permission definition.",
-      "type": "object",
-      "properties": {
-        "code": { "type": "string" },
-        "module": { "type": "string" },
-        "action": { "type": "string" },
-        "label": { "type": "string" },
-        "description": { "type": "string" },
-        "scope": { "type": "string", "enum": ["platform", "entity"] },
-        "status": { "type": "string", "enum": ["active", "inactive"] },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" },
-        "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["code", "module", "action", "label", "scope", "status"]
-    },
-    "Role": {
-      "title": "Role",
-      "description": "Role template defining a set of permissions.",
-      "type": "object",
-      "properties": {
-        "roleId": { "type": "string" },
-        "name": { "type": "string" },
-        "label": { "type": "string" },
-        "description": { "type": "string" },
-        "scope": { "type": "string", "enum": ["platform", "entity"] },
-        "permissions": { "type": "array", "items": { "type": "string" } },
-        "status": { "type": "string", "enum": ["active", "inactive"] },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" },
-        "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["roleId", "name", "label", "scope", "permissions", "status"]
-    },
-    "Person": {
-      "title": "Person",
-      "description": "Core identity for candidates and employees.",
-      "type": "object",
-      "properties": {
-        "personId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "firstName": { "type": "string" },
-        "lastName": { "type": "string" },
-        "displayName": { "type": "string" },
-        "codiceFiscale": { "type": "string", "description": "National identifier (e.g., Italian Codice Fiscale)." },
-        "email": { "type": "string", "format": "email" },
-        "phone": { "type": "string" },
-        "address": { "type": "string" },
-        "city": { "type": "string" },
-        "province": { "type": "string" },
-        "postalCode": { "type": "string" },
-        "currentLifecycleStatus": { "type": "string", "enum": ["person", "candidate", "employee", "former_employee", "archived"] },
-        "currentCandidateId": { "type": "string", "nullable": true },
-        "currentEmployeeId": { "type": "string", "nullable": true },
-        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" },
-        "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["personId", "entityId", "firstName", "lastName", "email", "codiceFiscale", "currentLifecycleStatus", "status"]
-    },
-    "Candidate": {
-      "title": "Candidate",
-      "description": "Recruitment process for a person.",
-      "type": "object",
-      "properties": {
-        "candidateId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "personId": { "type": "string" },
-        "displayName": { "type": "string" },
-        "email": { "type": "string" },
-        "positionApplied": { "type": "string" },
-        "status": { "type": "string" },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" }
-      },
-      "required": ["candidateId", "entityId", "personId", "status"]
-    },
-    "Interview": {
-      "title": "Interview",
-      "description": "Candidate evaluation session.",
-      "type": "object",
-      "properties": {
-        "interviewId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "personId": { "type": "string" },
-        "candidateId": { "type": "string" },
-        "scheduledAt": { "type": "string" },
-        "interviewType": { "type": "string" },
-        "interviewerName": { "type": "string" },
-        "status": { "type": "string" },
-        "decision": { "type": "string" },
-        "score": { "type": "number" },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" }
-      },
-      "required": ["interviewId", "entityId", "personId", "candidateId", "status", "decision"]
-    },
-    "Department": {
-      "title": "Department",
-      "description": "Organizational unit within an entity.",
-      "type": "object",
-      "properties": {
-        "departmentId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "name": { "type": "string" },
-        "code": { "type": "string" },
-        "description": { "type": "string" },
-        "responsibleName": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
-        "notes": { "type": "string" },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" },
-        "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["departmentId", "entityId", "name", "code", "status"]
-    },
-    "JobTitle": {
-      "title": "JobTitle",
-      "description": "Professional title associated with a department.",
-      "type": "object",
-      "properties": {
-        "jobTitleId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "departmentId": { "type": "string" },
-        "departmentName": { "type": "string" },
-        "title": { "type": "string" },
-        "description": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
-        "notes": { "type": "string" },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" },
-        "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["jobTitleId", "entityId", "departmentId", "title", "status"]
-    },
-    "JobProfile": {
-      "title": "JobProfile",
-      "description": "Structured job description and requirements.",
-      "type": "object",
-      "properties": {
-        "jobProfileId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "departmentId": { "type": "string" },
-        "jobTitleId": { "type": "string" },
-        "issueDate": { "type": "string" },
-        "version": { "type": "number" },
-        "versionLabel": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "inactive", "archived"] },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" },
-        "updatedAt": { "type": "object" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["jobProfileId", "entityId", "departmentId", "jobTitleId", "status"]
-    },
-    "JobProfileVersion": {
-      "title": "JobProfileVersion",
-      "description": "Snapshot of a job profile at a specific version.",
-      "type": "object",
-      "properties": {
-        "versionId": { "type": "string" },
-        "jobProfileId": { "type": "string" },
-        "version": { "type": "number" },
-        "versionLabel": { "type": "string" },
-        "snapshot": { "type": "object" },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" }
-      }
-    },
-    "JobProfileCatalogItem": {
-      "title": "JobProfileCatalogItem",
-      "description": "Reusable element for job profiles.",
-      "type": "object",
-      "properties": {
-        "itemId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "type": { "type": "string" },
-        "label": { "type": "string" },
-        "status": { "type": "string" },
-        "usageCount": { "type": "number" }
-      },
-      "required": ["itemId", "entityId", "type", "label", "status"]
-    },
-    "RecruitmentNeed": {
-      "title": "RecruitmentNeed",
-      "description": "A formal request for hiring including headcount and job offer details.",
-      "type": "object",
-      "properties": {
-        "needId": { "type": "string" },
-        "entityId": { "type": "string" },
-        "jobProfileId": { "type": "string" },
-        "requestedHeadcount": { "type": "number" },
-        "fulfilledHeadcount": { "type": "number" },
-        "status": { "type": "string" },
-        "createdAt": { "type": "object" },
-        "createdBy": { "type": "string" }
-      }
-    },
     "ApplicationForm": {
       "title": "ApplicationForm",
-      "description": "Configurable candidate application form linked to a recruitment need.",
+      "description": "Configurable candidate application form.",
       "type": "object",
       "properties": {
         "formId": { "type": "string" },
         "entityId": { "type": "string" },
         "recruitmentNeedId": { "type": "string" },
-        "title": { "type": "string" },
-        "description": { "type": "string" },
+        "publicSlug": { "type": "string" },
         "status": { "type": "string", "enum": ["draft", "published", "closed", "archived"] },
-        "fields": { "type": "array" },
-        "createdAt": { "type": "object" }
+        "fields": { "type": "array" }
+      }
+    },
+    "ApplicationSubmission": {
+      "title": "ApplicationSubmission",
+      "description": "Raw data from a candidate application.",
+      "type": "object",
+      "properties": {
+        "submissionId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "formId": { "type": "string" },
+        "recruitmentNeedId": { "type": "string" },
+        "personId": { "type": "string" },
+        "candidateId": { "type": "string" },
+        "status": { "type": "string" },
+        "submittedAt": { "type": "object" }
       }
     }
   },
@@ -326,53 +133,17 @@
       "schema": { "$ref": "#/entities/Entity" },
       "description": "Entity details."
     },
-    "/permissions/{code}": {
-      "schema": { "$ref": "#/entities/Permission" },
-      "description": "System permissions catalogue."
-    },
-    "/roles/{roleId}": {
-      "schema": { "$ref": "#/entities/Role" },
-      "description": "Role templates catalogue."
-    },
-    "/entities/{entityId}/persons/{personId}": {
-      "schema": { "$ref": "#/entities/Person" },
-      "description": "Persons belonging to an entity."
-    },
-    "/entities/{entityId}/candidates/{candidateId}": {
-      "schema": { "$ref": "#/entities/Candidate" },
-      "description": "Recruitment pipeline records."
-    },
-    "/entities/{entityId}/interviews/{interviewId}": {
-      "schema": { "$ref": "#/entities/Interview" },
-      "description": "Candidate interviews."
-    },
-    "/entities/{entityId}/departments/{departmentId}": {
-      "schema": { "$ref": "#/entities/Department" },
-      "description": "Company departments."
-    },
-    "/entities/{entityId}/jobTitles/{jobTitleId}": {
-      "schema": { "$ref": "#/entities/JobTitle" },
-      "description": "Job titles catalog."
-    },
-    "/entities/{entityId}/jobProfiles/{jobProfileId}": {
-      "schema": { "$ref": "#/entities/JobProfile" },
-      "description": "Formal job descriptions."
-    },
-    "/entities/{entityId}/jobProfiles/{jobProfileId}/versions/{versionId}": {
-      "schema": { "$ref": "#/entities/JobProfileVersion" },
-      "description": "Job profile version snapshots."
-    },
-    "/entities/{entityId}/jobProfileCatalogItems/{itemId}": {
-      "schema": { "$ref": "#/entities/JobProfileCatalogItem" },
-      "description": "Skills and missions database."
-    },
-    "/entities/{entityId}/recruitmentNeeds/{needId}": {
-      "schema": { "$ref": "#/entities/RecruitmentNeed" },
-      "description": "Hiring requests and job offer definitions."
-    },
     "/entities/{entityId}/applicationForms/{formId}": {
       "schema": { "$ref": "#/entities/ApplicationForm" },
       "description": "Candidate application form configurations."
+    },
+    "/entities/{entityId}/applicationSubmissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/ApplicationSubmission" },
+      "description": "Submissions from candidates."
+    },
+    "/entities/{entityId}/applicationSubmissionDedupe/{dedupeKey}": {
+      "schema": { "type": "object" },
+      "description": "Deduplication locks."
     }
   }
 }

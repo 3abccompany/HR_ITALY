@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Plus, Search, Edit, Eye, Archive, 
   Loader2, CheckCircle2, XCircle, Clock, 
-  FileCode, MoreVertical, Globe, Lock
+  FileCode, MoreVertical, Globe, Lock, Copy, ExternalLink
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 
 export default function ApplicationFormsPage() {
@@ -88,6 +89,16 @@ export default function ApplicationFormsPage() {
       setLoading(false);
       setActionPending(null);
     }
+  };
+
+  const copyPublicLink = (slug: string) => {
+    const url = `${window.location.origin}/apply/${slug}`;
+    navigator.clipboard.writeText(url);
+    toast({ title: "Lien copié !", description: "Le lien public est prêt à être partagé." });
+  };
+
+  const openPublicForm = (slug: string) => {
+    window.open(`/apply/${slug}`, '_blank');
   };
 
   const filteredForms = useMemo(() => {
@@ -166,8 +177,13 @@ export default function ApplicationFormsPage() {
                     </TableCell>
                     <TableCell>
                       {f.status === 'published' ? (
-                        <div className="flex items-center gap-1.5 text-[10px] font-mono text-accent">
-                          <Globe className="w-3 h-3" /> /{f.publicSlug}
+                        <div className="flex items-center gap-2">
+                           <div className="flex items-center gap-1.5 text-[10px] font-mono text-accent">
+                            <Globe className="w-3 h-3" /> /{f.publicSlug}
+                          </div>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyPublicLink(f.publicSlug)}>
+                            <Copy className="w-3 h-3" />
+                          </Button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -185,25 +201,40 @@ export default function ApplicationFormsPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/application-forms/${f.formId}/preview`)} className="gap-2">
-                            <Eye className="w-4 h-4" /> Aperçu
+                            <Eye className="w-4 h-4" /> Aperçu HR
                           </DropdownMenuItem>
+                          
+                          {f.status === 'published' && (
+                            <>
+                              <DropdownMenuItem onClick={() => openPublicForm(f.publicSlug)} className="gap-2 text-accent font-bold">
+                                <ExternalLink className="w-4 h-4" /> Ouvrir le formulaire
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => copyPublicLink(f.publicSlug)} className="gap-2">
+                                <Copy className="w-4 h-4" /> Copier le lien public
+                              </DropdownMenuItem>
+                            </>
+                          )}
+
                           {canUpdate && f.status === 'draft' && (
                             <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/application-forms/${f.formId}/edit`)} className="gap-2">
                               <Edit className="w-4 h-4" /> Configurer
                             </DropdownMenuItem>
                           )}
+                          
+                          <DropdownMenuSeparator />
+
                           {canPublish && f.status === 'draft' && (
-                            <DropdownMenuItem onClick={() => setActionPending({ id: f.formId, action: 'publish' })} className="gap-2 text-green-600 font-semibold">
-                              <Globe className="w-4 h-4" /> Publier
+                            <DropdownMenuItem onClick={() => setActionPending({ id: f.formId, action: 'publish' })} className="gap-2 text-green-600 font-bold">
+                              <Globe className="w-4 h-4" /> Publier l'offre
                             </DropdownMenuItem>
                           )}
                           {canUpdate && f.status === 'published' && (
                             <DropdownMenuItem onClick={() => setActionPending({ id: f.formId, action: 'close' })} className="gap-2 text-orange-600">
-                              <XCircle className="w-4 h-4" /> Fermer
+                              <XCircle className="w-4 h-4" /> Fermer l'offre
                             </DropdownMenuItem>
                           )}
                           {canUpdate && f.status !== 'archived' && (
-                            <DropdownMenuItem onClick={() => setActionPending({ id: f.formId, action: 'archive' })} className="gap-2 text-muted-foreground border-t mt-1">
+                            <DropdownMenuItem onClick={() => setActionPending({ id: f.formId, action: 'archive' })} className="gap-2 text-muted-foreground">
                               <Archive className="w-4 h-4" /> Archiver
                             </DropdownMenuItem>
                           )}
@@ -223,7 +254,7 @@ export default function ApplicationFormsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmation de l'action</AlertDialogTitle>
             <AlertDialogDescription>
-              {actionPending?.action === 'publish' && "Êtes-vous sûr de vouloir rendre ce formulaire public ?"}
+              {actionPending?.action === 'publish' && "Êtes-vous sûr de vouloir rendre ce formulaire public ? Un lien public sera généré."}
               {actionPending?.action === 'close' && "La fermeture empêchera toute nouvelle candidature via ce lien."}
               {actionPending?.action === 'archive' && "L'archivage masquera ce formulaire de la liste active."}
             </AlertDialogDescription>

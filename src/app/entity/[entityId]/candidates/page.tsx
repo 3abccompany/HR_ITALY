@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
@@ -5,7 +6,7 @@ import { useParams } from "next/navigation";
 import { 
   Search, UserPlus, Edit, PowerOff, RefreshCcw, 
   Loader2, Mail, Phone, Briefcase, Calendar, 
-  AlertCircle, ShieldCheck, MoreVertical
+  AlertCircle, ShieldCheck, MoreVertical, Globe, User
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,7 +51,7 @@ const initialForm = {
   personId: "",
   positionApplied: "",
   department: "",
-  source: "",
+  source: "manual",
   applicationDate: new Date().toISOString().split('T')[0],
   availabilityDate: "",
   expectedSalary: "",
@@ -115,7 +116,7 @@ export default function CandidatesManagementPage() {
       personId: c.personId,
       positionApplied: c.positionApplied,
       department: c.department || "",
-      source: c.source || "",
+      source: c.source || "manual",
       applicationDate: c.applicationDate || "",
       availabilityDate: c.availabilityDate || "",
       expectedSalary: c.expectedSalary || "",
@@ -198,6 +199,13 @@ export default function CandidatesManagementPage() {
     }
   };
 
+  const getSourceBadge = (source: string) => {
+    if (source === 'public_application_form') {
+      return <Badge variant="outline" className="bg-accent/5 text-accent border-accent/20 gap-1"><Globe className="w-3 h-3" /> Formulaire public</Badge>;
+    }
+    return <Badge variant="outline" className="text-muted-foreground gap-1"><User className="w-3 h-3" /> Manuel</Badge>;
+  };
+
   if (membershipLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -251,7 +259,7 @@ export default function CandidatesManagementPage() {
               <TableRow className="bg-secondary/20">
                 <TableHead>Candidat</TableHead>
                 <TableHead>Poste / Département</TableHead>
-                <TableHead>Date App.</TableHead>
+                <TableHead>Source</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -270,11 +278,6 @@ export default function CandidatesManagementPage() {
                         <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                           <Mail className="w-3 h-3" /> {c.email}
                         </div>
-                        {c.phone && (
-                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <Phone className="w-3 h-3" /> {c.phone}
-                          </div>
-                        )}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -284,9 +287,7 @@ export default function CandidatesManagementPage() {
                       <div className="text-[10px] text-muted-foreground uppercase mt-1">{c.department || "N/A"}</div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Calendar className="w-3.5 h-3.5" /> {c.applicationDate}
-                      </div>
+                      {getSourceBadge(c.source || 'manual')}
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(c.status)}
