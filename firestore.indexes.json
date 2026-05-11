@@ -13,8 +13,9 @@
       "collectionGroup": "applicationForms",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
+        { "fieldPath": "publicSlug", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "publicSlug", "order": "ASCENDING" }
+        { "fieldPath": "__name__", "order": "ASCENDING" }
       ]
     }
   ],
