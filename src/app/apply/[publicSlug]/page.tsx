@@ -45,15 +45,6 @@ export default function PublicApplicationPage() {
 
   const { data: need, loading: loadingNeed } = useDoc<RecruitmentNeed>(needRef as any);
 
-  if (loadingForm || (form && loadingNeed)) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <Loader2 className="w-10 h-10 animate-spin text-primary" />
-        <p className="text-muted-foreground font-medium animate-pulse">Chargement de l'offre...</p>
-      </div>
-    );
-  }
-
   // 3. Validation Rules
   const isAvailable = useMemo(() => {
     if (!form || !need) return false;
@@ -68,6 +59,15 @@ export default function PublicApplicationPage() {
 
     return true;
   }, [form, need]);
+
+  if (loadingForm || (form && loadingNeed)) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
+        <p className="text-muted-foreground font-medium animate-pulse">Chargement de l'offre...</p>
+      </div>
+    );
+  }
 
   if (!form || !isAvailable) {
     return (
