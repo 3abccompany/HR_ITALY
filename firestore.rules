@@ -22,6 +22,12 @@ service cloud.firestore {
         permission in get(/databases/$(database)/documents/memberships/$(membershipId)).data.permissions;
     }
 
+    // --- Public Collection Group Rules ---
+    
+    match /{path=**}/applicationForms/{formId} {
+      allow read: if resource.data.status == 'published';
+    }
+
     // --- Platform Level Rules ---
 
     match /users/{uid} {
@@ -42,12 +48,14 @@ service cloud.firestore {
 
       match /persons/{personId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
-        allow write: if hasPermission(entityId, 'persons.create') || hasPermission(entityId, 'persons.update') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'persons.create') || isPlatformAdmin() || request.resource.data.createdBy == 'public_application';
+        allow update: if hasPermission(entityId, 'persons.update') || isPlatformAdmin() || request.resource.data.updatedBy == 'public_application';
       }
 
       match /candidates/{candidateId} {
         allow read: if hasPermission(entityId, 'candidates.read') || isPlatformAdmin();
-        allow write: if hasPermission(entityId, 'candidates.create') || hasPermission(entityId, 'candidates.update') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'candidates.create') || isPlatformAdmin() || request.resource.data.createdBy == 'public_application';
+        allow update: if hasPermission(entityId, 'candidates.update') || isPlatformAdmin() || request.resource.data.updatedBy == 'public_application';
       }
 
       match /interviews/{interviewId} {
@@ -81,19 +89,29 @@ service cloud.firestore {
       }
 
       match /recruitmentNeeds/{needId} {
-        allow read: if hasPermission(entityId, 'recruitmentNeeds.read') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'recruitmentNeeds.read') || isPlatformAdmin() || (request.auth == null && resource.data.status in ['open', 'partially_fulfilled']);
         allow write: if hasPermission(entityId, 'recruitmentNeeds.create') || hasPermission(entityId, 'recruitmentNeeds.update') || hasPermission(entityId, 'recruitmentNeeds.cancel') || isPlatformAdmin();
       }
 
       match /applicationForms/{formId} {
-        allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin() || (request.auth == null && resource.data.status == 'published');
         allow create: if hasPermission(entityId, 'applicationForms.create') || isPlatformAdmin();
         allow update: if hasPermission(entityId, 'applicationForms.update') || hasPermission(entityId, 'applicationForms.publish') || isPlatformAdmin();
+      }
+
+      match /applicationSubmissions/{submissionId} {
+        allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
+        allow create: if request.resource.data.source == 'public_application_form';
+      }
+
+      match /applicationSubmissionDedupe/{dedupeKey} {
+        allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
+        allow create: if request.resource.data.source == 'public_application_form';
       }
       
       match /personTimeline/{eventId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
-        allow create: if isAuthenticated();
+        allow create: if isAuthenticated() || request.resource.data.createdBy == 'public_application';
       }
     }
 
@@ -111,7 +129,7 @@ service cloud.firestore {
 
     match /auditLogs/{logId} {
       allow read: if isPlatformAdmin();
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated() || request.resource.data.userId == 'public_application';
     }
     
     // --- Standard Debug Collection ---

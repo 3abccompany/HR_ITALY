@@ -1,4 +1,3 @@
-
 'use server';
 
 import { db } from "@/lib/firebase/client";
@@ -28,30 +27,6 @@ const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
 const normalizeNationalId = (id: string) => id.trim().toUpperCase().replace(/\s/g, "");
 
 /**
- * Server Action to handle public application submission.
- * This is executed on the server to prevent direct Firestore write access for unauthenticated users.
- */
-export async function submitApplication(publicSlug: string, answers: Record<string, any>) {
-  if (!db) throw new Error("Firestore not initialized");
-
-  return await runTransaction(db, async (transaction) => {
-    // 1. Resolve Application Form
-    const formsRef = collection(db, "entities"); // We need to search across entities or know the entityId
-    // Since we don't know entityId from publicSlug alone safely without index, 
-    // we use a query on collection group for applicationForms
-    // BUT for simplicity in this milestone, we expect the client to have found the form.
-    // In a real prod app, we'd use a collectionGroup query here.
-    
-    // For now, let's assume we have entityId and formId passed or resolved.
-    // To keep it strictly slug-based:
-    const qForm = query(collection(db, "applicationForms"), where("publicSlug", "==", publicSlug), where("status", "==", "published"), limit(1));
-    // Error: Collection group query needed. I will use the path-based lookup if we can pass context.
-    // Optimization: The client already has the form object to render the fields. 
-    // We will trust the context passed by the client but double check existence.
-  });
-}
-
-/**
  * Transactional Submission Logic
  */
 export async function executeSubmissionTransaction(
@@ -74,8 +49,26 @@ export async function executeSubmissionTransaction(
 
   const dedupeKey = `${form.recruitmentNeedId}_${normNationalId}`;
 
+  // 1. Pre-transaction Lookups (Firestore doesn't allow getDocs inside transactions)
+  // Check for existing person
+  const personsRef = collection(db, `entities/${entityId}/persons`);
+  const qPerson = query(personsRef, where("codiceFiscale", "==", normNationalId), limit(1));
+  const personSnap = await getDocs(qPerson);
+  
+  const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
+
+  // Check for secondary duplicates (same email for same need)
+  const qEmail = query(collection(db, `entities/${entityId}/applicationSubmissions`), 
+    where("recruitmentNeedId", "==", form.recruitmentNeedId),
+    where("normalizedEmail", "==", normEmail),
+    limit(1)
+  );
+  const emailSnap = await getDocs(qEmail);
+  const possibleDuplicate = !emailSnap.empty;
+  const duplicateReason = !emailSnap.empty ? "same_email" : undefined;
+
   return await runTransaction(db, async (transaction) => {
-    // 1. Verify Need Status
+    // 2. Verify Need Status
     const needRef = doc(db, `entities/${entityId}/recruitmentNeeds`, form.recruitmentNeedId);
     const needSnap = await transaction.get(needRef);
     if (!needSnap.exists()) throw new Error("Poste introuvable.");
@@ -86,27 +79,19 @@ export async function executeSubmissionTransaction(
       throw new Error("Cette offre n'est plus disponible.");
     }
 
-    // 2. Check Dedupe Lock
+    // 3. Check Dedupe Lock
     const dedupeRef = doc(db, `entities/${entityId}/applicationSubmissionDedupe`, dedupeKey);
     const dedupeSnap = await transaction.get(dedupeRef);
     if (dedupeSnap.exists()) {
       throw new Error("Vous avez déjà postulé à cette offre.");
     }
 
-    // 3. Resolve Person (Search within entity)
-    const personsRef = collection(db, `entities/${entityId}/persons`);
-    const qPerson = query(personsRef, where("codiceFiscale", "==", normNationalId), limit(1));
-    const personSnap = await getDocs(qPerson); // getDocs inside transaction is tricky but allowed for reads
-    
-    let personId: string;
-    let isNewPerson = false;
+    let personId = existingPersonId;
+    let isNewPerson = !personId;
 
-    if (!personSnap.empty) {
-      personId = personSnap.docs[0].id;
-    } else {
+    if (!personId) {
       const newPersonRef = doc(collection(db, `entities/${entityId}/persons`));
       personId = newPersonRef.id;
-      isNewPerson = true;
     }
 
     const submissionRef = doc(collection(db, `entities/${entityId}/applicationSubmissions`));
@@ -116,17 +101,7 @@ export async function executeSubmissionTransaction(
     const submissionId = submissionRef.id;
     const candidateId = candidateRef.id;
 
-    // 4. Check for Secondary Duplicates (Email/Phone)
-    const qEmail = query(collection(db, `entities/${entityId}/applicationSubmissions`), 
-      where("recruitmentNeedId", "==", form.recruitmentNeedId),
-      where("normalizedEmail", "==", normEmail),
-      limit(1)
-    );
-    const emailSnap = await getDocs(qEmail);
-    const possibleDuplicate = !emailSnap.empty;
-    const duplicateReason = !emailSnap.empty ? "same_email" : undefined;
-
-    // 5. Prepare Data
+    // 4. Prepare Data
     const submissionData: ApplicationSubmission = {
       submissionId,
       entityId,
@@ -150,7 +125,7 @@ export async function executeSubmissionTransaction(
       nationalId,
       normalizedNationalId: normNationalId,
       answers,
-      customAnswers: {}, // Optionally separate custom fields
+      customAnswers: {},
       consentAccepted: true,
       consentAcceptedAt: serverTimestamp(),
       dedupeKey,
@@ -212,23 +187,23 @@ export async function executeSubmissionTransaction(
       createdBy: "public_application",
       updatedAt: serverTimestamp(),
       updatedBy: "public_application",
-      // Metadata fields for future use
       notes: `Postulé via formulaire: ${form.title}`,
     };
 
-    // 6. Execute Writes
+    // 5. Execute Writes
     transaction.set(submissionRef, submissionData);
     transaction.set(dedupeRef, dedupeData);
     transaction.set(candidateRef, candidateData);
     
+    const personDocRef = doc(db, `entities/${entityId}/persons`, personId);
     if (isNewPerson) {
-      transaction.set(doc(db, `entities/${entityId}/persons`, personId), {
+      transaction.set(personDocRef, {
         ...personData,
         createdAt: serverTimestamp(),
         createdBy: "public_application",
       });
     } else {
-      transaction.update(doc(db, `entities/${entityId}/persons`, personId), personData);
+      transaction.update(personDocRef, personData);
     }
 
     transaction.set(timelineRef, {
@@ -246,7 +221,7 @@ export async function executeSubmissionTransaction(
 
     return { submissionId, candidateId, personId };
   }).then(async (result) => {
-    // Async Audit Logs (Safe from transaction failure if reached here)
+    // 6. Async Audit Logs
     await createAuditLog({
       userId: "public_application",
       entityId,
