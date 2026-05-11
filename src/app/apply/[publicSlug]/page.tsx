@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { 
   Building2, MapPin, Briefcase, 
@@ -9,58 +9,45 @@ import {
   Clock, Info
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { useFirebase, useCollection } from "@/firebase";
-import { collection, query, where, limit, doc } from "firebase/firestore";
-import { ApplicationForm } from "@/types/application-form";
-import { RecruitmentNeed } from "@/types/recruitment-need";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { PublicFormRenderer } from "@/components/application-forms/PublicFormRenderer";
-import { useDoc } from "@/firebase";
+import { getPublicFormBySlug } from "@/services/application-form.service";
 
 export default function PublicApplicationPage() {
   const params = useParams();
   const publicSlug = params.publicSlug as string;
-  const { db } = useFirebase();
 
-  // 1. Resolve Application Form by Slug
-  const formsQuery = useMemo(() => {
-    if (!db || !publicSlug) return null;
-    return query(
-      collection(db, "applicationForms"), 
-      where("publicSlug", "==", publicSlug),
-      where("status", "==", "published"),
-      limit(1)
-    );
-  }, [db, publicSlug]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const { data: forms, loading: loadingForm } = useCollection<ApplicationForm>(formsQuery);
-  const form = forms?.[0];
-
-  // 2. Load Recruitment Need details
-  const needRef = useMemo(() => {
-    if (!db || !form) return null;
-    return doc(db, `entities/${form.entityId}/recruitmentNeeds`, form.recruitmentNeedId);
-  }, [db, form]);
-
-  const { data: need, loading: loadingNeed } = useDoc<RecruitmentNeed>(needRef as any);
-
-  // 3. Validation Rules
-  const isAvailable = useMemo(() => {
-    if (!form || !need) return false;
-    const blockedStatuses = ["fulfilled", "cancelled", "archived", "closed"];
-    if (blockedStatuses.includes(need.status)) return false;
-    
-    // Date deadline check
-    if (need.applicationDeadline) {
-      const deadline = new Date(need.applicationDeadline);
-      if (deadline < new Date()) return false;
+  useEffect(() => {
+    async function load() {
+      if (!publicSlug) return;
+      setLoading(true);
+      try {
+        const data = await getPublicFormBySlug(publicSlug);
+        if (!data) {
+          setError("unavailable");
+        } else {
+          setForm(data);
+        }
+      } catch (err) {
+        console.error("Error loading public form:", err);
+        setError("error");
+      } finally {
+        setLoading(false);
+      }
     }
+    load();
+  }, [publicSlug]);
 
-    return true;
-  }, [form, need]);
+  const isAvailable = useMemo(() => {
+    return form && form.status === "published";
+  }, [form]);
 
-  if (loadingForm || (form && loadingNeed)) {
+  if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -69,7 +56,7 @@ export default function PublicApplicationPage() {
     );
   }
 
-  if (!form || !isAvailable) {
+  if (!form || !isAvailable || error) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <Card className="max-w-md w-full shadow-xl border-none text-center p-12">
@@ -113,10 +100,10 @@ export default function PublicApplicationPage() {
 
           {/* Offer Details Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             {need?.jobOfferLocation && <DetailCard icon={MapPin} label="Localisation précise" value={need.jobOfferLocation} />}
-             {need?.jobOfferPlanning && <DetailCard icon={Clock} label="Planning" value={need.jobOfferPlanning} />}
-             {need?.jobOfferBenefits && <DetailCard icon={Info} label="Avantages" value={need.jobOfferBenefits} />}
-             {need?.desiredAvailabilityDate && <DetailCard icon={Calendar} label="Prise de poste" value={new Date(need.desiredAvailabilityDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })} />}
+             {form.jobOfferLocation && <DetailCard icon={MapPin} label="Localisation précise" value={form.jobOfferLocation} />}
+             {form.jobOfferPlanning && <DetailCard icon={Clock} label="Planning" value={form.jobOfferPlanning} />}
+             {form.jobOfferBenefits && <DetailCard icon={Info} label="Avantages" value={form.jobOfferBenefits} />}
+             {form.desiredAvailabilityDate && <DetailCard icon={Calendar} label="Prise de poste" value={new Date(form.desiredAvailabilityDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })} />}
           </div>
         </div>
 

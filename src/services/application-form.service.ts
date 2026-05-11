@@ -6,6 +6,11 @@ import {
   setDoc, 
   updateDoc, 
   getDoc, 
+  getDocs,
+  query,
+  where,
+  limit,
+  collectionGroup,
   serverTimestamp 
 } from "firebase/firestore";
 import { ApplicationForm, ApplicationFormField } from "@/types/application-form";
@@ -178,4 +183,67 @@ export async function archiveApplicationForm(entityId: string, formId: string, a
     resourceType: "applicationForm",
     resourceId: formId,
   });
+}
+
+/**
+ * Server Action to securely retrieve published form details for external candidates.
+ */
+export async function getPublicFormBySlug(slug: string) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  // 1. Find form by slug using collectionGroup
+  const q = query(
+    collectionGroup(db, "applicationForms"),
+    where("publicSlug", "==", slug),
+    where("status", "==", "published"),
+    limit(1)
+  );
+  
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+
+  const formDoc = snap.docs[0];
+  const form = formDoc.data() as ApplicationForm;
+  const entityId = form.entityId;
+
+  // 2. Fetch related Recruitment Need
+  const needRef = doc(db, `entities/${entityId}/recruitmentNeeds`, form.recruitmentNeedId);
+  const needSnap = await getDoc(needRef);
+  
+  if (!needSnap.exists()) return null;
+  const need = needSnap.data() as RecruitmentNeed;
+
+  // 3. Status Validation
+  const blockedStatuses = ["fulfilled", "cancelled", "archived", "closed"];
+  if (blockedStatuses.includes(need.status)) return null;
+
+  // 4. Sanitization (Return only public-safe fields)
+  return {
+    formId: form.formId,
+    entityId: form.entityId,
+    recruitmentNeedId: form.recruitmentNeedId,
+    entityName: form.entityName || need.entityName,
+    title: form.title,
+    description: form.description || need.jobOfferText,
+    departmentName: form.departmentName,
+    worksiteName: form.worksiteName,
+    jobTitleName: form.jobTitleName,
+    jobOfferLocation: need.jobOfferLocation,
+    jobOfferPlanning: need.jobOfferPlanning,
+    jobOfferBenefits: need.jobOfferBenefits,
+    desiredAvailabilityDate: need.desiredAvailabilityDate,
+    fields: form.fields
+      .filter(f => f.enabled !== false)
+      .sort((a, b) => a.order - b.order)
+      .map(f => ({
+        fieldId: f.fieldId,
+        key: f.key,
+        label: f.label,
+        type: f.type,
+        required: f.required,
+        options: f.options || []
+      })),
+    status: form.status,
+    publicSlug: form.publicSlug
+  };
 }
