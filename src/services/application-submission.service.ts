@@ -66,9 +66,7 @@ export async function executeSubmissionTransaction(
   const dedupeKey = `${form.recruitmentNeedId}_${normNationalId}`;
 
   // 1. Pre-transaction Lookups (Server-side)
-  // Note: We perform these queries before the transaction because Firestore transactions 
-  // do not support getDocs (queries) - only getDoc (by reference).
-  
+  // Transactions do not support queries, only getDoc by ID.
   const personsRef = adminDb.collection("entities").doc(entityId).collection("persons");
   const personSnap = await personsRef.where("codiceFiscale", "==", normNationalId).limit(1).get();
   const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
