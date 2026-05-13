@@ -1,77 +1,73 @@
-
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase/admin";
+import { getPublicFormBySlug } from "@/services/application-form.service";
 import { executeSubmissionTransaction } from "@/services/application-submission.service";
 
 /**
- * POST /api/public/applications/submit
- * Public gateway for candidate application submissions.
+ * Secure API endpoint for unauthenticated candidate submissions.
+ * All Firestore writes are handled server-side via Admin SDK.
  */
-export async function POST(request: Request) {
-  console.log("[API/Submit] Starting submission process...");
-  
+export async function POST(req: Request) {
   try {
-    const body = await request.json();
+    const body = await req.json();
     const { publicSlug, answers } = body;
 
+    console.log(`[Submit API] Received submission request for slug: ${publicSlug}`);
+
     if (!publicSlug) {
-      return NextResponse.json({ 
-        error: { message: "Le slug du formulaire est manquant.", code: "MISSING_SLUG" } 
-      }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: { code: "MISSING_SLUG", message: "Slug manquant." } },
+        { status: 400 }
+      );
     }
 
-    if (!answers) {
-      return NextResponse.json({ 
-        error: { message: "Les réponses au formulaire sont manquantes.", code: "MISSING_ANSWERS" } 
-      }, { status: 400 });
+    if (!answers || typeof answers !== 'object') {
+      return NextResponse.json(
+        { success: false, error: { code: "INVALID_DATA", message: "Données de formulaire invalides." } },
+        { status: 400 }
+      );
     }
 
-    console.log(`[API/Submit] Looking up form for slug: ${publicSlug}`);
-
-    // 1. Find form by slug using collectionGroup (Privileged lookup)
-    const formSnap = await adminDb.collectionGroup("applicationForms")
-      .where("publicSlug", "==", publicSlug)
-      .where("status", "==", "published")
-      .limit(1)
-      .get();
-
-    if (formSnap.empty) {
-      console.warn(`[API/Submit] Form not found or not published: ${publicSlug}`);
-      return NextResponse.json({ 
-        error: { message: "Désolé, cette offre n'est plus disponible.", code: "FORM_NOT_AVAILABLE" } 
-      }, { status: 404 });
+    // 1. Securely resolve the form context
+    const form = await getPublicFormBySlug(publicSlug);
+    if (!form) {
+      console.error(`[Submit API] Published form not found or inactive for slug: ${publicSlug}`);
+      return NextResponse.json(
+        { success: false, error: { code: "FORM_NOT_FOUND", message: "Cette offre n'est plus disponible aux candidatures." } },
+        { status: 404 }
+      );
     }
 
-    const formDoc = formSnap.docs[0];
-    const form = formDoc.data();
-    const entityId = form.entityId;
+    console.log(`[Submit API] Form resolved: ${form.formId} (Entity: ${form.entityId})`);
 
-    if (!entityId) {
-      throw new Error("Missing entityId in form configuration");
-    }
+    // 2. Execute the submission transaction (Dedupe + Person + Candidate)
+    const result = await executeSubmissionTransaction(form.entityId, form, answers);
 
-    console.log(`[API/Submit] Found form ${formDoc.id} in entity ${entityId}. Processing transaction...`);
+    console.log(`[Submit API] Submission processed successfully. ID: ${result.submissionId}`);
 
-    // 2. Execute the submission transaction
-    const result = await executeSubmissionTransaction(entityId, form, answers);
-
-    console.log(`[API/Submit] Submission successfully completed: ${result.submissionId}`);
-
-    return NextResponse.json({
-      success: true,
-      data: result
+    return NextResponse.json({ 
+      success: true, 
+      data: {
+        submissionId: result.submissionId,
+        candidateId: result.candidateId
+      }
     });
 
   } catch (error: any) {
-    console.error("[API/Submit] Submission failed with error:", error);
+    console.error("[Submit API] FATAL ERROR:", error);
+
+    // Provide detailed error info in development
+    const isDev = process.env.NODE_ENV === 'development';
     
-    const statusCode = error.message?.includes("déjà postulé") ? 409 : 500;
-    
-    return NextResponse.json({
-      error: {
-        message: error.message || "Une erreur interne est survenue lors de l'envoi de votre candidature.",
-        code: error.code || "SUBMISSION_ERROR"
-      }
-    }, { status: statusCode });
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: { 
+          code: error.code || "SUBMISSION_FAILED", 
+          message: error.message || "Une erreur est survenue lors de l'envoi de votre candidature.",
+          details: isDev ? error.stack : undefined
+        } 
+      },
+      { status: error.status || 500 }
+    );
   }
 }

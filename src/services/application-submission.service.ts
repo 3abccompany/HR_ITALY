@@ -1,4 +1,3 @@
-
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
@@ -47,22 +46,29 @@ export async function executeSubmissionTransaction(
   if (!form?.formId) throw new Error("Missing form context.");
   if (!form?.recruitmentNeedId) throw new Error("Missing recruitment need context.");
 
-  // Normalization
+  // Data extraction and normalization
   const firstName = (answers.firstName || "").toString().trim();
   const lastName = (answers.lastName || "").toString().trim();
   const email = (answers.email || "").toString().trim();
   const phone = (answers.phone || "").toString().trim();
   const nationalId = (answers.nationalId || "").toString().trim();
 
-  if (!nationalId) throw new Error("L'identifiant national est obligatoire pour postuler.");
+  if (!nationalId) {
+    throw new Error("L'identifiant national est obligatoire pour postuler.");
+  }
 
   const normEmail = normalizeEmail(email);
   const normPhone = normalizePhone(phone);
   const normNationalId = normalizeNationalId(nationalId);
 
+  console.log(`[Submission Service] Processing identity: ${firstName} ${lastName} (${normNationalId})`);
+
   const dedupeKey = `${form.recruitmentNeedId}_${normNationalId}`;
 
   // 1. Pre-transaction Lookups (Server-side)
+  // Note: We perform these queries before the transaction because Firestore transactions 
+  // do not support getDocs (queries) - only getDoc (by reference).
+  
   const personsRef = adminDb.collection("entities").doc(entityId).collection("persons");
   const personSnap = await personsRef.where("codiceFiscale", "==", normNationalId).limit(1).get();
   const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
@@ -108,7 +114,7 @@ export async function executeSubmissionTransaction(
     const candidateRef = adminDb.collection("entities").doc(entityId).collection("candidates").doc();
     const timelineRef = adminDb.collection("entities").doc(entityId).collection("personTimeline").doc();
 
-    const submissionId = submissionRef.id;
+    const submissionId = submissionId = submissionRef.id;
     const candidateId = candidateRef.id;
 
     // 4. Prepare Sanitized Data
@@ -196,7 +202,7 @@ export async function executeSubmissionTransaction(
       notes: `Postulé via formulaire: ${form.title}`,
     });
 
-    // 5. Execute Writes
+    // 5. Execute Atomic Writes
     transaction.set(submissionRef, submissionData);
     transaction.set(dedupeRef, dedupeData);
     transaction.set(candidateRef, candidateData);
@@ -225,7 +231,7 @@ export async function executeSubmissionTransaction(
       createdBy: "public_application",
     });
 
-    // 6. Audit Log
+    // 6. Global Audit Log
     const auditRef = adminDb.collection("auditLogs").doc();
     transaction.set(auditRef, {
       userId: "public_application",
