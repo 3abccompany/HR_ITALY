@@ -114,7 +114,7 @@ export async function executeSubmissionTransaction(
     const candidateRef = adminDb.collection("entities").doc(entityId).collection("candidates").doc();
     const timelineRef = adminDb.collection("entities").doc(entityId).collection("personTimeline").doc();
 
-    const submissionId = submissionId = submissionRef.id;
+    const submissionId = submissionRef.id;
     const candidateId = candidateRef.id;
 
     // 4. Prepare Sanitized Data
