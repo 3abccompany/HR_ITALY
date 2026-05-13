@@ -1,3 +1,4 @@
+
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -231,7 +232,7 @@ export async function updateCandidateStatus(params: {
     updateData.acceptedBy = actorUid;
   }
 
-  // Non-blocking update
+  // 1. Update main candidate document (it must exist since we checked with getDoc)
   updateDoc(candidateRef, updateData).catch(async (serverError) => {
     const permissionError = new FirestorePermissionError({
       path: candidateRef.path,
@@ -241,7 +242,30 @@ export async function updateCandidateStatus(params: {
     errorEmitter.emit('permission-error', permissionError);
   });
 
-  // Timeline Event Mapping
+  // 2. Sync Person record (use setDoc merge to be safe against missing docs)
+  const personRef = doc(db, `entities/${entityId}/persons`, personId);
+  const personUpdate = {
+    currentLifecycleStatus: nextStatus === "accepted" || nextStatus === "hired" ? "employee" : "candidate",
+    currentCandidateId: candidateId,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  };
+  setDoc(personRef, personUpdate, { merge: true }).catch(err => {
+    console.warn("Secondary Person sync failed (non-critical):", err);
+  });
+
+  // 3. Update optional candidateView if it exists (using merge for safety)
+  const viewRef = doc(db, `entities/${entityId}/candidateViews`, candidateId);
+  setDoc(viewRef, { 
+    status: nextStatus, 
+    updatedAt: serverTimestamp(), 
+    updatedBy: actorUid 
+  }, { merge: true }).catch(err => {
+    // We don't throw here as views are derived data
+    console.debug("Secondary candidateView sync skipped or failed (non-critical):", err);
+  });
+
+  // 4. Timeline Event Mapping
   const typeMap: Record<string, string> = {
     under_review: "candidate.review_started",
     shortlisted: "candidate.shortlisted",
@@ -285,6 +309,7 @@ export async function updateCandidateStatus(params: {
     });
   }
 
+  // 5. Audit logging
   createAuditLog({
     userId: actorUid,
     entityId,
