@@ -4,8 +4,7 @@ import { useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { 
   Search, UserPlus, Edit, PowerOff, RefreshCcw, 
-  Loader2, Mail, Phone, Briefcase, Calendar, 
-  AlertCircle, ShieldCheck, MoreVertical, Globe, User,
+  Loader2, Mail, Briefcase, AlertCircle, MoreVertical, Globe, User,
   LayoutDashboard, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,7 +22,7 @@ import {
   disableCandidate, 
   reactivateCandidate 
 } from "@/services/candidate.service";
-import { Candidate, CandidateStatus } from "@/types/candidate";
+import { Candidate, CandidateStatus, CANDIDATE_STATUS_LABELS } from "@/types/candidate";
 import { Person } from "@/types/person";
 import { useToast } from "@/hooks/use-toast";
 import { 
@@ -50,6 +49,7 @@ import { CandidateApplicationPanel } from "@/components/candidates/CandidateAppl
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 
 const initialForm = {
   personId: "",
@@ -74,6 +74,7 @@ export default function CandidatesManagementPage() {
 
   // State
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
+  const [statusFilter, setStatusFilter] = useState<CandidateStatus | "all">("all");
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState(initialForm);
@@ -126,7 +127,7 @@ export default function CandidatesManagementPage() {
       applicationDate: c.applicationDate || "",
       availabilityDate: c.availabilityDate || "",
       expectedSalary: c.expectedSalary || "",
-      status: c.status,
+      status: c.status || "new",
       notes: c.notes || ""
     });
     setEditingId(c.candidateId);
@@ -182,26 +183,49 @@ export default function CandidatesManagementPage() {
     }
   };
 
+  // Compound filtering: Search + Status
   const filteredCandidates = useMemo(() => {
     const term = search.toLowerCase();
-    return candidates?.filter(c => 
+    let list = candidates || [];
+
+    // Filter by Status
+    if (statusFilter !== "all") {
+      list = list.filter(c => (c.status || "new") === statusFilter);
+    }
+
+    // Filter by Search Term
+    return list.filter(c => 
       c.displayName.toLowerCase().includes(term) || 
       c.positionApplied.toLowerCase().includes(term) ||
       c.email.toLowerCase().includes(term)
-    ) || [];
-  }, [candidates, search]);
+    );
+  }, [candidates, search, statusFilter]);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
+  // Statistics for counters
+  const stats = useMemo(() => {
+    const counts: Record<string, number> = { all: candidates?.length || 0 };
+    candidates?.forEach(c => {
+      const s = c.status || "new";
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return counts;
+  }, [candidates]);
+
+  const getStatusBadge = (status: string | undefined) => {
+    const s = (status || "new") as CandidateStatus;
+    switch (s) {
       case 'new': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Nouveau</Badge>;
-      case 'screening': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200">Tri / Sélection</Badge>;
-      case 'interview': return <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">Entretien</Badge>;
-      case 'offered': return <Badge variant="secondary" className="bg-cyan-50 text-cyan-700 border-cyan-200">Proposition</Badge>;
-      case 'hired': return <Badge className="bg-green-500 hover:bg-green-600 border-none">Embauché</Badge>;
+      case 'under_review': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200">En revue</Badge>;
+      case 'shortlisted': return <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">Présélectionné</Badge>;
+      case 'interview_to_schedule': return <Badge variant="secondary" className="bg-cyan-50 text-cyan-700 border-cyan-200">À planifier</Badge>;
+      case 'interview_scheduled': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">Planifié</Badge>;
+      case 'interview_completed': return <Badge variant="secondary" className="bg-teal-50 text-teal-700 border-teal-200">Réalisé</Badge>;
+      case 'accepted': return <Badge className="bg-green-600 hover:bg-green-700 border-none">Accepté</Badge>;
       case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Refusé</Badge>;
-      case 'withdrawn': return <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200">Désistement</Badge>;
+      case 'hired': return <Badge className="bg-slate-900 hover:bg-black border-none text-white">Embauché</Badge>;
+      case 'archived': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200">Archivé</Badge>;
       case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300">Inactif</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      default: return <Badge variant="outline">{s}</Badge>;
     }
   };
 
@@ -235,7 +259,7 @@ export default function CandidatesManagementPage() {
   }
 
   return (
-    <div className="p-8 pb-24 h-full flex flex-col gap-8">
+    <div className="p-8 pb-24 h-full flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Candidats</h1>
@@ -247,6 +271,28 @@ export default function CandidatesManagementPage() {
           </Button>
         )}
       </div>
+
+      {/* Filter Bar */}
+      <ScrollArea className="w-full whitespace-nowrap">
+        <div className="flex w-max space-x-2 p-1 bg-secondary/20 rounded-xl">
+           <FilterButton 
+             label="Tous" 
+             count={stats.all} 
+             active={statusFilter === "all"} 
+             onClick={() => setStatusFilter("all")} 
+           />
+           {Object.keys(CANDIDATE_STATUS_LABELS).map((s) => (
+             <FilterButton 
+               key={s}
+               label={CANDIDATE_STATUS_LABELS[s as CandidateStatus]} 
+               count={stats[s] || 0} 
+               active={statusFilter === s} 
+               onClick={() => setStatusFilter(s as CandidateStatus)} 
+             />
+           ))}
+        </div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
 
       <div className="flex flex-col lg:flex-row gap-8 flex-1 min-h-0">
         <div className={cn("flex-1 space-y-4 min-w-0 transition-all", selectedCandidate && "lg:w-2/3")}>
@@ -311,7 +357,7 @@ export default function CandidatesManagementPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleEdit(c)} className="gap-2">
-                                <Edit className="w-4 h-4" /> Modifier
+                                <Edit className="w-4 h-4" /> Modifier les infos
                               </DropdownMenuItem>
                               {c.status !== 'inactive' ? (
                                 <DropdownMenuItem onClick={() => setDisablingId(c.candidateId)} className="gap-2 text-destructive">
@@ -345,7 +391,11 @@ export default function CandidatesManagementPage() {
                    <X className="w-4 h-4" />
                 </Button>
              </div>
-             <CandidateApplicationPanel entityId={entityId} candidate={selectedCandidate} />
+             <CandidateApplicationPanel 
+               entityId={entityId} 
+               candidate={selectedCandidate} 
+               onStatusUpdate={(updated) => setSelectedCandidate(updated)}
+             />
           </div>
         )}
 
@@ -364,7 +414,11 @@ export default function CandidatesManagementPage() {
             <SheetHeader className="mb-4">
               <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs">Revue de candidature</SheetTitle>
             </SheetHeader>
-            <CandidateApplicationPanel entityId={entityId} candidate={selectedCandidate} />
+            <CandidateApplicationPanel 
+               entityId={entityId} 
+               candidate={selectedCandidate} 
+               onStatusUpdate={(updated) => setSelectedCandidate(updated)}
+            />
           </SheetContent>
         </Sheet>
       )}
@@ -424,12 +478,9 @@ export default function CandidatesManagementPage() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="new">Nouveau</SelectItem>
-                    <SelectItem value="screening">Tri / Sélection</SelectItem>
-                    <SelectItem value="interview">Entretien</SelectItem>
-                    <SelectItem value="offered">Proposition</SelectItem>
-                    <SelectItem value="rejected">Refusé</SelectItem>
-                    <SelectItem value="withdrawn">Désistement</SelectItem>
+                    {Object.keys(CANDIDATE_STATUS_LABELS).map(s => (
+                      <SelectItem key={s} value={s}>{CANDIDATE_STATUS_LABELS[s as CandidateStatus]}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -454,7 +505,7 @@ export default function CandidatesManagementPage() {
             <DialogFooter className="pt-4 border-t">
               <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
               <Button type="submit" disabled={loading || (!editingId && !formData.personId)}>
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
                 {editingId ? "Enregistrer les modifications" : "Créer la candidature"}
               </Button>
             </DialogFooter>
@@ -493,5 +544,30 @@ export default function CandidatesManagementPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function FilterButton({ label, count, active, onClick }: { label: string, count: number, active: boolean, onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2",
+        active 
+          ? "bg-white text-primary shadow-sm ring-1 ring-primary/10" 
+          : "text-muted-foreground hover:bg-white/50 hover:text-foreground"
+      )}
+    >
+      {label}
+      <Badge 
+        variant={active ? "default" : "secondary"} 
+        className={cn(
+          "h-4 px-1 min-w-[1.25rem] text-[9px] flex items-center justify-center",
+          active ? "bg-primary text-white" : "bg-muted text-muted-foreground"
+        )}
+      >
+        {count}
+      </Badge>
+    </button>
   );
 }

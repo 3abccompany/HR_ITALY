@@ -2,14 +2,30 @@ import { FieldValue } from "firebase/firestore";
 
 export type CandidateStatus =
   | "new"
-  | "screening"
-  | "interview"
-  | "offered"
-  | "hired"
+  | "under_review"
+  | "shortlisted"
+  | "interview_to_schedule"
+  | "interview_scheduled"
+  | "interview_completed"
+  | "accepted"
   | "rejected"
-  | "withdrawn"
-  | "inactive"
-  | "archived";
+  | "hired"
+  | "archived"
+  | "inactive";
+
+export const CANDIDATE_STATUS_LABELS: Record<CandidateStatus, string> = {
+  new: "Nouveau",
+  under_review: "En revue",
+  shortlisted: "Présélectionné",
+  interview_to_schedule: "Entretien à planifier",
+  interview_scheduled: "Entretien planifié",
+  interview_completed: "Entretien réalisé",
+  accepted: "Accepté",
+  rejected: "Rejeté",
+  hired: "Embauché",
+  archived: "Archivé",
+  inactive: "Inactif",
+};
 
 export interface Candidate {
   candidateId: string;
@@ -27,6 +43,21 @@ export interface Candidate {
   expectedSalary: string;
   status: CandidateStatus;
   previousStatus?: CandidateStatus;
+  
+  // Decision Workflow Fields
+  reviewNotes?: string;
+  rejectionReason?: string;
+  statusUpdatedAt?: Date | FieldValue;
+  statusUpdatedBy?: string;
+  reviewedAt?: Date | FieldValue;
+  reviewedBy?: string;
+  shortlistedAt?: Date | FieldValue;
+  shortlistedBy?: string;
+  rejectedAt?: Date | FieldValue;
+  rejectedBy?: string;
+  acceptedAt?: Date | FieldValue;
+  acceptedBy?: string;
+
   employeeId?: string;
   notes?: string;
   createdAt: Date | FieldValue;

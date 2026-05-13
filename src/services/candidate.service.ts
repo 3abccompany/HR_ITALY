@@ -128,23 +128,23 @@ export async function updateCandidate(
   });
 
   // Handle Person Link consistency for terminal statuses
-  const terminalStatuses: CandidateStatus[] = ["rejected", "withdrawn"];
+  const terminalStatuses: CandidateStatus[] = ["rejected", "archived", "inactive"];
   const personRef = doc(db, `entities/${entityId}/persons`, currentCandidate.personId);
   const personSnap = await getDoc(personRef);
   
   if (personSnap.exists()) {
     const personData = personSnap.data() as Person;
     
-    if (data.status && terminalStatuses.includes(data.status as CandidateStatus)) {
+    if (data.status && (terminalStatuses.includes(data.status as CandidateStatus) || data.status === "hired")) {
        if (personData.currentCandidateId === candidateId) {
          await updateDoc(personRef, {
-           currentLifecycleStatus: "person",
+           currentLifecycleStatus: data.status === "hired" ? "employee" : "person",
            currentCandidateId: null,
            updatedAt: serverTimestamp(),
            updatedBy: actorUid,
          });
        }
-    } else if (data.status && !terminalStatuses.includes(data.status as CandidateStatus) && data.status !== "inactive") {
+    } else if (data.status && !terminalStatuses.includes(data.status as CandidateStatus)) {
        if (!personData.currentCandidateId) {
          await updateDoc(personRef, {
            currentLifecycleStatus: "candidate",
@@ -164,6 +164,112 @@ export async function updateCandidate(
     resourceId: candidateId,
     details: data
   });
+}
+
+/**
+ * Transition candidate through recruitment workflow stages.
+ */
+export async function updateCandidateStatus(params: {
+  entityId: string;
+  candidateId: string;
+  personId: string;
+  nextStatus: CandidateStatus;
+  notes?: string;
+  rejectionReason?: string;
+  actorUid: string;
+}) {
+  const { entityId, candidateId, personId, nextStatus, notes, rejectionReason, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const candidateRef = doc(db, `entities/${entityId}/candidates`, candidateId);
+  const snap = await getDoc(candidateRef);
+  if (!snap.exists()) throw new Error("Candidat introuvable.");
+  const candidate = snap.data() as Candidate;
+
+  if (candidate.personId !== personId) throw new Error("Incohérence d'identité.");
+
+  // Terminal state check
+  if (candidate.status === "hired" && nextStatus !== "hired") {
+    throw new Error("Impossible de modifier le statut d'un candidat déjà embauché.");
+  }
+
+  if (nextStatus === "rejected" && !rejectionReason) {
+    throw new Error("Un motif de rejet est obligatoire.");
+  }
+
+  const updateData: Partial<Candidate> = {
+    status: nextStatus,
+    statusUpdatedAt: serverTimestamp(),
+    statusUpdatedBy: actorUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  };
+
+  if (notes) updateData.reviewNotes = notes;
+  if (rejectionReason) updateData.rejectionReason = rejectionReason;
+
+  // Specific tracking timestamps
+  if (nextStatus === "under_review") {
+    updateData.reviewedAt = serverTimestamp();
+    updateData.reviewedBy = actorUid;
+  } else if (nextStatus === "shortlisted") {
+    updateData.shortlistedAt = serverTimestamp();
+    updateData.shortlistedBy = actorUid;
+  } else if (nextStatus === "rejected") {
+    updateData.rejectedAt = serverTimestamp();
+    updateData.rejectedBy = actorUid;
+  } else if (nextStatus === "accepted") {
+    updateData.acceptedAt = serverTimestamp();
+    updateData.acceptedBy = actorUid;
+  }
+
+  await updateDoc(candidateRef, updateData);
+
+  // Timeline Event Mapping
+  const typeMap: Record<string, string> = {
+    under_review: "candidate.review_started",
+    shortlisted: "candidate.shortlisted",
+    rejected: "candidate.rejected",
+    interview_to_schedule: "candidate.interview_to_schedule",
+    accepted: "candidate.accepted",
+    archived: "candidate.archived"
+  };
+
+  const labelMap: Record<string, string> = {
+    under_review: "Candidature en revue",
+    shortlisted: "Candidat présélectionné",
+    rejected: "Candidature refusée",
+    interview_to_schedule: "Entretien à planifier",
+    accepted: "Candidat accepté",
+    archived: "Candidature archivée"
+  };
+
+  if (typeMap[nextStatus]) {
+    const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+    await updateDoc(timelineRef, {
+      eventId: timelineRef.id,
+      entityId,
+      personId,
+      type: typeMap[nextStatus],
+      label: labelMap[nextStatus],
+      description: rejectionReason ? `Motif du rejet : ${rejectionReason}` : `Statut mis à jour vers : ${nextStatus}`,
+      sourceCollection: "candidates",
+      sourceId: candidateId,
+      createdAt: serverTimestamp(),
+      createdBy: actorUid,
+    });
+  }
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: `candidate.${nextStatus}`,
+    resourceType: "candidate",
+    resourceId: candidateId,
+    details: { nextStatus, rejectionReason }
+  });
+
+  return { success: true };
 }
 
 /**
@@ -218,7 +324,7 @@ export async function reactivateCandidate(entityId: string, candidateId: string,
   if (!snap.exists()) return;
   const cand = snap.data() as Candidate;
 
-  const targetStatus = cand.previousStatus || "screening";
+  const targetStatus = cand.previousStatus || "under_review";
 
   await updateDoc(candidateRef, {
     status: targetStatus,
