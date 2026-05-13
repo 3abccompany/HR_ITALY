@@ -2,16 +2,14 @@
 "use client";
 
 import { useState } from "react";
-import { ApplicationForm, ApplicationFormField } from "@/types/application-form";
+import { ApplicationForm } from "@/types/application-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Loader2, Send, AlertCircle } from "lucide-react";
-import { executeSubmissionTransaction } from "@/services/application-submission.service";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 
@@ -48,7 +46,21 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         }
       }
 
-      await executeSubmissionTransaction(form.entityId, form, answers);
+      const response = await fetch('/api/public/applications/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          publicSlug: form.publicSlug,
+          answers
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Une erreur est survenue.");
+      }
+
       router.push(`/apply/${form.publicSlug}/success`);
     } catch (err: any) {
       console.error("Submission error:", err);
@@ -139,14 +151,6 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
                   <div className="p-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/30 flex flex-col items-center justify-center gap-2">
                      <p className="text-sm font-bold text-slate-500">Dépôt de fichier bientôt disponible</p>
                      <p className="text-[10px] text-muted-foreground uppercase">Prochaine version du Studio</p>
-                     {/* Temporary placeholder to not block submission if required */}
-                     <Input 
-                       type="text" 
-                       placeholder="[Simulé] Tapez 'OK' pour confirmer la possession du document" 
-                       className="mt-2"
-                       value={answers[field.key] || ""}
-                       onChange={(e) => handleInputChange(field.key, e.target.value)}
-                     />
                   </div>
                 ) : (
                   <Input 

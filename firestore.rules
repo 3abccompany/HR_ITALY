@@ -48,14 +48,14 @@ service cloud.firestore {
 
       match /persons/{personId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
-        allow create: if hasPermission(entityId, 'persons.create') || isPlatformAdmin() || request.resource.data.createdBy == 'public_application';
-        allow update: if hasPermission(entityId, 'persons.update') || isPlatformAdmin() || request.resource.data.updatedBy == 'public_application';
+        // Public writes handled by API route
+        allow write: if isPlatformAdmin();
       }
 
       match /candidates/{candidateId} {
         allow read: if hasPermission(entityId, 'candidates.read') || isPlatformAdmin();
-        allow create: if hasPermission(entityId, 'candidates.create') || isPlatformAdmin() || request.resource.data.createdBy == 'public_application';
-        allow update: if hasPermission(entityId, 'candidates.update') || isPlatformAdmin() || request.resource.data.updatedBy == 'public_application';
+        // Public writes handled by API route
+        allow write: if isPlatformAdmin();
       }
 
       match /interviews/{interviewId} {
@@ -101,17 +101,20 @@ service cloud.firestore {
 
       match /applicationSubmissions/{submissionId} {
         allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
-        allow create: if request.resource.data.source == 'public_application_form';
+        // Public writes handled by API route
+        allow write: if isPlatformAdmin();
       }
 
       match /applicationSubmissionDedupe/{dedupeKey} {
         allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
-        allow create: if request.resource.data.source == 'public_application_form';
+        // Public writes handled by API route
+        allow write: if isPlatformAdmin();
       }
       
       match /personTimeline/{eventId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
-        allow create: if isAuthenticated() || request.resource.data.createdBy == 'public_application';
+        // Public writes handled by API route
+        allow write: if isPlatformAdmin();
       }
     }
 
@@ -129,7 +132,8 @@ service cloud.firestore {
 
     match /auditLogs/{logId} {
       allow read: if isPlatformAdmin();
-      allow create: if isAuthenticated() || request.resource.data.userId == 'public_application';
+      // Public writes handled by API route
+      allow create: if isAuthenticated();
     }
     
     // --- Standard Debug Collection ---
