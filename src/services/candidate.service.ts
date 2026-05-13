@@ -6,13 +6,13 @@ import {
   serverTimestamp, 
   updateDoc,
   getDoc,
-  getDocs,
-  query,
-  where
+  setDoc
 } from "firebase/firestore";
 import { Candidate, CandidateStatus } from "@/types/candidate";
 import { Person } from "@/types/person";
 import { createAuditLog } from "./audit.service";
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
 /**
  * Creates a candidate linked to a person using a transaction.
@@ -88,7 +88,7 @@ export async function createCandidate(
 
     return candidateId;
   }).then(async (id) => {
-    await createAuditLog({
+    createAuditLog({
       userId: actorUid,
       entityId,
       action: "candidate.created",
@@ -121,42 +121,50 @@ export async function updateCandidate(
     throw new Error("Le statut 'Hired' est réservé au processus d'embauche.");
   }
 
-  await updateDoc(candidateRef, {
+  updateDoc(candidateRef, {
     ...data,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
+  }).catch(async (serverError) => {
+    const permissionError = new FirestorePermissionError({
+      path: candidateRef.path,
+      operation: 'update',
+      requestResourceData: data,
+    } satisfies SecurityRuleContext);
+    errorEmitter.emit('permission-error', permissionError);
   });
 
   // Handle Person Link consistency for terminal statuses
   const terminalStatuses: CandidateStatus[] = ["rejected", "archived", "inactive"];
   const personRef = doc(db, `entities/${entityId}/persons`, currentCandidate.personId);
-  const personSnap = await getDoc(personRef);
   
-  if (personSnap.exists()) {
-    const personData = personSnap.data() as Person;
-    
-    if (data.status && (terminalStatuses.includes(data.status as CandidateStatus) || data.status === "hired")) {
-       if (personData.currentCandidateId === candidateId) {
-         await updateDoc(personRef, {
-           currentLifecycleStatus: data.status === "hired" ? "employee" : "person",
-           currentCandidateId: null,
-           updatedAt: serverTimestamp(),
-           updatedBy: actorUid,
-         });
-       }
-    } else if (data.status && !terminalStatuses.includes(data.status as CandidateStatus)) {
-       if (!personData.currentCandidateId) {
-         await updateDoc(personRef, {
-           currentLifecycleStatus: "candidate",
-           currentCandidateId: candidateId,
-           updatedAt: serverTimestamp(),
-           updatedBy: actorUid,
-         });
-       }
+  getDoc(personRef).then(async (personSnap) => {
+    if (personSnap.exists()) {
+      const personData = personSnap.data() as Person;
+      
+      if (data.status && (terminalStatuses.includes(data.status as CandidateStatus) || data.status === "hired")) {
+         if (personData.currentCandidateId === candidateId) {
+           updateDoc(personRef, {
+             currentLifecycleStatus: data.status === "hired" ? "employee" : "person",
+             currentCandidateId: null,
+             updatedAt: serverTimestamp(),
+             updatedBy: actorUid,
+           });
+         }
+      } else if (data.status && !terminalStatuses.includes(data.status as CandidateStatus)) {
+         if (!personData.currentCandidateId) {
+           updateDoc(personRef, {
+             currentLifecycleStatus: "candidate",
+             currentCandidateId: candidateId,
+             updatedAt: serverTimestamp(),
+             updatedBy: actorUid,
+           });
+         }
+      }
     }
-  }
+  });
 
-  await createAuditLog({
+  createAuditLog({
     userId: actorUid,
     entityId,
     action: "candidate.updated",
@@ -223,7 +231,15 @@ export async function updateCandidateStatus(params: {
     updateData.acceptedBy = actorUid;
   }
 
-  await updateDoc(candidateRef, updateData);
+  // Non-blocking update
+  updateDoc(candidateRef, updateData).catch(async (serverError) => {
+    const permissionError = new FirestorePermissionError({
+      path: candidateRef.path,
+      operation: 'update',
+      requestResourceData: updateData,
+    } satisfies SecurityRuleContext);
+    errorEmitter.emit('permission-error', permissionError);
+  });
 
   // Timeline Event Mapping
   const typeMap: Record<string, string> = {
@@ -246,7 +262,7 @@ export async function updateCandidateStatus(params: {
 
   if (typeMap[nextStatus]) {
     const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-    await updateDoc(timelineRef, {
+    const timelineData = {
       eventId: timelineRef.id,
       entityId,
       personId,
@@ -257,10 +273,19 @@ export async function updateCandidateStatus(params: {
       sourceId: candidateId,
       createdAt: serverTimestamp(),
       createdBy: actorUid,
+    };
+    
+    setDoc(timelineRef, timelineData).catch(async (err) => {
+      const permissionError = new FirestorePermissionError({
+        path: timelineRef.path,
+        operation: 'create',
+        requestResourceData: timelineData,
+      } satisfies SecurityRuleContext);
+      errorEmitter.emit('permission-error', permissionError);
     });
   }
 
-  await createAuditLog({
+  createAuditLog({
     userId: actorUid,
     entityId,
     action: `candidate.${nextStatus}`,
@@ -283,7 +308,7 @@ export async function disableCandidate(entityId: string, candidateId: string, ac
   if (!snap.exists()) return;
   const cand = snap.data() as Candidate;
 
-  await updateDoc(candidateRef, {
+  updateDoc(candidateRef, {
     status: "inactive",
     previousStatus: cand.status,
     disabledAt: serverTimestamp(),
@@ -294,17 +319,18 @@ export async function disableCandidate(entityId: string, candidateId: string, ac
 
   // Clear Person link
   const personRef = doc(db, `entities/${entityId}/persons`, cand.personId);
-  const pSnap = await getDoc(personRef);
-  if (pSnap.exists() && pSnap.data().currentCandidateId === candidateId) {
-    await updateDoc(personRef, {
-      currentLifecycleStatus: "person",
-      currentCandidateId: null,
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid,
-    });
-  }
+  getDoc(personRef).then(async (pSnap) => {
+    if (pSnap.exists() && pSnap.data().currentCandidateId === candidateId) {
+      updateDoc(personRef, {
+        currentLifecycleStatus: "person",
+        currentCandidateId: null,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      });
+    }
+  });
 
-  await createAuditLog({
+  createAuditLog({
     userId: actorUid,
     entityId,
     action: "candidate.disabled",
@@ -326,7 +352,7 @@ export async function reactivateCandidate(entityId: string, candidateId: string,
 
   const targetStatus = cand.previousStatus || "under_review";
 
-  await updateDoc(candidateRef, {
+  updateDoc(candidateRef, {
     status: targetStatus,
     reactivatedAt: serverTimestamp(),
     reactivatedBy: actorUid,
@@ -336,17 +362,18 @@ export async function reactivateCandidate(entityId: string, candidateId: string,
 
   // Restore Person link if eligible
   const personRef = doc(db, `entities/${entityId}/persons`, cand.personId);
-  const pSnap = await getDoc(personRef);
-  if (pSnap.exists() && !pSnap.data().currentCandidateId) {
-    await updateDoc(personRef, {
-      currentLifecycleStatus: "candidate",
-      currentCandidateId: candidateId,
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid,
-    });
-  }
+  getDoc(personRef).then(async (pSnap) => {
+    if (pSnap.exists() && !pSnap.data().currentCandidateId) {
+      updateDoc(personRef, {
+        currentLifecycleStatus: "candidate",
+        currentCandidateId: candidateId,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      });
+    }
+  });
 
-  await createAuditLog({
+  createAuditLog({
     userId: actorUid,
     entityId,
     action: "candidate.reactivated",

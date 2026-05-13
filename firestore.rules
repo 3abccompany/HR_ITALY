@@ -48,14 +48,12 @@ service cloud.firestore {
 
       match /persons/{personId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
-        // Public writes handled by API route
-        allow write: if isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'persons.create') || hasPermission(entityId, 'persons.update') || isPlatformAdmin();
       }
 
       match /candidates/{candidateId} {
         allow read: if hasPermission(entityId, 'candidates.read') || isPlatformAdmin();
-        // Public writes handled by API route
-        allow write: if isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'candidates.create') || hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'candidates.decide') || isPlatformAdmin();
       }
 
       match /interviews/{interviewId} {
@@ -113,8 +111,7 @@ service cloud.firestore {
       
       match /personTimeline/{eventId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
-        // Public writes handled by API route
-        allow write: if isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'candidates.decide') || hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'persons.update') || isPlatformAdmin();
       }
     }
 
