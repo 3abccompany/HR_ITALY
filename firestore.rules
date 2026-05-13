@@ -100,13 +100,13 @@ service cloud.firestore {
       }
 
       match /applicationSubmissions/{submissionId} {
-        allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'applicationSubmissions.read') || isPlatformAdmin();
         // Public writes handled by API route
         allow write: if isPlatformAdmin();
       }
 
       match /applicationSubmissionDedupe/{dedupeKey} {
-        allow read: if hasPermission(entityId, 'applicationForms.read') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'applicationSubmissions.read') || isPlatformAdmin();
         // Public writes handled by API route
         allow write: if isPlatformAdmin();
       }

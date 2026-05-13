@@ -15,6 +15,7 @@ export interface Candidate {
   candidateId: string;
   entityId: string;
   personId: string;
+  applicationSubmissionId?: string; // Link to the original form submission if source is public_application_form
   displayName: string;
   email: string;
   phone: string;

@@ -66,7 +66,6 @@ export async function executeSubmissionTransaction(
   const dedupeKey = `${form.recruitmentNeedId}_${normNationalId}`;
 
   // 1. Pre-transaction Lookups (Server-side)
-  // Transactions do not support queries, only getDoc by ID.
   const personsRef = adminDb.collection("entities").doc(entityId).collection("persons");
   const personSnap = await personsRef.where("codiceFiscale", "==", normNationalId).limit(1).get();
   const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
@@ -185,6 +184,7 @@ export async function executeSubmissionTransaction(
       candidateId,
       entityId,
       personId,
+      applicationSubmissionId: submissionId, // CRITICAL LINK for Review Panel
       displayName: `${firstName} ${lastName}`,
       email: normEmail,
       phone: normPhone,

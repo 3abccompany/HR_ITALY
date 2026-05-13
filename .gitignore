@@ -43,3 +43,7 @@ next-env.d.ts
 # firebase
 firebase-debug.log
 firestore-debug.log
+# Firebase Admin secrets
+.env.local
+.env*.local
+firebase-adminsdk.json

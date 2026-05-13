@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -6,7 +5,8 @@ import { useParams } from "next/navigation";
 import { 
   Search, UserPlus, Edit, PowerOff, RefreshCcw, 
   Loader2, Mail, Phone, Briefcase, Calendar, 
-  AlertCircle, ShieldCheck, MoreVertical, Globe, User
+  AlertCircle, ShieldCheck, MoreVertical, Globe, User,
+  LayoutDashboard, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +46,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CandidateApplicationPanel } from "@/components/candidates/CandidateApplicationPanel";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 const initialForm = {
   personId: "",
@@ -62,12 +66,14 @@ const initialForm = {
 export default function CandidatesManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
+  const isMobile = useIsMobile();
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
 
   // State
+  const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState(initialForm);
@@ -229,99 +235,139 @@ export default function CandidatesManagementPage() {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto pb-24">
-      <div className="flex items-center justify-between mb-8">
+    <div className="p-8 pb-24 h-full flex flex-col gap-8">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Candidats</h1>
           <p className="text-muted-foreground text-sm">Suivi du pipeline de recrutement par entité.</p>
         </div>
         {canCreate && (
-          <Button onClick={() => setIsFormVisible(true)} className="gap-2">
+          <Button onClick={() => setIsFormVisible(true)} className="gap-2 shadow-lg shadow-primary/10">
             <UserPlus className="w-4 h-4" /> Nouvelle candidature
           </Button>
         )}
       </div>
 
-      <div className="space-y-4">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input 
-            className="pl-10" 
-            placeholder="Rechercher par nom, poste ou email..." 
-            value={search} 
-            onChange={(e) => setSearch(e.target.value)} 
-          />
+      <div className="flex flex-col lg:flex-row gap-8 flex-1 min-h-0">
+        <div className={cn("flex-1 space-y-4 min-w-0 transition-all", selectedCandidate && "lg:w-2/3")}>
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input 
+              className="pl-10" 
+              placeholder="Rechercher par nom, poste ou email..." 
+              value={search} 
+              onChange={(e) => setSearch(e.target.value)} 
+            />
+          </div>
+
+          <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-secondary/20">
+                  <TableHead>Candidat</TableHead>
+                  <TableHead className="hidden md:table-cell">Poste / Département</TableHead>
+                  <TableHead className="hidden sm:table-cell">Statut</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingCandidates ? (
+                  <TableRow><TableCell colSpan={4} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                ) : filteredCandidates.length === 0 ? (
+                  <TableRow><TableCell colSpan={4} className="text-center py-12 text-muted-foreground">Aucun candidat trouvé.</TableCell></TableRow>
+                ) : (
+                  filteredCandidates.map((c) => (
+                    <TableRow 
+                      key={c.candidateId} 
+                      onClick={() => setSelectedCandidate(c)}
+                      className={cn(
+                        "cursor-pointer transition-colors", 
+                        selectedCandidate?.candidateId === c.candidateId ? "bg-primary/5 hover:bg-primary/5" : "hover:bg-muted/50"
+                      )}
+                    >
+                      <TableCell>
+                        <div className="font-bold text-primary">{c.displayName}</div>
+                        <div className="flex flex-col gap-0.5 mt-1">
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <Mail className="w-3 h-3" /> {c.email}
+                          </div>
+                          <div className="mt-1">{getSourceBadge(c.source || 'manual')}</div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <div className="flex items-center gap-1.5 font-medium text-sm">
+                          <Briefcase className="w-3.5 h-3.5 text-muted-foreground" /> {c.positionApplied}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground uppercase mt-1">{c.department || "N/A"}</div>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        {getStatusBadge(c.status)}
+                      </TableCell>
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        {canUpdate && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleEdit(c)} className="gap-2">
+                                <Edit className="w-4 h-4" /> Modifier
+                              </DropdownMenuItem>
+                              {c.status !== 'inactive' ? (
+                                <DropdownMenuItem onClick={() => setDisablingId(c.candidateId)} className="gap-2 text-destructive">
+                                  <PowerOff className="w-4 h-4" /> Désactiver
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onClick={() => setReactivatingId(c.candidateId)} className="gap-2 text-green-600">
+                                  <RefreshCcw className="w-4 h-4" /> Réactiver
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </Card>
         </div>
 
-        <Card className="overflow-hidden border-primary/10">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/20">
-                <TableHead>Candidat</TableHead>
-                <TableHead>Poste / Département</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Statut</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loadingCandidates ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-              ) : filteredCandidates.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground">Aucun candidat trouvé.</TableCell></TableRow>
-              ) : (
-                filteredCandidates.map((c) => (
-                  <TableRow key={c.candidateId}>
-                    <TableCell>
-                      <div className="font-bold text-primary">{c.displayName}</div>
-                      <div className="flex flex-col gap-0.5 mt-1">
-                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <Mail className="w-3 h-3" /> {c.email}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5 font-medium text-sm">
-                        <Briefcase className="w-3.5 h-3.5 text-muted-foreground" /> {c.positionApplied}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground uppercase mt-1">{c.department || "N/A"}</div>
-                    </TableCell>
-                    <TableCell>
-                      {getSourceBadge(c.source || 'manual')}
-                    </TableCell>
-                    <TableCell>
-                      {getStatusBadge(c.status)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canUpdate && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handleEdit(c)} className="gap-2">
-                              <Edit className="w-4 h-4" /> Modifier
-                            </DropdownMenuItem>
-                            {c.status !== 'inactive' ? (
-                              <DropdownMenuItem onClick={() => setDisablingId(c.candidateId)} className="gap-2 text-destructive">
-                                <PowerOff className="w-4 h-4" /> Désactiver
-                              </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem onClick={() => setReactivatingId(c.candidateId)} className="gap-2 text-green-600">
-                                <RefreshCcw className="w-4 h-4" /> Réactiver
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </Card>
+        {/* Detail Panel - Desktop */}
+        {!isMobile && selectedCandidate && (
+          <div className="w-1/3 min-w-[400px] sticky top-24 self-start max-h-[calc(100vh-200px)] overflow-hidden">
+             <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-black uppercase text-primary tracking-widest flex items-center gap-2">
+                   <LayoutDashboard className="w-4 h-4" /> Revue de candidature
+                </h3>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedCandidate(null)}>
+                   <X className="w-4 h-4" />
+                </Button>
+             </div>
+             <CandidateApplicationPanel entityId={entityId} candidate={selectedCandidate} />
+          </div>
+        )}
+
+        {!isMobile && !selectedCandidate && (
+          <div className="w-1/3 hidden lg:flex flex-col items-center justify-center border-2 border-dashed rounded-3xl bg-secondary/5 h-[400px] text-center p-8">
+             <Search className="w-12 h-12 text-muted-foreground/20 mb-4" />
+             <p className="text-sm text-muted-foreground font-medium">Sélectionnez un candidat pour consulter sa candidature.</p>
+          </div>
+        )}
       </div>
+
+      {/* Detail Panel - Mobile Sheet */}
+      {isMobile && (
+        <Sheet open={!!selectedCandidate} onOpenChange={(open) => !open && setSelectedCandidate(null)}>
+          <SheetContent side="bottom" className="h-[90vh] px-6">
+            <SheetHeader className="mb-4">
+              <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs">Revue de candidature</SheetTitle>
+            </SheetHeader>
+            <CandidateApplicationPanel entityId={entityId} candidate={selectedCandidate} />
+          </SheetContent>
+        </Sheet>
+      )}
 
       {/* Create / Edit Dialog */}
       <Dialog open={isFormVisible} onOpenChange={(open) => !open && handleReset()}>

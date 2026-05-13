@@ -1,4 +1,3 @@
-
 import { RoleScope } from "@/types/role";
 import { MVP_PERMISSIONS } from "./permissions";
 
@@ -40,7 +39,7 @@ export const MVP_ROLES: RoleDefinition[] = [
       const hrModules = [
         "dashboard", "persons", "candidates", "interviews", 
         "departments", "jobTitles", "jobProfiles", "jobProfileCatalog",
-        "recruitmentNeeds", "applicationForms", "employees", "contracts", "documents", 
+        "recruitmentNeeds", "applicationForms", "applicationSubmissions", "employees", "contracts", "documents", 
         "attendances", "leaveRequests", "reports"
       ];
       return MVP_PERMISSIONS
@@ -86,7 +85,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     scope: "entity",
     getPermissions: () => 
       MVP_PERMISSIONS
-        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms"))
+        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions"))
         .filter(p => p.action === "read")
         .map(p => p.code)
   }

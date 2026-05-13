@@ -1,4 +1,3 @@
-
 import { PermissionScope } from "@/types/permission";
 
 export interface PermissionDefinition {
@@ -65,6 +64,7 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "applicationForms.create", module: "applicationForms", action: "create", label: "Créer un formulaire", description: "Ajouter un nouveau formulaire.", scope: "entity" },
   { code: "applicationForms.update", module: "applicationForms", action: "update", label: "Gérer les formulaires", description: "Modifier, fermer ou archiver des formulaires.", scope: "entity" },
   { code: "applicationForms.publish", module: "applicationForms", action: "publish", label: "Publier un formulaire", description: "Rendre un formulaire public.", scope: "entity" },
+  { code: "applicationSubmissions.read", module: "applicationSubmissions", action: "read", label: "Consulter les candidatures reçues", description: "Accès aux réponses détaillées des formulaires.", scope: "entity" },
   { code: "employees.read", module: "employees", action: "read", label: "Voir les employés", description: "Accès à la liste du personnel actif.", scope: "entity" },
   { code: "employees.create", module: "employees", action: "create", label: "Créer un employé", description: "Embauche directe ou conversion de candidat.", scope: "entity" },
   { code: "employees.update", module: "employees", action: "update", label: "Modifier un employé", description: "Mise à jour des données contractuelles/RH.", scope: "entity" },
