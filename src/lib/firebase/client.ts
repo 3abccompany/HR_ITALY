@@ -1,5 +1,3 @@
-'use client';
-
 import { initializeFirebase } from '@/firebase';
 
 const { auth, db, storage } = initializeFirebase();

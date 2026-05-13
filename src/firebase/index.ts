@@ -1,5 +1,3 @@
-'use client';
-
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
@@ -34,7 +32,10 @@ export function initializeFirebase() {
       console.error("Firebase initialization failed:", error);
     }
   } else {
-    console.warn("Firebase configuration is incomplete. Missing:", exactMissing.join(', '));
+    // Only warn on server if it's really missing, standard for Next.js build/runtime
+    if (typeof window !== 'undefined') {
+      console.warn("Firebase configuration is incomplete. Missing:", exactMissing.join(', '));
+    }
   }
 
   return { 
