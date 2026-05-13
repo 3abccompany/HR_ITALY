@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { 
   Loader2, User, Mail, ClipboardList, CheckCircle2, FileX,
   AlertTriangle, Briefcase, Building2, MapPin, 
-  ArrowRight, XCircle, UserCheck, Clock, MessageSquare, AlertCircle
+  ArrowRight, XCircle, UserCheck, Clock, MessageSquare, AlertCircle,
+  Calendar, Phone, Fingerprint, Info, ChevronDown
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +29,12 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 interface CandidateApplicationPanelProps {
   entityId: string;
@@ -43,17 +50,18 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
   const [loadingAction, setLoadingAction] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [isOtherOpen, setIsOtherOpen] = useState(false);
 
   const submissionRef = useMemo(() => {
     if (!db || !entityId || !candidate?.applicationSubmissionId) return null;
     return doc(db, `entities/${entityId}/applicationSubmissions`, candidate.applicationSubmissionId) as DocumentReference<ApplicationSubmission>;
   }, [db, entityId, candidate]);
 
-  const { data: submission, loading, error } = useDoc<ApplicationSubmission>(submissionRef);
+  const { data: submission, loading: loadingSubmission } = useDoc<ApplicationSubmission>(submissionRef);
 
   if (!candidate) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center p-8 bg-secondary/5 rounded-xl border-dashed border-2">
+      <div className="flex flex-col items-center justify-center h-full text-center p-8 bg-secondary/5 rounded-3xl border-dashed border-2">
         <User className="w-12 h-12 text-muted-foreground/20 mb-4" />
         <h3 className="font-bold text-primary">Aucun candidat sélectionné</h3>
         <p className="text-sm text-muted-foreground max-w-[200px] mt-1">Sélectionnez un profil pour consulter le détail de sa candidature.</p>
@@ -88,299 +96,326 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
     }
   };
 
-  const renderDecisionActions = () => {
-    const s = candidate.status || "new";
+  // Logic to find custom questions (fields not explicitly mapped to UI sections)
+  const mappedKeys = [
+    'firstName', 'lastName', 'email', 'phone', 'nationalId', 'birthDate', 
+    'address', 'city', 'province', 'country', 'availability', 'availableFrom', 
+    'experienceYears', 'educationLevel', 'currentPosition', 'motivationMessage', 
+    'cv', 'coverLetter', 'consent'
+  ];
 
-    if (s === "hired") {
-      return (
-        <div className="bg-green-50 border border-green-200 p-4 rounded-xl flex items-center gap-3">
-          <UserCheck className="w-5 h-5 text-green-600" />
-          <p className="text-xs font-bold text-green-800 uppercase tracking-tight">Candidat déjà embauché</p>
-        </div>
-      );
-    }
-
-    if (s === "rejected") {
-      return (
-        <div className="bg-red-50 border border-red-200 p-4 rounded-xl space-y-2">
-          <div className="flex items-center gap-2 text-red-800">
-            <XCircle className="w-4 h-4" />
-            <p className="text-xs font-bold uppercase">Candidature refusée</p>
-          </div>
-          {candidate.rejectionReason && (
-            <p className="text-xs text-red-700 italic border-l-2 border-red-200 pl-3 py-1">
-              "{candidate.rejectionReason}"
-            </p>
-          )}
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="w-full text-[10px] h-7 mt-2" 
-            onClick={() => handleStatusChange("under_review")}
-            disabled={loadingAction}
-          >
-            Ré-ouvrir le dossier
-          </Button>
-        </div>
-      );
-    }
-
-    if (s === "accepted") {
-      return (
-        <div className="bg-accent/10 border border-accent/20 p-4 rounded-xl space-y-3">
-           <div className="flex items-center gap-2 text-accent">
-             <CheckCircle2 className="w-5 h-5" />
-             <p className="text-xs font-black uppercase tracking-tight">Candidat Accepté</p>
-           </div>
-           <p className="text-[10px] text-muted-foreground leading-relaxed">
-             La validation finale a été prononcée. La conversion en employé se fera dans une étape ultérieure du processus Studio.
-           </p>
-           <Button variant="outline" size="sm" className="w-full h-8 text-[10px]" onClick={() => setRejectDialogOpen(true)}>
-             Annuler l'acceptation / Rejeter
-           </Button>
-        </div>
-      );
-    }
-
-    return (
-      <div className="space-y-3">
-        <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest pl-1">Actions de décision</p>
-        <div className="grid grid-cols-2 gap-2">
-           {s === "new" && (
-             <Button className="col-span-full h-10 gap-2" onClick={() => handleStatusChange("under_review")} disabled={loadingAction}>
-                <Clock className="w-4 h-4" /> Mettre en revue
-             </Button>
-           )}
-
-           {s === "under_review" && (
-             <>
-               <Button variant="secondary" className="gap-2 h-9 text-xs" onClick={() => handleStatusChange("shortlisted")} disabled={loadingAction}>
-                 <ArrowRight className="w-3.5 h-3.5" /> Présélectionner
-               </Button>
-               <Button variant="outline" className="text-destructive hover:text-destructive gap-2 h-9 text-xs" onClick={() => setRejectDialogOpen(true)} disabled={loadingAction}>
-                 <XCircle className="w-3.5 h-3.5" /> Rejeter
-               </Button>
-             </>
-           )}
-
-           {s === "shortlisted" && (
-              <Button className="col-span-full h-10 gap-2" onClick={() => handleStatusChange("interview_to_schedule")} disabled={loadingAction}>
-                <MessageSquare className="w-4 h-4" /> À planifier entretien
-              </Button>
-           )}
-
-           {s === "interview_to_schedule" && (
-             <div className="col-span-full p-4 border border-dashed rounded-xl bg-secondary/10 text-center">
-                <p className="text-[10px] font-bold text-muted-foreground uppercase">Phase : Entretien</p>
-                <p className="text-xs mt-1 text-primary">Utilisez le module "Entretiens" pour planifier.</p>
-             </div>
-           )}
-
-           {s === "interview_completed" && (
-             <>
-               <Button variant="secondary" className="bg-green-600 hover:bg-green-700 text-white gap-2 h-10 text-xs" onClick={() => handleStatusChange("accepted")} disabled={loadingAction}>
-                 <UserCheck className="w-4 h-4" /> Accepter
-               </Button>
-               <Button variant="outline" className="text-destructive gap-2 h-10 text-xs" onClick={() => setRejectDialogOpen(true)} disabled={loadingAction}>
-                 <XCircle className="w-4 h-4" /> Rejeter
-               </Button>
-             </>
-           )}
-        </div>
-      </div>
-    );
-  };
+  const customAnswers = submission?.answers ? Object.entries(submission.answers).filter(([key]) => {
+    return !mappedKeys.includes(key) && !key.startsWith('_');
+  }) : [];
 
   return (
-    <ScrollArea className="h-full pr-4">
-      <div className="space-y-6 pb-20 animate-in fade-in slide-in-from-right-4 duration-300">
-        <CandidateSummary candidate={candidate} submission={submission} />
+    <div className="h-full flex flex-col bg-white rounded-[2rem] border shadow-2xl shadow-primary/5 overflow-hidden">
+      <ScrollArea className="flex-1">
+        <div className="p-6 md:p-8 space-y-8 pb-32">
+          
+          {/* A. Header & Summary */}
+          <div className="space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <h2 className="text-2xl font-black text-primary leading-tight">{candidate.displayName}</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] uppercase font-bold bg-white">
+                    {CANDIDATE_STATUS_LABELS[candidate.status] || candidate.status}
+                  </Badge>
+                  {candidate.source === 'public_application_form' ? (
+                    <Badge className="bg-accent text-white text-[9px] uppercase font-black border-none px-2 h-5 leading-none">Formulaire Public</Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-[9px] uppercase font-bold h-5 leading-none">Saisie Manuelle</Badge>
+                  )}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">Candidature reçue</p>
+                <p className="text-xs font-bold text-primary">{formatDateTime(submission?.submittedAt || candidate.createdAt)}</p>
+              </div>
+            </div>
 
-        {/* Workflow Actions Section */}
-        <div className="px-1">{renderDecisionActions()}</div>
-
-        {submission?.possibleDuplicate && (
-          <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 shrink-0" />
-            <div className="space-y-0.5">
-              <p className="text-xs font-bold uppercase">Doublon potentiel détecté</p>
-              <p className="text-xs opacity-90">Un autre dossier avec le même identifiant ou email existe pour ce recrutement.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <SummaryMiniItem icon={Briefcase} label="Poste" value={candidate.positionApplied} />
+              <SummaryMiniItem icon={Building2} label="Département" value={candidate.department} />
+              <SummaryMiniItem icon={MapPin} label="Site" value={submission?.worksiteName || "N/A"} />
             </div>
           </div>
-        )}
 
-        <Card className="border-primary/10 shadow-sm">
-          <CardHeader className="bg-primary/5 py-4 border-b">
-            <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2">
-              <ClipboardList className="w-4 h-4 text-primary" /> Détails de la réponse
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6 space-y-8">
-            {candidate.applicationSubmissionId ? (
-              <div className="grid grid-cols-1 gap-6">
-                <Section title="Informations d'identité">
-                  <div className="grid grid-cols-2 gap-4">
-                      <AnswerItem label="National ID / Code Fiscal" value={submission?.nationalId} code />
-                      <AnswerItem label="Date de naissance" value={formatValue(submission?.answers?.birthDate)} />
-                      <AnswerItem label="Email de contact" value={submission?.email} />
-                      <AnswerItem label="Téléphone" value={submission?.phone} />
-                  </div>
-                </Section>
+          <Separator className="bg-slate-100" />
 
-                <Section title="Localisation">
-                  <div className="grid grid-cols-2 gap-4">
-                      <AnswerItem label="Ville" value={submission?.answers?.city} />
-                      <AnswerItem label="Province" value={submission?.answers?.province} />
-                      <AnswerItem label="Adresse" value={submission?.answers?.address} className="col-span-full" />
-                  </div>
-                </Section>
+          {/* B. Actions de décision */}
+          <div className="space-y-3">
+             <div className="flex items-center gap-2 px-1">
+               <Info className="w-3 h-3 text-muted-foreground" />
+               <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Actions de décision RH</p>
+             </div>
+             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+               {renderDecisionActions(candidate, loadingAction, handleStatusChange, () => setRejectDialogOpen(true))}
+             </div>
+          </div>
 
-                <Section title="Profil Professionnel">
-                  <div className="grid grid-cols-2 gap-4">
-                      <AnswerItem label="Disponibilité" value={submission?.answers?.availability} />
-                      <AnswerItem label="Date dispo." value={formatValue(submission?.answers?.availableFrom)} />
-                      <AnswerItem label="Expérience" value={submission?.answers?.experienceYears ? `${submission.answers.experienceYears} ans` : undefined} />
-                      <AnswerItem label="Niveau d'étude" value={submission?.answers?.educationLevel} />
-                      <AnswerItem label="Poste actuel" value={submission?.answers?.currentPosition} className="col-span-full" />
-                  </div>
-                </Section>
-
-                {renderCustomQuestions(submission)}
-
-                <Section title="Documents & Consentement">
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3 p-3 bg-secondary/20 rounded-lg border border-dashed">
-                        <div className="bg-white p-2 rounded shadow-sm"><CheckCircle2 className="w-4 h-4 text-green-600" /></div>
-                        <div>
-                          <p className="text-[10px] font-bold uppercase text-muted-foreground">RGPD / Consentement</p>
-                          <p className="text-[10px] font-medium">Accepté le {formatDateTime(submission?.consentAcceptedAt)}</p>
-                        </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <FilePlaceholder label="Curriculum Vitae (CV)" />
-                        <FilePlaceholder label="Lettre de motivation" />
-                    </div>
-                  </div>
-                </Section>
+          {/* Warnings */}
+          {submission?.possibleDuplicate && (
+            <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-2xl flex items-start gap-3 animate-pulse">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <div className="space-y-0.5">
+                <p className="text-xs font-bold uppercase">Doublon potentiel détecté</p>
+                <p className="text-[10px] opacity-90 font-medium">Un autre dossier avec le même identifiant national ou email existe pour ce recrutement.</p>
               </div>
-            ) : (
-              <div className="flex flex-col items-center py-8 text-center text-muted-foreground">
-                <AlertCircle className="w-10 h-10 opacity-20 mb-3" />
-                <p className="text-sm font-medium">Aucune soumission de formulaire liée.</p>
-                <p className="text-[10px] uppercase font-bold tracking-tighter mt-1 opacity-60">Saisie manuelle RH uniquement</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            </div>
+          )}
 
-        {submission?.answers?.motivationMessage && (
-           <Card className="border-accent/20 bg-accent/5">
-             <CardHeader className="py-3 border-b border-accent/10">
-               <CardTitle className="text-[10px] font-black uppercase text-accent tracking-widest">Message de motivation</CardTitle>
-             </CardHeader>
-             <CardContent className="p-4">
-               <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{submission.answers.motivationMessage}</p>
-             </CardContent>
-           </Card>
-        )}
-      </div>
+          {/* C. Identity */}
+          <Section icon={Fingerprint} title="Informations d'identité">
+             <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                <AnswerItem label="Prénom" value={submission?.firstName || candidate.displayName.split(' ')[0]} />
+                <AnswerItem label="Nom" value={submission?.lastName || candidate.displayName.split(' ').slice(1).join(' ')} />
+                <AnswerItem label="Email" value={submission?.email || candidate.email} copyable />
+                <AnswerItem label="Téléphone" value={submission?.phone || candidate.phone} />
+                <AnswerItem label="Identifiant National" value={submission?.nationalId} code />
+                <AnswerItem label="Date de naissance" value={formatValue(submission?.answers?.birthDate)} />
+             </div>
+          </Section>
+
+          {/* D. Location */}
+          <Section icon={MapPin} title="Localisation">
+             <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                <AnswerItem label="Ville" value={submission?.answers?.city} />
+                <AnswerItem label="Province" value={submission?.answers?.province} />
+                <AnswerItem label="Adresse" value={submission?.answers?.address} className="col-span-full" />
+                <AnswerItem label="Pays" value={submission?.answers?.country} />
+             </div>
+          </Section>
+
+          {/* E. Expérience / Formation */}
+          <Section icon={Briefcase} title="Expérience & Formation">
+             <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                <AnswerItem label="Disponibilité" value={submission?.answers?.availability} />
+                <AnswerItem label="Date disponible" value={formatValue(submission?.answers?.availableFrom)} />
+                <AnswerItem label="Expérience" value={submission?.answers?.experienceYears ? `${submission.answers.experienceYears} ans` : undefined} />
+                <AnswerItem label="Niveau d'étude" value={submission?.answers?.educationLevel} />
+                <AnswerItem label="Poste actuel / Dernier poste" value={submission?.answers?.currentPosition} className="col-span-full" />
+             </div>
+          </Section>
+
+          {/* F. Motivation */}
+          <Section icon={MessageSquare} title="Message de motivation">
+             <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap italic">
+                {submission?.answers?.motivationMessage || "Aucun message de motivation saisi."}
+             </div>
+          </Section>
+
+          {/* G. Questions personnalisées */}
+          {customAnswers.length > 0 && (
+            <Section icon={ClipboardList} title="Questions spécifiques au formulaire">
+               <div className="space-y-6">
+                  {customAnswers.map(([key, value]) => (
+                     <div key={key} className="space-y-1.5 p-4 bg-accent/5 rounded-2xl border border-accent/10">
+                        <p className="text-[10px] font-black text-accent uppercase tracking-widest">Q: {formatKeyToLabel(key)}</p>
+                        <p className="text-sm font-bold text-slate-800">{formatValue(value) || "Non renseigné"}</p>
+                     </div>
+                  ))}
+               </div>
+            </Section>
+          )}
+
+          {/* H. Fichiers */}
+          <Section icon={FileX} title="Documents joints">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FilePlaceholder label="Curriculum Vitae (CV)" />
+                <FilePlaceholder label="Lettre de motivation" />
+             </div>
+          </Section>
+
+          {/* I. Consentement */}
+          <Section icon={CheckCircle2} title="Consentement & RGPD">
+             <div className="flex items-center gap-4 p-4 bg-green-50/50 rounded-2xl border border-green-100">
+                <div className="bg-white p-2 rounded-xl shadow-sm text-green-600">
+                   <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                   <p className="text-xs font-bold text-green-900">Données personnelles acceptées</p>
+                   <p className="text-[10px] text-green-700 font-medium">Validé le {formatDateTime(submission?.consentAcceptedAt || submission?.submittedAt)}</p>
+                </div>
+             </div>
+          </Section>
+
+          {/* J. Catch-all / Raw Data */}
+          <Collapsible open={isOtherOpen} onOpenChange={setIsOtherOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="w-full flex items-center justify-between text-muted-foreground hover:text-primary p-0 h-8">
+                 <span className="text-[10px] font-black uppercase tracking-widest">Données brutes de soumission</span>
+                 <ChevronDown className={cn("w-4 h-4 transition-transform", isOtherOpen && "rotate-180")} />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-4 space-y-2">
+               <div className="bg-slate-50 p-4 rounded-xl border border-dashed font-mono text-[9px] overflow-x-auto whitespace-pre">
+                  {JSON.stringify(submission?.answers || {}, null, 2)}
+               </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+        </div>
+      </ScrollArea>
 
       {/* Reject Dialog */}
       <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
-        <DialogContent className="sm:max-w-[450px]">
+        <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
           <DialogHeader>
-            <DialogTitle>Rejeter la candidature</DialogTitle>
-            <DialogDescription>
-              Veuillez indiquer le motif du refus. Cette information sera conservée dans le dossier.
+            <DialogTitle className="text-xl font-black text-primary">Rejeter la candidature</DialogTitle>
+            <DialogDescription className="text-sm">
+              Indiquez le motif du refus pour clore le dossier de {candidate.displayName}.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
              <div className="space-y-2">
-               <Label htmlFor="reason">Motif du refus</Label>
+               <Label htmlFor="reason" className="text-xs font-bold uppercase">Motif du refus</Label>
                <Textarea 
                  id="reason" 
-                 placeholder="Ex: Profil ne correspondant pas aux pré-requis techniques..." 
+                 placeholder="Ex: Expérience insuffisante sur la technologie X..." 
                  value={rejectionReason}
                  onChange={(e) => setRejectionReason(e.target.value)}
-                 className="min-h-[100px]"
+                 className="min-h-[120px] rounded-xl"
                />
              </div>
           </div>
-          <DialogFooter>
-             <Button variant="outline" onClick={() => setRejectDialogOpen(false)} disabled={loadingAction}>Annuler</Button>
-             <Button variant="destructive" onClick={() => handleStatusChange("rejected", rejectionReason)} disabled={loadingAction || !rejectionReason.trim()}>
+          <DialogFooter className="gap-2 sm:gap-0">
+             <Button variant="outline" onClick={() => setRejectDialogOpen(false)} disabled={loadingAction} className="rounded-xl">Annuler</Button>
+             <Button variant="destructive" onClick={() => handleStatusChange("rejected", rejectionReason)} disabled={loadingAction || !rejectionReason.trim()} className="rounded-xl font-bold">
                 {loadingAction ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <XCircle className="w-4 h-4 mr-2" />}
                 Confirmer le rejet
              </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </ScrollArea>
+    </div>
   );
 }
 
-function CandidateSummary({ candidate, submission }: { candidate: Candidate, submission?: ApplicationSubmission }) {
-  const s = (candidate.status || "new") as CandidateStatus;
-  
-  return (
-    <div className="space-y-4">
-       <div className="flex items-start justify-between">
-          <div className="space-y-1">
-             <h2 className="text-2xl font-black text-primary leading-none">{candidate.displayName}</h2>
-             <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-[10px] uppercase font-bold bg-white">
-                  {CANDIDATE_STATUS_LABELS[s]}
-                </Badge>
-                {candidate.source === 'public_application_form' ? (
-                  <Badge className="bg-accent text-white text-[9px] uppercase font-black border-none px-1.5 h-4 leading-none">Formulaire Public</Badge>
-                ) : (
-                  <Badge variant="secondary" className="text-[9px] uppercase font-bold h-4 leading-none">Saisie Manuelle</Badge>
-                )}
-             </div>
-          </div>
-          <div className="text-right">
-             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Candidature reçue le</p>
-             <p className="text-sm font-bold text-primary">{formatDateTime(submission?.submittedAt || candidate.createdAt)}</p>
-          </div>
-       </div>
+function renderDecisionActions(candidate: Candidate, loading: boolean, onStatus: any, onReject: () => void) {
+  const s = candidate.status || "new";
 
-       <div className="grid grid-cols-3 gap-2">
-          <SummaryMiniItem icon={Briefcase} label="Poste" value={candidate.positionApplied} />
-          <SummaryMiniItem icon={Building2} label="Département" value={candidate.department} />
-          <SummaryMiniItem icon={MapPin} label="Site" value={submission?.worksiteName || "N/A"} />
-       </div>
-       <Separator />
+  if (s === "hired") {
+    return (
+      <div className="flex items-center gap-3 text-green-700 font-bold text-sm">
+        <UserCheck className="w-5 h-5" /> Candidat déjà embauché
+      </div>
+    );
+  }
+
+  if (s === "rejected") {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 text-red-700 font-bold text-sm">
+          <XCircle className="w-5 h-5" /> Candidature refusée
+        </div>
+        {candidate.rejectionReason && (
+          <p className="text-xs text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 italic">"{candidate.rejectionReason}"</p>
+        )}
+        <Button variant="outline" size="sm" onClick={() => onStatus("under_review")} disabled={loading} className="w-full text-[10px] uppercase font-black tracking-widest h-8 rounded-xl">
+           Ré-ouvrir le dossier
+        </Button>
+      </div>
+    );
+  }
+
+  if (s === "accepted") {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 text-accent font-bold text-sm">
+          <CheckCircle2 className="w-5 h-5" /> Candidat Validé
+        </div>
+        <p className="text-[10px] text-muted-foreground font-medium">Le candidat est prêt pour l'embauche. Utilisez le bouton d'action dans la liste pour finaliser.</p>
+        <Button variant="outline" size="sm" onClick={onReject} disabled={loading} className="w-full text-[10px] h-8 rounded-xl">
+           Annuler l'acceptation
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+       {s === "new" && (
+         <Button className="col-span-full h-11 rounded-xl font-bold gap-2" onClick={() => onStatus("under_review")} disabled={loading}>
+            <Clock className="w-4 h-4" /> Mettre en revue
+         </Button>
+       )}
+
+       {s === "under_review" && (
+         <>
+           <Button variant="secondary" className="gap-2 h-10 rounded-xl text-xs font-bold" onClick={() => onStatus("shortlisted")} disabled={loading}>
+             <ArrowRight className="w-4 h-4" /> Présélectionner
+           </Button>
+           <Button variant="outline" className="text-destructive hover:text-destructive gap-2 h-10 rounded-xl text-xs font-bold" onClick={onReject} disabled={loading}>
+             <XCircle className="w-4 h-4" /> Rejeter
+           </Button>
+         </>
+       )}
+
+       {s === "shortlisted" && (
+          <Button className="col-span-full h-11 rounded-xl font-bold gap-2" onClick={() => onStatus("interview_to_schedule")} disabled={loading}>
+            <Calendar className="w-4 h-4" /> À planifier entretien
+          </Button>
+       )}
+
+       {s === "interview_to_schedule" && (
+          <div className="col-span-full text-center p-2 text-[10px] font-black uppercase text-muted-foreground tracking-widest border border-dashed rounded-xl">
+             En attente de planification
+          </div>
+       )}
+
+       {s === "interview_completed" && (
+         <>
+           <Button variant="secondary" className="bg-green-600 hover:bg-green-700 text-white gap-2 h-11 rounded-xl text-xs font-black uppercase tracking-wider" onClick={() => onStatus("accepted")} disabled={loading}>
+             <UserCheck className="w-4 h-4" /> Accepter
+           </Button>
+           <Button variant="outline" className="text-destructive gap-2 h-11 rounded-xl text-xs font-black uppercase tracking-wider" onClick={onReject} disabled={loading}>
+             <XCircle className="w-4 h-4" /> Rejeter
+           </Button>
+         </>
+       )}
     </div>
   );
 }
 
 function SummaryMiniItem({ icon: Icon, label, value }: { icon: any, label: string, value: string }) {
   return (
-    <div className="bg-white p-3 rounded-xl border shadow-sm space-y-1">
+    <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100 shadow-sm space-y-1">
        <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground">
           <Icon className="w-3 h-3 text-primary/60" />
           {label}
        </div>
-       <p className="text-xs font-bold text-primary truncate">{value}</p>
+       <p className="text-xs font-bold text-primary truncate">{value || "N/A"}</p>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string, children: React.ReactNode }) {
+function Section({ icon: Icon, title, children }: { icon: any, title: string, children: React.ReactNode }) {
   return (
-    <div className="space-y-3">
-       <h4 className="text-[11px] font-black uppercase text-primary border-l-2 border-primary pl-2 tracking-wider">{title}</h4>
-       <div className="pl-2">{children}</div>
+    <div className="space-y-4">
+       <div className="flex items-center gap-2">
+         <div className="bg-primary/5 p-1.5 rounded-lg text-primary">
+            <Icon className="w-4 h-4" />
+         </div>
+         <h4 className="text-[11px] font-black uppercase text-primary tracking-wider">{title}</h4>
+       </div>
+       <div className="pl-0 sm:pl-8">{children}</div>
     </div>
   );
 }
 
-function AnswerItem({ label, value, code = false, className }: { label: string, value: any, code?: boolean, className?: string }) {
+function AnswerItem({ label, value, code = false, className, copyable = false }: { label: string, value: any, code?: boolean, className?: string, copyable?: boolean }) {
+  const formatted = formatValue(value);
   return (
-    <div className={className}>
-      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-tight">{label}</p>
-      <p className={`text-sm font-semibold mt-0.5 ${code ? 'font-mono text-xs uppercase' : ''} ${!value ? 'italic text-muted-foreground/50 font-normal' : 'text-slate-800'}`}>
-        {formatValue(value) || "Non renseigné"}
+    <div className={cn("space-y-1", className)}>
+      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-tight opacity-70">{label}</p>
+      <p className={cn(
+        "text-sm font-bold", 
+        code ? 'font-mono text-xs uppercase' : '', 
+        !value ? 'italic text-muted-foreground/30 font-medium' : 'text-slate-800'
+      )}>
+        {formatted || "Non renseigné"}
       </p>
     </div>
   );
@@ -388,42 +423,17 @@ function AnswerItem({ label, value, code = false, className }: { label: string, 
 
 function FilePlaceholder({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 p-2 border rounded-lg bg-slate-50">
-       <div className="bg-white p-1.5 rounded border text-muted-foreground"><FileX className="w-4 h-4" /></div>
+    <div className="flex items-center gap-3 p-3 border rounded-2xl bg-slate-50/50 border-slate-100">
+       <div className="bg-white p-2 rounded-xl border text-slate-300 shadow-sm"><FileX className="w-5 h-5" /></div>
        <div className="min-w-0">
-          <p className="text-[9px] font-bold truncate text-muted-foreground uppercase">{label}</p>
-          <p className="text-[8px] font-bold text-orange-600 uppercase">Fichier non disponible</p>
+          <p className="text-[9px] font-black truncate text-muted-foreground uppercase tracking-tighter">{label}</p>
+          <p className="text-[8px] font-black text-orange-600 uppercase">Fichier non disponible</p>
        </div>
     </div>
   );
 }
 
-function renderCustomQuestions(submission: ApplicationSubmission | undefined) {
-  if (!submission?.answers) return null;
-  
-  // Identify custom questions (keys starting with 'custom_')
-  const customEntries = Object.entries(submission.answers).filter(([key]) => key.startsWith('custom_'));
-  
-  if (customEntries.length === 0) return null;
-
-  return (
-    <Section title="Questions spécifiques">
-       <div className="grid grid-cols-1 gap-4">
-          {customEntries.map(([key, value]) => (
-             <div key={key} className="space-y-1">
-                <p className="text-xs font-bold text-slate-600 italic">Q: {formatKeyToLabel(key)}</p>
-                <div className="bg-secondary/10 p-2 rounded-lg border-l-2 border-primary/20">
-                   <p className="text-sm font-medium text-slate-800">{formatValue(value)}</p>
-                </div>
-             </div>
-          ))}
-       </div>
-    </Section>
-  );
-}
-
 function formatKeyToLabel(key: string): string {
-  // Remove 'custom_' and trailing timestamp suffix
   return key
     .replace(/^custom_/, '')
     .replace(/_\d+$/, '')
@@ -444,3 +454,4 @@ function formatDateTime(val: any) {
   const d = val.toDate ? val.toDate() : new Date(val);
   return d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
 }
+
