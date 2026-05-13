@@ -69,10 +69,32 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         }),
       });
 
-      const result = await response.json();
+      let result: any = null;
+      let rawText = "";
+
+      try {
+        rawText = await response.text();
+        result = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        result = null;
+      }
 
       if (!response.ok) {
-        throw new Error(result.error || "Une erreur est survenue.");
+        console.error("Public submit failed", {
+          status: response.status,
+          statusText: response.statusText,
+          result,
+          rawText,
+        });
+
+        const message =
+          result?.error?.message ||
+          result?.error ||
+          result?.message ||
+          rawText ||
+          "Une erreur est survenue lors de l'envoi.";
+
+        throw new Error(typeof message === "string" ? message : JSON.stringify(message));
       }
 
       router.push(`/apply/${form.publicSlug}/success`);
