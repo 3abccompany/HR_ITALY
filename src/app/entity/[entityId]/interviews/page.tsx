@@ -16,7 +16,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy } from "firebase/firestore";
+import { collection, query, orderBy, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   scheduleInterview, 
@@ -95,12 +95,12 @@ export default function InterviewsManagementPage() {
   // Queries
   const interviewsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/interviews`), orderBy("scheduledAt", "desc"));
+    return query(collection(db, `entities/${entityId}/interviews`), orderBy("scheduledAt", "desc")) as Query<Interview>;
   }, [db, entityId, canRead]);
 
   const candidatesQuery = useMemo(() => {
     if (!db || !entityId || !canReadCandidates || !isFormVisible || editingId) return null;
-    return query(collection(db, `entities/${entityId}/candidates`), orderBy("createdAt", "desc"));
+    return query(collection(db, `entities/${entityId}/candidates`), orderBy("createdAt", "desc")) as Query<Candidate>;
   }, [db, entityId, canReadCandidates, isFormVisible, editingId]);
 
   const { data: interviews, loading: loadingInterviews } = useCollection<Interview>(interviewsQuery);
