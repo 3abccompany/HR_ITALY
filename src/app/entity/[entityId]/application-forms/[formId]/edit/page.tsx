@@ -423,6 +423,11 @@ export default function EditApplicationFormPage() {
                           {field.required && <Badge variant="secondary" className="text-[8px] h-3 uppercase py-0 leading-none bg-red-50 text-red-700">Requis</Badge>}
                         </div>
                         <p className="text-[10px] text-muted-foreground uppercase font-mono">Type: {field.type}</p>
+                        {field.type === 'file' && (
+                          <p className="text-[9px] text-orange-600 font-bold">
+                            Note: Le dépôt de fichier n'est pas encore disponible. Ce champ ne bloquera pas la soumission.
+                          </p>
+                        )}
                       </div>
                     </div>
 

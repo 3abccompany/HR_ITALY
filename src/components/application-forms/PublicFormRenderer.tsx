@@ -41,17 +41,31 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
     try {
       // Basic validation check (Required fields)
       for (const field of enabledFields) {
-        if (field.required && !answers[field.key]) {
+        // Skip required validation for file fields while the component is not implemented
+        if (field.type === 'file') continue;
+
+        const val = answers[field.key];
+        const isEmpty = val === undefined || val === null || val === "" || (Array.isArray(val) && val.length === 0);
+
+        if (field.required && isEmpty) {
           throw new Error(`Le champ "${field.label}" est obligatoire.`);
         }
       }
+
+      // Sanitize answers (remove any accidental undefined)
+      const sanitizedAnswers: Record<string, any> = {};
+      Object.entries(answers).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          sanitizedAnswers[key] = value;
+        }
+      });
 
       const response = await fetch('/api/public/applications/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           publicSlug: form.publicSlug,
-          answers
+          answers: sanitizedAnswers
         }),
       });
 
