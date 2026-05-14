@@ -35,15 +35,16 @@ const normalizePhone = (phone: string) => phone.toString().replace(/\D/g, "");
 
 /**
  * SHA-256 Hashing for privacy-safe deduplication keys.
+ * Updated to use Email ONLY per recruitment need.
  */
-function computeDedupeKey(entityId: string, needId: string, email: string, phone: string): string {
-  const input = `${entityId}:${needId}:${email}:${phone}`;
+function computeDedupeKey(entityId: string, needId: string, email: string): string {
+  const input = `${entityId}:${needId}:${email}`;
   return createHash('sha256').update(input).digest('hex');
 }
 
 /**
  * Transactional Submission Logic using Admin SDK.
- * Updated to use Email/Phone deduplication for better privacy and UX.
+ * Updated to use Email-only deduplication per recruitment need (Milestone 7K-bis).
  */
 export async function executeSubmissionTransaction(
   entityId: string, 
@@ -63,15 +64,16 @@ export async function executeSubmissionTransaction(
   const phone = (answers.phone || "").toString().trim();
   const nationalId = (answers.nationalId || "").toString().trim(); // Optional legacy support
 
-  if (!email || !phone) {
-    throw new Error("L'email et le téléphone sont obligatoires pour postuler.");
+  if (!email) {
+    throw new Error("L'email est obligatoire pour postuler.");
   }
 
   const normEmail = normalizeEmail(email);
   const normPhone = normalizePhone(phone);
   
   // SHA-256 Hash for the dedupe document ID (Privacy First)
-  const dedupeKey = computeDedupeKey(entityId, form.recruitmentNeedId, normEmail, normPhone);
+  // Dedupe is strictly Email + RecruitmentNeedId
+  const dedupeKey = computeDedupeKey(entityId, form.recruitmentNeedId, normEmail);
 
   console.log(`[Submission Service] Processing application for: ${normEmail}`);
 
