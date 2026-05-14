@@ -10,6 +10,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PersonTimeline } from "./PersonTimeline";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 interface PersonDetailPanelProps {
   entityId: string;
