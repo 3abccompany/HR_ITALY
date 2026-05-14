@@ -70,7 +70,6 @@ service cloud.firestore {
       match /emailLogs/{logId} {
         allow read: if hasPermission(entityId, 'interviews.read') || hasPermission(entityId, 'interviews.notify') || isPlatformAdmin();
         allow create: if hasPermission(entityId, 'interviews.create') || hasPermission(entityId, 'interviews.notify') || isPlatformAdmin();
-        // Status updates (sent/failed) handled via Admin SDK in Server Actions
         allow update: if isPlatformAdmin();
       }
 
@@ -112,13 +111,11 @@ service cloud.firestore {
 
       match /applicationSubmissions/{submissionId} {
         allow read: if hasPermission(entityId, 'applicationSubmissions.read') || isPlatformAdmin();
-        // Public writes handled by API route
         allow write: if isPlatformAdmin();
       }
 
       match /applicationSubmissionDedupe/{dedupeKey} {
         allow read: if hasPermission(entityId, 'applicationSubmissions.read') || isPlatformAdmin();
-        // Public writes handled by API route
         allow write: if isPlatformAdmin();
       }
       
@@ -142,7 +139,6 @@ service cloud.firestore {
 
     match /auditLogs/{logId} {
       allow read: if isPlatformAdmin();
-      // Public writes handled by API route
       allow create: if isAuthenticated();
     }
     
