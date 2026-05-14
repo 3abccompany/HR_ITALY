@@ -195,9 +195,9 @@ export default function CandidatesManagementPage() {
 
     // Filter by Search Term
     return list.filter(c => 
-      c.displayName.toLowerCase().includes(term) || 
-      c.positionApplied.toLowerCase().includes(term) ||
-      c.email.toLowerCase().includes(term)
+      (c.displayName || "").toLowerCase().includes(term) || 
+      (c.positionApplied || "").toLowerCase().includes(term) ||
+      (c.email || "").toLowerCase().includes(term)
     );
   }, [candidates, search, statusFilter]);
 
@@ -259,44 +259,46 @@ export default function CandidatesManagementPage() {
   }
 
   return (
-    <div className="p-8 pb-24 h-full flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Candidats</h1>
-          <p className="text-muted-foreground text-sm">Suivi du pipeline de recrutement par entité.</p>
+    <div className="h-screen flex flex-col overflow-hidden">
+      <div className="p-8 pb-4 shrink-0 flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Candidats</h1>
+            <p className="text-muted-foreground text-sm">Suivi du pipeline de recrutement par entité.</p>
+          </div>
+          {canCreate && (
+            <Button onClick={() => setIsFormVisible(true)} className="gap-2 shadow-lg shadow-primary/10">
+              <UserPlus className="w-4 h-4" /> Nouvelle candidature
+            </Button>
+          )}
         </div>
-        {canCreate && (
-          <Button onClick={() => setIsFormVisible(true)} className="gap-2 shadow-lg shadow-primary/10">
-            <UserPlus className="w-4 h-4" /> Nouvelle candidature
-          </Button>
-        )}
+
+        {/* Filter Bar */}
+        <ScrollArea className="w-full whitespace-nowrap">
+          <div className="flex w-max space-x-2 p-1 bg-secondary/20 rounded-xl">
+             <FilterButton 
+               label="Tous" 
+               count={stats.all} 
+               active={statusFilter === "all"} 
+               onClick={() => setStatusFilter("all")} 
+             />
+             {Object.keys(CANDIDATE_STATUS_LABELS).map((s) => (
+               <FilterButton 
+                 key={s}
+                 label={CANDIDATE_STATUS_LABELS[s as CandidateStatus]} 
+                 count={stats[s] || 0} 
+                 active={statusFilter === s} 
+                 onClick={() => setStatusFilter(s as CandidateStatus)} 
+               />
+             ))}
+          </div>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
       </div>
 
-      {/* Filter Bar */}
-      <ScrollArea className="w-full whitespace-nowrap">
-        <div className="flex w-max space-x-2 p-1 bg-secondary/20 rounded-xl">
-           <FilterButton 
-             label="Tous" 
-             count={stats.all} 
-             active={statusFilter === "all"} 
-             onClick={() => setStatusFilter("all")} 
-           />
-           {Object.keys(CANDIDATE_STATUS_LABELS).map((s) => (
-             <FilterButton 
-               key={s}
-               label={CANDIDATE_STATUS_LABELS[s as CandidateStatus]} 
-               count={stats[s] || 0} 
-               active={statusFilter === s} 
-               onClick={() => setStatusFilter(s as CandidateStatus)} 
-             />
-           ))}
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
-
-      <div className="flex flex-col lg:flex-row gap-8 flex-1 min-h-0">
-        <div className={cn("flex-1 space-y-4 min-w-0 transition-all", selectedCandidate && "lg:w-2/3")}>
-          <div className="relative max-w-md">
+      <div className="flex-1 flex overflow-hidden p-8 pt-0 gap-8">
+        <div className={cn("flex-1 flex flex-col gap-4 min-w-0", selectedCandidate && "hidden lg:flex")}>
+          <div className="relative max-w-md shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
               className="pl-10" 
@@ -306,84 +308,86 @@ export default function CandidatesManagementPage() {
             />
           </div>
 
-          <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-secondary/20">
-                  <TableHead>Candidat</TableHead>
-                  <TableHead className="hidden md:table-cell">Poste / Département</TableHead>
-                  <TableHead className="hidden sm:table-cell">Statut</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loadingCandidates ? (
-                  <TableRow><TableCell colSpan={4} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-                ) : filteredCandidates.length === 0 ? (
-                  <TableRow><TableCell colSpan={4} className="text-center py-12 text-muted-foreground">Aucun candidat trouvé.</TableCell></TableRow>
-                ) : (
-                  filteredCandidates.map((c) => (
-                    <TableRow 
-                      key={c.candidateId} 
-                      onClick={() => setSelectedCandidate(c)}
-                      className={cn(
-                        "cursor-pointer transition-colors", 
-                        selectedCandidate?.candidateId === c.candidateId ? "bg-primary/5 hover:bg-primary/5" : "hover:bg-muted/50"
-                      )}
-                    >
-                      <TableCell>
-                        <div className="font-bold text-primary">{c.displayName}</div>
-                        <div className="flex flex-col gap-0.5 mt-1">
-                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <Mail className="w-3 h-3" /> {c.email}
-                          </div>
-                          <div className="mt-1">{getSourceBadge(c.source || 'manual')}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        <div className="flex items-center gap-1.5 font-medium text-sm">
-                          <Briefcase className="w-3.5 h-3.5 text-muted-foreground" /> {c.positionApplied}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground uppercase mt-1">{c.department || "N/A"}</div>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        {getStatusBadge(c.status)}
-                      </TableCell>
-                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                        {canUpdate && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEdit(c)} className="gap-2">
-                                <Edit className="w-4 h-4" /> Modifier les infos
-                              </DropdownMenuItem>
-                              {c.status !== 'inactive' ? (
-                                <DropdownMenuItem onClick={() => setDisablingId(c.candidateId)} className="gap-2 text-destructive">
-                                  <PowerOff className="w-4 h-4" /> Désactiver
-                                </DropdownMenuItem>
-                              ) : (
-                                <DropdownMenuItem onClick={() => setReactivatingId(c.candidateId)} className="gap-2 text-green-600">
-                                  <RefreshCcw className="w-4 h-4" /> Réactiver
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+          <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
+            <div className="flex-1 overflow-auto">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-secondary/20">
+                  <TableRow>
+                    <TableHead>Candidat</TableHead>
+                    <TableHead className="hidden md:table-cell">Poste / Département</TableHead>
+                    <TableHead className="hidden sm:table-cell">Statut</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingCandidates ? (
+                    <TableRow><TableCell colSpan={4} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                  ) : filteredCandidates.length === 0 ? (
+                    <TableRow><TableCell colSpan={4} className="text-center py-12 text-muted-foreground">Aucun candidat trouvé.</TableCell></TableRow>
+                  ) : (
+                    filteredCandidates.map((c) => (
+                      <TableRow 
+                        key={c.candidateId} 
+                        onClick={() => setSelectedCandidate(c)}
+                        className={cn(
+                          "cursor-pointer transition-colors", 
+                          selectedCandidate?.candidateId === c.candidateId ? "bg-primary/5 hover:bg-primary/5" : "hover:bg-muted/50"
                         )}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                      >
+                        <TableCell>
+                          <div className="font-bold text-primary">{c.displayName}</div>
+                          <div className="flex flex-col gap-0.5 mt-1">
+                            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                              <Mail className="w-3 h-3" /> {c.email}
+                            </div>
+                            <div className="mt-1">{getSourceBadge(c.source || 'manual')}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <div className="flex items-center gap-1.5 font-medium text-sm">
+                            <Briefcase className="w-3.5 h-3.5 text-muted-foreground" /> {c.positionApplied}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground uppercase mt-1">{c.department || "N/A"}</div>
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {getStatusBadge(c.status)}
+                        </TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          {canUpdate && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleEdit(c)} className="gap-2">
+                                  <Edit className="w-4 h-4" /> Modifier les infos
+                                </DropdownMenuItem>
+                                {c.status !== 'inactive' ? (
+                                  <DropdownMenuItem onClick={() => setDisablingId(c.candidateId)} className="gap-2 text-destructive">
+                                    <PowerOff className="w-4 h-4" /> Désactiver
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem onClick={() => setReactivatingId(c.candidateId)} className="gap-2 text-green-600">
+                                    <RefreshCcw className="w-4 h-4" /> Réactiver
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </Card>
         </div>
 
         {/* Detail Panel - Desktop */}
         {!isMobile && selectedCandidate && (
-          <div className="w-1/3 min-w-[400px] sticky top-24 self-start max-h-[calc(100vh-200px)] overflow-hidden">
-             <div className="flex items-center justify-between mb-4">
+          <div className="w-[520px] flex flex-col gap-4 animate-in slide-in-from-right-4 duration-300">
+             <div className="flex items-center justify-between shrink-0">
                 <h3 className="text-sm font-black uppercase text-primary tracking-widest flex items-center gap-2">
                    <LayoutDashboard className="w-4 h-4" /> Revue de candidature
                 </h3>
@@ -391,16 +395,18 @@ export default function CandidatesManagementPage() {
                    <X className="w-4 h-4" />
                 </Button>
              </div>
-             <CandidateApplicationPanel 
-               entityId={entityId} 
-               candidate={selectedCandidate} 
-               onStatusUpdate={(updated) => setSelectedCandidate(updated)}
-             />
+             <div className="flex-1 min-h-0">
+               <CandidateApplicationPanel 
+                 entityId={entityId} 
+                 candidate={selectedCandidate} 
+                 onStatusUpdate={(updated) => setSelectedCandidate(updated)}
+               />
+             </div>
           </div>
         )}
 
         {!isMobile && !selectedCandidate && (
-          <div className="w-1/3 hidden lg:flex flex-col items-center justify-center border-2 border-dashed rounded-3xl bg-secondary/5 h-[400px] text-center p-8">
+          <div className="w-[520px] hidden lg:flex flex-col items-center justify-center border-2 border-dashed rounded-3xl bg-secondary/5 text-center p-8">
              <Search className="w-12 h-12 text-muted-foreground/20 mb-4" />
              <p className="text-sm text-muted-foreground font-medium">Sélectionnez un candidat pour consulter sa candidature.</p>
           </div>
@@ -410,15 +416,17 @@ export default function CandidatesManagementPage() {
       {/* Detail Panel - Mobile Sheet */}
       {isMobile && (
         <Sheet open={!!selectedCandidate} onOpenChange={(open) => !open && setSelectedCandidate(null)}>
-          <SheetContent side="bottom" className="h-[90vh] px-6">
-            <SheetHeader className="mb-4">
+          <SheetContent side="bottom" className="h-[90vh] px-0">
+            <SheetHeader className="px-6 mb-4">
               <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs">Revue de candidature</SheetTitle>
             </SheetHeader>
-            <CandidateApplicationPanel 
-               entityId={entityId} 
-               candidate={selectedCandidate} 
-               onStatusUpdate={(updated) => setSelectedCandidate(updated)}
-            />
+            <div className="h-full pb-20">
+              <CandidateApplicationPanel 
+                 entityId={entityId} 
+                 candidate={selectedCandidate} 
+                 onStatusUpdate={(updated) => setSelectedCandidate(updated)}
+              />
+            </div>
           </SheetContent>
         </Sheet>
       )}

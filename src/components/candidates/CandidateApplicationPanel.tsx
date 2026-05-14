@@ -96,7 +96,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
     }
   };
 
-  // Logic to find custom questions (fields not explicitly mapped to UI sections)
+  // Track which fields are explicitly rendered in sections
   const mappedKeys = [
     'firstName', 'lastName', 'email', 'phone', 'nationalId', 'birthDate', 
     'address', 'city', 'province', 'country', 'availability', 'availableFrom', 
@@ -109,7 +109,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
   }) : [];
 
   return (
-    <div className="h-full flex flex-col bg-white rounded-[2rem] border shadow-2xl shadow-primary/5 overflow-hidden">
+    <Card className="h-full flex flex-col bg-white rounded-3xl border shadow-2xl shadow-primary/5 overflow-hidden">
       <ScrollArea className="flex-1">
         <div className="p-6 md:p-8 space-y-8 pb-32">
           
@@ -171,9 +171,9 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
              <div className="grid grid-cols-2 gap-y-6 gap-x-4">
                 <AnswerItem label="Prénom" value={submission?.firstName || candidate.displayName.split(' ')[0]} />
                 <AnswerItem label="Nom" value={submission?.lastName || candidate.displayName.split(' ').slice(1).join(' ')} />
-                <AnswerItem label="Email" value={submission?.email || candidate.email} copyable />
+                <AnswerItem label="Email" value={submission?.email || candidate.email} />
                 <AnswerItem label="Téléphone" value={submission?.phone || candidate.phone} />
-                <AnswerItem label="Identifiant National" value={submission?.nationalId} code />
+                <AnswerItem label="Identifiant National" value={submission?.nationalId || (candidate as any).codiceFiscale} code />
                 <AnswerItem label="Date de naissance" value={formatValue(submission?.answers?.birthDate)} />
              </div>
           </Section>
@@ -245,7 +245,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
           <Collapsible open={isOtherOpen} onOpenChange={setIsOtherOpen}>
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full flex items-center justify-between text-muted-foreground hover:text-primary p-0 h-8">
-                 <span className="text-[10px] font-black uppercase tracking-widest">Données brutes de soumission</span>
+                 <span className="text-[10px] font-black uppercase tracking-widest">Autres données de soumission</span>
                  <ChevronDown className={cn("w-4 h-4 transition-transform", isOtherOpen && "rotate-180")} />
               </Button>
             </CollapsibleTrigger>
@@ -273,7 +273,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
                <Label htmlFor="reason" className="text-xs font-bold uppercase">Motif du refus</Label>
                <Textarea 
                  id="reason" 
-                 placeholder="Ex: Expérience insuffisante sur la technologie X..." 
+                 placeholder="Ex: Expérience insuffisante..." 
                  value={rejectionReason}
                  onChange={(e) => setRejectionReason(e.target.value)}
                  className="min-h-[120px] rounded-xl"
@@ -289,7 +289,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Card>
   );
 }
 
@@ -405,7 +405,7 @@ function Section({ icon: Icon, title, children }: { icon: any, title: string, ch
   );
 }
 
-function AnswerItem({ label, value, code = false, className, copyable = false }: { label: string, value: any, code?: boolean, className?: string, copyable?: boolean }) {
+function AnswerItem({ label, value, code = false, className }: { label: string, value: any, code?: boolean, className?: string }) {
   const formatted = formatValue(value);
   return (
     <div className={cn("space-y-1", className)}>
@@ -449,9 +449,40 @@ function formatValue(val: any): string {
   return val.toString();
 }
 
-function formatDateTime(val: any) {
-  if (!val) return "N/A";
-  const d = val.toDate ? val.toDate() : new Date(val);
-  return d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-}
+function formatDateTime(val: any): string {
+  if (!val) return "Date non disponible";
+  
+  try {
+    let date: Date;
+    
+    // Handle Firestore Timestamp
+    if (val && typeof val === 'object' && 'seconds' in val) {
+      date = new Date(val.seconds * 1000);
+    } 
+    // Handle Date object
+    else if (val instanceof Date) {
+      date = val;
+    }
+    // Handle toDate() function (Firestore SDK helper)
+    else if (typeof val.toDate === 'function') {
+      date = val.toDate();
+    }
+    // Handle ISO string or numeric string
+    else {
+      date = new Date(val);
+    }
 
+    if (isNaN(date.getTime())) return "Date non disponible";
+
+    return date.toLocaleString('fr-FR', { 
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  } catch (e) {
+    console.warn("Date formatting error:", e);
+    return "Date non disponible";
+  }
+}
