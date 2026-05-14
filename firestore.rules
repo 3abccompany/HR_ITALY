@@ -69,8 +69,9 @@ service cloud.firestore {
 
       match /emailLogs/{logId} {
         allow read: if hasPermission(entityId, 'interviews.read') || hasPermission(entityId, 'interviews.notify') || isPlatformAdmin();
-        // Writes only through authorized actions/transactions
-        allow write: if isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'interviews.create') || hasPermission(entityId, 'interviews.notify') || isPlatformAdmin();
+        // Status updates (sent/failed) handled via Admin SDK in Server Actions
+        allow update: if isPlatformAdmin();
       }
 
       match /departments/{departmentId} {
@@ -123,7 +124,7 @@ service cloud.firestore {
       
       match /personTimeline/{eventId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
-        allow write: if hasPermission(entityId, 'candidates.decide') || hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'persons.update') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'candidates.decide') || hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'persons.update') || hasPermission(entityId, 'interviews.create') || isPlatformAdmin();
       }
     }
 

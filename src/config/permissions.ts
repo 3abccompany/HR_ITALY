@@ -1,3 +1,4 @@
+
 import { PermissionScope } from "@/types/permission";
 
 export interface PermissionDefinition {
@@ -40,10 +41,11 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "candidates.read", module: "candidates", action: "read", label: "Voir les candidats", description: "Gestion du flux de recrutement.", scope: "entity" },
   { code: "candidates.create", module: "candidates", action: "create", label: "Créer un candidat", description: "Ajout d'un parcours de candidature.", scope: "entity" },
   { code: "candidates.update", module: "candidates", action: "update", label: "Modifier un candidat", description: "Mise à jour du statut de candidature.", scope: "entity" },
-  { code: "candidates.decide", module: "candidates", action: "decide", label: "Décider sur un candidat", description: "Capacité à changer le statut et à accepter/rejeter un candidat.", scope: "entity" },
+  { code: "candidates.decide", module: "candidates", action: "decide", label: "Décider du statut candidat", description: "Permet de changer le statut de décision RH d'un candidat.", scope: "entity" },
   { code: "interviews.read", module: "interviews", action: "read", label: "Voir les entretiens", description: "Liste des rendez-vous de recrutement.", scope: "entity" },
   { code: "interviews.create", module: "interviews", action: "create", label: "Créer un entretien", description: "Planification d'un nouvel échange.", scope: "entity" },
   { code: "interviews.update", module: "interviews", action: "update", label: "Modifier un entretien", description: "Mise à jour des notes d'entretien.", scope: "entity" },
+  { code: "interviews.notify", module: "interviews", action: "notify", label: "Notifier les candidats", description: "Permet d'envoyer ou renvoyer les emails liés aux entretiens.", scope: "entity" },
   { code: "interviews.decide", module: "interviews", action: "decide", label: "Décider (RH)", description: "Valider ou rejeter un candidat après entretien.", scope: "entity" },
   { code: "departments.read", module: "departments", action: "read", label: "Voir les départements", description: "Consulter la structure organisationnelle.", scope: "entity" },
   { code: "departments.create", module: "departments", action: "create", label: "Créer un département", description: "Ajouter un nouveau département.", scope: "entity" },

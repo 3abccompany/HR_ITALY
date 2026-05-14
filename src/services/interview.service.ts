@@ -54,148 +54,167 @@ export async function scheduleInterview(
   let interviewId: string;
   let candidateEmail: string = "";
 
-  const result = await runTransaction(db, async (transaction) => {
-    const candidateRef = doc(db, `entities/${entityId}/candidates`, data.candidateId);
-    const candidateSnap = await transaction.get(candidateRef);
+  try {
+    const result = await runTransaction(db, async (transaction) => {
+      console.debug("[Interview Service] Step 1: Fetching candidate");
+      const candidateRef = doc(db, `entities/${entityId}/candidates`, data.candidateId);
+      const candidateSnap = await transaction.get(candidateRef);
 
-    if (!candidateSnap.exists()) throw new Error("Le candidat n'existe pas.");
-    const candidateData = candidateSnap.data() as Candidate;
-    candidateEmail = candidateData.email;
+      if (!candidateSnap.exists()) throw new Error("Le candidat n'existe pas.");
+      const candidateData = candidateSnap.data() as Candidate;
+      candidateEmail = candidateData.email;
 
-    if (candidateData.status !== "interview_to_schedule") {
-      throw new Error(`Ce candidat n'est pas éligible à la planification d'un entretien (Statut actuel: ${candidateData.status})`);
-    }
+      if (candidateData.status !== "interview_to_schedule") {
+        throw new Error(`Ce candidat n'est pas éligible à la planification d'un entretien (Statut actuel: ${candidateData.status})`);
+      }
 
-    const interviewRef = doc(collection(db, `entities/${entityId}/interviews`));
-    interviewId = interviewRef.id;
+      const interviewRef = doc(collection(db, `entities/${entityId}/interviews`));
+      interviewId = interviewRef.id;
 
-    const emailStatus = emailConfig?.enabled ? "queued" : "not_requested";
+      const emailStatus = emailConfig?.enabled ? "queued" : "not_requested";
 
-    const interviewData: Interview = {
-      interviewId,
-      entityId,
-      personId: candidateData.personId,
-      candidateId: data.candidateId,
-      candidateDisplayName: candidateData.displayName,
-      positionApplied: candidateData.positionApplied,
-      scheduledAt: data.scheduledAt || new Date().toISOString(),
-      interviewType: data.interviewType || "video",
-      interviewerName: data.interviewerName || "",
-      interviewerUid: data.interviewerUid || "",
-      location: data.location || "",
-      status: "scheduled",
-      decision: "pending",
-      hiredEmployeeId: null,
-      notes: data.notes || "",
-      
-      // Email Notification
-      emailNotificationEnabled: !!emailConfig?.enabled,
-      emailTo: candidateEmail,
-      emailSubjectSnapshot: emailConfig?.subject,
-      emailMessageSnapshot: emailConfig?.message,
-      emailStatus: emailStatus,
-
-      createdAt: serverTimestamp(),
-      createdBy: actorUid,
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid,
-    };
-
-    // 1. Create Interview
-    transaction.set(interviewRef, interviewData);
-
-    // 2. Update Candidate
-    transaction.update(candidateRef, {
-      status: "interview_scheduled",
-      latestInterviewId: interviewId,
-      interviewIds: arrayUnion(interviewId),
-      statusUpdatedAt: serverTimestamp(),
-      statusUpdatedBy: actorUid,
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid,
-    });
-
-    // 3. Email Log if enabled
-    if (emailConfig?.enabled) {
-      const logRef = doc(collection(db, `entities/${entityId}/emailLogs`));
-      transaction.set(logRef, {
-        logId: logRef.id,
-        entityId,
-        candidateId: data.candidateId,
-        personId: candidateData.personId,
+      const interviewData: Interview = {
         interviewId,
-        to: candidateEmail,
-        subject: emailConfig.subject,
-        body: emailConfig.message,
-        status: "queued",
+        entityId,
+        personId: candidateData.personId,
+        candidateId: data.candidateId,
+        candidateDisplayName: candidateData.displayName,
+        positionApplied: candidateData.positionApplied,
+        scheduledAt: data.scheduledAt || new Date().toISOString(),
+        interviewType: data.interviewType || "video",
+        interviewerName: data.interviewerName || "",
+        interviewerUid: data.interviewerUid || "",
+        location: data.location || "",
+        status: "scheduled",
+        decision: "pending",
+        hiredEmployeeId: null,
+        notes: data.notes || "",
+        
+        // Email Notification
+        emailNotificationEnabled: !!emailConfig?.enabled,
+        emailTo: candidateEmail,
+        emailSubjectSnapshot: emailConfig?.subject,
+        emailMessageSnapshot: emailConfig?.message,
+        emailStatus: emailStatus,
+
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      };
+
+      // 1. Create Interview
+      console.debug(`[Interview Service] Step 2: Creating interview ${interviewId}`);
+      transaction.set(interviewRef, interviewData);
+
+      // 2. Update Candidate
+      console.debug("[Interview Service] Step 3: Updating candidate status");
+      transaction.update(candidateRef, {
+        status: "interview_scheduled",
+        latestInterviewId: interviewId,
+        interviewIds: arrayUnion(interviewId),
+        statusUpdatedAt: serverTimestamp(),
+        statusUpdatedBy: actorUid,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      });
+
+      // 3. Email Log if enabled
+      if (emailConfig?.enabled) {
+        console.debug("[Interview Service] Step 4: Queuing email log");
+        const logRef = doc(collection(db, `entities/${entityId}/emailLogs`));
+        transaction.set(logRef, {
+          logId: logRef.id,
+          entityId,
+          candidateId: data.candidateId,
+          personId: candidateData.personId,
+          interviewId,
+          to: candidateEmail,
+          subject: emailConfig.subject,
+          body: emailConfig.message,
+          status: "queued",
+          createdAt: serverTimestamp(),
+          createdBy: actorUid,
+        });
+      }
+
+      // 4. Timeline Event
+      console.debug("[Interview Service] Step 5: Creating timeline event");
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(timelineRef, {
+        eventId: timelineRef.id,
+        entityId,
+        personId: candidateData.personId,
+        type: "interview.scheduled",
+        label: "Entretien planifié",
+        description: `Entretien ${interviewData.interviewType} planifié pour le poste de ${interviewData.positionApplied}`,
+        sourceCollection: "interviews",
+        sourceId: interviewId,
         createdAt: serverTimestamp(),
         createdBy: actorUid,
       });
+
+      // 5. Update Views
+      console.debug("[Interview Service] Step 6: Updating candidate views (safe set)");
+      const viewRef = doc(db, `entities/${entityId}/candidateViews`, data.candidateId);
+      transaction.set(viewRef, {
+        status: "interview_scheduled",
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      }, { merge: true });
+
+      return { interviewId, candidateDisplayName: candidateData.displayName };
+    });
+
+    // Post-Transaction: Trigger Email Send
+    if (emailConfig?.enabled && candidateEmail) {
+      console.debug("[Interview Service] Step 7: Triggering async server email send");
+      const dateObj = new Date(data.scheduledAt || "");
+      const interviewDate = dateObj.toLocaleDateString('fr-FR', { dateStyle: 'long' });
+      const interviewTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+      sendInterviewEmailAction({
+        entityId,
+        interviewId: result.interviewId,
+        to: candidateEmail,
+        subject: emailConfig.subject,
+        message: emailConfig.message,
+        templateData: {
+          candidateName: result.candidateDisplayName,
+          jobTitle: data.positionApplied || "Poste ouvert",
+          companyName: emailConfig.companyName,
+          interviewDate,
+          interviewTime,
+          locationOrLink: data.location || "Sur site",
+          recruiterName: data.interviewerName || "Équipe RH",
+        }
+      }).catch(err => {
+        console.error("[Interview Service] Non-critical email trigger failure:", err);
+      });
     }
 
-    // 4. Timeline Event
-    const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-    transaction.set(timelineRef, {
-      eventId: timelineRef.id,
+    await createAuditLog({
+      userId: actorUid,
       entityId,
-      personId: candidateData.personId,
-      type: "interview.scheduled",
-      label: "Entretien planifié",
-      description: `Entretien ${interviewData.interviewType} planifié pour le poste de ${interviewData.positionApplied}`,
-      sourceCollection: "interviews",
-      sourceId: interviewId,
-      createdAt: serverTimestamp(),
-      createdBy: actorUid,
+      action: "interview.scheduled",
+      resourceType: "interview",
+      resourceId: result.interviewId,
+      details: { candidateId: data.candidateId, emailNotification: !!emailConfig?.enabled }
     });
 
-    // 5. Update Views
-    const viewRef = doc(db, `entities/${entityId}/candidateViews`, data.candidateId);
-    transaction.set(viewRef, {
-      status: "interview_scheduled",
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid,
-    }, { merge: true });
-
-    return { interviewId, candidateDisplayName: candidateData.displayName };
-  });
-
-  // Post-Transaction: Trigger Email Send
-  if (emailConfig?.enabled && candidateEmail) {
-    // Extract date/time for template
-    const dateObj = new Date(data.scheduledAt || "");
-    const interviewDate = dateObj.toLocaleDateString('fr-FR', { dateStyle: 'long' });
-    const interviewTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-
-    sendInterviewEmailAction({
-      entityId,
-      interviewId: result.interviewId,
-      to: candidateEmail,
-      subject: emailConfig.subject,
-      message: emailConfig.message,
-      templateData: {
-        candidateName: result.candidateDisplayName,
-        jobTitle: data.positionApplied || "Poste ouvert",
-        companyName: emailConfig.companyName,
-        interviewDate,
-        interviewTime,
-        locationOrLink: data.location || "Sur site",
-        recruiterName: data.interviewerName || "Équipe RH",
-      }
-    }).catch(err => {
-      console.error("[Interview Service] Non-critical email trigger failure:", err);
-    });
+    return result.interviewId;
+  } catch (serverError: any) {
+    console.error("[Interview Service] Transaction Failed:", serverError);
+    if (serverError.code === 'permission-denied') {
+      const permissionError = new FirestorePermissionError({
+        path: `entities/${entityId}/interviews/...`,
+        operation: 'write',
+        requestResourceData: { candidateId: data.candidateId },
+      } satisfies SecurityRuleContext);
+      errorEmitter.emit('permission-error', permissionError);
+    }
+    throw serverError;
   }
-
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "interview.scheduled",
-    resourceType: "interview",
-    resourceId: result.interviewId,
-    details: { candidateId: data.candidateId, emailNotification: !!emailConfig?.enabled }
-  });
-
-  return result.interviewId;
 }
 
 /**
