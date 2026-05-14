@@ -22,6 +22,7 @@ import { Worksite } from "@/types/worksite";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
+import { useActiveMembership } from "@/hooks/use-active-membership";
 
 interface RecruitmentNeedFormProps {
   entityId: string;
@@ -65,25 +66,28 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
   const router = useRouter();
   const { db } = useFirebase();
   const { toast } = useToast();
+  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
   
   const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
   const [loadingRequester, setLoadingRequester] = useState(false);
 
   // Queries
+  const canReadProfiles = !membershipLoading && hasPermission("jobProfiles.read");
   const profilesQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || !canReadProfiles) return null;
     return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc"));
-  }, [db, entityId]);
+  }, [db, entityId, canReadProfiles]);
 
+  const canReadWorksites = !membershipLoading && hasPermission("worksites.read");
   const worksitesQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || !canReadWorksites) return null;
     return query(
       collection(db, `entities/${entityId}/worksites`), 
       where("status", "==", "active"),
       orderBy("name", "asc")
     );
-  }, [db, entityId]);
+  }, [db, entityId, canReadWorksites]);
 
   const { data: jobProfiles } = useCollection<JobProfile>(profilesQuery);
   const { data: worksites, loading: loadingWorksites } = useCollection<Worksite>(worksitesQuery);
@@ -253,13 +257,17 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
                <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Fiche de Poste de Référence</Label>
                 <Select value={formData.jobProfileId} onValueChange={handleProfileChange}>
-                  <SelectTrigger><SelectValue placeholder="Sélectionner une fiche active" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder={!canReadProfiles ? "Accès refusé" : "Sélectionner une fiche active"} /></SelectTrigger>
                   <SelectContent>
-                    {activeProfiles.map(p => (
-                      <SelectItem key={p.jobProfileId} value={p.jobProfileId}>
-                        {p.jobTitleName} ({p.versionLabel})
-                      </SelectItem>
-                    ))}
+                    {!canReadProfiles ? (
+                      <div className="p-4 text-center text-xs text-destructive">Permission requise : jobProfiles.read</div>
+                    ) : (
+                      activeProfiles.map(p => (
+                        <SelectItem key={p.jobProfileId} value={p.jobProfileId}>
+                          {p.jobTitleName} ({p.versionLabel})
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -345,25 +353,37 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold flex items-center justify-between">
                     Lieu de travail
-                    <Link href={`/entity/${entityId}/worksites`} className="text-accent text-[9px] hover:underline flex items-center gap-0.5">
-                      <Plus className="w-2 h-2" /> Gérer sites
-                    </Link>
+                    {canReadWorksites && (
+                      <Link href={`/entity/${entityId}/worksites`} className="text-accent text-[9px] hover:underline flex items-center gap-0.5">
+                        <Plus className="w-2 h-2" /> Gérer sites
+                      </Link>
+                    )}
                   </Label>
-                  <Select value={formData.worksiteId} onValueChange={handleWorksiteChange}>
+                  <Select value={formData.worksiteId} onValueChange={handleWorksiteChange} disabled={!canReadWorksites}>
                     <SelectTrigger>
-                      <SelectValue placeholder={loadingWorksites ? "Chargement..." : "Choisir un lieu..."} />
+                      <SelectValue placeholder={!canReadWorksites ? "Accès refusé" : loadingWorksites ? "Chargement..." : "Choisir un lieu..."} />
                     </SelectTrigger>
                     <SelectContent>
-                      {worksites?.map(w => (
-                        <SelectItem key={w.worksiteId} value={w.worksiteId}>{w.name} ({w.city})</SelectItem>
-                      ))}
-                      {worksites?.length === 0 && !loadingWorksites && (
-                        <div className="p-4 text-center">
-                          <p className="text-xs text-muted-foreground mb-2">Aucun site actif disponible.</p>
-                          <Button variant="outline" size="sm" asChild>
-                            <Link href={`/entity/${entityId}/worksites`}>Créer un site</Link>
-                          </Button>
+                      {!canReadWorksites ? (
+                        <div className="p-4 text-center text-xs text-destructive">
+                           Vous n'avez pas la permission de consulter les lieux de travail.
                         </div>
+                      ) : (
+                        <>
+                          {worksites?.map(w => (
+                            <SelectItem key={w.worksiteId} value={w.worksiteId}>{w.name} ({w.city})</SelectItem>
+                          ))}
+                          {worksites?.length === 0 && !loadingWorksites && (
+                            <div className="p-4 text-center">
+                              <p className="text-xs text-muted-foreground mb-2">Aucun site actif disponible.</p>
+                              {hasPermission("worksites.create") && (
+                                <Button variant="outline" size="sm" asChild>
+                                  <Link href={`/entity/${entityId}/worksites`}>Créer un site</Link>
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </>
                       )}
                     </SelectContent>
                   </Select>
