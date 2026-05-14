@@ -56,6 +56,11 @@ service cloud.firestore {
         allow write: if hasPermission(entityId, 'candidates.create') || hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'candidates.decide') || isPlatformAdmin();
       }
 
+      match /candidateViews/{viewId} {
+        allow read: if hasPermission(entityId, 'candidates.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'candidates.decide') || hasPermission(entityId, 'candidates.update') || isPlatformAdmin();
+      }
+
       match /interviews/{interviewId} {
         allow read: if hasPermission(entityId, 'interviews.read') || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'interviews.create') || hasPermission(entityId, 'interviews.update') || hasPermission(entityId, 'interviews.decide') || isPlatformAdmin();

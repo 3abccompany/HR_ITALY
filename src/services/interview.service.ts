@@ -26,6 +26,8 @@ export async function scheduleInterview(
 ) {
   if (!db) throw new Error("Firestore not initialized");
 
+  console.debug(`[Interview Service] Starting scheduling for candidate: ${data.candidateId}`);
+
   return await runTransaction(db, async (transaction) => {
     const candidateRef = doc(db, `entities/${entityId}/candidates`, data.candidateId);
     const candidateSnap = await transaction.get(candidateRef);
@@ -64,9 +66,11 @@ export async function scheduleInterview(
     };
 
     // 1. Create Interview
+    console.debug(`[Transaction] Creating interview: entities/${entityId}/interviews/${interviewId}`);
     transaction.set(interviewRef, interviewData);
 
     // 2. Update Candidate Status and Tracking
+    console.debug(`[Transaction] Updating candidate: entities/${entityId}/candidates/${data.candidateId}`);
     transaction.update(candidateRef, {
       status: "interview_scheduled",
       latestInterviewId: interviewId,
@@ -79,6 +83,7 @@ export async function scheduleInterview(
 
     // 3. Timeline Event
     const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+    console.debug(`[Transaction] Creating timeline event: entities/${entityId}/personTimeline/${timelineRef.id}`);
     transaction.set(timelineRef, {
       eventId: timelineRef.id,
       entityId,
@@ -94,6 +99,7 @@ export async function scheduleInterview(
 
     // 4. Update optional read models safely
     const viewRef = doc(db, `entities/${entityId}/candidateViews`, data.candidateId);
+    console.debug(`[Transaction] Updating candidateView: entities/${entityId}/candidateViews/${data.candidateId}`);
     transaction.set(viewRef, {
       status: "interview_scheduled",
       updatedAt: serverTimestamp(),
@@ -112,11 +118,13 @@ export async function scheduleInterview(
     });
     return id;
   }).catch((err) => {
+    console.error("[Interview Service] Scheduling failed:", err);
+    
     // If it's a permission error, emit for the developer overlay
-    if (err.code === 'permission-denied') {
+    if (err.code === 'permission-denied' || err.message?.includes('permission')) {
       const permissionError = new FirestorePermissionError({
-        path: `entities/${entityId}/interviews`,
-        operation: 'create',
+        path: `entities/${entityId}/interviews (Transaction)`,
+        operation: 'write',
       } satisfies SecurityRuleContext);
       errorEmitter.emit('permission-error', permissionError);
     }
