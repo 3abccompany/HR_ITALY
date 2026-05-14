@@ -20,6 +20,8 @@ import { createJobProfile, updateJobProfile } from "@/services/job-profile.servi
 import { JobProfile, CatalogItemType, JobProfileCatalogItem } from "@/types/job-profile";
 import { Department, JobTitle } from "@/types/organization";
 import { useToast } from "@/hooks/use-toast";
+import { useActiveMembership } from "@/hooks/use-active-membership";
+import Link from "next/link";
 
 interface JobProfileFormProps {
   entityId: string;
@@ -47,6 +49,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   const router = useRouter();
   const { db } = useFirebase();
   const { toast } = useToast();
+  const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
   
   const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
@@ -81,8 +84,9 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   const activeDepartments = useMemo(() => departments?.filter(d => d.status === "active") || [], [departments]);
   const activeJobTitles = useMemo(() => jobTitles?.filter(j => j.status === "active") || [], [jobTitles]);
   
+  // Requirement: Filtered Job Titles by department
   const filteredJobTitlesForDept = useMemo(() => {
-    if (!formData.departmentId) return activeJobTitles;
+    if (!formData.departmentId) return [];
     return activeJobTitles.filter(j => j.departmentId === formData.departmentId);
   }, [activeJobTitles, formData.departmentId]);
 
@@ -209,7 +213,13 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             </div>
             <div className="space-y-2 pt-2">
               <Label className="text-[10px] uppercase text-muted-foreground font-bold">Département</Label>
-              <Select value={formData.departmentId} onValueChange={(v) => setFormData(p => ({...p, departmentId: v, jobTitleId: ""}))}>
+              <Select 
+                value={formData.departmentId} 
+                onValueChange={(v) => {
+                  // Clear jobTitleId when manually changing department
+                  setFormData(p => ({...p, departmentId: v, jobTitleId: ""}));
+                }}
+              >
                 <SelectTrigger><SelectValue placeholder="Choisir..." /></SelectTrigger>
                 <SelectContent>
                   {activeDepartments.map(d => <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>)}
@@ -217,11 +227,30 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
               </Select>
             </div>
             <div className="space-y-2">
-              <Label className="text-[10px] uppercase text-muted-foreground font-bold">Intitulé du poste</Label>
-              <Select value={formData.jobTitleId} onValueChange={(v) => setFormData(p => ({...p, jobTitleId: v}))}>
-                <SelectTrigger><SelectValue placeholder={formData.departmentId ? "Choisir..." : "Sél. département"} /></SelectTrigger>
+              <Label className="text-[10px] uppercase text-muted-foreground font-bold flex items-center justify-between">
+                Intitulé du poste
+                {formData.departmentId && hasPermission("jobTitles.create") && (
+                   <Link href={`/entity/${entityId}/departments`} className="text-accent text-[9px] hover:underline flex items-center gap-0.5">
+                     <Plus className="w-2 h-2" /> Créer intitulé
+                   </Link>
+                )}
+              </Label>
+              <Select 
+                value={formData.jobTitleId} 
+                onValueChange={(v) => setFormData(p => ({...p, jobTitleId: v}))}
+                disabled={!formData.departmentId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={formData.departmentId ? "Choisir..." : "Sélectionner un département d'abord"} />
+                </SelectTrigger>
                 <SelectContent>
-                  {filteredJobTitlesForDept.map(j => <SelectItem key={j.jobTitleId} value={j.jobTitleId}>{j.title}</SelectItem>)}
+                  {formData.departmentId && filteredJobTitlesForDept.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-muted-foreground">
+                      Aucun intitulé de poste actif pour ce département.
+                    </div>
+                  ) : (
+                    filteredJobTitlesForDept.map(j => <SelectItem key={j.jobTitleId} value={j.jobTitleId}>{j.title}</SelectItem>)
+                  )}
                 </SelectContent>
               </Select>
             </div>
