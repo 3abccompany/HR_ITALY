@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { 
   Users, UserPlus, Search, Edit, PowerOff, RefreshCcw, 
   Loader2, Mail, Phone, Fingerprint, MapPin, MoreVertical,
-  AlertCircle, ShieldCheck
+  AlertCircle, ShieldCheck, X, LayoutDashboard
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ITALIAN_PROVINCES, getCitiesForProvince } from "@/config/geo-italy";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { PersonDetailPanel } from "@/components/persons/PersonDetailPanel";
+import { cn } from "@/lib/utils";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const initialForm = {
   firstName: "",
@@ -62,12 +66,14 @@ const initialForm = {
 export default function PersonsManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
+  const isMobile = useIsMobile();
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
 
-  // State
+  // UI State
+  const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState(initialForm);
@@ -158,34 +164,9 @@ export default function PersonsManagementPage() {
     e.preventDefault();
     if (!user || !entityId) return;
 
-    // 1. National Identity Check
     if (!formData.codiceFiscale) {
       toast({ variant: "destructive", title: "Incomplet", description: "L'identifiant national est obligatoire." });
       return;
-    }
-
-    // 2. Email Validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(formData.email)) {
-      toast({ 
-        variant: "destructive", 
-        title: "Format d'email invalide", 
-        description: "Veuillez saisir une adresse email valide." 
-      });
-      return;
-    }
-
-    // 3. Phone Validation (Digits Only)
-    if (formData.phone) {
-      const phoneRegex = /^\d+$/;
-      if (!phoneRegex.test(formData.phone)) {
-        toast({ 
-          variant: "destructive", 
-          title: "Format de téléphone invalide", 
-          description: "Le numéro de téléphone doit contenir uniquement des chiffres." 
-        });
-        return;
-      }
     }
 
     setLoading(true);
@@ -219,7 +200,7 @@ export default function PersonsManagementPage() {
     setLoading(true);
     try {
       await disablePerson(entityId, disablingId, user.uid);
-      toast({ title: "Désactivée", description: "La fiche est désormais inactive." });
+      toast({ title: "Désactivée" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -233,7 +214,7 @@ export default function PersonsManagementPage() {
     setLoading(true);
     try {
       await reactivatePerson(entityId, reactivatingId, user.uid);
-      toast({ title: "Réactivée", description: "La fiche est de nouveau active." });
+      toast({ title: "Réactivée" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -251,23 +232,16 @@ export default function PersonsManagementPage() {
     ) || [];
   }, [persons, search]);
 
-  const getLifecycleLabel = (status: string | undefined) => {
+  const getLifecycleBadge = (status: string | undefined) => {
     switch (status) {
-      case 'candidate': return "Candidat";
-      case 'employee': return "Employé";
-      case 'former_employee': return "Ancien employé";
-      case 'person': return "Personne";
-      default: return "Personne";
+      case 'candidate': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Candidat</Badge>;
+      case 'employee': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200">Employé</Badge>;
+      case 'former_employee': return <Badge variant="outline" className="text-muted-foreground">Ancien employé</Badge>;
+      default: return <Badge variant="outline">Personne</Badge>;
     }
   };
 
-  if (membershipLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   if (!canRead) {
     return (
@@ -276,9 +250,7 @@ export default function PersonsManagementPage() {
           <CardContent className="flex flex-col items-center py-12 text-center">
             <AlertCircle className="w-12 h-12 text-destructive mb-4" />
             <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
-            <p className="text-muted-foreground max-w-md">
-              Vous n'avez pas la permission de consulter le catalogue des personnes de cette entreprise.
-            </p>
+            <p className="text-muted-foreground">Vous n'avez pas la permission de consulter le catalogue des personnes.</p>
           </CardContent>
         </Card>
       </div>
@@ -286,124 +258,161 @@ export default function PersonsManagementPage() {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto pb-24">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Personnes</h1>
-          <p className="text-muted-foreground text-sm">Base d'identité unique pour les candidats et employés.</p>
+    <div className="h-screen flex flex-col overflow-hidden">
+      <div className="p-8 pb-4 shrink-0 flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-headline font-bold text-primary">Base de données Personnes</h1>
+            <p className="text-muted-foreground text-sm">Référentiel d'identité et parcours de vie HR.</p>
+          </div>
+          {canCreate && (
+            <Button onClick={() => setIsFormVisible(true)} className="gap-2 shadow-lg shadow-primary/10">
+              <UserPlus className="w-4 h-4" /> Ajouter une identité
+            </Button>
+          )}
         </div>
-        {canCreate && (
-          <Button onClick={() => setIsFormVisible(true)} className="gap-2">
-            <UserPlus className="w-4 h-4" /> Nouvelle personne
-          </Button>
+      </div>
+
+      <div className="flex-1 flex overflow-hidden p-8 pt-0 gap-8">
+        {/* Left Table Section */}
+        <div className={cn("flex-1 flex flex-col gap-4 min-w-0", selectedPerson && "hidden lg:flex")}>
+          <div className="relative max-w-md shrink-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input 
+              className="pl-10" 
+              placeholder="Rechercher par nom, email ou identifiant..." 
+              value={search} 
+              onChange={(e) => setSearch(e.target.value)} 
+            />
+          </div>
+
+          <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
+            <div className="flex-1 overflow-auto">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-secondary/20">
+                  <TableRow>
+                    <TableHead>Identité</TableHead>
+                    <TableHead className="hidden md:table-cell">Contact</TableHead>
+                    <TableHead>Situation</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingPersons ? (
+                    <TableRow><TableCell colSpan={5} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                  ) : filteredPersons.length === 0 ? (
+                    <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground">Aucun résultat trouvé.</TableCell></TableRow>
+                  ) : (
+                    filteredPersons.map((p) => (
+                      <TableRow 
+                        key={p.personId} 
+                        onClick={() => setSelectedPerson(p)}
+                        className={cn(
+                          "cursor-pointer transition-colors", 
+                          selectedPerson?.personId === p.personId ? "bg-primary/5 hover:bg-primary/5" : "hover:bg-muted/50"
+                        )}
+                      >
+                        <TableCell>
+                          <div className="font-bold text-primary">{p.displayName}</div>
+                          <div className="text-[10px] text-muted-foreground uppercase font-mono mt-0.5">{p.codiceFiscale || "SANS ID"}</div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <div className="flex flex-col gap-0.5">
+                            <div className="text-xs flex items-center gap-1"><Mail className="w-2.5 h-2.5 opacity-50" /> {p.email}</div>
+                            {p.phone && <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Phone className="w-2.5 h-2.5 opacity-50" /> {p.phone}</div>}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {getLifecycleBadge(p.currentLifecycleStatus)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={p.status === 'active' ? 'default' : 'outline'} className={p.status === 'active' ? "bg-green-500 hover:bg-green-600 border-none" : ""}>
+                            {p.status === 'active' ? "Actif" : "Inactif"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          {canUpdate && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleEdit(p)} className="gap-2">
+                                  <Edit className="w-4 h-4" /> Modifier
+                                </DropdownMenuItem>
+                                {p.status === 'active' ? (
+                                  <DropdownMenuItem onClick={() => setDisablingId(p.personId)} className="gap-2 text-destructive">
+                                    <PowerOff className="w-4 h-4" /> Désactiver
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem onClick={() => setReactivatingId(p.personId)} className="gap-2 text-green-600">
+                                    <RefreshCcw className="w-4 h-4" /> Réactiver
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </div>
+
+        {/* Right Detail Panel - Desktop */}
+        {!isMobile && selectedPerson && (
+          <div className="w-[500px] flex flex-col gap-4 animate-in slide-in-from-right-4 duration-300">
+             <div className="flex items-center justify-between shrink-0">
+                <h3 className="text-sm font-black uppercase text-primary tracking-widest flex items-center gap-2">
+                   <LayoutDashboard className="w-4 h-4" /> Fiche Identité & Parcours
+                </h3>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedPerson(null)}>
+                   <X className="w-4 h-4" />
+                </Button>
+             </div>
+             <div className="flex-1 min-h-0">
+               <PersonDetailPanel 
+                 entityId={entityId} 
+                 person={selectedPerson} 
+               />
+             </div>
+          </div>
+        )}
+
+        {!isMobile && !selectedPerson && (
+          <div className="w-[500px] hidden lg:flex flex-col items-center justify-center border-2 border-dashed rounded-3xl bg-secondary/5 text-center p-8">
+             <Fingerprint className="w-12 h-12 text-muted-foreground/20 mb-4" />
+             <p className="text-sm text-muted-foreground font-medium">Sélectionnez une personne pour consulter sa fiche complète et son historique.</p>
+          </div>
         )}
       </div>
 
-      <div className="space-y-4">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input 
-            className="pl-10" 
-            placeholder="Rechercher par nom, email ou identifiant..." 
-            value={search} 
-            onChange={(e) => setSearch(e.target.value)} 
-          />
-        </div>
+      {/* Mobile Detail Panel */}
+      {isMobile && (
+        <Sheet open={!!selectedPerson} onOpenChange={(open) => !open && setSelectedPerson(null)}>
+          <SheetContent side="bottom" className="h-[90vh] px-0">
+            <SheetHeader className="px-6 mb-4">
+              <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs">Fiche Identité</SheetTitle>
+            </SheetHeader>
+            <div className="h-full pb-20">
+              <PersonDetailPanel 
+                 entityId={entityId} 
+                 person={selectedPerson} 
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
 
-        <Card className="overflow-hidden border-primary/10">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/20">
-                <TableHead>Identité</TableHead>
-                <TableHead>Identifiant National</TableHead>
-                <TableHead>Contact</TableHead>
-                <TableHead>Localisation</TableHead>
-                <TableHead>Situation RH</TableHead>
-                <TableHead>Statut</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loadingPersons ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-              ) : filteredPersons.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">Aucun résultat trouvé.</TableCell></TableRow>
-              ) : (
-                filteredPersons.map((p) => (
-                  <TableRow key={p.personId}>
-                    <TableCell>
-                      <div className="font-bold text-primary">{p.displayName}</div>
-                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground uppercase font-mono">
-                        <Fingerprint className="w-3 h-3" /> {p.personId}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-mono text-sm uppercase font-bold">{p.codiceFiscale || "N/A"}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <Mail className="w-3 h-3 text-muted-foreground" /> {p.email}
-                        </div>
-                        {p.phone && (
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <Phone className="w-3 h-3" /> {p.phone}
-                          </div>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <MapPin className="w-3 h-3" /> {p.city}, {p.province}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="capitalize font-medium text-[10px]">
-                        {getLifecycleLabel(p.currentLifecycleStatus)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={p.status === 'active' ? 'default' : 'outline'} className={p.status === 'active' ? "bg-green-500 hover:bg-green-600 border-none" : "bg-red-50 text-red-600 border-red-200"}>
-                        {p.status === 'active' ? "Actif" : "Inactif"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canUpdate && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handleEdit(p)} className="gap-2">
-                              <Edit className="w-4 h-4" /> Modifier
-                            </DropdownMenuItem>
-                            {p.status === 'active' ? (
-                              <DropdownMenuItem onClick={() => setDisablingId(p.personId)} className="gap-2 text-destructive">
-                                <PowerOff className="w-4 h-4" /> Désactiver
-                              </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem onClick={() => setReactivatingId(p.personId)} className="gap-2 text-green-600">
-                                <RefreshCcw className="w-4 h-4" /> Réactiver
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </Card>
-      </div>
-
-      {/* Create / Edit Dialog */}
+      {/* Forms & Dialogs */}
       <Dialog open={isFormVisible} onOpenChange={(open) => !open && handleReset()}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingId ? "Modifier la personne" : "Ajouter une personne"}</DialogTitle>
-            <DialogDescription>Saisissez les informations d'identité et de localisation.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSave} className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -418,8 +427,8 @@ export default function PersonsManagementPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="codiceFiscale">Identifiant national (ex: Code Fiscal)</Label>
-                <Input id="codiceFiscale" value={formData.codiceFiscale} onChange={handleInputChange} className="font-mono uppercase font-bold" placeholder="XXXXXX00X00X000X" required />
+                <Label htmlFor="codiceFiscale">Identifiant National (Code Fiscal)</Label>
+                <Input id="codiceFiscale" value={formData.codiceFiscale} onChange={handleInputChange} className="font-mono uppercase font-bold" required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
@@ -434,8 +443,6 @@ export default function PersonsManagementPage() {
                   options={provinceOptions}
                   value={formData.province}
                   onValueChange={(v) => setFormData(p => ({...p, province: v, city: ""}))}
-                  placeholder="Choisir une province"
-                  searchPlaceholder="Rechercher une province..."
                 />
               </div>
               <div className="space-y-2">
@@ -446,66 +453,37 @@ export default function PersonsManagementPage() {
                   onValueChange={(v) => {
                     setFormData(p => ({...p, city: v}));
                     setIsOtherCity(v === "OTHER");
-                    if (v !== "OTHER") setCustomCityName("");
                   }}
-                  placeholder={formData.province ? "Choisir une ville" : "Sélectionnez d'abord une province"}
                   disabled={!formData.province}
-                  searchPlaceholder="Rechercher une ville..."
                 />
-              </div>
-            </div>
-
-            {isOtherCity && (
-              <div className="space-y-2 bg-secondary/20 p-3 rounded-lg border border-dashed border-primary/20 animate-in fade-in slide-in-from-top-1">
-                <Label htmlFor="customCity">Nom de la ville personnalisée</Label>
-                <Input id="customCity" value={customCityName} onChange={(e) => setCustomCityName(e.target.value)} placeholder="Entrez le nom de la ville" required />
-              </div>
-            )}
-
-            <div className="grid grid-cols-3 gap-4">
-              <div className="col-span-2 space-y-2">
-                <Label htmlFor="address">Adresse</Label>
-                <Input id="address" value={formData.address} onChange={handleInputChange} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="postalCode">Code Postal</Label>
-                <Input id="postalCode" value={formData.postalCode} onChange={handleInputChange} />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="phone">Téléphone</Label>
-              <Input id="phone" value={formData.phone} onChange={handleInputChange} placeholder="Ex: 0601020304" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="notes">Notes Internes</Label>
-              <Input id="notes" value={formData.notes} onChange={handleInputChange} placeholder="Observations..." />
+              <Input id="phone" value={formData.phone} onChange={handleInputChange} />
             </div>
 
             <DialogFooter className="pt-4 border-t">
               <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
               <Button type="submit" disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-                {editingId ? "Enregistrer les modifications" : "Créer la personne"}
+                Enregistrer
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* Confirmation Dialogs */}
       <AlertDialog open={!!disablingId} onOpenChange={() => setDisablingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmer la désactivation</AlertDialogTitle>
-            <AlertDialogDescription>Cette fiche sera masquée des processus opérationnels actifs.</AlertDialogDescription>
+            <AlertDialogDescription>L'accès de cette personne aux futurs processus sera suspendu.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
-            <AlertDialogAction onClick={(e) => { e.preventDefault(); confirmDisable(); }} className="bg-red-600 hover:bg-red-700" disabled={loading}>
-              {loading ? "Chargement..." : "Confirmer"}
-            </AlertDialogAction>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); confirmDisable(); }} className="bg-red-600 hover:bg-red-700" disabled={loading}>Confirmer</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -518,9 +496,7 @@ export default function PersonsManagementPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
-            <AlertDialogAction onClick={(e) => { e.preventDefault(); confirmReactivate(); }} className="bg-green-600 hover:bg-green-700" disabled={loading}>
-              {loading ? "Chargement..." : "Réactiver"}
-            </AlertDialogAction>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); confirmReactivate(); }} className="bg-green-600 hover:bg-green-700" disabled={loading}>Réactiver</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
