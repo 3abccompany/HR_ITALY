@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -451,7 +450,7 @@ export default function CandidatesManagementPage() {
                     <SelectItem value="job">Poste / Métier</SelectItem>
                     <SelectItem value="department">Département</SelectItem>
                     <SelectItem value="worksite">Site / Localisation</SelectItem>
-                    <SelectItem value="status_then_job">Statut > Poste</SelectItem>
+                    <SelectItem value="status_then_job">Statut &gt; Poste</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -866,4 +865,3 @@ function CandidateTable({
     </Table>
   );
 }
-
