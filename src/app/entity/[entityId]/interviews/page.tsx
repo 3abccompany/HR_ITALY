@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -107,8 +106,8 @@ export default function InterviewsManagementPage() {
   const { data: candidates, loading: loadingCandidates } = useCollection<Candidate>(candidatesQuery);
 
   const eligibleCandidates = useMemo(() => {
-    const invalidStatuses = ["inactive", "archived", "hired", "rejected", "withdrawn"];
-    return candidates?.filter(c => !invalidStatuses.includes(c.status)) || [];
+    // Only candidates in "interview_to_schedule" are eligible for NEW interviews
+    return candidates?.filter(c => c.status === "interview_to_schedule") || [];
   }, [candidates]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -159,7 +158,7 @@ export default function InterviewsManagementPage() {
         toast({ title: "Mis à jour", description: "L'entretien a été modifié." });
       } else {
         await scheduleInterview(entityId, formData, user.uid);
-        toast({ title: "Planifié", description: "L'entretien a été enregistré." });
+        toast({ title: "Planifié", description: "L'entretien a été enregistré et le candidat mis à jour." });
       }
       handleReset();
     } catch (err: any) {
@@ -396,10 +395,10 @@ export default function InterviewsManagementPage() {
           <form onSubmit={handleSave} className="space-y-4 py-4">
             {!editingId && (
               <div className="space-y-2">
-                <Label htmlFor="candidateId">Candidat éligible</Label>
+                <Label htmlFor="candidateId">Candidat éligible (À planifier)</Label>
                 <Select value={formData.candidateId} onValueChange={(v) => setFormData(p => ({...p, candidateId: v}))}>
                   <SelectTrigger>
-                    <SelectValue placeholder={loadingCandidates ? "Chargement..." : "Sélectionner un candidat actif"} />
+                    <SelectValue placeholder={loadingCandidates ? "Chargement..." : "Sélectionner un candidat éligible"} />
                   </SelectTrigger>
                   <SelectContent>
                     {eligibleCandidates.map(c => (
@@ -407,8 +406,14 @@ export default function InterviewsManagementPage() {
                         {c.displayName} — {c.positionApplied}
                       </SelectItem>
                     ))}
+                    {eligibleCandidates.length === 0 && !loadingCandidates && (
+                      <div className="p-4 text-center text-xs text-muted-foreground italic">
+                        Aucun candidat en attente de planification trouvé.
+                      </div>
+                    )}
                   </SelectContent>
                 </Select>
+                <p className="text-[10px] text-muted-foreground">Note: Seuls les candidats avec le statut "À planifier" apparaissent ici.</p>
               </div>
             )}
 
