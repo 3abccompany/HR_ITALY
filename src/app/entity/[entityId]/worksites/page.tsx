@@ -71,7 +71,7 @@ export default function WorksitesManagementPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
+  const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
 
   // UI State
   const [isFormVisible, setIsFormVisible] = useState(false);
@@ -82,7 +82,7 @@ export default function WorksitesManagementPage() {
   const [archivingId, setArchivingId] = useState<string | null>(null);
 
   // Permissions
-  const canRead = hasPermission("worksites.read");
+  const canRead = !membershipLoading && !!membership && hasPermission("worksites.read");
   const canCreate = hasPermission("worksites.create");
   const canUpdate = hasPermission("worksites.update");
   const canArchive = hasPermission("worksites.archive");

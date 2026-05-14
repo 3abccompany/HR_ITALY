@@ -66,20 +66,20 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
   const router = useRouter();
   const { db } = useFirebase();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
   
   const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
   const [loadingRequester, setLoadingRequester] = useState(false);
 
   // Queries
-  const canReadProfiles = !membershipLoading && hasPermission("jobProfiles.read");
+  const canReadProfiles = !membershipLoading && !!membership && hasPermission("jobProfiles.read");
   const profilesQuery = useMemo(() => {
     if (!db || !entityId || !canReadProfiles) return null;
     return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc"));
   }, [db, entityId, canReadProfiles]);
 
-  const canReadWorksites = !membershipLoading && hasPermission("worksites.read");
+  const canReadWorksites = !membershipLoading && !!membership && hasPermission("worksites.read");
   const worksitesQuery = useMemo(() => {
     if (!db || !entityId || !canReadWorksites) return null;
     return query(
