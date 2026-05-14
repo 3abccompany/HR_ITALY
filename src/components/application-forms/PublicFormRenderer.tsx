@@ -70,22 +70,19 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       });
 
       let result: any = null;
-      let rawText = "";
+      const rawText = await response.text();
 
       try {
-        rawText = await response.text();
         result = rawText ? JSON.parse(rawText) : null;
       } catch {
         result = null;
       }
 
       if (!response.ok) {
-        console.error("Public submit failed", {
-          status: response.status,
-          statusText: response.statusText,
-          result,
-          rawText,
-        });
+        // Handle domain-specific errors (Duplicates)
+        if (result?.error?.code === "ALREADY_APPLIED_TO_THIS_JOB") {
+          throw new Error("Vous avez déjà postulé à ce poste.");
+        }
 
         const message =
           result?.error?.message ||
@@ -94,7 +91,7 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
           rawText ||
           "Une erreur est survenue lors de l'envoi.";
 
-        throw new Error(typeof message === "string" ? message : JSON.stringify(message));
+        throw new Error(typeof message === "string" ? message : "Erreur technique");
       }
 
       router.push(`/apply/${form.publicSlug}/success`);
@@ -190,7 +187,7 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
                   </div>
                 ) : (
                   <Input 
-                    type={field.type} 
+                    type={field.type === 'phone' ? 'tel' : field.type} 
                     className="h-11 rounded-xl border-slate-200 focus:ring-primary/20" 
                     placeholder={field.label}
                     value={answers[field.key] || ""}

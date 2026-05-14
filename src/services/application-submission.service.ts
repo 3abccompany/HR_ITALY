@@ -1,7 +1,9 @@
+
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { createHash } from "crypto";
 
 /**
  * Recursively removes undefined values from an object and replaces them with null
@@ -29,11 +31,19 @@ function sanitizePayload(obj: any): any {
  * Normalization helpers
  */
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
-const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
-const normalizeNationalId = (id: string) => id.trim().toUpperCase().replace(/\s/g, "");
+const normalizePhone = (phone: string) => phone.toString().replace(/\D/g, "");
 
 /**
- * Transactional Submission Logic using Admin SDK
+ * SHA-256 Hashing for privacy-safe deduplication keys.
+ */
+function computeDedupeKey(entityId: string, needId: string, email: string, phone: string): string {
+  const input = `${entityId}:${needId}:${email}:${phone}`;
+  return createHash('sha256').update(input).digest('hex');
+}
+
+/**
+ * Transactional Submission Logic using Admin SDK.
+ * Updated to use Email/Phone deduplication for better privacy and UX.
  */
 export async function executeSubmissionTransaction(
   entityId: string, 
@@ -51,25 +61,27 @@ export async function executeSubmissionTransaction(
   const lastName = (answers.lastName || "").toString().trim();
   const email = (answers.email || "").toString().trim();
   const phone = (answers.phone || "").toString().trim();
-  const nationalId = (answers.nationalId || "").toString().trim();
+  const nationalId = (answers.nationalId || "").toString().trim(); // Optional legacy support
 
-  if (!nationalId) {
-    throw new Error("L'identifiant national est obligatoire pour postuler.");
+  if (!email || !phone) {
+    throw new Error("L'email et le téléphone sont obligatoires pour postuler.");
   }
 
   const normEmail = normalizeEmail(email);
   const normPhone = normalizePhone(phone);
-  const normNationalId = normalizeNationalId(nationalId);
+  
+  // SHA-256 Hash for the dedupe document ID (Privacy First)
+  const dedupeKey = computeDedupeKey(entityId, form.recruitmentNeedId, normEmail, normPhone);
 
-  console.log(`[Submission Service] Processing identity: ${firstName} ${lastName} (${normNationalId})`);
-
-  const dedupeKey = `${form.recruitmentNeedId}_${normNationalId}`;
+  console.log(`[Submission Service] Processing application for: ${normEmail}`);
 
   // 1. Pre-transaction Lookups (Server-side)
+  // Search for existing Person by normalized email
   const personsRef = adminDb.collection("entities").doc(entityId).collection("persons");
-  const personSnap = await personsRef.where("codiceFiscale", "==", normNationalId).limit(1).get();
+  const personSnap = await personsRef.where("email", "==", normEmail).limit(1).get();
   const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
 
+  // Potential duplicate check by email for this specific job
   const submissionsRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissions");
   const emailSnap = await submissionsRef
     .where("recruitmentNeedId", "==", form.recruitmentNeedId)
@@ -78,7 +90,6 @@ export async function executeSubmissionTransaction(
     .get();
     
   const possibleDuplicate = !emailSnap.empty;
-  const duplicateReason = !emailSnap.empty ? "same_email" : null;
 
   return await adminDb.runTransaction(async (transaction) => {
     // 2. Verify Need Status
@@ -92,15 +103,15 @@ export async function executeSubmissionTransaction(
       throw new Error("Désolé, cette offre n'est plus disponible aux candidatures.");
     }
 
-    // 3. Check Dedupe Lock
+    // 3. Check Dedupe Lock (Atomic check)
     const dedupeRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissionDedupe").doc(dedupeKey);
     const dedupeSnap = await transaction.get(dedupeRef);
     if (dedupeSnap.exists) {
-      throw new Error("Vous avez déjà postulé à cette offre d'emploi.");
+      throw new Error("ALREADY_APPLIED_TO_THIS_JOB");
     }
 
     let personId = existingPersonId;
-    let isNewPerson = !personId;
+    const isNewPerson = !personId;
 
     if (!personId) {
       const newPersonRef = adminDb.collection("entities").doc(entityId).collection("persons").doc();
@@ -135,14 +146,12 @@ export async function executeSubmissionTransaction(
       normalizedEmail: normEmail,
       phone,
       normalizedPhone: normPhone,
-      nationalId,
-      normalizedNationalId: normNationalId,
+      nationalId: nationalId || null, // Keep if provided in old forms
       answers: answers || {},
       consentAccepted: true,
       consentAcceptedAt: FieldValue.serverTimestamp(),
       dedupeKey,
       possibleDuplicate,
-      duplicateReason,
       personId,
       candidateId,
       status: "submitted",
@@ -156,7 +165,7 @@ export async function executeSubmissionTransaction(
       dedupeKey,
       entityId,
       recruitmentNeedId: form.recruitmentNeedId,
-      normalizedNationalId: normNationalId,
+      normalizedEmail: normEmail,
       applicationSubmissionId: submissionId,
       personId,
       candidateId,
@@ -172,7 +181,6 @@ export async function executeSubmissionTransaction(
       displayName: `${firstName} ${lastName}`,
       email: normEmail,
       phone: normPhone,
-      codiceFiscale: normNationalId,
       currentLifecycleStatus: "candidate",
       currentCandidateId: candidateId,
       status: "active",
@@ -184,7 +192,7 @@ export async function executeSubmissionTransaction(
       candidateId,
       entityId,
       personId,
-      applicationSubmissionId: submissionId, // CRITICAL LINK for Review Panel
+      applicationSubmissionId: submissionId,
       displayName: `${firstName} ${lastName}`,
       email: normEmail,
       phone: normPhone,
@@ -237,7 +245,7 @@ export async function executeSubmissionTransaction(
       action: "applicationSubmission.created",
       resourceType: "applicationSubmission",
       resourceId: submissionId,
-      details: { personId, candidateId },
+      details: { personId, candidateId, dedupeHashed: true },
       timestamp: FieldValue.serverTimestamp(),
     });
 

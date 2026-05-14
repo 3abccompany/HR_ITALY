@@ -18,7 +18,8 @@ import { RecruitmentNeed } from "@/types/recruitment-need";
 import { createAuditLog } from "./audit.service";
 
 /**
- * Generates the 19 standard system fields for a new application form.
+ * Generates the standard system fields for a new application form.
+ * Updated: National ID removed for privacy. Email and Phone are required for dedupe.
  */
 export function getInitialSystemFields(): ApplicationFormField[] {
   const fields: Omit<ApplicationFormField, 'order'>[] = [
@@ -26,7 +27,6 @@ export function getInitialSystemFields(): ApplicationFormField[] {
     { fieldId: "f2", key: "lastName", label: "Nom", type: "text", required: true, systemField: true, enabled: true, options: [] },
     { fieldId: "f3", key: "email", label: "Email", type: "email", required: true, systemField: true, enabled: true, options: [] },
     { fieldId: "f4", key: "phone", label: "Téléphone", type: "phone", required: true, systemField: true, enabled: true, options: [] },
-    { fieldId: "f5", key: "nationalId", label: "Identifiant national", type: "text", required: true, systemField: true, enabled: true, options: [] },
     { fieldId: "f6", key: "birthDate", label: "Date de naissance", type: "date", required: false, systemField: true, enabled: true, options: [] },
     { fieldId: "f7", key: "address", label: "Adresse", type: "text", required: false, systemField: true, enabled: true, options: [] },
     { fieldId: "f8", key: "city", label: "Ville", type: "text", required: false, systemField: true, enabled: true, options: [] },

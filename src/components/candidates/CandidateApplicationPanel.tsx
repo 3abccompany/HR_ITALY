@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -180,7 +181,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
               <AlertTriangle className="w-5 h-5 shrink-0" />
               <div className="space-y-0.5">
                 <p className="text-xs font-bold uppercase">Doublon potentiel détecté</p>
-                <p className="text-[10px] opacity-90 font-medium">Un autre dossier avec le même identifiant national existe pour ce recrutement.</p>
+                <p className="text-[10px] opacity-90 font-medium">Un autre dossier avec le même identifiant existe pour ce recrutement.</p>
               </div>
             </div>
           )}
@@ -192,7 +193,9 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
                 <AnswerRow label="Nom" value={submission?.lastName || candidate.displayName.split(' ').slice(1).join(' ')} />
                 <AnswerRow label="Email" value={submission?.email || candidate.email} />
                 <AnswerRow label="Téléphone" value={submission?.phone || candidate.phone} />
-                <AnswerRow label="Identifiant National" value={submission?.nationalId || (candidate as any).codiceFiscale} code />
+                {(submission?.nationalId || (candidate as any).codiceFiscale) && (
+                  <AnswerRow label="Identifiant National" value={submission?.nationalId || (candidate as any).codiceFiscale} code />
+                )}
                 <AnswerRow label="Date de naissance" value={formatValue(submission?.answers?.birthDate)} />
              </div>
           </Section>

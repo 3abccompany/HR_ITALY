@@ -25,8 +25,8 @@ export interface ApplicationSubmission {
   normalizedEmail: string;
   phone: string;
   normalizedPhone: string;
-  nationalId: string;
-  normalizedNationalId: string;
+  nationalId?: string; // Optional (legacy/manual)
+  normalizedNationalId?: string; // Optional (legacy/manual)
 
   // Data
   answers: Record<string, any>;
@@ -54,7 +54,7 @@ export interface ApplicationSubmissionDedupe {
   dedupeKey: string;
   entityId: string;
   recruitmentNeedId: string;
-  normalizedNationalId: string;
+  normalizedEmail: string;
   applicationSubmissionId: string;
   personId: string;
   candidateId: string;
