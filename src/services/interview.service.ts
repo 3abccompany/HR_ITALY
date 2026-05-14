@@ -16,6 +16,21 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
 /**
+ * Utility to remove undefined properties from an object to prevent Firestore errors.
+ */
+function sanitizePayload(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  for (const key in obj) {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = typeof val === 'object' ? sanitizePayload(val) : val;
+    }
+  }
+  return newObj;
+}
+
+/**
  * Schedules a new interview.
  * Uses a transaction to validate candidate state and promotes status to 'interview_scheduled'.
  */
@@ -163,7 +178,7 @@ export async function updateInterview(
     action: "interview.updated",
     resourceType: "interview",
     resourceId: interviewId,
-    details: data
+    details: sanitizePayload(data)
   });
 }
 
@@ -228,7 +243,7 @@ export async function recordInterviewDecision(
       description: `Résultat de l'entretien : ${decisionData.decision}. Score : ${decisionData.score || 'N/A'}`,
       sourceCollection: "interviews",
       sourceId: interviewId,
-      metadata: { decision: decisionData.decision },
+      metadata: sanitizePayload({ decision: decisionData.decision }),
       createdAt: serverTimestamp(),
       createdBy: actorUid,
     });
@@ -269,7 +284,7 @@ export async function recordInterviewDecision(
       action: "interview.decisionRecorded",
       resourceType: "interview",
       resourceId: interviewId,
-      details: { ...decisionData, candidateStatus: res.nextStatus }
+      details: sanitizePayload({ ...decisionData, candidateStatus: res.nextStatus })
     });
     return res;
   }).catch((err) => {

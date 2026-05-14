@@ -15,6 +15,21 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
 /**
+ * Utility to remove undefined properties from an object to prevent Firestore errors.
+ */
+function sanitizePayload(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  for (const key in obj) {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = typeof val === 'object' ? sanitizePayload(val) : val;
+    }
+  }
+  return newObj;
+}
+
+/**
  * Creates a candidate linked to a person using a transaction.
  */
 export async function createCandidate(
@@ -160,7 +175,7 @@ export async function updateCandidate(
     action: "candidate.updated",
     resourceType: "candidate",
     resourceId: candidateId,
-    details: data
+    details: sanitizePayload(data)
   });
 }
 
@@ -231,7 +246,7 @@ export async function updateCandidateStatus(params: {
     errorEmitter.emit('permission-error', permissionError);
   });
 
-  // 2. Sync Person record (use setDoc merge to be safe against missing docs and fix No document to update)
+  // 2. Sync Person record (use setDoc merge to be safe against missing docs)
   const personRef = doc(db, `entities/${entityId}/persons`, personId);
   const personUpdate = {
     currentLifecycleStatus: nextStatus === "accepted" || nextStatus === "hired" ? "employee" : "candidate",
@@ -243,7 +258,7 @@ export async function updateCandidateStatus(params: {
     console.warn("Secondary Person sync failed (non-critical):", err);
   });
 
-  // 3. Update optional candidateView if it exists (using merge for safety and fix No document to update)
+  // 3. Update optional read models safely
   const viewRef = doc(db, `entities/${entityId}/candidateViews`, candidateId);
   setDoc(viewRef, { 
     status: nextStatus, 
@@ -297,14 +312,14 @@ export async function updateCandidateStatus(params: {
     });
   }
 
-  // 5. Audit logging
+  // 5. Audit logging - Santized to remove undefined values
   createAuditLog({
     userId: actorUid,
     entityId,
     action: `candidate.${nextStatus}`,
     resourceType: "candidate",
     resourceId: candidateId,
-    details: { nextStatus, rejectionReason }
+    details: sanitizePayload({ nextStatus, rejectionReason })
   });
 
   return { success: true };
