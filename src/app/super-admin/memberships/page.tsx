@@ -4,7 +4,7 @@
 import { useState, useMemo } from "react";
 import { 
   Link as LinkIcon, Plus, Loader2, Search, ArrowLeft, 
-  AlertCircle, Save, X, Edit, PowerOff, RefreshCcw, ShieldCheck 
+  AlertCircle, Save, X, Edit, PowerOff, RefreshCcw, ShieldCheck, RefreshCw 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,7 +86,7 @@ export default function MembershipsManagementPage() {
       ]);
       setUsersMaster(u.filter(user => user.status === "active"));
       setEntitiesMaster(e.filter(entity => entity.status === "active"));
-      setRolesMaster(r.filter(role => role.status === "active" && role.scope === "entity"));
+      setRolesMaster(r.filter(role => role.status === "active" && role.scope === "entity") as Role[]);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible de charger les données de référence." });
     } finally {
@@ -161,19 +161,15 @@ export default function MembershipsManagementPage() {
     const currentMembership = memberships?.find(m => m.membershipId === editingId);
     if (!currentMembership) return;
 
-    if (currentMembership.roleId !== selectedRoleId) {
-      setRoleChangePending({ id: editingId, roleId: selectedRoleId });
-      return;
-    }
-
-    await executeUpdate(editingId, { notes }, false);
+    // Trigger confirmation dialog for permission sync if role changed OR manually requested
+    setRoleChangePending({ id: editingId, roleId: selectedRoleId });
   };
 
   const executeUpdate = async (id: string, data: Partial<Membership>, syncPermissions: boolean) => {
     setLoading(true);
     try {
       let finalData = { ...data };
-      if (syncPermissions && data.roleId) {
+      if (syncPermissions && data.roleId && db) {
         const roleRef = doc(db, "roles", data.roleId);
         const roleSnap = await getDoc(roleRef);
         if (roleSnap.exists()) {
@@ -181,8 +177,7 @@ export default function MembershipsManagementPage() {
           finalData.permissions = roleData.permissions;
           finalData.roleLabel = roleData.label;
         }
-      } else if (data.roleId) {
-        // Just update label if sync is no
+      } else if (data.roleId && db) {
         const roleRef = doc(db, "roles", data.roleId);
         const roleSnap = await getDoc(roleRef);
         if (roleSnap.exists()) {
@@ -194,6 +189,29 @@ export default function MembershipsManagementPage() {
       toast({ title: "Mis à jour", description: "L'affectation a été modifiée." });
       resetForm();
       setRoleChangePending(null);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickSync = async (m: Membership) => {
+    if (!db || !user) return;
+    setLoading(true);
+    try {
+      const roleRef = doc(db, "roles", m.roleId);
+      const roleSnap = await getDoc(roleRef);
+      if (!roleSnap.exists()) throw new Error("Rôle introuvable dans le catalogue.");
+      
+      const roleData = roleSnap.data();
+      await updateMembership(m.membershipId, {
+        permissions: roleData.permissions,
+        roleLabel: roleData.label,
+        updatedAt: new Date()
+      }, user.uid);
+      
+      toast({ title: "Permissions synchronisées", description: `Les accès pour ${m.userDisplayName} ont été mis à jour.` });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -340,7 +358,7 @@ export default function MembershipsManagementPage() {
                 </Button>
                 <Button type="submit" disabled={loading}>
                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                  {editingId ? "Enregistrer les modifications" : "Créer l'affectation"}
+                  {editingId ? "Vérifier et Enregistrer" : "Créer l'affectation"}
                 </Button>
               </div>
             </form>
@@ -399,6 +417,9 @@ export default function MembershipsManagementPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => handleQuickSync(m)} disabled={loading} title="Synchroniser permissions">
+                           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => handleEdit(m)} disabled={loading}>
                           <Edit className="w-4 h-4" />
                         </Button>
@@ -480,10 +501,10 @@ export default function MembershipsManagementPage() {
       <AlertDialog open={!!roleChangePending} onOpenChange={(open) => !open && setRoleChangePending(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Mise à jour du rôle</AlertDialogTitle>
+            <AlertDialogTitle>Mise à jour des accès</AlertDialogTitle>
             <AlertDialogDescription>
-              Vous avez modifié le rôle de cette affectation. 
-              Voulez-vous également remplacer les permissions effectives par celles du nouveau rôle ?
+              Voulez-vous également synchroniser les permissions effectives de cette affectation avec celles définies dans le catalogue des rôles ? 
+              Ceci est nécessaire pour appliquer les nouveaux modules comme "Personnes / Timeline".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="sm:justify-between flex-col sm:flex-row gap-2">
@@ -500,7 +521,7 @@ export default function MembershipsManagementPage() {
                 onClick={() => executeUpdate(roleChangePending!.id, { roleId: roleChangePending!.roleId, notes }, true)}
                 disabled={loading}
               >
-                Copier du nouveau rôle
+                Synchroniser du catalogue
               </Button>
             </div>
           </AlertDialogFooter>
