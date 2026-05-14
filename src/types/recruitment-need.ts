@@ -1,3 +1,4 @@
+
 import { FieldValue } from "firebase/firestore";
 
 export type RecruitmentNeedStatus = 
@@ -28,7 +29,9 @@ export interface RecruitmentNeed {
   // Company / site
   companyName: string;
   worksiteId: string | null;
-  worksiteName: string;
+  worksiteNameSnapshot: string;
+  // Legacy support
+  worksiteName?: string;
 
   // Contract / employment
   contractType: string;

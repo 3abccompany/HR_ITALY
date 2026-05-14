@@ -78,6 +78,13 @@ service cloud.firestore {
         allow write: if hasPermission(entityId, 'departments.update') || isPlatformAdmin();
       }
 
+      match /worksites/{worksiteId} {
+        allow read: if hasPermission(entityId, 'worksites.read') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'worksites.create') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'worksites.update') || hasPermission(entityId, 'worksites.archive') || isPlatformAdmin();
+        allow delete: if false;
+      }
+
       match /jobTitles/{jobId} {
         allow read: if hasPermission(entityId, 'jobTitles.read') || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'jobTitles.update') || isPlatformAdmin();

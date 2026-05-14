@@ -1,10 +1,11 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Loader2, ShieldCheck, ArrowLeft, Building2, Briefcase, 
-  MapPin, Calendar, FileText, Info, UserCircle
+  MapPin, Calendar, FileText, Info, UserCircle, Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,14 +14,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFirebase, useCollection } from "@/firebase";
-import { collection, query, orderBy, doc, getDoc } from "firebase/firestore";
+import { collection, query, orderBy, doc, getDoc, where } from "firebase/firestore";
 import { createRecruitmentNeed, updateRecruitmentNeed } from "@/services/recruitment-need.service";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { JobProfile } from "@/types/job-profile";
-import { AppUser } from "@/types/user";
+import { Worksite } from "@/types/worksite";
 import { useToast } from "@/hooks/use-toast";
-import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 
 interface RecruitmentNeedFormProps {
   entityId: string;
@@ -35,9 +36,8 @@ const initialForm = {
   requesterName: "",
   requesterSourceJobProfileId: "",
   requestedHeadcount: 1,
-  worksiteId: null as string | null,
-  worksiteName: "Site principal",
-  customWorksiteName: "",
+  worksiteId: "",
+  worksiteNameSnapshot: "",
   contractType: "CDI",
   employmentType: "Nouveau poste",
   workingTime: "Temps plein",
@@ -76,7 +76,18 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
     return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc"));
   }, [db, entityId]);
 
+  const worksitesQuery = useMemo(() => {
+    if (!db || !entityId) return null;
+    return query(
+      collection(db, `entities/${entityId}/worksites`), 
+      where("status", "==", "active"),
+      orderBy("name", "asc")
+    );
+  }, [db, entityId]);
+
   const { data: jobProfiles } = useCollection<JobProfile>(profilesQuery);
+  const { data: worksites, loading: loadingWorksites } = useCollection<Worksite>(worksitesQuery);
+
   const activeProfiles = useMemo(() => jobProfiles?.filter(p => p.status === "active") || [], [jobProfiles]);
 
   // Load initial data for editing
@@ -87,9 +98,8 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
         requesterName: initialData.requesterName,
         requesterSourceJobProfileId: initialData.requesterSourceJobProfileId,
         requestedHeadcount: initialData.requestedHeadcount,
-        worksiteId: initialData.worksiteId,
-        worksiteName: initialData.worksiteId ? "Autre site" : initialData.worksiteName,
-        customWorksiteName: !initialData.worksiteId && !["Site principal", "À définir"].includes(initialData.worksiteName) ? initialData.worksiteName : "",
+        worksiteId: initialData.worksiteId || "",
+        worksiteNameSnapshot: initialData.worksiteNameSnapshot || initialData.worksiteName || "",
         contractType: initialData.contractType,
         employmentType: initialData.employmentType,
         workingTime: initialData.workingTime,
@@ -147,6 +157,15 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
     }));
   };
 
+  const handleWorksiteChange = (id: string) => {
+    const worksite = worksites?.find(w => w.worksiteId === id);
+    setFormData(p => ({
+      ...p,
+      worksiteId: id,
+      worksiteNameSnapshot: worksite?.name || ""
+    }));
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId || !entityId) return;
@@ -156,18 +175,20 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
       return;
     }
 
+    if (!formData.worksiteId) {
+      toast({ variant: "destructive", title: "Erreur", description: "Veuillez sélectionner un lieu de travail." });
+      return;
+    }
+
     setLoading(true);
     try {
       const profile = activeProfiles.find(p => p.jobProfileId === formData.jobProfileId);
       if (!profile) throw new Error("Veuillez sélectionner une fiche de poste valide.");
 
-      const finalWorksiteName = formData.worksiteName === "Autre site" ? formData.customWorksiteName : formData.worksiteName;
-
       const payload = {
         ...formData,
         entityName,
         companyName: entityName,
-        worksiteName: finalWorksiteName,
         jobProfileTitle: profile.jobTitleName,
         jobProfileVersion: profile.versionLabel,
         departmentId: profile.departmentId,
@@ -322,23 +343,30 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
                   <Input value={entityName} readOnly className="bg-secondary/20" />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">Site</Label>
-                  <Select value={formData.worksiteName} onValueChange={(v) => setFormData(p => ({...p, worksiteName: v}))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                  <Label className="text-[10px] uppercase text-muted-foreground font-bold flex items-center justify-between">
+                    Lieu de travail
+                    <Link href={`/entity/${entityId}/worksites`} className="text-accent text-[9px] hover:underline flex items-center gap-0.5">
+                      <Plus className="w-2 h-2" /> Gérer sites
+                    </Link>
+                  </Label>
+                  <Select value={formData.worksiteId} onValueChange={handleWorksiteChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={loadingWorksites ? "Chargement..." : "Choisir un lieu..."} />
+                    </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Site principal">Site principal</SelectItem>
-                      <SelectItem value="À définir">À définir</SelectItem>
-                      <SelectItem value="Autre site">Autre site...</SelectItem>
+                      {worksites?.map(w => (
+                        <SelectItem key={w.worksiteId} value={w.worksiteId}>{w.name} ({w.city})</SelectItem>
+                      ))}
+                      {worksites?.length === 0 && !loadingWorksites && (
+                        <div className="p-4 text-center">
+                          <p className="text-xs text-muted-foreground mb-2">Aucun site actif disponible.</p>
+                          <Button variant="outline" size="sm" asChild>
+                            <Link href={`/entity/${entityId}/worksites`}>Créer un site</Link>
+                          </Button>
+                        </div>
+                      )}
                     </SelectContent>
                   </Select>
-                  {formData.worksiteName === "Autre site" && (
-                    <Input 
-                      placeholder="Nom du site personnalisé" 
-                      className="mt-2" 
-                      value={formData.customWorksiteName} 
-                      onChange={(e) => setFormData(p => ({...p, customWorksiteName: e.target.value}))} 
-                    />
-                  )}
                 </div>
               </div>
 

@@ -40,11 +40,13 @@ export const MVP_ROLES: RoleDefinition[] = [
       const hrModules = [
         "dashboard", "persons", "candidates", "interviews", 
         "departments", "jobTitles", "jobProfiles", "jobProfileCatalog",
-        "recruitmentNeeds", "applicationForms", "applicationSubmissions", "employees", "contracts", "documents", 
+        "recruitmentNeeds", "applicationForms", "applicationSubmissions", 
+        "worksites", "employees", "contracts", "documents", 
         "attendances", "leaveRequests", "reports"
       ];
       return MVP_PERMISSIONS
         .filter(p => p.scope === "entity" && hrModules.includes(p.module))
+        .filter(p => p.action !== "archive") // companyHR can't archive by default based on Milestone 7L correction
         .map(p => p.code);
     }
   },
@@ -61,7 +63,8 @@ export const MVP_ROLES: RoleDefinition[] = [
         "documents.read",
         "documents.upload",
         "documents.download",
-        "reports.read"
+        "reports.read",
+        "worksites.read"
       ];
       const safetyModules = ["training", "safety", "medicalVisits"];
       return MVP_PERMISSIONS
@@ -86,7 +89,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     scope: "entity",
     getPermissions: () => 
       MVP_PERMISSIONS
-        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions" || p.module === "persons"))
+        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions" || p.module === "persons" || p.module === "worksites"))
         .filter(p => p.action === "read")
         .map(p => p.code)
   }

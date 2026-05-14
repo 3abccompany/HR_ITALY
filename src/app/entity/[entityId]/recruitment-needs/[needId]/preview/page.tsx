@@ -155,7 +155,7 @@ export default function RecruitmentNeedPreviewPage() {
                    </div>
                    <div className="space-y-1">
                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Site / Localisation</p>
-                      <p className="font-bold text-sm truncate">{need.worksiteName}</p>
+                      <p className="font-bold text-sm truncate">{need.worksiteNameSnapshot || need.worksiteName || "N/A"}</p>
                    </div>
                 </div>
              </div>
