@@ -23,6 +23,8 @@ export type InterviewType =
   | "hr"
   | "final";
 
+export type EmailNotificationStatus = "not_requested" | "queued" | "sent" | "failed";
+
 export interface Interview {
   interviewId: string;
   entityId: string;
@@ -30,7 +32,7 @@ export interface Interview {
   candidateId: string;
   candidateDisplayName: string;
   positionApplied: string;
-  scheduledAt: string; // ISO format for easy sorting and DatePicker use
+  scheduledAt: string; // ISO format
   interviewType: InterviewType;
   interviewerName: string;
   interviewerUid: string;
@@ -42,6 +44,16 @@ export interface Interview {
   notes?: string;
   hiredEmployeeId: string | null;
   previousStatus?: InterviewStatus;
+
+  // Email Notification Tracking
+  emailNotificationEnabled: boolean;
+  emailTo: string;
+  emailSubjectSnapshot?: string;
+  emailMessageSnapshot?: string;
+  emailStatus: EmailNotificationStatus;
+  emailSentAt?: Date | FieldValue;
+  emailError?: string;
+
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;

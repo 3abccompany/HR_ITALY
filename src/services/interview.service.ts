@@ -1,3 +1,4 @@
+
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -14,6 +15,7 @@ import { Candidate, CandidateStatus } from "@/types/candidate";
 import { createAuditLog } from "./audit.service";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { sendInterviewEmailAction } from "./email.service";
 
 /**
  * Utility to remove undefined properties from an object to prevent Firestore errors.
@@ -37,26 +39,37 @@ function sanitizePayload(obj: any): any {
 export async function scheduleInterview(
   entityId: string, 
   data: Partial<Interview> & { candidateId: string }, 
-  actorUid: string
+  actorUid: string,
+  emailConfig?: {
+    enabled: boolean;
+    subject: string;
+    message: string;
+    companyName: string;
+  }
 ) {
   if (!db) throw new Error("Firestore not initialized");
 
   console.debug(`[Interview Service] Starting scheduling for candidate: ${data.candidateId}`);
 
-  return await runTransaction(db, async (transaction) => {
+  let interviewId: string;
+  let candidateEmail: string = "";
+
+  const result = await runTransaction(db, async (transaction) => {
     const candidateRef = doc(db, `entities/${entityId}/candidates`, data.candidateId);
     const candidateSnap = await transaction.get(candidateRef);
 
     if (!candidateSnap.exists()) throw new Error("Le candidat n'existe pas.");
     const candidateData = candidateSnap.data() as Candidate;
+    candidateEmail = candidateData.email;
 
-    // Strict eligibility check for Milestone 7J
     if (candidateData.status !== "interview_to_schedule") {
       throw new Error(`Ce candidat n'est pas éligible à la planification d'un entretien (Statut actuel: ${candidateData.status})`);
     }
 
     const interviewRef = doc(collection(db, `entities/${entityId}/interviews`));
-    const interviewId = interviewRef.id;
+    interviewId = interviewRef.id;
+
+    const emailStatus = emailConfig?.enabled ? "queued" : "not_requested";
 
     const interviewData: Interview = {
       interviewId,
@@ -74,6 +87,14 @@ export async function scheduleInterview(
       decision: "pending",
       hiredEmployeeId: null,
       notes: data.notes || "",
+      
+      // Email Notification
+      emailNotificationEnabled: !!emailConfig?.enabled,
+      emailTo: candidateEmail,
+      emailSubjectSnapshot: emailConfig?.subject,
+      emailMessageSnapshot: emailConfig?.message,
+      emailStatus: emailStatus,
+
       createdAt: serverTimestamp(),
       createdBy: actorUid,
       updatedAt: serverTimestamp(),
@@ -81,11 +102,9 @@ export async function scheduleInterview(
     };
 
     // 1. Create Interview
-    console.debug(`[Transaction] Creating interview: entities/${entityId}/interviews/${interviewId}`);
     transaction.set(interviewRef, interviewData);
 
-    // 2. Update Candidate Status and Tracking
-    console.debug(`[Transaction] Updating candidate: entities/${entityId}/candidates/${data.candidateId}`);
+    // 2. Update Candidate
     transaction.update(candidateRef, {
       status: "interview_scheduled",
       latestInterviewId: interviewId,
@@ -96,9 +115,26 @@ export async function scheduleInterview(
       updatedBy: actorUid,
     });
 
-    // 3. Timeline Event
+    // 3. Email Log if enabled
+    if (emailConfig?.enabled) {
+      const logRef = doc(collection(db, `entities/${entityId}/emailLogs`));
+      transaction.set(logRef, {
+        logId: logRef.id,
+        entityId,
+        candidateId: data.candidateId,
+        personId: candidateData.personId,
+        interviewId,
+        to: candidateEmail,
+        subject: emailConfig.subject,
+        body: emailConfig.message,
+        status: "queued",
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+      });
+    }
+
+    // 4. Timeline Event
     const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-    console.debug(`[Transaction] Creating timeline event: entities/${entityId}/personTimeline/${timelineRef.id}`);
     transaction.set(timelineRef, {
       eventId: timelineRef.id,
       entityId,
@@ -112,79 +148,58 @@ export async function scheduleInterview(
       createdBy: actorUid,
     });
 
-    // 4. Update optional read models safely
+    // 5. Update Views
     const viewRef = doc(db, `entities/${entityId}/candidateViews`, data.candidateId);
-    console.debug(`[Transaction] Updating candidateView: entities/${entityId}/candidateViews/${data.candidateId}`);
     transaction.set(viewRef, {
       status: "interview_scheduled",
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
     }, { merge: true });
 
-    return interviewId;
-  }).then(async (id) => {
-    await createAuditLog({
-      userId: actorUid,
-      entityId,
-      action: "interview.scheduled",
-      resourceType: "interview",
-      resourceId: id,
-      details: { candidateId: data.candidateId }
-    });
-    return id;
-  }).catch((err) => {
-    console.error("[Interview Service] Scheduling failed:", err);
-    
-    // If it's a permission error, emit for the developer overlay
-    if (err.code === 'permission-denied' || err.message?.includes('permission')) {
-      const permissionError = new FirestorePermissionError({
-        path: `entities/${entityId}/interviews (Transaction)`,
-        operation: 'write',
-      } satisfies SecurityRuleContext);
-      errorEmitter.emit('permission-error', permissionError);
-    }
-    throw err;
+    return { interviewId, candidateDisplayName: candidateData.displayName };
   });
-}
 
-/**
- * Updates interview details.
- */
-export async function updateInterview(
-  entityId: string, 
-  interviewId: string, 
-  data: Partial<Interview>, 
-  actorUid: string
-) {
-  if (!db) throw new Error("Firestore not initialized");
-  const interviewRef = doc(db, `entities/${entityId}/interviews`, interviewId);
-  
-  updateDoc(interviewRef, {
-    ...data,
-    updatedAt: serverTimestamp(),
-    updatedBy: actorUid,
-  }).catch(async (serverError) => {
-    const permissionError = new FirestorePermissionError({
-      path: interviewRef.path,
-      operation: 'update',
-      requestResourceData: data,
-    } satisfies SecurityRuleContext);
-    errorEmitter.emit('permission-error', permissionError);
-  });
+  // Post-Transaction: Trigger Email Send
+  if (emailConfig?.enabled && candidateEmail) {
+    // Extract date/time for template
+    const dateObj = new Date(data.scheduledAt || "");
+    const interviewDate = dateObj.toLocaleDateString('fr-FR', { dateStyle: 'long' });
+    const interviewTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+    sendInterviewEmailAction({
+      entityId,
+      interviewId: result.interviewId,
+      to: candidateEmail,
+      subject: emailConfig.subject,
+      message: emailConfig.message,
+      templateData: {
+        candidateName: result.candidateDisplayName,
+        jobTitle: data.positionApplied || "Poste ouvert",
+        companyName: emailConfig.companyName,
+        interviewDate,
+        interviewTime,
+        locationOrLink: data.location || "Sur site",
+        recruiterName: data.interviewerName || "Équipe RH",
+      }
+    }).catch(err => {
+      console.error("[Interview Service] Non-critical email trigger failure:", err);
+    });
+  }
 
   await createAuditLog({
     userId: actorUid,
     entityId,
-    action: "interview.updated",
+    action: "interview.scheduled",
     resourceType: "interview",
-    resourceId: interviewId,
-    details: sanitizePayload(data)
+    resourceId: result.interviewId,
+    details: { candidateId: data.candidateId, emailNotification: !!emailConfig?.enabled }
   });
+
+  return result.interviewId;
 }
 
 /**
  * Records an interview decision and marks it as completed.
- * Atomic transition: Interview (completed) + Candidate (status sync).
  */
 export async function recordInterviewDecision(
   entityId: string,
@@ -204,10 +219,6 @@ export async function recordInterviewDecision(
     const candidateSnap = await transaction.get(candidateRef);
     if (!candidateSnap.exists()) throw new Error("Candidat introuvable.");
 
-    // 1. Map interview decision to candidate status
-    // accepted -> accepted
-    // rejected -> rejected
-    // pending/on_hold -> interview_completed
     let nextStatus: CandidateStatus = "interview_completed";
     if (decisionData.decision === "accepted") {
       nextStatus = "accepted";
@@ -215,15 +226,13 @@ export async function recordInterviewDecision(
       nextStatus = "rejected";
     }
 
-    // 2. Update the interview document
-    transaction.update(interviewRef, {
+    transaction.update(interviewRef, sanitizePayload({
       ...decisionData,
       status: "completed",
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    });
+    }));
 
-    // 3. Update Candidate status
     transaction.update(candidateRef, {
       status: nextStatus,
       statusUpdatedAt: serverTimestamp(),
@@ -232,7 +241,6 @@ export async function recordInterviewDecision(
       updatedBy: actorUid,
     });
 
-    // 4. Create timeline events
     const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
     transaction.set(timelineRef, {
       eventId: timelineRef.id,
@@ -248,7 +256,6 @@ export async function recordInterviewDecision(
       createdBy: actorUid,
     });
 
-    // If terminal decision reached, add specific journey event
     if (nextStatus === "accepted" || nextStatus === "rejected") {
       const decisionTimelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
       transaction.set(decisionTimelineRef, {
@@ -257,9 +264,7 @@ export async function recordInterviewDecision(
         personId: interview.personId,
         type: nextStatus === "accepted" ? "candidate.accepted" : "candidate.rejected",
         label: nextStatus === "accepted" ? "Candidat retenu" : "Candidature refusée",
-        description: nextStatus === "accepted" 
-          ? "Candidat validé suite à l'évaluation de l'entretien." 
-          : "Le profil n'a pas été retenu suite à l'entretien.",
+        description: nextStatus === "accepted" ? "Validé suite à l'entretien." : "Refusé suite à l'entretien.",
         sourceCollection: "candidates",
         sourceId: interview.candidateId,
         createdAt: serverTimestamp(),
@@ -267,7 +272,6 @@ export async function recordInterviewDecision(
       });
     }
 
-    // 5. Update secondary read models safely
     const viewRef = doc(db, `entities/${entityId}/candidateViews`, interview.candidateId);
     transaction.set(viewRef, {
       status: nextStatus,
@@ -277,7 +281,6 @@ export async function recordInterviewDecision(
 
     return { interviewId, candidateId: interview.candidateId, nextStatus };
   }).then(async (res) => {
-    // 6. Audit logs
     await createAuditLog({
       userId: actorUid,
       entityId,
@@ -287,74 +290,23 @@ export async function recordInterviewDecision(
       details: sanitizePayload({ ...decisionData, candidateStatus: res.nextStatus })
     });
     return res;
-  }).catch((err) => {
-    console.error("[Interview Service] recordInterviewDecision failed:", err);
-    if (err.code === 'permission-denied' || err.message?.includes('permission')) {
-      const permissionError = new FirestorePermissionError({
-        path: `entities/${entityId}/interviews/${interviewId} (Decision Transaction)`,
-        operation: 'write',
-      } satisfies SecurityRuleContext);
-      errorEmitter.emit('permission-error', permissionError);
-    }
-    throw err;
   });
 }
 
-/**
- * Disables an interview record.
- */
+export async function updateInterview(entityId: string, interviewId: string, data: Partial<Interview>, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const interviewRef = doc(db, `entities/${entityId}/interviews`, interviewId);
+  await updateDoc(interviewRef, sanitizePayload({ ...data, updatedAt: serverTimestamp(), updatedBy: actorUid }));
+}
+
 export async function disableInterview(entityId: string, interviewId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
-
   const interviewRef = doc(db, `entities/${entityId}/interviews`, interviewId);
-  const snap = await getDoc(interviewRef);
-  if (!snap.exists()) return;
-  const interview = snap.data() as Interview;
-
-  updateDoc(interviewRef, {
-    status: "inactive",
-    previousStatus: interview.status,
-    disabledAt: serverTimestamp(),
-    disabledBy: actorUid,
-    updatedAt: serverTimestamp(),
-    updatedBy: actorUid,
-  });
-
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "interview.disabled",
-    resourceType: "interview",
-    resourceId: interviewId,
-  });
+  await updateDoc(interviewRef, { status: "inactive", updatedAt: serverTimestamp(), updatedBy: actorUid });
 }
 
-/**
- * Reactivates an interview record.
- */
 export async function reactivateInterview(entityId: string, interviewId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
-
   const interviewRef = doc(db, `entities/${entityId}/interviews`, interviewId);
-  const snap = await getDoc(interviewRef);
-  if (!snap.exists()) return;
-  const interview = snap.data() as Interview;
-
-  const targetStatus = interview.previousStatus || "scheduled";
-
-  updateDoc(interviewRef, {
-    status: targetStatus,
-    reactivatedAt: serverTimestamp(),
-    reactivatedBy: actorUid,
-    updatedAt: serverTimestamp(),
-    updatedBy: actorUid,
-  });
-
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "interview.reactivated",
-    resourceType: "interview",
-    resourceId: interviewId,
-  });
+  await updateDoc(interviewRef, { status: "scheduled", updatedAt: serverTimestamp(), updatedBy: actorUid });
 }
