@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -314,24 +315,6 @@ export default function CandidatesManagementPage() {
     }
   };
 
-  const getStatusBadge = (status: string | undefined) => {
-    const s = (status || "new") as CandidateStatus;
-    switch (s) {
-      case 'new': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Nouveau</Badge>;
-      case 'under_review': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200">En revue</Badge>;
-      case 'shortlisted': return <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">Présélectionné</Badge>;
-      case 'interview_to_schedule': return <Badge variant="secondary" className="bg-cyan-50 text-cyan-700 border-cyan-200">À planifier</Badge>;
-      case 'interview_scheduled': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">Planifié</Badge>;
-      case 'interview_completed': return <Badge variant="secondary" className="bg-teal-50 text-teal-700 border-teal-200">Réalisé</Badge>;
-      case 'accepted': return <Badge className="bg-green-600 hover:bg-green-700 border-none">Accepté</Badge>;
-      case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Refusé</Badge>;
-      case 'hired': return <Badge className="bg-slate-900 hover:bg-black border-none text-white">Embauché</Badge>;
-      case 'archived': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200">Archivé</Badge>;
-      case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300">Inactif</Badge>;
-      default: return <Badge variant="outline">{s}</Badge>;
-    }
-  };
-
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return (
@@ -450,7 +433,7 @@ export default function CandidatesManagementPage() {
                     <SelectItem value="job">Poste / Métier</SelectItem>
                     <SelectItem value="department">Département</SelectItem>
                     <SelectItem value="worksite">Site / Localisation</SelectItem>
-                    <SelectItem value="status_then_job">Statut &gt; Poste</SelectItem>
+                    <SelectItem value="status_then_job">Statut {'>'} Poste</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -765,6 +748,24 @@ function FilterDropdown({ label, value, onValueChange, options }: { label: strin
       </SelectContent>
     </Select>
   );
+}
+
+function getStatusBadge(status: string | undefined) {
+  const s = (status || "new") as CandidateStatus;
+  switch (s) {
+    case 'new': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Nouveau</Badge>;
+    case 'under_review': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200">En revue</Badge>;
+    case 'shortlisted': return <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">Présélectionné</Badge>;
+    case 'interview_to_schedule': return <Badge variant="secondary" className="bg-cyan-50 text-cyan-700 border-cyan-200">À planifier</Badge>;
+    case 'interview_scheduled': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">Planifié</Badge>;
+    case 'interview_completed': return <Badge variant="secondary" className="bg-teal-50 text-teal-700 border-teal-200">Réalisé</Badge>;
+    case 'accepted': return <Badge className="bg-green-600 hover:bg-green-700 border-none">Accepté</Badge>;
+    case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Refusé</Badge>;
+    case 'hired': return <Badge className="bg-slate-900 hover:bg-black border-none text-white">Embauché</Badge>;
+    case 'archived': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200">Archivé</Badge>;
+    case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300">Inactif</Badge>;
+    default: return <Badge variant="outline">{s}</Badge>;
+  }
 }
 
 function CandidateTable({ 
