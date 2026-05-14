@@ -10,7 +10,7 @@ import {
   arrayUnion
 } from "firebase/firestore";
 import { Interview, InterviewDecision } from "@/types/interview";
-import { Candidate } from "@/types/candidate";
+import { Candidate, CandidateStatus } from "@/types/candidate";
 import { createAuditLog } from "./audit.service";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
@@ -169,6 +169,7 @@ export async function updateInterview(
 
 /**
  * Records an interview decision and marks it as completed.
+ * Atomic transition: Interview (completed) + Candidate (status sync).
  */
 export async function recordInterviewDecision(
   entityId: string,
@@ -178,69 +179,109 @@ export async function recordInterviewDecision(
 ) {
   if (!db) throw new Error("Firestore not initialized");
   
-  const interviewRef = doc(db, `entities/${entityId}/interviews`, interviewId);
-  const interviewSnap = await getDoc(interviewRef);
-  if (!interviewSnap.exists()) throw new Error("Entretien introuvable.");
-  const interview = interviewSnap.data() as Interview;
+  return await runTransaction(db, async (transaction) => {
+    const interviewRef = doc(db, `entities/${entityId}/interviews`, interviewId);
+    const interviewSnap = await transaction.get(interviewRef);
+    if (!interviewSnap.exists()) throw new Error("Entretien introuvable.");
+    const interview = interviewSnap.data() as Interview;
 
-  // 1. Update the interview document
-  await updateDoc(interviewRef, {
-    ...decisionData,
-    status: "completed",
-    updatedAt: serverTimestamp(),
-    updatedBy: actorUid,
-  }).catch(async (serverError) => {
-    const permissionError = new FirestorePermissionError({
-      path: interviewRef.path,
-      operation: 'update',
-      requestResourceData: decisionData,
-    } satisfies SecurityRuleContext);
-    errorEmitter.emit('permission-error', permissionError);
-  });
+    const candidateRef = doc(db, `entities/${entityId}/candidates`, interview.candidateId);
+    const candidateSnap = await transaction.get(candidateRef);
+    if (!candidateSnap.exists()) throw new Error("Candidat introuvable.");
 
-  // 2. Update Candidate status based on interview outcome
-  const candidateRef = doc(db, `entities/${entityId}/candidates`, interview.candidateId);
-  updateDoc(candidateRef, {
-    status: "interview_completed",
-    statusUpdatedAt: serverTimestamp(),
-    statusUpdatedBy: actorUid,
-    updatedAt: serverTimestamp(),
-    updatedBy: actorUid,
-  }).catch(err => console.warn("Candidate status sync after interview failed", err));
+    // 1. Map interview decision to candidate status
+    // accepted -> accepted
+    // rejected -> rejected
+    // pending/on_hold -> interview_completed
+    let nextStatus: CandidateStatus = "interview_completed";
+    if (decisionData.decision === "accepted") {
+      nextStatus = "accepted";
+    } else if (decisionData.decision === "rejected") {
+      nextStatus = "rejected";
+    }
 
-  // 3. Create personTimeline event (History)
-  const newTimelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-  const timelineData = {
-    eventId: newTimelineRef.id,
-    entityId,
-    personId: interview.personId,
-    type: "interview.completed",
-    label: "Entretien terminé",
-    description: `Résultat de l'entretien : ${decisionData.decision}. Score : ${decisionData.score || 'N/A'}`,
-    sourceCollection: "interviews",
-    sourceId: interviewId,
-    metadata: { decision: decisionData.decision },
-    createdAt: serverTimestamp(),
-    createdBy: actorUid,
-  };
+    // 2. Update the interview document
+    transaction.update(interviewRef, {
+      ...decisionData,
+      status: "completed",
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
 
-  setDoc(newTimelineRef, timelineData).catch(async (err) => {
-    const permissionError = new FirestorePermissionError({
-      path: newTimelineRef.path,
-      operation: 'create',
-      requestResourceData: timelineData,
-    } satisfies SecurityRuleContext);
-    errorEmitter.emit('permission-error', permissionError);
-  });
+    // 3. Update Candidate status
+    transaction.update(candidateRef, {
+      status: nextStatus,
+      statusUpdatedAt: serverTimestamp(),
+      statusUpdatedBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
 
-  // 4. Audit log
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "interview.decisionRecorded",
-    resourceType: "interview",
-    resourceId: interviewId,
-    details: decisionData
+    // 4. Create timeline events
+    const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+    transaction.set(timelineRef, {
+      eventId: timelineRef.id,
+      entityId,
+      personId: interview.personId,
+      type: "interview.completed",
+      label: "Entretien terminé",
+      description: `Résultat de l'entretien : ${decisionData.decision}. Score : ${decisionData.score || 'N/A'}`,
+      sourceCollection: "interviews",
+      sourceId: interviewId,
+      metadata: { decision: decisionData.decision },
+      createdAt: serverTimestamp(),
+      createdBy: actorUid,
+    });
+
+    // If terminal decision reached, add specific journey event
+    if (nextStatus === "accepted" || nextStatus === "rejected") {
+      const decisionTimelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(decisionTimelineRef, {
+        eventId: decisionTimelineRef.id,
+        entityId,
+        personId: interview.personId,
+        type: nextStatus === "accepted" ? "candidate.accepted" : "candidate.rejected",
+        label: nextStatus === "accepted" ? "Candidat retenu" : "Candidature refusée",
+        description: nextStatus === "accepted" 
+          ? "Candidat validé suite à l'évaluation de l'entretien." 
+          : "Le profil n'a pas été retenu suite à l'entretien.",
+        sourceCollection: "candidates",
+        sourceId: interview.candidateId,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+      });
+    }
+
+    // 5. Update secondary read models safely
+    const viewRef = doc(db, `entities/${entityId}/candidateViews`, interview.candidateId);
+    transaction.set(viewRef, {
+      status: nextStatus,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    }, { merge: true });
+
+    return { interviewId, candidateId: interview.candidateId, nextStatus };
+  }).then(async (res) => {
+    // 6. Audit logs
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "interview.decisionRecorded",
+      resourceType: "interview",
+      resourceId: interviewId,
+      details: { ...decisionData, candidateStatus: res.nextStatus }
+    });
+    return res;
+  }).catch((err) => {
+    console.error("[Interview Service] recordInterviewDecision failed:", err);
+    if (err.code === 'permission-denied' || err.message?.includes('permission')) {
+      const permissionError = new FirestorePermissionError({
+        path: `entities/${entityId}/interviews/${interviewId} (Decision Transaction)`,
+        operation: 'write',
+      } satisfies SecurityRuleContext);
+      errorEmitter.emit('permission-error', permissionError);
+    }
+    throw err;
   });
 }
 
