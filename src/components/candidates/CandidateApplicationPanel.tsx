@@ -5,9 +5,9 @@ import {
   Loader2, User, Mail, ClipboardList, CheckCircle2, FileX,
   AlertTriangle, Briefcase, Building2, MapPin, 
   ArrowRight, XCircle, UserCheck, Clock, MessageSquare, AlertCircle,
-  Calendar, Phone, Fingerprint, Info, ChevronDown
+  Calendar, Phone, Fingerprint, Info, ChevronDown, Globe, Home
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDoc, useUser } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
@@ -30,17 +30,37 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 
 interface CandidateApplicationPanelProps {
   entityId: string;
   candidate: Candidate | null;
   onStatusUpdate?: (updated: Candidate) => void;
 }
+
+/**
+ * Technical Key to HR Label mapping for system fields
+ */
+const FIELD_LABELS: Record<string, string> = {
+  firstName: "Prénom",
+  lastName: "Nom",
+  email: "Email",
+  phone: "Téléphone",
+  nationalId: "Identifiant national",
+  birthDate: "Date de naissance",
+  address: "Adresse",
+  city: "Ville",
+  province: "Province",
+  country: "Pays",
+  postalCode: "Code Postal",
+  experienceYears: "Années d'expérience",
+  currentPosition: "Poste actuel / dernier poste",
+  educationLevel: "Niveau d'étude",
+  availability: "Disponibilité",
+  availableFrom: "Disponible à partir du",
+  motivationMessage: "Message de motivation",
+  consent: "Consentement RGPD",
+  expectedSalary: "Prétentions salariales",
+};
 
 export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate }: CandidateApplicationPanelProps) {
   const db = useFirestore();
@@ -50,7 +70,6 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
   const [loadingAction, setLoadingAction] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
-  const [isOtherOpen, setIsOtherOpen] = useState(false);
 
   const submissionRef = useMemo(() => {
     if (!db || !entityId || !candidate?.applicationSubmissionId) return null;
@@ -96,12 +115,12 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
     }
   };
 
-  // Track which fields are explicitly rendered in sections
+  // Track which fields are explicitly rendered in sections to avoid duplicates
   const mappedKeys = [
     'firstName', 'lastName', 'email', 'phone', 'nationalId', 'birthDate', 
     'address', 'city', 'province', 'country', 'availability', 'availableFrom', 
     'experienceYears', 'educationLevel', 'currentPosition', 'motivationMessage', 
-    'cv', 'coverLetter', 'consent'
+    'cv', 'coverLetter', 'consent', 'postalCode'
   ];
 
   const customAnswers = submission?.answers ? Object.entries(submission.answers).filter(([key]) => {
@@ -161,66 +180,73 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
               <AlertTriangle className="w-5 h-5 shrink-0" />
               <div className="space-y-0.5">
                 <p className="text-xs font-bold uppercase">Doublon potentiel détecté</p>
-                <p className="text-[10px] opacity-90 font-medium">Un autre dossier avec le même identifiant national ou email existe pour ce recrutement.</p>
+                <p className="text-[10px] opacity-90 font-medium">Un autre dossier avec le même identifiant national existe pour ce recrutement.</p>
               </div>
             </div>
           )}
 
-          {/* C. Identity */}
-          <Section icon={Fingerprint} title="Informations d'identité">
+          {/* C. Identity & Contact */}
+          <Section icon={Fingerprint} title="Informations d'identité & Coordonnées">
              <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-                <AnswerItem label="Prénom" value={submission?.firstName || candidate.displayName.split(' ')[0]} />
-                <AnswerItem label="Nom" value={submission?.lastName || candidate.displayName.split(' ').slice(1).join(' ')} />
-                <AnswerItem label="Email" value={submission?.email || candidate.email} />
-                <AnswerItem label="Téléphone" value={submission?.phone || candidate.phone} />
-                <AnswerItem label="Identifiant National" value={submission?.nationalId || (candidate as any).codiceFiscale} code />
-                <AnswerItem label="Date de naissance" value={formatValue(submission?.answers?.birthDate)} />
+                <AnswerRow label="Prénom" value={submission?.firstName || candidate.displayName.split(' ')[0]} />
+                <AnswerRow label="Nom" value={submission?.lastName || candidate.displayName.split(' ').slice(1).join(' ')} />
+                <AnswerRow label="Email" value={submission?.email || candidate.email} />
+                <AnswerRow label="Téléphone" value={submission?.phone || candidate.phone} />
+                <AnswerRow label="Identifiant National" value={submission?.nationalId || (candidate as any).codiceFiscale} code />
+                <AnswerRow label="Date de naissance" value={formatValue(submission?.answers?.birthDate)} />
              </div>
           </Section>
 
-          {/* D. Location */}
-          <Section icon={MapPin} title="Localisation">
+          {/* D. Localisation */}
+          <Section icon={Home} title="Localisation">
              <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-                <AnswerItem label="Ville" value={submission?.answers?.city} />
-                <AnswerItem label="Province" value={submission?.answers?.province} />
-                <AnswerItem label="Adresse" value={submission?.answers?.address} className="col-span-full" />
-                <AnswerItem label="Pays" value={submission?.answers?.country} />
+                <AnswerRow label="Ville" value={submission?.answers?.city} />
+                <AnswerRow label="Province" value={submission?.answers?.province} />
+                <AnswerRow label="Code Postal" value={submission?.answers?.postalCode} />
+                <AnswerRow label="Pays" value={submission?.answers?.country} />
+                <AnswerRow label="Adresse" value={submission?.answers?.address} className="col-span-full" />
              </div>
           </Section>
 
-          {/* E. Expérience / Formation */}
+          {/* E. Expérience & Formation */}
           <Section icon={Briefcase} title="Expérience & Formation">
              <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-                <AnswerItem label="Disponibilité" value={submission?.answers?.availability} />
-                <AnswerItem label="Date disponible" value={formatValue(submission?.answers?.availableFrom)} />
-                <AnswerItem label="Expérience" value={submission?.answers?.experienceYears ? `${submission.answers.experienceYears} ans` : undefined} />
-                <AnswerItem label="Niveau d'étude" value={submission?.answers?.educationLevel} />
-                <AnswerItem label="Poste actuel / Dernier poste" value={submission?.answers?.currentPosition} className="col-span-full" />
+                <AnswerRow label="Années d'expérience" value={submission?.answers?.experienceYears ? `${submission.answers.experienceYears} ans` : undefined} />
+                <AnswerRow label="Niveau d'étude" value={submission?.answers?.educationLevel} />
+                <AnswerRow label="Poste actuel / dernier poste" value={submission?.answers?.currentPosition} className="col-span-full" />
              </div>
           </Section>
 
-          {/* F. Motivation */}
-          <Section icon={MessageSquare} title="Message de motivation">
+          {/* F. Disponibilité */}
+          <Section icon={Calendar} title="Disponibilité">
+             <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                <AnswerRow label="Disponibilité" value={submission?.answers?.availability} />
+                <AnswerRow label="Date de début possible" value={formatValue(submission?.answers?.availableFrom)} />
+             </div>
+          </Section>
+
+          {/* G. Motivation */}
+          <Section icon={MessageSquare} title="Motivation">
              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap italic">
                 {submission?.answers?.motivationMessage || "Aucun message de motivation saisi."}
              </div>
           </Section>
 
-          {/* G. Questions personnalisées */}
+          {/* H. Questions Personnalisées */}
           {customAnswers.length > 0 && (
-            <Section icon={ClipboardList} title="Questions spécifiques au formulaire">
-               <div className="space-y-6">
+            <Section icon={ClipboardList} title="Informations Complémentaires">
+               <div className="space-y-4">
                   {customAnswers.map(([key, value]) => (
-                     <div key={key} className="space-y-1.5 p-4 bg-accent/5 rounded-2xl border border-accent/10">
-                        <p className="text-[10px] font-black text-accent uppercase tracking-widest">Q: {formatKeyToLabel(key)}</p>
-                        <p className="text-sm font-bold text-slate-800">{formatValue(value) || "Non renseigné"}</p>
+                     <div key={key} className="flex flex-col gap-1 p-3 bg-accent/5 rounded-xl border border-accent/10">
+                        <p className="text-[10px] font-black text-accent uppercase tracking-widest">{FIELD_LABELS[key] || formatKeyToLabel(key)}</p>
+                        <p className="text-sm font-bold text-slate-800">{formatValue(value)}</p>
                      </div>
                   ))}
                </div>
             </Section>
           )}
 
-          {/* H. Fichiers */}
+          {/* I. Fichiers */}
           <Section icon={FileX} title="Documents joints">
              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FilePlaceholder label="Curriculum Vitae (CV)" />
@@ -228,33 +254,18 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
              </div>
           </Section>
 
-          {/* I. Consentement */}
-          <Section icon={CheckCircle2} title="Consentement & RGPD">
+          {/* J. Consentement */}
+          <Section icon={CheckCircle2} title="Consentement RGPD">
              <div className="flex items-center gap-4 p-4 bg-green-50/50 rounded-2xl border border-green-100">
                 <div className="bg-white p-2 rounded-xl shadow-sm text-green-600">
                    <CheckCircle2 className="w-5 h-5" />
                 </div>
                 <div>
                    <p className="text-xs font-bold text-green-900">Données personnelles acceptées</p>
-                   <p className="text-[10px] text-green-700 font-medium">Validé le {formatDateTime(submission?.consentAcceptedAt || submission?.submittedAt)}</p>
+                   <p className="text-[10px] text-green-700 font-medium">Validé lors de la soumission</p>
                 </div>
              </div>
           </Section>
-
-          {/* J. Catch-all / Raw Data */}
-          <Collapsible open={isOtherOpen} onOpenChange={setIsOtherOpen}>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full flex items-center justify-between text-muted-foreground hover:text-primary p-0 h-8">
-                 <span className="text-[10px] font-black uppercase tracking-widest">Autres données de soumission</span>
-                 <ChevronDown className={cn("w-4 h-4 transition-transform", isOtherOpen && "rotate-180")} />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-4 space-y-2">
-               <div className="bg-slate-50 p-4 rounded-xl border border-dashed font-mono text-[9px] overflow-x-auto whitespace-pre">
-                  {JSON.stringify(submission?.answers || {}, null, 2)}
-               </div>
-            </CollapsibleContent>
-          </Collapsible>
 
         </div>
       </ScrollArea>
@@ -326,7 +337,7 @@ function renderDecisionActions(candidate: Candidate, loading: boolean, onStatus:
         <div className="flex items-center gap-3 text-accent font-bold text-sm">
           <CheckCircle2 className="w-5 h-5" /> Candidat Validé
         </div>
-        <p className="text-[10px] text-muted-foreground font-medium">Le candidat est prêt pour l'embauche. Utilisez le bouton d'action dans la liste pour finaliser.</p>
+        <p className="text-[10px] text-muted-foreground font-medium italic">Conversion employé disponible dans l'étape d'embauche.</p>
         <Button variant="outline" size="sm" onClick={onReject} disabled={loading} className="w-full text-[10px] h-8 rounded-xl">
            Annuler l'acceptation
         </Button>
@@ -360,7 +371,7 @@ function renderDecisionActions(candidate: Candidate, loading: boolean, onStatus:
        )}
 
        {s === "interview_to_schedule" && (
-          <div className="col-span-full text-center p-2 text-[10px] font-black uppercase text-muted-foreground tracking-widest border border-dashed rounded-xl">
+          <div className="col-span-full text-center p-2 text-[10px] font-black uppercase text-muted-foreground tracking-widest border border-dashed rounded-xl bg-white">
              En attente de planification
           </div>
        )}
@@ -405,7 +416,7 @@ function Section({ icon: Icon, title, children }: { icon: any, title: string, ch
   );
 }
 
-function AnswerItem({ label, value, code = false, className }: { label: string, value: any, code?: boolean, className?: string }) {
+function AnswerRow({ label, value, code = false, className }: { label: string, value: any, code?: boolean, className?: string }) {
   const formatted = formatValue(value);
   return (
     <div className={cn("space-y-1", className)}>
@@ -455,26 +466,19 @@ function formatDateTime(val: any): string {
   try {
     let date: Date;
     
-    // Handle Firestore Timestamp
     if (val && typeof val === 'object' && 'seconds' in val) {
       date = new Date(val.seconds * 1000);
-    } 
-    // Handle Date object
-    else if (val instanceof Date) {
+    } else if (val instanceof Date) {
       date = val;
-    }
-    // Handle toDate() function (Firestore SDK helper)
-    else if (typeof val.toDate === 'function') {
+    } else if (typeof val.toDate === 'function') {
       date = val.toDate();
-    }
-    // Handle ISO string or numeric string
-    else {
+    } else {
       date = new Date(val);
     }
 
     if (isNaN(date.getTime())) return "Date non disponible";
 
-    return date.toLocaleString('fr-FR', { 
+    return date.toLocaleDateString('fr-FR', { 
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
@@ -482,7 +486,6 @@ function formatDateTime(val: any): string {
       minute: '2-digit' 
     });
   } catch (e) {
-    console.warn("Date formatting error:", e);
     return "Date non disponible";
   }
 }
