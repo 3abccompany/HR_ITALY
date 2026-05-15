@@ -6,7 +6,9 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Plus, Search, Edit, Eye, Archive, 
   Loader2, CheckCircle2, XCircle, Clock, 
-  FileCode, MoreVertical, Globe, Lock, Copy, ExternalLink
+  FileCode, MoreVertical, Globe, Lock, Copy, ExternalLink,
+  Filter, X, Calendar as CalendarIcon, Briefcase, Building2,
+  ListFilter, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { ApplicationForm } from "@/types/application-form";
+import { ApplicationForm, ApplicationFormStatus } from "@/types/application-form";
 import { 
   publishApplicationForm, 
   closeApplicationForm, 
@@ -40,6 +42,57 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { format, isWithinInterval, startOfDay, endOfDay } from "date-fns";
+import { fr } from "date-fns/locale";
+import { cn } from "@/lib/utils";
+
+interface Filters {
+  status: string;
+  job: string;
+  department: string;
+  need: string;
+  visibility: string;
+  search: string;
+  dateRange: { from: Date | undefined; to: Date | undefined };
+}
+
+const initialFilters: Filters = {
+  status: 'all',
+  job: 'all',
+  department: 'all',
+  need: 'all',
+  visibility: 'all',
+  search: '',
+  dateRange: { from: undefined, to: undefined }
+};
+
+/**
+ * Robust date parser for mixed Firestore/Admin/Corrupted formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  
+  // Handle Firestore Timestamp or serialized maps
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    // Ignore empty objects or corrupted maps from 7L investigation
+    return null;
+  }
+  
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  
+  return null;
+}
 
 export default function ApplicationFormsPage() {
   const params = useParams();
@@ -52,7 +105,7 @@ export default function ApplicationFormsPage() {
 
   // State
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<Filters>(initialFilters);
   const [actionPending, setActionPending] = useState<{ id: string, action: 'publish' | 'close' | 'archive' } | null>(null);
 
   // Permissions
@@ -68,6 +121,84 @@ export default function ApplicationFormsPage() {
   }, [db, entityId, canRead]);
 
   const { data: forms, loading: loadingForms } = useCollection<ApplicationForm>(formsQuery);
+
+  // Filter Options Generation
+  const uniqueJobs = useMemo(() => 
+    Array.from(new Set(forms?.map(f => f.jobTitleName || 'Non renseigné') || [])).sort(), 
+  [forms]);
+
+  const uniqueDepartments = useMemo(() => 
+    Array.from(new Set(forms?.map(f => f.departmentName || 'Non renseigné') || [])).sort(), 
+  [forms]);
+
+  const uniqueNeeds = useMemo(() => {
+    const needsMap = new Map<string, string>();
+    forms?.forEach(f => {
+      if (f.recruitmentNeedId) {
+        needsMap.set(f.recruitmentNeedId, f.recruitmentNeedTitle || 'Besoin sans titre');
+      }
+    });
+    return Array.from(needsMap.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [forms]);
+
+  // Filtering Logic
+  const filteredForms = useMemo(() => {
+    if (!forms) return [];
+    
+    return forms.filter(f => {
+      // 1. Search
+      if (filters.search) {
+        const term = filters.search.toLowerCase();
+        const matchesSearch = 
+          f.title.toLowerCase().includes(term) ||
+          f.jobTitleName?.toLowerCase().includes(term) ||
+          f.departmentName?.toLowerCase().includes(term) ||
+          f.recruitmentNeedTitle?.toLowerCase().includes(term) ||
+          f.publicSlug?.toLowerCase().includes(term);
+        if (!matchesSearch) return false;
+      }
+
+      // 2. Status
+      if (filters.status !== 'all' && f.status !== filters.status) return false;
+      
+      // 3. Job
+      if (filters.job !== 'all' && (f.jobTitleName || 'Non renseigné') !== filters.job) return false;
+
+      // 4. Department
+      if (filters.department !== 'all' && (f.departmentName || 'Non renseigné') !== filters.department) return false;
+
+      // 5. Need
+      if (filters.need !== 'all' && f.recruitmentNeedId !== filters.need) return false;
+
+      // 6. Visibility
+      if (filters.visibility === 'has_public_link' && !f.publicSlug) return false;
+      if (filters.visibility === 'no_public_link' && !!f.publicSlug) return false;
+
+      // 7. Date Range
+      if (filters.dateRange.from || filters.dateRange.to) {
+        const fDate = parseSafeDate(f.createdAt) || parseSafeDate(f.updatedAt);
+        if (!fDate) return false;
+
+        const from = filters.dateRange.from ? startOfDay(filters.dateRange.from) : undefined;
+        const to = filters.dateRange.to ? endOfDay(filters.dateRange.to) : undefined;
+
+        if (from && fDate < from) return false;
+        if (to && fDate > to) return false;
+      }
+
+      return true;
+    });
+  }, [forms, filters]);
+
+  const updateFilter = (key: keyof Filters, value: any) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const removeFilter = (key: keyof Filters) => {
+    setFilters(prev => ({ ...prev, [key]: initialFilters[key] }));
+  };
+
+  const resetFilters = () => setFilters(initialFilters);
 
   const executeAction = async () => {
     if (!actionPending || !user) return;
@@ -101,14 +232,6 @@ export default function ApplicationFormsPage() {
     window.open(`/apply/${slug}`, '_blank');
   };
 
-  const filteredForms = useMemo(() => {
-    const term = search.toLowerCase();
-    return forms?.filter(f => 
-      f.title.toLowerCase().includes(term) || 
-      f.jobTitleName.toLowerCase().includes(term)
-    ) || [];
-  }, [forms, search]);
-
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Brouillon</Badge>;
@@ -135,15 +258,144 @@ export default function ApplicationFormsPage() {
         )}
       </div>
 
-      <div className="space-y-4">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input 
-            className="pl-10" 
-            placeholder="Rechercher un formulaire..." 
-            value={search} 
-            onChange={(e) => setSearch(e.target.value)} 
-          />
+      <div className="space-y-6 mb-6">
+        {/* Advanced Filter Bar */}
+        <div className="flex flex-col gap-4">
+          <ScrollArea className="w-full whitespace-nowrap">
+            <div className="flex w-max space-x-3 p-1">
+              {/* Search */}
+              <div className="relative w-64">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input 
+                  placeholder="Rechercher..." 
+                  className="h-9 pl-8 text-xs bg-background" 
+                  value={filters.search}
+                  onChange={(e) => updateFilter('search', e.target.value)}
+                />
+              </div>
+
+              {/* Status Filter */}
+              <FilterDropdown 
+                label="Statut" 
+                value={filters.status} 
+                onValueChange={(v) => updateFilter('status', v)}
+                options={[
+                  { label: "Brouillon", value: "draft" },
+                  { label: "Publié", value: "published" },
+                  { label: "Fermé", value: "closed" },
+                  { label: "Archivé", value: "archived" }
+                ]}
+              />
+
+              {/* Job Filter */}
+              <FilterDropdown 
+                label="Poste" 
+                value={filters.job} 
+                onValueChange={(v) => updateFilter('job', v)}
+                options={uniqueJobs.map(j => ({ label: j, value: j }))}
+              />
+
+              {/* Dept Filter */}
+              <FilterDropdown 
+                label="Département" 
+                value={filters.department} 
+                onValueChange={(v) => updateFilter('department', v)}
+                options={uniqueDepartments.map(d => ({ label: d, value: d }))}
+              />
+
+              {/* Recruitment Need Filter */}
+              <FilterDropdown 
+                label="Besoin RH" 
+                value={filters.need} 
+                onValueChange={(v) => updateFilter('need', v)}
+                options={uniqueNeeds.map(([id, title]) => ({ label: title, value: id }))}
+              />
+
+              {/* Visibility Filter */}
+              <FilterDropdown 
+                label="Lien Public" 
+                value={filters.visibility} 
+                onValueChange={(v) => updateFilter('visibility', v)}
+                options={[
+                  { label: "Avec lien", value: "has_public_link" },
+                  { label: "Sans lien", value: "no_public_link" }
+                ]}
+              />
+
+              {/* Date Filter */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-9 gap-2 text-xs font-medium bg-background">
+                    <CalendarIcon className="h-3.5 w-3.5" />
+                    {filters.dateRange.from ? (
+                      filters.dateRange.to ? (
+                        <>{format(filters.dateRange.from, "dd/MM")} - {format(filters.dateRange.to, "dd/MM")}</>
+                      ) : (
+                        format(filters.dateRange.from, "dd/MM/yyyy")
+                      )
+                    ) : (
+                      "Date de création"
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    initialFocus
+                    mode="range"
+                    defaultMonth={filters.dateRange.from}
+                    selected={{ from: filters.dateRange.from, to: filters.dateRange.to }}
+                    onSelect={(range: any) => updateFilter('dateRange', { from: range?.from, to: range?.to })}
+                    numberOfMonths={2}
+                    locale={fr}
+                  />
+                </PopoverContent>
+              </Popover>
+
+              <Button variant="ghost" size="sm" onClick={resetFilters} className="h-9 text-xs text-muted-foreground hover:text-primary">
+                Réinitialiser
+              </Button>
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+
+          {/* Active Filter Chips */}
+          <div className="flex flex-wrap items-center gap-2 px-1 min-h-[32px]">
+            {Object.entries(filters).map(([key, value]) => {
+              if (key === 'search' || key === 'dateRange') return null;
+              if (value === 'all') return null;
+              
+              let label = value;
+              if (key === 'status') {
+                const map: any = { draft: 'Brouillon', published: 'Publié', closed: 'Fermé', archived: 'Archivé' };
+                label = map[value] || value;
+              }
+              if (key === 'visibility') label = value === 'has_public_link' ? 'Avec lien' : 'Sans lien';
+              if (key === 'need') label = uniqueNeeds.find(n => n[0] === value)?.[1] || value;
+
+              return (
+                <Badge key={key} variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
+                  {label}
+                  <button onClick={() => removeFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5">
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </Badge>
+              );
+            })}
+            {(filters.dateRange.from || filters.dateRange.to) && (
+              <Badge variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
+                Période: {filters.dateRange.from ? format(filters.dateRange.from, "dd/MM") : '?'} - {filters.dateRange.to ? format(filters.dateRange.to, "dd/MM") : '?'}
+                <button onClick={() => removeFilter('dateRange')} className="hover:bg-primary/10 rounded-full p-0.5">
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </Badge>
+            )}
+            
+            {filteredForms.length > 0 && !loadingForms && (
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest ml-auto mr-2">
+                {filteredForms.length} formulaire{filteredForms.length > 1 ? 's' : ''} trouvé{filteredForms.length > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
         </div>
 
         <Card className="overflow-hidden border-primary/10">
@@ -161,19 +413,27 @@ export default function ApplicationFormsPage() {
               {loadingForms ? (
                 <TableRow><TableCell colSpan={5} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
               ) : filteredForms.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground">Aucun formulaire trouvé.</TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center py-20 text-muted-foreground">
+                    <div className="flex flex-col items-center gap-3">
+                      <ListFilter className="h-10 w-10 opacity-20" />
+                      <p className="font-medium">Aucun formulaire ne correspond à vos critères.</p>
+                      <Button variant="outline" size="sm" onClick={resetFilters}>Effacer les filtres</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
               ) : (
                 filteredForms.map((f) => (
-                  <TableRow key={f.formId}>
+                  <TableRow key={f.formId} className="hover:bg-muted/50 transition-colors">
                     <TableCell>
                       <div className="font-bold text-primary truncate max-w-[250px]">{f.title}</div>
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase mt-1">
-                        <FileCode className="w-3 h-3" /> {f.jobTitleName}
+                        <FileCode className="w-3 h-3" /> {f.jobTitleName || "Non renseigné"}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-xs font-medium truncate max-w-[200px]">{f.recruitmentNeedTitle}</div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">{f.departmentName}</div>
+                      <div className="text-xs font-medium truncate max-w-[200px]">{f.recruitmentNeedTitle || "Non renseigné"}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{f.departmentName || "Non renseigné"}</div>
                     </TableCell>
                     <TableCell>
                       {f.status === 'published' ? (
@@ -204,7 +464,7 @@ export default function ApplicationFormsPage() {
                             <Eye className="w-4 h-4" /> Aperçu HR
                           </DropdownMenuItem>
                           
-                          {f.status === 'published' && (
+                          {f.status === 'published' && f.publicSlug && (
                             <>
                               <DropdownMenuItem onClick={() => openPublicForm(f.publicSlug)} className="gap-2 text-accent font-bold">
                                 <ExternalLink className="w-4 h-4" /> Ouvrir le formulaire
@@ -215,7 +475,7 @@ export default function ApplicationFormsPage() {
                             </>
                           )}
 
-                          {canUpdate && f.status === 'draft' && (
+                          {canUpdate && (f.status === 'draft' || f.status === 'published') && (
                             <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/application-forms/${f.formId}/edit`)} className="gap-2">
                               <Edit className="w-4 h-4" /> Configurer
                             </DropdownMenuItem>
@@ -268,5 +528,37 @@ export default function ApplicationFormsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function FilterDropdown({ 
+  label, 
+  value, 
+  onValueChange, 
+  options 
+}: { 
+  label: string, 
+  value: string, 
+  onValueChange: (v: string) => void, 
+  options: { label: string, value: string }[] 
+}) {
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className={cn(
+        "h-9 w-auto min-w-[140px] text-xs font-medium bg-background",
+        value !== 'all' && "border-primary ring-1 ring-primary/10"
+      )}>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground">{label}:</span>
+          <SelectValue placeholder="Tous" />
+        </div>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">Tous ({label})</SelectItem>
+        {options.map(opt => (
+          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
