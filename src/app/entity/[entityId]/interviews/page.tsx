@@ -8,7 +8,7 @@ import {
   Loader2, User, Briefcase, MapPin, CheckCircle2, 
   AlertCircle, MoreVertical, Star, MessageSquare, Mail, 
   Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
-  Clock, MapPinned, UserCircle
+  Clock, MapPinned, UserCircle, Timer, HandMetal
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -171,7 +171,7 @@ export default function InterviewsManagementPage() {
   const candidatesQuery = useMemo(() => {
     if (!db || !entityId || !canReadCandidates || !isFormVisible || editingId) return null;
     return query(collection(db, `entities/${entityId}/candidates`), orderBy("createdAt", "desc")) as Query<Candidate>;
-  }, [db, entityId, canReadCandidates, isFormVisible, editingId]);
+  }, [db, entityId, canReadCandidates, iisFormVisible, editingId]);
 
   const { data: interviews, loading: loadingInterviews } = useCollection<Interview>(interviewsQuery);
   const { data: candidates, loading: loadingCandidates } = useCollection<Candidate>(candidatesQuery);
@@ -402,8 +402,8 @@ export default function InterviewsManagementPage() {
                     <TableHead>Candidat & Poste</TableHead>
                     <TableHead>Rendez-vous</TableHead>
                     <TableHead>Recruteur</TableHead>
-                    <TableHead>Communication</TableHead>
                     <TableHead>Statut</TableHead>
+                    <TableHead>Réponse recruteur</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -438,40 +438,42 @@ export default function InterviewsManagementPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {getEmailStatusBadge(i.emailStatus)}
-                        </TableCell>
-                        <TableCell>
                           {getStatusBadge(i.status)}
                         </TableCell>
+                        <TableCell>
+                          {getDecisionBadge(i.decision)}
+                        </TableCell>
                         <TableCell className="text-right">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {canUpdate && (
-                                <DropdownMenuItem onClick={() => handleEdit(i)} className="gap-2">
-                                  <Edit className="w-4 h-4" /> Modifier
-                                </DropdownMenuItem>
-                              )}
-                              {canDecide && i.status !== 'inactive' && (
-                                <DropdownMenuItem onClick={() => handleOpenDecision(i)} className="gap-2 font-bold text-primary">
-                                  <CheckCircle2 className="w-4 h-4" /> Décision
-                                </DropdownMenuItem>
-                              )}
-                              {canUpdate && (
-                                i.status !== 'inactive' ? (
-                                  <DropdownMenuItem onClick={() => setDisablingId(i.interviewId)} className="gap-2 text-destructive">
-                                    <PowerOff className="w-4 h-4" /> Désactiver
+                          <div className="flex justify-end gap-1">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {canUpdate && (
+                                  <DropdownMenuItem onClick={() => handleEdit(i)} className="gap-2">
+                                    <Edit className="w-4 h-4" /> Modifier
                                   </DropdownMenuItem>
-                                ) : (
-                                  <DropdownMenuItem onClick={() => setReactivatingId(i.interviewId)} className="gap-2 text-green-600">
-                                    <RefreshCcw className="w-4 h-4" /> Réactiver
+                                )}
+                                {canDecide && i.status !== 'inactive' && (
+                                  <DropdownMenuItem onClick={() => handleOpenDecision(i)} className="gap-2 font-bold text-primary">
+                                    <CheckCircle2 className="w-4 h-4" /> Décision
                                   </DropdownMenuItem>
-                                )
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                                )}
+                                {canUpdate && (
+                                  i.status !== 'inactive' ? (
+                                    <DropdownMenuItem onClick={() => setDisablingId(i.interviewId)} className="gap-2 text-destructive">
+                                      <PowerOff className="w-4 h-4" /> Désactiver
+                                    </DropdownMenuItem>
+                                  ) : (
+                                    <DropdownMenuItem onClick={() => setReactivatingId(i.interviewId)} className="gap-2 text-green-600">
+                                      <RefreshCcw className="w-4 h-4" /> Réactiver
+                                    </DropdownMenuItem>
+                                  )
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -522,7 +524,7 @@ export default function InterviewsManagementPage() {
                             key={idx} 
                             className={cn(
                               "min-h-[140px] p-2 border-r border-b transition-colors group relative",
-                              !isCurrentMonth ? "bg-slate-50/50 opacity-40" : "bg-white",
+                              !isCurrentMonth ? "bg-slate-50/50 opacity-40" : "bg-white cursor-pointer hover:bg-slate-50/50",
                               isToday && "bg-blue-50/20"
                             )}
                             onClick={() => dayInterviews.length > 0 && setSelectedDay(day)}
@@ -547,7 +549,7 @@ export default function InterviewsManagementPage() {
                                    key={interview.interviewId}
                                    className={cn(
                                      "w-full text-left px-2 py-1 rounded text-[9px] font-bold border truncate transition-all hover:ring-2 ring-primary/20",
-                                     getEventStatusClasses(interview)
+                                     getEventClasses(interview)
                                    )}
                                    onClick={(e) => {
                                       e.stopPropagation();
@@ -632,7 +634,10 @@ export default function InterviewsManagementPage() {
                                {format(parseSafeDate(i.scheduledAt) || new Date(), 'HH:mm')}
                              </span>
                            </div>
-                           {getStatusBadge(i.status)}
+                           <div className="flex items-center gap-2">
+                             {getStatusBadge(i.status)}
+                             {getDecisionBadge(i.decision)}
+                           </div>
                         </div>
                         
                         <Card className="border-primary/5 shadow-sm overflow-hidden group-hover:border-primary/20 transition-colors">
@@ -825,7 +830,7 @@ export default function InterviewsManagementPage() {
                   <SelectItem value="pending">En attente / À revoir</SelectItem>
                   <SelectItem value="accepted">Retenu (À embaucher)</SelectItem>
                   <SelectItem value="rejected">Refusé</SelectItem>
-                  <SelectItem value="on_hold">Vivier / Stand-by</SelectItem>
+                  <SelectItem value="on_hold">Stand by / Vivier</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -897,26 +902,35 @@ function formatDateDisplay(val: any): string {
 function getStatusBadge(status: string) {
   switch (status) {
     case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase text-[9px] font-bold">Planifié</Badge>;
-    case 'completed': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 uppercase text-[9px] font-bold">Terminé</Badge>;
+    case 'completed': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 uppercase text-[9px] font-bold">Réalisé</Badge>;
     case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase text-[9px] font-bold">Annulé</Badge>;
+    case 'no_show': return <Badge variant="destructive" className="bg-slate-100 text-slate-700 border-slate-200 uppercase text-[9px] font-bold">Absent</Badge>;
     case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300 uppercase text-[9px] font-bold">Inactif</Badge>;
     default: return <Badge variant="outline" className="uppercase text-[9px] font-bold">{status}</Badge>;
   }
 }
 
-function getEmailStatusBadge(status: string | undefined) {
-  switch (status) {
-    case 'sent': return <Badge variant="outline" className="text-green-600 border-green-100 bg-green-50 gap-1 text-[9px]"><Mail className="w-3 h-3" /> Envoyé</Badge>;
-    case 'queued': return <Badge variant="outline" className="text-blue-600 border-blue-100 bg-blue-50 gap-1 animate-pulse text-[9px]"><Loader2 className="w-3 h-3 animate-spin" /> Envoi...</Badge>;
-    case 'failed': return <Badge variant="outline" className="text-red-600 border-red-100 bg-red-50 gap-1 text-[9px]"><AlertCircle className="w-3 h-3" /> Échec</Badge>;
-    default: return null;
+function getDecisionBadge(decision: string | undefined) {
+  const d = decision || "pending";
+  switch (d) {
+    case 'accepted': return <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200 gap-1.5"><CheckCircle2 className="w-3 h-3" /> Accepté</Badge>;
+    case 'rejected': return <Badge variant="secondary" className="bg-red-100 text-red-800 border-red-200 gap-1.5"><AlertCircle className="w-3 h-3" /> Refusé</Badge>;
+    case 'on_hold':
+    case 'stand_by': return <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-200 gap-1.5"><Timer className="w-3 h-3" /> Stand by</Badge>;
+    default: return <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 gap-1.5"><HandMetal className="w-3 h-3 opacity-50" /> En attente</Badge>;
   }
 }
 
-function getEventStatusClasses(i: Interview) {
-  if (i.status === 'completed') return "bg-green-50 border-green-100 text-green-700";
-  if (i.status === 'cancelled') return "bg-red-50 border-red-100 text-red-700";
-  if (i.status === 'inactive') return "bg-slate-50 border-slate-100 text-slate-400 opacity-60";
-  return "bg-blue-50 border-blue-100 text-blue-700";
+function getEventClasses(i: Interview) {
+  // Decision takes precedence for coloring
+  if (i.decision === 'accepted') return "bg-green-50 border-green-200 text-green-700";
+  if (i.decision === 'rejected') return "bg-red-50 border-red-200 text-red-700";
+  if (i.decision === 'on_hold' || i.decision === 'stand_by') return "bg-orange-50 border-orange-200 text-orange-700";
+  
+  // Fallback to status
+  if (i.status === 'completed') return "bg-emerald-50 border-emerald-200 text-emerald-700";
+  if (i.status === 'cancelled' || i.status === 'no_show') return "bg-slate-100 border-slate-300 text-slate-500 opacity-60";
+  if (i.status === 'inactive') return "bg-slate-50 border-slate-100 text-slate-400 opacity-40";
+  
+  return "bg-blue-50 border-blue-200 text-blue-700";
 }
-
