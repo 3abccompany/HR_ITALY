@@ -11,7 +11,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -340,9 +339,9 @@ export default function CandidatesManagementPage() {
               {/* Search */}
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input 
+                <input 
                   placeholder="Rechercher..." 
-                  className="pl-8 h-9 text-xs" 
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-xs shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" 
                   value={filters.search}
                   onChange={(e) => updateFilter('search', e.target.value)}
                 />
@@ -414,6 +413,7 @@ export default function CandidatesManagementPage() {
                     selected={{ from: filters.dateRange.from, to: filters.dateRange.to }}
                     onSelect={(range: any) => updateFilter('dateRange', { from: range?.from, to: range?.to })}
                     numberOfMonths={2}
+                    locale={fr}
                   />
                 </PopoverContent>
               </Popover>
@@ -476,10 +476,9 @@ export default function CandidatesManagementPage() {
         </div>
       </div>
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Full Width */}
       <div className="flex-1 flex overflow-hidden p-8 pt-0 gap-8">
-        <div className={cn("flex-1 flex flex-col gap-4 min-w-0", selectedCandidate && "hidden lg:flex")}>
-          
+        <div className="flex-1 flex flex-col gap-4 min-w-0">
           <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
             <ScrollArea className="flex-1">
               {loadingCandidates ? (
@@ -561,55 +560,29 @@ export default function CandidatesManagementPage() {
             </ScrollArea>
           </Card>
         </div>
-
-        {/* Detail Panel */}
-        {!isMobile && selectedCandidate && (
-          <div className="w-[520px] flex flex-col gap-4 animate-in slide-in-from-right-4 duration-300">
-             <div className="flex items-center justify-between shrink-0">
-                <h3 className="text-sm font-black uppercase text-primary tracking-widest flex items-center gap-2">
-                   <LayoutDashboard className="w-4 h-4" /> Revue de candidature
-                </h3>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedCandidate(null)}>
-                   <X className="w-4 h-4" />
-                </Button>
-             </div>
-             <div className="flex-1 min-h-0">
-               <CandidateApplicationPanel 
-                 entityId={entityId} 
-                 candidate={selectedCandidate} 
-                 onStatusUpdate={(updated) => setSelectedCandidate(updated)}
-               />
-             </div>
-          </div>
-        )}
-
-        {!isMobile && !selectedCandidate && (
-          <div className="w-[520px] hidden lg:flex flex-col items-center justify-center border-2 border-dashed rounded-3xl bg-secondary/5 text-center p-8">
-             <Filter className="w-12 h-12 text-muted-foreground/20 mb-4" />
-             <p className="text-sm text-muted-foreground font-medium">Sélectionnez un candidat ou ajustez vos filtres.</p>
-          </div>
-        )}
       </div>
 
-      {/* Mobile Detail Panel */}
-      {isMobile && (
-        <Sheet open={!!selectedCandidate} onOpenChange={(open) => !open && setSelectedCandidate(null)}>
-          <SheetContent side="bottom" className="h-[90vh] px-0">
-            <SheetHeader className="px-6 mb-4">
-              <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs">Revue de candidature</SheetTitle>
-            </SheetHeader>
-            <div className="h-full pb-20">
-              <CandidateApplicationPanel 
-                 entityId={entityId} 
-                 candidate={selectedCandidate} 
-                 onStatusUpdate={(updated) => setSelectedCandidate(updated)}
-              />
+      {/* Review Side Drawer (Sheet) - Unifies desktop and mobile detail view */}
+      <Sheet open={!!selectedCandidate} onOpenChange={(open) => !open && setSelectedCandidate(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-[620px] p-0 flex flex-col gap-0 border-l shadow-2xl">
+          <SheetHeader className="px-8 py-6 border-b shrink-0">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs flex items-center gap-2">
+                <LayoutDashboard className="w-4 h-4" /> Revue de candidature
+              </SheetTitle>
             </div>
-          </SheetContent>
-        </Sheet>
-      )}
+          </SheetHeader>
+          <div className="flex-1 min-h-0">
+            <CandidateApplicationPanel 
+               entityId={entityId} 
+               candidate={selectedCandidate} 
+               onStatusUpdate={(updated) => setSelectedCandidate(updated)}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
 
-      {/* Forms & Dialogs */}
+      {/* Form & Confirmation Dialogs */}
       <Dialog open={isFormVisible} onOpenChange={(open) => !open && handleResetForm()}>
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
@@ -694,7 +667,6 @@ export default function CandidatesManagementPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Confirmation Dialogs */}
       <AlertDialog open={!!disablingId} onOpenChange={() => setDisablingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
