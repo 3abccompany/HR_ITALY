@@ -3,6 +3,16 @@ import { FieldValue } from "firebase/firestore";
 
 export type SubmissionStatus = "submitted" | "converted_to_candidate" | "duplicate_blocked" | "rejected";
 
+export interface AttachmentMetadata {
+  id: string;
+  type: "cv" | "cover_letter";
+  fileName: string;
+  filePath: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string | Date | FieldValue;
+}
+
 export interface ApplicationSubmission {
   submissionId: string;
   entityId: string;
@@ -31,6 +41,7 @@ export interface ApplicationSubmission {
   // Data
   answers: Record<string, any>;
   customAnswers: Record<string, any>;
+  attachments?: AttachmentMetadata[];
   consentAccepted: boolean;
   consentAcceptedAt: Date | FieldValue;
 

@@ -4,6 +4,7 @@
 import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { createHash } from "crypto";
+import { AttachmentMetadata } from "@/types/application-submission";
 
 /**
  * Recursively removes undefined values from an object and replaces them with null
@@ -35,7 +36,6 @@ const normalizePhone = (phone: string) => phone.toString().replace(/\D/g, "");
 
 /**
  * SHA-256 Hashing for privacy-safe deduplication keys.
- * Updated to use Email ONLY per recruitment need.
  */
 function computeDedupeKey(entityId: string, needId: string, email: string): string {
   const input = `${entityId}:${needId}:${email}`;
@@ -44,46 +44,34 @@ function computeDedupeKey(entityId: string, needId: string, email: string): stri
 
 /**
  * Transactional Submission Logic using Admin SDK.
- * Updated to use Email-only deduplication per recruitment need (Milestone 7K-bis).
+ * Now includes support for attachments.
  */
 export async function executeSubmissionTransaction(
   entityId: string, 
   form: any, 
-  answers: Record<string, any>
+  answers: Record<string, any>,
+  attachments: AttachmentMetadata[] = []
 ) {
-  // Defensive validation
   if (!adminDb) throw new Error("Firestore Admin SDK is not initialized.");
   if (!entityId) throw new Error("Missing entityId context.");
   if (!form?.formId) throw new Error("Missing form context.");
-  if (!form?.recruitmentNeedId) throw new Error("Missing recruitment need context.");
 
-  // Data extraction and normalization
   const firstName = (answers.firstName || "").toString().trim();
   const lastName = (answers.lastName || "").toString().trim();
   const email = (answers.email || "").toString().trim();
   const phone = (answers.phone || "").toString().trim();
-  const nationalId = (answers.nationalId || "").toString().trim(); // Optional legacy support
 
-  if (!email) {
-    throw new Error("L'email est obligatoire pour postuler.");
-  }
+  if (!email) throw new Error("L'email est obligatoire.");
 
   const normEmail = normalizeEmail(email);
   const normPhone = normalizePhone(phone);
-  
-  // SHA-256 Hash for the dedupe document ID (Privacy First)
-  // Dedupe is strictly Email + RecruitmentNeedId
   const dedupeKey = computeDedupeKey(entityId, form.recruitmentNeedId, normEmail);
 
-  console.log(`[Submission Service] Processing application for: ${normEmail}`);
-
-  // 1. Pre-transaction Lookups (Server-side)
-  // Search for existing Person by normalized email
+  // 1. Lookups
   const personsRef = adminDb.collection("entities").doc(entityId).collection("persons");
   const personSnap = await personsRef.where("email", "==", normEmail).limit(1).get();
   const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
 
-  // Potential duplicate check by email for this specific job
   const submissionsRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissions");
   const emailSnap = await submissionsRef
     .where("recruitmentNeedId", "==", form.recruitmentNeedId)
@@ -94,18 +82,13 @@ export async function executeSubmissionTransaction(
   const possibleDuplicate = !emailSnap.empty;
 
   return await adminDb.runTransaction(async (transaction) => {
-    // 2. Verify Need Status
+    // 2. Verify Need
     const needRef = adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(form.recruitmentNeedId);
     const needSnap = await transaction.get(needRef);
-    if (!needSnap.exists) throw new Error("L'offre d'emploi correspondante est introuvable.");
-    const need = needSnap.data() as any;
+    if (!needSnap.exists) throw new Error("Offre d'emploi introuvable.");
+    const needData = needSnap.data();
 
-    const blockedStatuses = ["fulfilled", "cancelled", "archived", "closed"];
-    if (blockedStatuses.includes(need.status)) {
-      throw new Error("Désolé, cette offre n'est plus disponible aux candidatures.");
-    }
-
-    // 3. Check Dedupe Lock (Atomic check)
+    // 3. Check Dedupe
     const dedupeRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissionDedupe").doc(dedupeKey);
     const dedupeSnap = await transaction.get(dedupeRef);
     if (dedupeSnap.exists) {
@@ -127,7 +110,7 @@ export async function executeSubmissionTransaction(
     const submissionId = submissionRef.id;
     const candidateId = candidateRef.id;
 
-    // 4. Prepare Sanitized Data
+    // 4. Data
     const submissionData = sanitizePayload({
       submissionId,
       entityId,
@@ -148,8 +131,8 @@ export async function executeSubmissionTransaction(
       normalizedEmail: normEmail,
       phone,
       normalizedPhone: normPhone,
-      nationalId: nationalId || null, // Keep if provided in old forms
       answers: answers || {},
+      attachments,
       consentAccepted: true,
       consentAcceptedAt: FieldValue.serverTimestamp(),
       dedupeKey,
@@ -161,33 +144,6 @@ export async function executeSubmissionTransaction(
       submittedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    const dedupeData = sanitizePayload({
-      dedupeKey,
-      entityId,
-      recruitmentNeedId: form.recruitmentNeedId,
-      normalizedEmail: normEmail,
-      applicationSubmissionId: submissionId,
-      personId,
-      candidateId,
-      createdAt: FieldValue.serverTimestamp(),
-      source: "public_application_form",
-    });
-
-    const personData = sanitizePayload({
-      personId,
-      entityId,
-      firstName,
-      lastName,
-      displayName: `${firstName} ${lastName}`,
-      email: normEmail,
-      phone: normPhone,
-      currentLifecycleStatus: "candidate",
-      currentCandidateId: candidateId,
-      status: "active",
-      updatedAt: FieldValue.serverTimestamp(),
-      updatedBy: "public_application",
     });
 
     const candidateData = sanitizePayload({
@@ -207,23 +163,43 @@ export async function executeSubmissionTransaction(
       createdBy: "public_application",
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: "public_application",
-      notes: `Postulé via formulaire: ${form.title}`,
     });
 
-    // 5. Execute Atomic Writes
+    // 5. Writes
     transaction.set(submissionRef, submissionData);
-    transaction.set(dedupeRef, dedupeData);
+    transaction.set(dedupeRef, {
+      dedupeKey,
+      entityId,
+      recruitmentNeedId: form.recruitmentNeedId,
+      normalizedEmail: normEmail,
+      applicationSubmissionId: submissionId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
     transaction.set(candidateRef, candidateData);
     
-    const personDocRef = adminDb.collection("entities").doc(entityId).collection("persons").doc(personId);
     if (isNewPerson) {
-      transaction.set(personDocRef, {
-        ...personData,
+      transaction.set(adminDb.collection("entities").doc(entityId).collection("persons").doc(personId), {
+        personId,
+        entityId,
+        firstName,
+        lastName,
+        displayName: `${firstName} ${lastName}`,
+        email: normEmail,
+        phone: normPhone,
+        currentLifecycleStatus: "candidate",
+        currentCandidateId: candidateId,
+        status: "active",
         createdAt: FieldValue.serverTimestamp(),
         createdBy: "public_application",
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: "public_application",
       });
     } else {
-      transaction.update(personDocRef, personData);
+      transaction.update(adminDb.collection("entities").doc(entityId).collection("persons").doc(personId), {
+        currentLifecycleStatus: "candidate",
+        currentCandidateId: candidateId,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
     }
 
     transaction.set(timelineRef, {
@@ -232,23 +208,11 @@ export async function executeSubmissionTransaction(
       personId,
       type: "candidate.created",
       label: "Candidature reçue",
-      description: `Candidature reçue via formulaire public pour le poste de ${form.jobTitleName}.`,
+      description: `Candidature reçue avec ${attachments.length} pièces jointes.`,
       sourceCollection: "applicationSubmissions",
       sourceId: submissionId,
       createdAt: FieldValue.serverTimestamp(),
       createdBy: "public_application",
-    });
-
-    // 6. Global Audit Log
-    const auditRef = adminDb.collection("auditLogs").doc();
-    transaction.set(auditRef, {
-      userId: "public_application",
-      entityId,
-      action: "applicationSubmission.created",
-      resourceType: "applicationSubmission",
-      resourceId: submissionId,
-      details: { personId, candidateId, dedupeHashed: true },
-      timestamp: FieldValue.serverTimestamp(),
     });
 
     return { submissionId, candidateId, personId };

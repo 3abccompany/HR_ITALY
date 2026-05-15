@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Send, AlertCircle } from "lucide-react";
+import { Loader2, Send, AlertCircle, Upload, FileText, CheckCircle2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 
@@ -17,10 +17,18 @@ interface PublicFormRendererProps {
   form: ApplicationForm;
 }
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+];
+
 export function PublicFormRenderer({ form }: PublicFormRendererProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [files, setFiles] = useState<Record<string, File>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +41,34 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
     if (error) setError(null);
   };
 
+  const handleFileChange = (key: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      toast({ 
+        variant: "destructive", 
+        title: "Format non supporté", 
+        description: "Veuillez envoyer un fichier PDF, DOC ou DOCX." 
+      });
+      e.target.value = "";
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      toast({ 
+        variant: "destructive", 
+        title: "Fichier trop volumineux", 
+        description: "La taille maximale autorisée est de 5 Mo." 
+      });
+      e.target.value = "";
+      return;
+    }
+
+    setFiles(prev => ({ ...prev, [key]: file }));
+    if (error) setError(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -41,8 +77,12 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
     try {
       // Basic validation check (Required fields)
       for (const field of enabledFields) {
-        // Skip required validation for file fields while the component is not implemented
-        if (field.type === 'file') continue;
+        if (field.type === 'file') {
+          if (field.required && !files[field.key]) {
+            throw new Error(`Le document "${field.label}" est obligatoire.`);
+          }
+          continue;
+        }
 
         const val = answers[field.key];
         const isEmpty = val === undefined || val === null || val === "" || (Array.isArray(val) && val.length === 0);
@@ -52,21 +92,26 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         }
       }
 
-      // Sanitize answers (remove any accidental undefined)
+      // Build FormData
+      const formData = new FormData();
+      formData.append("publicSlug", form.publicSlug);
+      
+      // Sanitize and append answers
       const sanitizedAnswers: Record<string, any> = {};
       Object.entries(answers).forEach(([key, value]) => {
         if (value !== undefined && value !== null) {
           sanitizedAnswers[key] = value;
         }
       });
+      formData.append("answers", JSON.stringify(sanitizedAnswers));
+
+      // Append files
+      if (files["cv"]) formData.append("cv", files["cv"]);
+      if (files["coverLetter"]) formData.append("coverLetter", files["coverLetter"]);
 
       const response = await fetch('/api/public/applications/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          publicSlug: form.publicSlug,
-          answers: sanitizedAnswers
-        }),
+        body: formData,
       });
 
       let result: any = null;
@@ -79,7 +124,6 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       }
 
       if (!response.ok) {
-        // Handle domain-specific errors (Duplicates)
         if (result?.error?.code === "ALREADY_APPLIED_TO_THIS_JOB") {
           throw new Error("Vous avez déjà postulé à ce poste.");
         }
@@ -181,9 +225,44 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
                     })}
                   </div>
                 ) : field.type === 'file' ? (
-                  <div className="p-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/30 flex flex-col items-center justify-center gap-2">
-                     <p className="text-sm font-bold text-slate-500">Dépôt de fichier bientôt disponible</p>
-                     <p className="text-[10px] text-muted-foreground uppercase">Prochaine version du Studio</p>
+                  <div className="relative group">
+                    <Input 
+                      type="file" 
+                      className="hidden" 
+                      id={`file-${field.key}`}
+                      accept=".pdf,.doc,.docx"
+                      onChange={(e) => handleFileChange(field.key, e)}
+                    />
+                    <Label 
+                      htmlFor={`file-${field.key}`}
+                      className={`flex flex-col items-center justify-center gap-3 p-8 border-2 border-dashed rounded-2xl cursor-pointer transition-all ${
+                        files[field.key] 
+                          ? 'border-green-200 bg-green-50/30 hover:bg-green-50/50' 
+                          : 'border-slate-200 bg-slate-50/30 hover:bg-slate-50 hover:border-primary/30'
+                      }`}
+                    >
+                      {files[field.key] ? (
+                        <>
+                          <div className="bg-green-100 p-3 rounded-full text-green-600">
+                             <CheckCircle2 className="w-6 h-6" />
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs font-bold text-green-800">{files[field.key].name}</p>
+                            <p className="text-[10px] text-green-600 uppercase font-bold tracking-tighter">Fichier prêt — Cliquer pour changer</p>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="bg-white p-3 rounded-full shadow-sm text-primary/60 group-hover:text-primary transition-colors">
+                             <Upload className="w-6 h-6" />
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs font-bold text-slate-600">Cliquez pour ajouter votre {field.label}</p>
+                            <p className="text-[10px] text-muted-foreground uppercase font-medium">PDF, DOCX (Max 5Mo)</p>
+                          </div>
+                        </>
+                      )}
+                    </Label>
                   </div>
                 ) : (
                   <Input 
