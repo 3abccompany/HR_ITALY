@@ -7,7 +7,8 @@ import {
   Calendar, Search, Plus, Edit, PowerOff, RefreshCcw, 
   Loader2, User, Briefcase, MapPin, CheckCircle2, 
   AlertCircle, MoreVertical, Star, MessageSquare, Mail, 
-  Info, Eye
+  Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
+  Clock, MapPinned, UserCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +54,23 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import { 
+  format, 
+  startOfMonth, 
+  endOfMonth, 
+  startOfWeek, 
+  endOfWeek, 
+  eachDayOfInterval, 
+  isSameMonth, 
+  isSameDay, 
+  addMonths, 
+  subMonths,
+  parseISO
+} from "date-fns";
+import { fr } from "date-fns/locale";
+import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 
 const initialForm = {
   candidateId: "",
@@ -86,6 +104,28 @@ const initialDecisionForm = {
   feedback: ""
 };
 
+/**
+ * Robust date parser for mixed Firestore/Admin/Corrupted formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  
+  return null;
+}
+
 export default function InterviewsManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -94,7 +134,11 @@ export default function InterviewsManagementPage() {
   const { toast } = useToast();
   const { hasPermission, entity, loading: membershipLoading } = useActiveMembership(entityId);
 
-  // State
+  // View State
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+
+  // Form/Modal State
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isDecisionVisible, setIsDecisionVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -136,6 +180,43 @@ export default function InterviewsManagementPage() {
     return candidates?.filter(c => c.status === "interview_to_schedule") || [];
   }, [candidates]);
 
+  // Filtering Logic
+  const filteredInterviews = useMemo(() => {
+    const term = search.toLowerCase();
+    return interviews?.filter(i => 
+      i.candidateDisplayName.toLowerCase().includes(term) || 
+      i.positionApplied.toLowerCase().includes(term) ||
+      i.interviewerName.toLowerCase().includes(term)
+    ) || [];
+  }, [interviews, search]);
+
+  // Calendar Specific Memoized Data
+  const calendarDays = useMemo(() => {
+    const monthStart = startOfMonth(currentMonth);
+    const monthEnd = endOfMonth(monthStart);
+    const startDate = startOfWeek(monthStart, { weekStartsOn: 1 });
+    const endDate = endOfWeek(monthEnd, { weekStartsOn: 1 });
+    return eachDayOfInterval({ start: startDate, end: endDate });
+  }, [currentMonth]);
+
+  const interviewsByDate = useMemo(() => {
+    const groups: Record<string, Interview[]> = {};
+    filteredInterviews.forEach(i => {
+      const d = parseSafeDate(i.scheduledAt);
+      if (d) {
+        const key = format(d, 'yyyy-MM-dd');
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(i);
+      }
+    });
+    return groups;
+  }, [filteredInterviews]);
+
+  const interviewsWithoutDate = useMemo(() => {
+    return filteredInterviews.filter(i => !parseSafeDate(i.scheduledAt));
+  }, [filteredInterviews]);
+
+  // Handlers
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target;
     setFormData(prev => ({ ...prev, [id]: value }));
@@ -246,15 +327,6 @@ export default function InterviewsManagementPage() {
     }
   };
 
-  const filteredInterviews = useMemo(() => {
-    const term = search.toLowerCase();
-    return interviews?.filter(i => 
-      i.candidateDisplayName.toLowerCase().includes(term) || 
-      i.positionApplied.toLowerCase().includes(term) ||
-      i.interviewerName.toLowerCase().includes(term)
-    ) || [];
-  }, [interviews, search]);
-
   const getEmailPreview = () => {
     const candidate = eligibleCandidates.find(c => c.candidateId === formData.candidateId);
     const dateObj = new Date(formData.scheduledAt);
@@ -281,25 +353,6 @@ export default function InterviewsManagementPage() {
     return { renderedSubject, renderedMessage };
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Planifié</Badge>;
-      case 'completed': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200">Terminé</Badge>;
-      case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Annulé</Badge>;
-      case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300">Inactif</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
-    }
-  };
-
-  const getEmailStatusBadge = (status: string | undefined) => {
-    switch (status) {
-      case 'sent': return <Badge variant="outline" className="text-green-600 border-green-100 bg-green-50 gap-1"><Mail className="w-3 h-3" /> Envoyé</Badge>;
-      case 'queued': return <Badge variant="outline" className="text-blue-600 border-blue-100 bg-blue-50 gap-1 animate-pulse"><Loader2 className="w-3 h-3 animate-spin" /> Envoi...</Badge>;
-      case 'failed': return <Badge variant="outline" className="text-red-600 border-red-100 bg-red-50 gap-1"><AlertCircle className="w-3 h-3" /> Échec</Badge>;
-      default: return null;
-    }
-  };
-
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return (
@@ -310,103 +363,312 @@ export default function InterviewsManagementPage() {
           <p className="text-muted-foreground text-sm">Planification et évaluation des candidats.</p>
         </div>
         {canCreate && (
-          <Button onClick={() => setIsFormVisible(true)} className="gap-2">
+          <Button onClick={() => setIsFormVisible(true)} className="gap-2 shadow-lg shadow-primary/10">
             <Plus className="w-4 h-4" /> Nouvel entretien
           </Button>
         )}
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-6">
         <div className="relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input className="pl-10" placeholder="Rechercher..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input className="pl-10" placeholder="Rechercher par candidat, poste ou recruteur..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
 
-        <Card className="overflow-hidden border-primary/10">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/20">
-                <TableHead>Candidat & Poste</TableHead>
-                <TableHead>Rendez-vous</TableHead>
-                <TableHead>Recruteur</TableHead>
-                <TableHead>Communication</TableHead>
-                <TableHead>Statut</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loadingInterviews ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-              ) : filteredInterviews.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">Aucun entretien trouvé.</TableCell></TableRow>
-              ) : (
-                filteredInterviews.map((i) => (
-                  <TableRow key={i.interviewId}>
-                    <TableCell>
-                      <div className="font-bold text-primary">{i.candidateDisplayName}</div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-1">
-                        <Briefcase className="w-3 h-3" /> {i.positionApplied}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1.5 text-xs font-semibold">
-                          <Calendar className="w-3.5 h-3.5 text-primary" /> {new Date(i.scheduledAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          {i.location && <span className="flex items-center gap-1"><MapPin className="w-2.5 h-2.5" /> {i.location}</span>}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-xs">
-                        <User className="w-3 h-3 text-muted-foreground" />
-                        {i.interviewerName || "N/A"}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {getEmailStatusBadge(i.emailStatus)}
-                    </TableCell>
-                    <TableCell>
-                      {getStatusBadge(i.status)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {canUpdate && (
-                            <DropdownMenuItem onClick={() => handleEdit(i)} className="gap-2">
-                              <Edit className="w-4 h-4" /> Modifier
-                            </DropdownMenuItem>
-                          )}
-                          {canDecide && i.status !== 'inactive' && (
-                            <DropdownMenuItem onClick={() => handleOpenDecision(i)} className="gap-2 font-bold text-primary">
-                              <CheckCircle2 className="w-4 h-4" /> Décision
-                            </DropdownMenuItem>
-                          )}
-                          {canUpdate && (
-                             i.status !== 'inactive' ? (
-                               <DropdownMenuItem onClick={() => setDisablingId(i.interviewId)} className="gap-2 text-destructive">
-                                 <PowerOff className="w-4 h-4" /> Désactiver
-                               </DropdownMenuItem>
-                             ) : (
-                               <DropdownMenuItem onClick={() => setReactivatingId(i.interviewId)} className="gap-2 text-green-600">
-                                 <RefreshCcw className="w-4 h-4" /> Réactiver
-                               </DropdownMenuItem>
-                             )
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+        <Tabs defaultValue="list" className="space-y-6">
+          <div className="flex items-center justify-between bg-white/50 p-1 rounded-xl border border-primary/5">
+            <TabsList className="grid w-[400px] grid-cols-2 h-10">
+              <TabsTrigger value="list" className="gap-2">
+                <ListIcon className="w-4 h-4" /> Liste
+              </TabsTrigger>
+              <TabsTrigger value="calendar" className="gap-2">
+                <Calendar className="w-4 h-4" /> Calendrier
+              </TabsTrigger>
+            </TabsList>
+            
+            {/* Contextual calendar counts */}
+            <div className="px-4 hidden sm:block">
+              <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">
+                {filteredInterviews.length} entretien{filteredInterviews.length > 1 ? 's' : ''} trouvé{filteredInterviews.length > 1 ? 's' : ''}
+              </span>
+            </div>
+          </div>
+
+          <TabsContent value="list" className="mt-0">
+            <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-secondary/20">
+                    <TableHead>Candidat & Poste</TableHead>
+                    <TableHead>Rendez-vous</TableHead>
+                    <TableHead>Recruteur</TableHead>
+                    <TableHead>Communication</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </Card>
+                </TableHeader>
+                <TableBody>
+                  {loadingInterviews ? (
+                    <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                  ) : filteredInterviews.length === 0 ? (
+                    <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">Aucun entretien trouvé.</TableCell></TableRow>
+                  ) : (
+                    filteredInterviews.map((i) => (
+                      <TableRow key={i.interviewId} className="hover:bg-muted/50 transition-colors">
+                        <TableCell>
+                          <div className="font-bold text-primary">{i.candidateDisplayName}</div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase mt-1">
+                            <Briefcase className="w-3 h-3" /> {i.positionApplied}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold">
+                              <Calendar className="w-3.5 h-3.5 text-primary" /> {formatDateDisplay(i.scheduledAt)}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                              {i.location && <span className="flex items-center gap-1"><MapPin className="w-2.5 h-2.5" /> {i.location}</span>}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-xs">
+                            <User className="w-3 h-3 text-muted-foreground" />
+                            {i.interviewerName || "N/A"}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {getEmailStatusBadge(i.emailStatus)}
+                        </TableCell>
+                        <TableCell>
+                          {getStatusBadge(i.status)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {canUpdate && (
+                                <DropdownMenuItem onClick={() => handleEdit(i)} className="gap-2">
+                                  <Edit className="w-4 h-4" /> Modifier
+                                </DropdownMenuItem>
+                              )}
+                              {canDecide && i.status !== 'inactive' && (
+                                <DropdownMenuItem onClick={() => handleOpenDecision(i)} className="gap-2 font-bold text-primary">
+                                  <CheckCircle2 className="w-4 h-4" /> Décision
+                                </DropdownMenuItem>
+                              )}
+                              {canUpdate && (
+                                i.status !== 'inactive' ? (
+                                  <DropdownMenuItem onClick={() => setDisablingId(i.interviewId)} className="gap-2 text-destructive">
+                                    <PowerOff className="w-4 h-4" /> Désactiver
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem onClick={() => setReactivatingId(i.interviewId)} className="gap-2 text-green-600">
+                                    <RefreshCcw className="w-4 h-4" /> Réactiver
+                                  </DropdownMenuItem>
+                                )
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="calendar" className="mt-0">
+             <div className="space-y-6">
+                <Card className="border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
+                  <CardHeader className="bg-secondary/20 flex flex-row items-center justify-between border-b px-6 py-4">
+                    <div className="flex items-center gap-4">
+                      <h2 className="text-xl font-black text-primary uppercase tracking-tight">
+                        {format(currentMonth, 'MMMM yyyy', { locale: fr })}
+                      </h2>
+                      <div className="flex items-center bg-white rounded-lg border shadow-sm p-0.5">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-8 px-3 text-[10px] font-black uppercase" onClick={() => setCurrentMonth(new Date())}>
+                          Aujourd'hui
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}>
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="grid grid-cols-7 border-b bg-muted/30">
+                      {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((day) => (
+                        <div key={day} className="py-2 text-center text-[10px] font-black uppercase text-muted-foreground tracking-widest border-r last:border-r-0">
+                          {day}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 border-l border-t">
+                      {calendarDays.map((day, idx) => {
+                        const dateKey = format(day, 'yyyy-MM-dd');
+                        const dayInterviews = interviewsByDate[dateKey] || [];
+                        const isCurrentMonth = isSameMonth(day, currentMonth);
+                        const isToday = isSameDay(day, new Date());
+
+                        return (
+                          <div 
+                            key={idx} 
+                            className={cn(
+                              "min-h-[140px] p-2 border-r border-b transition-colors group relative",
+                              !isCurrentMonth ? "bg-slate-50/50 opacity-40" : "bg-white",
+                              isToday && "bg-blue-50/20"
+                            )}
+                            onClick={() => dayInterviews.length > 0 && setSelectedDay(day)}
+                          >
+                            <div className="flex justify-between items-center mb-2">
+                               <span className={cn(
+                                 "text-[11px] font-bold px-1.5 py-0.5 rounded-full",
+                                 isToday ? "bg-primary text-white" : "text-muted-foreground"
+                               )}>
+                                 {format(day, 'd')}
+                               </span>
+                               {dayInterviews.length > 0 && (
+                                 <Badge variant="secondary" className="text-[8px] h-4 px-1 font-black bg-primary/5 text-primary border-none">
+                                    {dayInterviews.length}
+                                 </Badge>
+                               )}
+                            </div>
+
+                            <div className="space-y-1">
+                               {dayInterviews.slice(0, 3).map((interview) => (
+                                 <button
+                                   key={interview.interviewId}
+                                   className={cn(
+                                     "w-full text-left px-2 py-1 rounded text-[9px] font-bold border truncate transition-all hover:ring-2 ring-primary/20",
+                                     getEventStatusClasses(interview)
+                                   )}
+                                   onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEdit(interview);
+                                   }}
+                                 >
+                                    {format(parseSafeDate(interview.scheduledAt) || new Date(), 'HH:mm')} • {interview.candidateDisplayName}
+                                 </button>
+                               ))}
+                               {dayInterviews.length > 3 && (
+                                 <div className="text-[9px] font-black text-primary/60 text-center py-1 bg-secondary/30 rounded cursor-pointer hover:bg-secondary/50">
+                                   + {dayInterviews.length - 3} autres
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {interviewsWithoutDate.length > 0 && (
+                  <div className="bg-orange-50 border border-orange-100 rounded-2xl p-6 space-y-4">
+                    <div className="flex items-center gap-2">
+                       <AlertCircle className="w-5 h-5 text-orange-600" />
+                       <h3 className="text-sm font-black uppercase text-orange-800 tracking-wider">Entretiens avec date invalide ({interviewsWithoutDate.length})</h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                       {interviewsWithoutDate.map(i => (
+                         <div key={i.interviewId} className="bg-white p-3 rounded-xl border border-orange-200 shadow-sm flex items-center justify-between">
+                            <div className="min-w-0">
+                               <p className="text-xs font-bold text-slate-800 truncate">{i.candidateDisplayName}</p>
+                               <p className="text-[10px] text-muted-foreground uppercase">{i.positionApplied}</p>
+                            </div>
+                            <Button variant="ghost" size="icon" onClick={() => handleEdit(i)} className="h-8 w-8 text-orange-600 hover:bg-orange-50">
+                               <Edit className="w-4 h-4" />
+                            </Button>
+                         </div>
+                       ))}
+                    </div>
+                  </div>
+                )}
+             </div>
+          </TabsContent>
+        </Tabs>
       </div>
+
+      {/* Day Detail Sheet */}
+      <Sheet open={!!selectedDay} onOpenChange={(open) => !open && setSelectedDay(null)}>
+        <SheetContent className="sm:max-w-[500px]">
+          <SheetHeader className="pb-6 border-b">
+             <div className="flex items-center gap-3">
+                <div className="bg-primary p-2 rounded-xl text-white">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                   <SheetTitle className="text-xl font-black text-primary">
+                     {selectedDay && format(selectedDay, 'EEEE d MMMM yyyy', { locale: fr })}
+                   </SheetTitle>
+                   <SheetDescription className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                      Programme de la journée
+                   </SheetDescription>
+                </div>
+             </div>
+          </SheetHeader>
+          
+          <ScrollArea className="h-[calc(100vh-140px)] pr-4">
+             <div className="py-8 space-y-6">
+                {selectedDay && interviewsByDate[format(selectedDay, 'yyyy-MM-dd')]?.sort((a,b) => {
+                   const da = parseSafeDate(a.scheduledAt)?.getTime() || 0;
+                   const db = parseSafeDate(b.scheduledAt)?.getTime() || 0;
+                   return da - db;
+                }).map((i) => (
+                  <div key={i.interviewId} className="group relative pl-8 border-l-2 border-primary/10 pb-8 last:pb-0">
+                     <div className="absolute left-[-9px] top-0 w-4 h-4 rounded-full border-2 border-white bg-primary shadow-sm" />
+                     <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                           <div className="flex items-center gap-2">
+                             <Clock className="w-3.5 h-3.5 text-primary" />
+                             <span className="text-sm font-black text-primary">
+                               {format(parseSafeDate(i.scheduledAt) || new Date(), 'HH:mm')}
+                             </span>
+                           </div>
+                           {getStatusBadge(i.status)}
+                        </div>
+                        
+                        <Card className="border-primary/5 shadow-sm overflow-hidden group-hover:border-primary/20 transition-colors">
+                           <CardContent className="p-4 space-y-3">
+                              <div className="flex items-start justify-between">
+                                 <div className="space-y-0.5">
+                                    <h4 className="font-black text-slate-900 leading-tight">{i.candidateDisplayName}</h4>
+                                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">{i.positionApplied}</p>
+                                 </div>
+                                 <div className="flex gap-1">
+                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(i)}>
+                                       <Eye className="w-4 h-4" />
+                                    </Button>
+                                    {canDecide && i.status !== 'inactive' && (
+                                       <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => handleOpenDecision(i)}>
+                                          <CheckCircle2 className="w-4 h-4" />
+                                       </Button>
+                                    )}
+                                 </div>
+                              </div>
+
+                              <Separator className="bg-slate-50" />
+
+                              <div className="grid grid-cols-2 gap-3">
+                                 <DetailMini label="Recruteur" value={i.interviewerName} icon={UserCircle} />
+                                 <DetailMini label="Format" value={i.interviewType} icon={MapPinned} />
+                              </div>
+                           </CardContent>
+                        </Card>
+                     </div>
+                  </div>
+                ))}
+             </div>
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
 
       {/* Create / Edit Dialog with Tabs */}
       <Dialog open={isFormVisible} onOpenChange={(open) => !open && handleReset()}>
@@ -613,3 +875,48 @@ export default function InterviewsManagementPage() {
     </div>
   );
 }
+
+function DetailMini({ label, value, icon: Icon }: { label: string, value: any, icon: any }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
+      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+        <Icon className="w-3 h-3 text-muted-foreground" />
+        <span className="truncate">{value || "N/A"}</span>
+      </div>
+    </div>
+  );
+}
+
+function formatDateDisplay(val: any): string {
+  const d = parseSafeDate(val);
+  if (!d) return "Date non disponible";
+  return format(d, "dd/MM/yyyy HH:mm", { locale: fr });
+}
+
+function getStatusBadge(status: string) {
+  switch (status) {
+    case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase text-[9px] font-bold">Planifié</Badge>;
+    case 'completed': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 uppercase text-[9px] font-bold">Terminé</Badge>;
+    case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase text-[9px] font-bold">Annulé</Badge>;
+    case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300 uppercase text-[9px] font-bold">Inactif</Badge>;
+    default: return <Badge variant="outline" className="uppercase text-[9px] font-bold">{status}</Badge>;
+  }
+}
+
+function getEmailStatusBadge(status: string | undefined) {
+  switch (status) {
+    case 'sent': return <Badge variant="outline" className="text-green-600 border-green-100 bg-green-50 gap-1 text-[9px]"><Mail className="w-3 h-3" /> Envoyé</Badge>;
+    case 'queued': return <Badge variant="outline" className="text-blue-600 border-blue-100 bg-blue-50 gap-1 animate-pulse text-[9px]"><Loader2 className="w-3 h-3 animate-spin" /> Envoi...</Badge>;
+    case 'failed': return <Badge variant="outline" className="text-red-600 border-red-100 bg-red-50 gap-1 text-[9px]"><AlertCircle className="w-3 h-3" /> Échec</Badge>;
+    default: return null;
+  }
+}
+
+function getEventStatusClasses(i: Interview) {
+  if (i.status === 'completed') return "bg-green-50 border-green-100 text-green-700";
+  if (i.status === 'cancelled') return "bg-red-50 border-red-100 text-red-700";
+  if (i.status === 'inactive') return "bg-slate-50 border-slate-100 text-slate-400 opacity-60";
+  return "bg-blue-50 border-blue-100 text-blue-700";
+}
+
