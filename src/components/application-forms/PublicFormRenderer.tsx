@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from "react";
@@ -79,7 +78,9 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       for (const field of enabledFields) {
         if (field.type === 'file') {
           if (field.required && !files[field.key]) {
-            throw new Error(`Le document "${field.label}" est obligatoire.`);
+            setError(`Le document "${field.label}" est obligatoire.`);
+            setLoading(false);
+            return;
           }
           continue;
         }
@@ -88,15 +89,17 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         const isEmpty = val === undefined || val === null || val === "" || (Array.isArray(val) && val.length === 0);
 
         if (field.required && isEmpty) {
-          throw new Error(`Le champ "${field.label}" est obligatoire.`);
+          setError(`Le champ "${field.label}" est obligatoire.`);
+          setLoading(false);
+          return;
         }
       }
 
-      // Build FormData
+      // Build FormData for multipart submission
       const formData = new FormData();
       formData.append("publicSlug", form.publicSlug);
       
-      // Sanitize and append answers
+      // Sanitize answers
       const sanitizedAnswers: Record<string, any> = {};
       Object.entries(answers).forEach(([key, value]) => {
         if (value !== undefined && value !== null) {
@@ -115,9 +118,8 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       });
 
       let result: any = null;
-      const rawText = await response.text();
-
       try {
+        const rawText = await response.text();
         result = rawText ? JSON.parse(rawText) : null;
       } catch {
         result = null;
@@ -125,24 +127,18 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
 
       if (!response.ok) {
         if (result?.error?.code === "ALREADY_APPLIED_TO_THIS_JOB") {
-          throw new Error("Vous avez déjà postulé à ce poste.");
+          setError("Vous avez déjà postulé à ce poste.");
+        } else {
+          setError(result?.error?.message || result?.error || "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer.");
         }
-
-        const message =
-          result?.error?.message ||
-          result?.error ||
-          result?.message ||
-          rawText ||
-          "Une erreur est survenue lors de l'envoi.";
-
-        throw new Error(typeof message === "string" ? message : "Erreur technique");
+        setLoading(false);
+        return;
       }
 
       router.push(`/apply/${form.publicSlug}/success`);
     } catch (err: any) {
       console.error("Submission error:", err);
-      setError(err.message || "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer.");
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
+      setError("Une erreur technique est survenue. Veuillez vérifier votre connexion et réessayer.");
     } finally {
       setLoading(false);
     }

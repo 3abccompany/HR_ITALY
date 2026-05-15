@@ -1,4 +1,3 @@
-
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
@@ -18,6 +17,11 @@ function sanitizePayload(obj: any): any {
     return obj.map(sanitizePayload);
   }
 
+  // Handle specialized Admin SDK objects like FieldValue
+  if (obj.constructor && obj.constructor.name === 'FieldValue') {
+    return obj;
+  }
+
   const newObj: any = {};
   for (const key in obj) {
     const val = obj[key];
@@ -31,26 +35,27 @@ function sanitizePayload(obj: any): any {
 /**
  * Normalization helpers
  */
-const normalizeEmail = (email: string) => email.trim().toLowerCase();
-const normalizePhone = (phone: string) => phone.toString().replace(/\D/g, "");
+export const normalizeEmail = (email: string) => email.trim().toLowerCase();
+export const normalizePhone = (phone: string) => phone.toString().replace(/\D/g, "");
 
 /**
  * SHA-256 Hashing for privacy-safe deduplication keys.
  */
-function computeDedupeKey(entityId: string, needId: string, email: string): string {
+export function computeDedupeKey(entityId: string, needId: string, email: string): string {
   const input = `${entityId}:${needId}:${email}`;
   return createHash('sha256').update(input).digest('hex');
 }
 
 /**
  * Transactional Submission Logic using Admin SDK.
- * Now includes support for attachments.
+ * Now includes support for attachments and stable submissionId.
  */
 export async function executeSubmissionTransaction(
   entityId: string, 
   form: any, 
   answers: Record<string, any>,
-  attachments: AttachmentMetadata[] = []
+  attachments: AttachmentMetadata[] = [],
+  submissionId?: string
 ) {
   if (!adminDb) throw new Error("Firestore Admin SDK is not initialized.");
   if (!entityId) throw new Error("Missing entityId context.");
@@ -86,7 +91,6 @@ export async function executeSubmissionTransaction(
     const needRef = adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(form.recruitmentNeedId);
     const needSnap = await transaction.get(needRef);
     if (!needSnap.exists) throw new Error("Offre d'emploi introuvable.");
-    const needData = needSnap.data();
 
     // 3. Check Dedupe
     const dedupeRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissionDedupe").doc(dedupeKey);
@@ -103,16 +107,20 @@ export async function executeSubmissionTransaction(
       personId = newPersonRef.id;
     }
 
-    const submissionRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissions").doc();
+    // Use provided submissionId or generate a new one
+    const submissionRef = submissionId 
+      ? adminDb.collection("entities").doc(entityId).collection("applicationSubmissions").doc(submissionId)
+      : adminDb.collection("entities").doc(entityId).collection("applicationSubmissions").doc();
+    
     const candidateRef = adminDb.collection("entities").doc(entityId).collection("candidates").doc();
     const timelineRef = adminDb.collection("entities").doc(entityId).collection("personTimeline").doc();
 
-    const submissionId = submissionRef.id;
+    const finalSubmissionId = submissionRef.id;
     const candidateId = candidateRef.id;
 
     // 4. Data
     const submissionData = sanitizePayload({
-      submissionId,
+      submissionId: finalSubmissionId,
       entityId,
       formId: form.formId,
       publicSlug: form.publicSlug || "",
@@ -132,7 +140,7 @@ export async function executeSubmissionTransaction(
       phone,
       normalizedPhone: normPhone,
       answers: answers || {},
-      attachments,
+      attachments: attachments.map(a => sanitizePayload(a)),
       consentAccepted: true,
       consentAcceptedAt: FieldValue.serverTimestamp(),
       dedupeKey,
@@ -150,7 +158,7 @@ export async function executeSubmissionTransaction(
       candidateId,
       entityId,
       personId,
-      applicationSubmissionId: submissionId,
+      applicationSubmissionId: finalSubmissionId,
       displayName: `${firstName} ${lastName}`,
       email: normEmail,
       phone: normPhone,
@@ -172,7 +180,7 @@ export async function executeSubmissionTransaction(
       entityId,
       recruitmentNeedId: form.recruitmentNeedId,
       normalizedEmail: normEmail,
-      applicationSubmissionId: submissionId,
+      applicationSubmissionId: finalSubmissionId,
       createdAt: FieldValue.serverTimestamp(),
     });
     transaction.set(candidateRef, candidateData);
@@ -210,11 +218,11 @@ export async function executeSubmissionTransaction(
       label: "Candidature reçue",
       description: `Candidature reçue avec ${attachments.length} pièces jointes.`,
       sourceCollection: "applicationSubmissions",
-      sourceId: submissionId,
+      sourceId: finalSubmissionId,
       createdAt: FieldValue.serverTimestamp(),
       createdBy: "public_application",
     });
 
-    return { submissionId, candidateId, personId };
+    return { submissionId: finalSubmissionId, candidateId, personId };
   });
 }
