@@ -30,8 +30,11 @@ export interface RecruitmentNeed {
   companyName: string;
   worksiteId: string | null;
   worksiteNameSnapshot: string;
-  // Legacy support
+  
+  // Legacy / Fallback support
   worksiteName?: string;
+  siteName?: string;
+  location?: string;
 
   // Contract / employment
   contractType: string;

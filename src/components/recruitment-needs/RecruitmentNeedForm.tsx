@@ -39,6 +39,7 @@ const initialForm = {
   requestedHeadcount: 1,
   worksiteId: "",
   worksiteNameSnapshot: "",
+  worksiteName: "", // Legacy support field
   contractType: "CDI",
   employmentType: "Nouveau poste",
   workingTime: "Temps plein",
@@ -104,6 +105,7 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
         requestedHeadcount: initialData.requestedHeadcount,
         worksiteId: initialData.worksiteId || "",
         worksiteNameSnapshot: initialData.worksiteNameSnapshot || initialData.worksiteName || "",
+        worksiteName: initialData.worksiteName || initialData.worksiteNameSnapshot || "",
         contractType: initialData.contractType,
         employmentType: initialData.employmentType,
         workingTime: initialData.workingTime,
@@ -163,10 +165,12 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
 
   const handleWorksiteChange = (id: string) => {
     const worksite = worksites?.find(w => w.worksiteId === id);
+    const name = worksite?.name || "";
     setFormData(p => ({
       ...p,
       worksiteId: id,
-      worksiteNameSnapshot: worksite?.name || ""
+      worksiteNameSnapshot: name,
+      worksiteName: name // For legacy support and cross-app consistency
     }));
   };
 

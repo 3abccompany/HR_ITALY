@@ -91,7 +91,8 @@ export default function RecruitmentNeedsPage() {
     return needs?.filter(n => 
       n.jobTitleName?.toLowerCase().includes(term) ||
       n.departmentName?.toLowerCase().includes(term) ||
-      n.worksiteName?.toLowerCase().includes(term)
+      n.worksiteName?.toLowerCase().includes(term) ||
+      n.worksiteNameSnapshot?.toLowerCase().includes(term)
     ) || [];
   }, [needs, search]);
 
@@ -153,6 +154,9 @@ export default function RecruitmentNeedsPage() {
               ) : (
                 filteredNeeds.map((n) => {
                   const progress = n.requestedHeadcount > 0 ? (n.fulfilledHeadcount / n.requestedHeadcount) * 100 : 0;
+                  // Multi-stage fallback for site name display
+                  const siteName = n.worksiteName || n.worksiteNameSnapshot || n.siteName || n.location || "Non renseigné";
+                  
                   return (
                     <TableRow key={n.needId}>
                       <TableCell>
@@ -163,7 +167,7 @@ export default function RecruitmentNeedsPage() {
                       </TableCell>
                       <TableCell>
                          <div className="flex items-center gap-1.5 text-sm font-medium">
-                           <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> {n.worksiteName}
+                           <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> {siteName}
                          </div>
                       </TableCell>
                       <TableCell>

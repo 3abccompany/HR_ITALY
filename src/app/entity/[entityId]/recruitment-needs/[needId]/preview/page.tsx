@@ -57,6 +57,7 @@ export default function RecruitmentNeedPreviewPage() {
   }
 
   const progress = need.requestedHeadcount > 0 ? (need.fulfilledHeadcount / need.requestedHeadcount) * 100 : 0;
+  const siteName = need.worksiteName || need.worksiteNameSnapshot || need.siteName || need.location || "Non renseigné";
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -155,7 +156,7 @@ export default function RecruitmentNeedPreviewPage() {
                    </div>
                    <div className="space-y-1">
                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Site / Localisation</p>
-                      <p className="font-bold text-sm truncate">{need.worksiteNameSnapshot || need.worksiteName || "N/A"}</p>
+                      <p className="font-bold text-sm truncate">{siteName}</p>
                    </div>
                 </div>
              </div>
