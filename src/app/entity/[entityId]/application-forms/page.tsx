@@ -101,6 +101,12 @@ function parseSafeDate(val: any): Date | null {
   return null;
 }
 
+function formatDateDisplay(val: any): string {
+  const d = parseSafeDate(val);
+  if (!d) return "Date non disponible";
+  return format(d, "dd/MM/yyyy", { locale: fr });
+}
+
 export default function ApplicationFormsPage() {
   const params = useParams();
   const router = useRouter();
@@ -511,7 +517,7 @@ function FormsTable({
             <TableHead>Formulaire & Poste</TableHead>
             <TableHead className="hidden md:table-cell">Besoin RH source</TableHead>
             <TableHead>Lien Public</TableHead>
-            <TableHead className="hidden sm:table-cell">Statut</TableHead>
+            <TableHead className="hidden sm:table-cell">Statut & Dates</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -545,7 +551,33 @@ function FormsTable({
                 )}
               </TableCell>
               <TableCell className="hidden sm:table-cell">
-                {getStatusBadge(f.status)}
+                <div className="flex flex-col gap-1.5">
+                  {getStatusBadge(f.status)}
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1 text-[9px] font-medium text-muted-foreground">
+                      <CalendarIcon className="w-2.5 h-2.5" />
+                      <span>Créé le {formatDateDisplay(f.createdAt)}</span>
+                    </div>
+                    {f.status === 'published' ? (
+                      <div className="flex items-center gap-1 text-[9px] font-bold text-accent">
+                        <Globe className="w-2.5 h-2.5" />
+                        <span>Publié le {formatDateDisplay(f.publishedAt || f.updatedAt)}</span>
+                      </div>
+                    ) : f.status === 'closed' && (f as any).closedAt ? (
+                      <div className="flex items-center gap-1 text-[9px] font-bold text-orange-600">
+                        <XCircle className="w-2.5 h-2.5" />
+                        <span>Fermé le {formatDateDisplay((f as any).closedAt)}</span>
+                      </div>
+                    ) : f.status === 'archived' && (f as any).archivedAt ? (
+                      <div className="flex items-center gap-1 text-[9px] font-bold text-muted-foreground">
+                        <Archive className="w-2.5 h-2.5" />
+                        <span>Archivé le {formatDateDisplay((f as any).archivedAt)}</span>
+                      </div>
+                    ) : (
+                      <div className="text-[9px] italic text-muted-foreground opacity-50">Non publié</div>
+                    )}
+                  </div>
+                </div>
               </TableCell>
               <TableCell className="text-right">
                 <DropdownMenu>
@@ -643,3 +675,4 @@ function getStatusBadge(status: string) {
     default: return <Badge variant="outline">Inconnu</Badge>;
   }
 }
+
