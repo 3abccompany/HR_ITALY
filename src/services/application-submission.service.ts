@@ -1,13 +1,13 @@
-
 import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createHash } from "crypto";
 import { AttachmentMetadata } from "@/types/application-submission";
 
 /**
  * Recursively removes undefined values from an object and replaces them with null
  * to satisfy Firestore's strict rules about unsupported field values.
+ * Updated to preserve Firestore FieldValue and Timestamp instances.
  */
 function sanitizePayload(obj: any): any {
   if (obj === undefined) return null;
@@ -17,15 +17,21 @@ function sanitizePayload(obj: any): any {
     return obj.map(sanitizePayload);
   }
 
-  // Handle specialized Admin SDK objects like FieldValue
-  if (obj.constructor && (obj.constructor.name === 'FieldValue' || obj.constructor.name === 'Timestamp')) {
+  // Handle specialized Admin SDK objects like FieldValue or Timestamp
+  // We check constructor names and types to avoid deep-serializing sentinels
+  if (obj instanceof FieldValue || obj instanceof Timestamp) {
+    return obj;
+  }
+
+  // Fallback check for cases where instanceof might fail due to package version mismatches
+  const constructorName = obj.constructor?.name;
+  if (constructorName === 'FieldValue' || constructorName === 'Timestamp' || constructorName === 'ServerTimestampValue') {
     return obj;
   }
 
   const newObj: any = {};
   for (const key in obj) {
     const val = obj[key];
-    // Explicitly check for undefined to prevent Firestore crash
     if (val !== undefined) {
       newObj[key] = sanitizePayload(val);
     } else {
@@ -79,15 +85,6 @@ export async function executeSubmissionTransaction(
   const personsRef = adminDb.collection("entities").doc(entityId).collection("persons");
   const personSnap = await personsRef.where("email", "==", normEmail).limit(1).get();
   const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
-
-  const submissionsRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissions");
-  const emailSnap = await submissionsRef
-    .where("recruitmentNeedId", "==", form.recruitmentNeedId)
-    .where("normalizedEmail", "==", normEmail)
-    .limit(1)
-    .get();
-    
-  const possibleDuplicate = !emailSnap.empty;
 
   return await adminDb.runTransaction(async (transaction) => {
     // 2. Verify Need
@@ -147,7 +144,7 @@ export async function executeSubmissionTransaction(
       consentAccepted: true,
       consentAcceptedAt: FieldValue.serverTimestamp(),
       dedupeKey,
-      possibleDuplicate,
+      possibleDuplicate: false, // Initially false for new logic
       personId,
       candidateId,
       status: "submitted",

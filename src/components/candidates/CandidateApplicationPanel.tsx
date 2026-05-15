@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState } from "react";
@@ -137,6 +136,9 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
     );
   }
 
+  // Prioritized fallback for submission date
+  const bestReceivedDate = submission?.submittedAt || submission?.createdAt || candidate.createdAt || candidate.updatedAt || submission?.attachments?.[0]?.uploadedAt;
+
   // Define keys that are rendered in dedicated sections to avoid duplicates in "Autres réponses"
   const mappedKeys = [
     'firstName', 'lastName', 'email', 'phone', 'nationalId', 'birthDate', 
@@ -171,7 +173,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
               </div>
               <div className="text-right shrink-0">
                 <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">Candidature reçue</p>
-                <p className="text-xs font-bold text-primary">{formatDateTime(submission?.submittedAt || candidate.createdAt)}</p>
+                <p className="text-xs font-bold text-primary">{formatDateTime(bestReceivedDate)}</p>
               </div>
             </div>
 
@@ -413,12 +415,41 @@ function formatValue(val: any): string {
   return val.toString();
 }
 
+/**
+ * Robust date formatter that handles Firestore Timestamps (Client & Admin),
+ * regular Date objects, and serialized timestamp maps.
+ */
 function formatDateTime(val: any): string {
   if (!val) return "Date non disponible";
+  
+  // Detect invalid map ({}) from corrupted storage
+  if (typeof val === 'object' && !val.seconds && !val._seconds && !(val instanceof Date) && typeof val.toDate !== 'function') {
+    return "Date non disponible";
+  }
+
   try {
-    const date = new Date(val?.seconds ? val.seconds * 1000 : val);
-    if (isNaN(date.getTime())) return "Date non disponible";
-    return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    let date: Date | null = null;
+
+    if (val instanceof Date) {
+      date = val;
+    } else if (typeof val.toDate === 'function') {
+      date = val.toDate();
+    } else if (val.seconds !== undefined) {
+      date = new Date(val.seconds * 1000);
+    } else if (val._seconds !== undefined) {
+      date = new Date(val._seconds * 1000);
+    } else if (typeof val === 'string') {
+      const parsed = new Date(val);
+      if (!isNaN(parsed.getTime())) date = parsed;
+    }
+
+    if (!date || isNaN(date.getTime())) return "Date non disponible";
+    
+    return date.toLocaleDateString('fr-FR', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric' 
+    });
   } catch (e) {
     return "Date non disponible";
   }
