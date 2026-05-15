@@ -6,7 +6,8 @@ import {
   Loader2, User, Mail, ClipboardList, CheckCircle2, FileX,
   AlertTriangle, Briefcase, Building2, MapPin, 
   ArrowRight, XCircle, UserCheck, Clock, MessageSquare, AlertCircle,
-  Calendar, Phone, Fingerprint, Info, ChevronDown, Globe, Home, FileText, Download, Eye
+  Calendar, Phone, Fingerprint, Info, ChevronDown, Globe, Home, FileText, Download, Eye,
+  GraduationCap, ListTodo
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -136,6 +137,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
     );
   }
 
+  // Define keys that are rendered in dedicated sections to avoid duplicates in "Autres réponses"
   const mappedKeys = [
     'firstName', 'lastName', 'email', 'phone', 'nationalId', 'birthDate', 
     'address', 'city', 'province', 'country', 'availability', 'availableFrom', 
@@ -210,7 +212,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
           </Section>
 
           <Section icon={Fingerprint} title="Identité & Contact">
-             <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-4">
                 <AnswerRow label="Prénom" value={submission?.firstName || candidate.displayName.split(' ')[0]} />
                 <AnswerRow label="Nom" value={submission?.lastName || candidate.displayName.split(' ').slice(1).join(' ')} />
                 <AnswerRow label="Email" value={submission?.email || candidate.email} />
@@ -218,8 +220,31 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
              </div>
           </Section>
 
+          <Section icon={GraduationCap} title="Informations professionnelles">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-4">
+                <AnswerRow label="Années d'expérience" value={submission?.answers?.experienceYears} />
+                <AnswerRow label="Niveau d'étude" value={submission?.answers?.educationLevel} />
+                <AnswerRow label="Poste actuel / dernier poste" value={submission?.answers?.currentPosition} className="col-span-full" />
+             </div>
+          </Section>
+
+          <Section icon={Clock} title="Disponibilité">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-4">
+                <AnswerRow label="Disponibilité" value={submission?.answers?.availability} />
+                <AnswerRow label="À partir du" value={submission?.answers?.availableFrom} />
+             </div>
+          </Section>
+
+          {submission?.answers?.motivationMessage && (
+            <Section icon={MessageSquare} title="Motivation">
+               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap italic">
+                 "{submission.answers.motivationMessage}"
+               </div>
+            </Section>
+          )}
+
           {customAnswers.length > 0 && (
-            <Section icon={ClipboardList} title="Questions Complémentaires">
+            <Section icon={ClipboardList} title="Autres réponses">
                <div className="space-y-4">
                   {customAnswers.map(([key, value]) => (
                      <div key={key} className="flex flex-col gap-1 p-3 bg-accent/5 rounded-xl border border-accent/10">
@@ -368,11 +393,11 @@ function Section({ icon: Icon, title, children }: { icon: any, title: string, ch
   );
 }
 
-function AnswerRow({ label, value }: { label: string, value: any }) {
+function AnswerRow({ label, value, className }: { label: string, value: any, className?: string }) {
   return (
-    <div className="space-y-1">
+    <div className={cn("space-y-1", className)}>
       <p className="text-[10px] font-black text-muted-foreground uppercase tracking-tight opacity-70">{label}</p>
-      <p className="text-sm font-bold text-slate-800">{value || ""}</p>
+      <p className="text-sm font-bold text-slate-800">{formatValue(value)}</p>
     </div>
   );
 }
@@ -382,8 +407,8 @@ function formatKeyToLabel(key: string): string {
 }
 
 function formatValue(val: any): string {
-  if (val === undefined || val === null || val === "") return "";
-  if (Array.isArray(val)) return val.join(", ");
+  if (val === undefined || val === null || val === "") return "Non renseigné";
+  if (Array.isArray(val)) return val.length > 0 ? val.join(", ") : "Non renseigné";
   if (typeof val === 'boolean') return val ? "Oui" : "Non";
   return val.toString();
 }
