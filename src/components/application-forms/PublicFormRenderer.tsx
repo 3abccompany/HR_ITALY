@@ -75,27 +75,6 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
     setError(null);
 
     try {
-      // 1. Client-side validation
-      for (const field of enabledFields) {
-        if (field.type === 'file') {
-          if (field.required && !files[field.key]) {
-            setError({ message: `Le document "${field.label}" est obligatoire.` });
-            setLoading(false);
-            return;
-          }
-          continue;
-        }
-
-        const val = answers[field.key];
-        const isMissing = val === undefined || val === null || val === "";
-
-        if (field.required && isMissing) {
-          setError({ message: `Le champ "${field.label}" est obligatoire.` });
-          setLoading(false);
-          return;
-        }
-      }
-
       const formData = new FormData();
       formData.append("publicSlug", form.publicSlug);
       
@@ -107,8 +86,10 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       });
       formData.append("answers", JSON.stringify(sanitizedAnswers));
 
-      if (files["cv"]) formData.append("cv", files["cv"]);
-      if (files["coverLetter"]) formData.append("coverLetter", files["coverLetter"]);
+      // Append files
+      Object.entries(files).forEach(([key, file]) => {
+        formData.append(key, file);
+      });
 
       const response = await fetch('/api/public/applications/submit', {
         method: 'POST',
@@ -118,9 +99,10 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       const result = await response.json().catch(() => null);
 
       if (!response.ok) {
-        const errorData = result?.error;
-        const message = typeof errorData === 'string' ? errorData : (errorData?.message || "Une erreur est survenue lors de l'envoi.");
-        const debug = errorData?.debugMessage;
+        // Advanced error parsing for visibility
+        const errObj = result?.error;
+        const message = typeof errObj === 'string' ? errObj : (errObj?.message || "Une erreur est survenue lors de l'envoi.");
+        const debug = errObj?.debugMessage;
         
         setError({ message, debug });
         setLoading(false);
@@ -145,8 +127,9 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
             <p>{error.message}</p>
           </div>
           {error.debug && (
-            <div className="mt-2 p-2 bg-black/5 rounded text-[10px] font-mono text-muted-foreground break-all overflow-hidden">
-              DEBUG: {error.debug}
+            <div className="mt-2 p-3 bg-black/5 rounded text-[10px] font-mono text-muted-foreground break-all overflow-hidden border border-black/5">
+              <span className="font-black uppercase text-[9px] block mb-1">Détail technique (Dév) :</span>
+              {error.debug}
             </div>
           )}
         </div>
@@ -170,7 +153,6 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
                     className="min-h-[120px] rounded-xl border-slate-200 focus:ring-primary/20" 
                     value={answers[field.key] || ""}
                     onChange={(e) => handleInputChange(field.key, e.target.value)}
-                    required={field.required}
                   />
                 ) : field.type === 'select' ? (
                   <Select 
@@ -266,7 +248,6 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
                     placeholder={field.label}
                     value={answers[field.key] || ""}
                     onChange={(e) => handleInputChange(field.key, e.target.value)}
-                    required={field.required}
                   />
                 )}
               </div>
