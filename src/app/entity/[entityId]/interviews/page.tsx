@@ -169,9 +169,9 @@ export default function InterviewsManagementPage() {
   }, [db, entityId, canRead]);
 
   const candidatesQuery = useMemo(() => {
-    if (!db || !entityId || !canReadCandidates || !isFormVisible || editingId) return null;
+    if (!db || !entityId || !canReadCandidates) return null;
     return query(collection(db, `entities/${entityId}/candidates`), orderBy("createdAt", "desc")) as Query<Candidate>;
-  }, [db, entityId, canReadCandidates, iisFormVisible, editingId]);
+  }, [db, entityId, canReadCandidates]);
 
   const { data: interviews, loading: loadingInterviews } = useCollection<Interview>(interviewsQuery);
   const { data: candidates, loading: loadingCandidates } = useCollection<Candidate>(candidatesQuery);
