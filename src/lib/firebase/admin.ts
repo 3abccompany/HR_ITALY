@@ -1,6 +1,7 @@
 import { cert, getApps, initializeApp, App } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import { getAuth, Auth } from 'firebase-admin/auth';
+import { getStorage } from 'firebase-admin/storage';
 
 /**
  * Initializes the Firebase Admin SDK using explicit service account credentials.
@@ -17,6 +18,7 @@ function getAdminApp(): App {
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   // Handle newlines in private key which are often escaped in env vars
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
 
   if (!projectId || !clientEmail || !privateKey) {
     console.error("[Admin SDK] Missing required credentials. Check FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY.");
@@ -35,9 +37,11 @@ function getAdminApp(): App {
       privateKey,
     }),
     projectId,
+    storageBucket,
   });
 }
 
 export const adminApp = getAdminApp();
 export const adminDb = getFirestore(adminApp);
 export const adminAuth = getAuth(adminApp);
+export const adminStorage = getStorage(adminApp);

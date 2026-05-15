@@ -141,7 +141,7 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       router.push(`/apply/${form.publicSlug}/success`);
     } catch (err: any) {
       console.error("Submission error:", err);
-      setError(err.message || "Une erreur est survenue lors de l'envoi.");
+      setError(err.message || "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer.");
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);

@@ -1,96 +1,108 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { adminDb, adminStorage } from "@/lib/firebase/admin";
 import { getPublicFormBySlug } from "@/services/application-form.service";
 import { executeSubmissionTransaction } from "@/services/application-submission.service";
-import { adminApp } from "@/lib/firebase/admin";
 import { AttachmentMetadata } from "@/types/application-submission";
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Handles public job application submissions.
+ * This route manages file uploads to Storage and atomic database updates.
+ */
 export async function POST(request: NextRequest) {
-  let uploadedFiles: { id: string, path: string }[] = [];
-  
   try {
     const formData = await request.formData();
     const publicSlug = formData.get("publicSlug") as string;
-    const answers = JSON.parse(formData.get("answers") as string);
+    const answersRaw = formData.get("answers") as string;
+    const answers = JSON.parse(answersRaw || "{}");
 
     if (!publicSlug) {
-      return NextResponse.json({ error: "Missing slug" }, { status: 400 });
+      return NextResponse.json({ error: "Missing form slug" }, { status: 400 });
     }
 
-    // 1. Resolve Form
+    // 1. Resolve entity context
     const form = await getPublicFormBySlug(publicSlug);
     if (!form) {
-      return NextResponse.json({ error: "Form not found or closed" }, { status: 404 });
+      return NextResponse.json({ error: "Form not found or no longer active" }, { status: 404 });
     }
 
     const entityId = form.entityId;
-    const bucket = adminApp.storage().bucket();
 
-    // 2. Process Files
+    // 2. Pre-generate IDs to ensure correct storage paths
+    const submissionId = adminDb.collection("entities").doc(entityId).collection("applicationSubmissions").doc().id;
+
+    // 3. Handle File Uploads
     const attachments: AttachmentMetadata[] = [];
-    const fileEntries = [
+    const filesToProcess = [
       { key: "cv", type: "cv" as const },
       { key: "coverLetter", type: "cover_letter" as const }
     ];
 
-    for (const entry of fileEntries) {
-      const file = formData.get(entry.key) as File | null;
+    const bucket = adminStorage.bucket();
+    const uploadedFilePaths: string[] = [];
+
+    for (const item of filesToProcess) {
+      const file = formData.get(item.key) as File;
       if (file && file.size > 0) {
-        const attachmentId = `att_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        const safeName = file.name.replace(/[^a-z0-9.]/gi, '_');
-        const submissionIdPlaceholder = `sub_${Date.now()}`; // Temporary folder prefix
-        const filePath = `entities/${entityId}/applicationSubmissions/${submissionIdPlaceholder}/attachments/${attachmentId}-${safeName}`;
+        const attachmentId = `att_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const safeFileName = file.name.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
+        const filePath = `entities/${entityId}/applicationSubmissions/${submissionId}/attachments/${attachmentId}-${safeFileName}`;
 
-        const buffer = Buffer.from(await file.arrayBuffer());
-        const blob = bucket.file(filePath);
-        
-        await blob.save(buffer, {
-          contentType: file.type,
-          metadata: {
-            entityId,
-            attachmentType: entry.type
+        try {
+          const buffer = Buffer.from(await file.arrayBuffer());
+          await bucket.file(filePath).save(buffer, {
+            metadata: { contentType: file.type }
+          });
+          
+          uploadedFilePaths.push(filePath);
+          attachments.push({
+            id: attachmentId,
+            type: item.type,
+            fileName: file.name,
+            filePath: filePath,
+            mimeType: file.type,
+            size: file.size,
+            uploadedAt: new Date().toISOString()
+          });
+        } catch (uploadErr) {
+          console.error(`[Upload Error] Failed to upload ${item.key}:`, uploadErr);
+          // Cleanup already uploaded files for this attempt
+          for (const path of uploadedFilePaths) {
+            await bucket.file(path).delete().catch(() => {});
           }
-        });
-
-        uploadedFiles.push({ id: attachmentId, path: filePath });
-
-        attachments.push({
-          id: attachmentId,
-          type: entry.type,
-          fileName: file.name,
-          filePath: filePath,
-          mimeType: file.type,
-          size: file.size,
-          uploadedAt: new Date().toISOString()
-        });
+          return NextResponse.json({ error: "Échec du téléchargement des fichiers." }, { status: 500 });
+        }
       }
     }
 
-    // 3. Save to Database
-    const result = await executeSubmissionTransaction(entityId, form, answers, attachments);
-
-    // 4. Update file paths with real submission ID (Optional but cleaner for storage org)
-    // For simplicity here, we keep the generated path but could rename if required.
-
-    return NextResponse.json({ success: true, ...result });
-
-  } catch (err: any) {
-    console.error("[Submission API Error]", err);
-    
-    // Cleanup uploaded files on failure to prevent orphaned blobs
-    if (uploadedFiles.length > 0) {
-      const bucket = adminApp.storage().bucket();
-      for (const f of uploadedFiles) {
-        await bucket.file(f.path).delete().catch(() => {});
+    // 4. Atomically record submission and create candidate
+    try {
+      // Overriding internal executeSubmissionTransaction to use our pre-generated submissionId if needed
+      // but for simplicity we let the service handle its IDs and metadata
+      const result = await executeSubmissionTransaction(entityId, form, answers, attachments);
+      return NextResponse.json(result);
+    } catch (txErr: any) {
+      console.error("[Transaction Error] Submission failed:", txErr);
+      // Cleanup files since DB record failed
+      for (const path of uploadedFilePaths) {
+        await bucket.file(path).delete().catch(() => {});
       }
+
+      if (txErr.message === "ALREADY_APPLIED_TO_THIS_JOB") {
+        return NextResponse.json({ 
+          error: { code: "ALREADY_APPLIED_TO_THIS_JOB", message: "Vous avez déjà postulé à ce poste." } 
+        }, { status: 409 });
+      }
+
+      throw txErr;
     }
 
-    if (err.message === "ALREADY_APPLIED_TO_THIS_JOB") {
-      return NextResponse.json({ error: { code: "ALREADY_APPLIED_TO_THIS_JOB", message: "Déjà postulé." } }, { status: 409 });
-    }
-
-    return NextResponse.json({ error: err.message || "Submission failed" }, { status: 500 });
+  } catch (error: any) {
+    console.error("[Public Submission API Error]", error);
+    return NextResponse.json({ 
+      error: "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer." 
+    }, { status: 500 });
   }
 }
