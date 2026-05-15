@@ -1,3 +1,4 @@
+import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { createHash } from "crypto";
