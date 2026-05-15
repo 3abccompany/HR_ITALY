@@ -8,7 +8,8 @@ import {
   Loader2, User, Briefcase, MapPin, CheckCircle2, 
   AlertCircle, MoreVertical, Star, MessageSquare, Mail, 
   Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
-  Clock, MapPinned, UserCircle, Timer, HandMetal
+  Clock, MapPinned, UserCircle, Timer, HandMetal,
+  X, Filter, ListFilter, Calendar as CalendarIcon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
@@ -65,12 +67,36 @@ import {
   isSameDay, 
   addMonths, 
   subMonths,
-  parseISO
+  startOfDay,
+  endOfDay,
+  isWithinInterval
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+
+interface Filters {
+  search: string;
+  status: string;
+  decision: string;
+  interviewer: string;
+  job: string;
+  mode: string;
+  dateRange: { from: Date | undefined; to: Date | undefined };
+}
+
+const initialFilters: Filters = {
+  search: "",
+  status: "all",
+  decision: "all",
+  interviewer: "all",
+  job: "all",
+  mode: "all",
+  dateRange: { from: undefined, to: undefined }
+};
 
 const initialForm = {
   candidateId: "",
@@ -138,6 +164,9 @@ export default function InterviewsManagementPage() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
+  // Filters State
+  const [filters, setFilters] = useState<Filters>(initialFilters);
+
   // Form/Modal State
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isDecisionVisible, setIsDecisionVisible] = useState(false);
@@ -151,7 +180,6 @@ export default function InterviewsManagementPage() {
   });
   const [decisionData, setDecisionData] = useState(initialDecisionForm);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
   const [disablingId, setDisablingId] = useState<string | null>(null);
   const [reactivatingId, setReactivatingId] = useState<string | null>(null);
 
@@ -180,15 +208,65 @@ export default function InterviewsManagementPage() {
     return candidates?.filter(c => c.status === "interview_to_schedule") || [];
   }, [candidates]);
 
-  // Filtering Logic
+  // dynamic filter options
+  const uniqueInterviewers = useMemo(() => 
+    Array.from(new Set(interviews?.map(i => i.interviewerName || "Non renseigné") || [])).sort(), 
+  [interviews]);
+
+  const uniqueJobs = useMemo(() => 
+    Array.from(new Set(interviews?.map(i => i.positionApplied || "Non renseigné") || [])).sort(), 
+  [interviews]);
+
+  const uniqueModes = useMemo(() => 
+    Array.from(new Set(interviews?.map(i => i.interviewType || "Non renseigné") || [])).sort(), 
+  [interviews]);
+
+  // Primary Filtering Logic
   const filteredInterviews = useMemo(() => {
-    const term = search.toLowerCase();
-    return interviews?.filter(i => 
-      i.candidateDisplayName.toLowerCase().includes(term) || 
-      i.positionApplied.toLowerCase().includes(term) ||
-      i.interviewerName.toLowerCase().includes(term)
-    ) || [];
-  }, [interviews, search]);
+    if (!interviews) return [];
+    
+    return interviews.filter(i => {
+      // 1. Search
+      if (filters.search) {
+        const term = filters.search.toLowerCase();
+        const matchesSearch = 
+          i.candidateDisplayName.toLowerCase().includes(term) ||
+          i.positionApplied.toLowerCase().includes(term) ||
+          i.interviewerName.toLowerCase().includes(term) ||
+          (i.location && i.location.toLowerCase().includes(term));
+        if (!matchesSearch) return false;
+      }
+
+      // 2. Status
+      if (filters.status !== "all" && i.status !== filters.status) return false;
+
+      // 3. Decision (Recruiter response)
+      if (filters.decision !== "all" && (i.decision || "pending") !== filters.decision) return false;
+
+      // 4. Interviewer
+      if (filters.interviewer !== "all" && (i.interviewerName || "Non renseigné") !== filters.interviewer) return false;
+
+      // 5. Job
+      if (filters.job !== "all" && (i.positionApplied || "Non renseigné") !== filters.job) return false;
+
+      // 6. Mode
+      if (filters.mode !== "all" && (i.interviewType || "Non renseigné") !== filters.mode) return false;
+
+      // 7. Date Range
+      if (filters.dateRange.from || filters.dateRange.to) {
+        const iDate = parseSafeDate(i.scheduledAt);
+        if (!iDate) return false;
+
+        const from = filters.dateRange.from ? startOfDay(filters.dateRange.from) : undefined;
+        const to = filters.dateRange.to ? endOfDay(filters.dateRange.to) : undefined;
+
+        if (from && iDate < from) return false;
+        if (to && iDate > to) return false;
+      }
+
+      return true;
+    });
+  }, [interviews, filters]);
 
   // Calendar Specific Memoized Data
   const calendarDays = useMemo(() => {
@@ -221,6 +299,16 @@ export default function InterviewsManagementPage() {
     const { id, value } = e.target;
     setFormData(prev => ({ ...prev, [id]: value }));
   };
+
+  const updateFilter = (key: keyof Filters, value: any) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const removeFilter = (key: keyof Filters) => {
+    setFilters(prev => ({ ...prev, [key]: initialFilters[key] }));
+  };
+
+  const handleResetFilters = () => setFilters(initialFilters);
 
   const handleReset = () => {
     setFormData(initialForm);
@@ -370,9 +458,141 @@ export default function InterviewsManagementPage() {
       </div>
 
       <div className="space-y-6">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input className="pl-10" placeholder="Rechercher par candidat, poste ou recruteur..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        {/* Advanced Filter Bar */}
+        <div className="flex flex-col gap-4">
+          <ScrollArea className="w-full whitespace-nowrap">
+            <div className="flex w-max space-x-3 p-1">
+              {/* Search */}
+              <div className="relative w-64">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input 
+                  placeholder="Rechercher..." 
+                  className="h-9 pl-8 text-xs bg-background" 
+                  value={filters.search}
+                  onChange={(e) => updateFilter('search', e.target.value)}
+                />
+              </div>
+
+              {/* Status Filter */}
+              <FilterDropdown 
+                label="Statut" 
+                value={filters.status} 
+                onValueChange={(v) => updateFilter('status', v)}
+                options={[
+                  { label: "Planifié", value: "scheduled" },
+                  { label: "Réalisé", value: "completed" },
+                  { label: "Annulé", value: "cancelled" },
+                  { label: "Absent", value: "no_show" }
+                ]}
+              />
+
+              {/* Decision Filter */}
+              <FilterDropdown 
+                label="Réponse" 
+                value={filters.decision} 
+                onValueChange={(v) => updateFilter('decision', v)}
+                options={[
+                  { label: "En attente", value: "pending" },
+                  { label: "Accepté", value: "accepted" },
+                  { label: "Refusé", value: "rejected" },
+                  { label: "Stand by", value: "on_hold" }
+                ]}
+              />
+
+              {/* Recruiter Filter */}
+              <FilterDropdown 
+                label="Recruteur" 
+                value={filters.interviewer} 
+                onValueChange={(v) => updateFilter('interviewer', v)}
+                options={uniqueInterviewers.map(n => ({ label: n, value: n }))}
+              />
+
+              {/* Job Filter */}
+              <FilterDropdown 
+                label="Poste" 
+                value={filters.job} 
+                onValueChange={(v) => updateFilter('job', v)}
+                options={uniqueJobs.map(j => ({ label: j, value: j }))}
+              />
+
+              {/* Mode Filter */}
+              <FilterDropdown 
+                label="Mode" 
+                value={filters.mode} 
+                onValueChange={(v) => updateFilter('mode', v)}
+                options={uniqueModes.map(m => ({ label: m, value: m }))}
+              />
+
+              {/* Date Filter */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-9 gap-2 text-xs font-medium bg-background">
+                    <CalendarIcon className="h-3.5 w-3.5" />
+                    {filters.dateRange.from ? (
+                      filters.dateRange.to ? (
+                        <>{format(filters.dateRange.from, "dd/MM")} - {format(filters.dateRange.to, "dd/MM")}</>
+                      ) : (
+                        format(filters.dateRange.from, "dd/MM/yyyy")
+                      )
+                    ) : (
+                      "Toutes les dates"
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <CalendarComponent
+                    initialFocus
+                    mode="range"
+                    defaultMonth={filters.dateRange.from}
+                    selected={{ from: filters.dateRange.from, to: filters.dateRange.to }}
+                    onSelect={(range: any) => updateFilter('dateRange', { from: range?.from, to: range?.to })}
+                    numberOfMonths={2}
+                    locale={fr}
+                  />
+                </PopoverContent>
+              </Popover>
+
+              <Button variant="ghost" size="sm" onClick={handleResetFilters} className="h-9 text-xs text-muted-foreground hover:text-primary">
+                Réinitialiser
+              </Button>
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+
+          {/* Active Filter Chips */}
+          <div className="flex flex-wrap items-center gap-2 px-1 min-h-[32px]">
+            {Object.entries(filters).map(([key, value]) => {
+              if (key === 'search' || key === 'dateRange') return null;
+              if (value === 'all') return null;
+              
+              let label = value;
+              if (key === 'status') label = getStatusLabel(value);
+              if (key === 'decision') label = getDecisionLabel(value);
+
+              return (
+                <Badge key={key} variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
+                  {label}
+                  <button onClick={() => removeFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5">
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </Badge>
+              );
+            })}
+            {(filters.dateRange.from || filters.dateRange.to) && (
+              <Badge variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
+                Période: {filters.dateRange.from ? format(filters.dateRange.from, "dd/MM") : '?'} - {filters.dateRange.to ? format(filters.dateRange.to, "dd/MM") : '?'}
+                <button onClick={() => removeFilter('dateRange')} className="hover:bg-primary/10 rounded-full p-0.5">
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </Badge>
+            )}
+            
+            {filteredInterviews.length > 0 && !loadingInterviews && (
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest ml-auto mr-2">
+                {filteredInterviews.length} entretien{filteredInterviews.length > 1 ? 's' : ''} trouvé{filteredInterviews.length > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
         </div>
 
         <Tabs defaultValue="list" className="space-y-6">
@@ -385,13 +605,6 @@ export default function InterviewsManagementPage() {
                 <Calendar className="w-4 h-4" /> Calendrier
               </TabsTrigger>
             </TabsList>
-            
-            {/* Contextual calendar counts */}
-            <div className="px-4 hidden sm:block">
-              <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">
-                {filteredInterviews.length} entretien{filteredInterviews.length > 1 ? 's' : ''} trouvé{filteredInterviews.length > 1 ? 's' : ''}
-              </span>
-            </div>
           </div>
 
           <TabsContent value="list" className="mt-0">
@@ -411,7 +624,15 @@ export default function InterviewsManagementPage() {
                   {loadingInterviews ? (
                     <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
                   ) : filteredInterviews.length === 0 ? (
-                    <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">Aucun entretien trouvé.</TableCell></TableRow>
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-20">
+                        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+                          <ListFilter className="h-10 w-10 opacity-20" />
+                          <p className="font-medium">Aucun entretien ne correspond à vos critères.</p>
+                          <Button variant="outline" size="sm" onClick={handleResetFilters}>Effacer les filtres</Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   ) : (
                     filteredInterviews.map((i) => (
                       <TableRow key={i.interviewId} className="hover:bg-muted/50 transition-colors">
@@ -576,7 +797,7 @@ export default function InterviewsManagementPage() {
                   <div className="bg-orange-50 border border-orange-100 rounded-2xl p-6 space-y-4">
                     <div className="flex items-center gap-2">
                        <AlertCircle className="w-5 h-5 text-orange-600" />
-                       <h3 className="text-sm font-black uppercase text-orange-800 tracking-wider">Entretiens avec date invalide ({interviewsWithoutDate.length})</h3>
+                       <h3 className="text-sm font-black uppercase text-orange-800 tracking-wider">Entretiens sans date valide ({interviewsWithoutDate.length})</h3>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                        {interviewsWithoutDate.map(i => (
@@ -910,6 +1131,16 @@ function getStatusBadge(status: string) {
   }
 }
 
+function getStatusLabel(status: string) {
+  switch (status) {
+    case 'scheduled': return "Planifié";
+    case 'completed': return "Réalisé";
+    case 'cancelled': return "Annulé";
+    case 'no_show': return "Absent";
+    default: return status;
+  }
+}
+
 function getDecisionBadge(decision: string | undefined) {
   const d = decision || "pending";
   switch (d) {
@@ -918,6 +1149,16 @@ function getDecisionBadge(decision: string | undefined) {
     case 'on_hold':
     case 'stand_by': return <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-200 gap-1.5"><Timer className="w-3 h-3" /> Stand by</Badge>;
     default: return <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 gap-1.5"><HandMetal className="w-3 h-3 opacity-50" /> En attente</Badge>;
+  }
+}
+
+function getDecisionLabel(decision: string) {
+  switch (decision) {
+    case 'accepted': return "Accepté";
+    case 'rejected': return "Refusé";
+    case 'on_hold': return "Stand by";
+    case 'pending': return "En attente";
+    default: return decision;
   }
 }
 
@@ -934,3 +1175,36 @@ function getEventClasses(i: Interview) {
   
   return "bg-blue-50 border-blue-200 text-blue-700";
 }
+
+function FilterDropdown({ 
+  label, 
+  value, 
+  onValueChange, 
+  options 
+}: { 
+  label: string, 
+  value: string, 
+  onValueChange: (v: string) => void, 
+  options: { label: string, value: string }[] 
+}) {
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className={cn(
+        "h-9 w-auto min-w-[140px] text-xs font-medium bg-background",
+        value !== 'all' && "border-primary ring-1 ring-primary/10"
+      )}>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground">{label}:</span>
+          <SelectValue placeholder="Tous" />
+        </div>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">Tous ({label})</SelectItem>
+        {options.map(opt => (
+          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
