@@ -1,3 +1,4 @@
+
 import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -17,15 +18,18 @@ function sanitizePayload(obj: any): any {
   }
 
   // Handle specialized Admin SDK objects like FieldValue
-  if (obj.constructor && obj.constructor.name === 'FieldValue') {
+  if (obj.constructor && (obj.constructor.name === 'FieldValue' || obj.constructor.name === 'Timestamp')) {
     return obj;
   }
 
   const newObj: any = {};
   for (const key in obj) {
     const val = obj[key];
+    // Explicitly check for undefined to prevent Firestore crash
     if (val !== undefined) {
       newObj[key] = sanitizePayload(val);
+    } else {
+      newObj[key] = null;
     }
   }
   return newObj;

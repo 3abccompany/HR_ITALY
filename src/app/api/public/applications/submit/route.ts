@@ -1,141 +1,147 @@
-import { NextRequest, NextResponse } from "next/server";
+
+import { NextResponse } from "next/server";
 import { adminDb, adminStorage } from "@/lib/firebase/admin";
-import { 
-  executeSubmissionTransaction, 
-  computeDedupeKey, 
-  normalizeEmail 
-} from "@/services/application-submission.service";
+import { executeSubmissionTransaction } from "@/services/application-submission.service";
+import { AttachmentMetadata } from "@/types/application-submission";
 
 /**
- * Handles the public application submission.
- * USES ADMIN SDK to bypass security rules and manage Storage uploads securely.
+ * Safer check for missing required values.
+ * Accepts 0 and false as valid values.
  */
-export async function POST(request: NextRequest) {
+function isMissingRequiredValue(value: unknown) {
+  return value === undefined || value === null || value === "";
+}
+
+export async function POST(request: Request) {
+  // Generate a stable submissionId to be used across Storage and Firestore
+  const submissionId = adminDb.collection("_temp_").doc().id;
+  const uploadedFiles: string[] = [];
+
+  console.log(`[PUBLIC SUBMIT] Start processing submission: ${submissionId}`);
+
   try {
     const formData = await request.formData();
     const publicSlug = formData.get("publicSlug") as string;
     const answersStr = formData.get("answers") as string;
-    
-    if (!publicSlug || !answersStr) {
-      return NextResponse.json({ error: "Paramètres manquants." }, { status: 400 });
+    const answers = answersStr ? JSON.parse(answersStr) : {};
+
+    if (!publicSlug) {
+      return NextResponse.json({ error: { message: "Identifiant de l'offre manquant." } }, { status: 400 });
     }
 
-    const answers = JSON.parse(answersStr);
-
-    // 1. Resolve Form using Admin SDK
-    const formsSnap = await adminDb.collectionGroup("applicationForms")
+    // 1. Fetch Form Details using Admin SDK (Collection Group Query)
+    // Requires Index: collectionGroup: applicationForms, fields: publicSlug (ASC), status (ASC)
+    const formSnap = await adminDb.collectionGroup("applicationForms")
       .where("publicSlug", "==", publicSlug)
       .where("status", "==", "published")
       .limit(1)
       .get();
 
-    if (formsSnap.empty) {
-      return NextResponse.json({ error: "Cette offre n'est plus disponible." }, { status: 404 });
+    if (formSnap.empty) {
+      console.error(`[PUBLIC SUBMIT] No published form found for slug: ${publicSlug}`);
+      return NextResponse.json({ error: { message: "Désolé, cette offre n'est plus disponible." } }, { status: 404 });
     }
 
-    const formDoc = formsSnap.docs[0];
+    const formDoc = formSnap.docs[0];
     const form = formDoc.data();
     const entityId = form.entityId;
 
-    // 2. Early Deduplication Check (Before heavy file upload)
-    const email = (answers.email || "").toString().trim();
-    const normEmail = normalizeEmail(email);
-    const dedupeKey = computeDedupeKey(entityId, form.recruitmentNeedId, normEmail);
-    
-    const dedupeSnap = await adminDb.collection("entities").doc(entityId)
-      .collection("applicationSubmissionDedupe").doc(dedupeKey).get();
-    
-    if (dedupeSnap.exists) {
-      return NextResponse.json({ 
-        error: { 
-          code: "ALREADY_APPLIED_TO_THIS_JOB", 
-          message: "Vous avez déjà postulé à ce poste." 
+    console.log(`[PUBLIC SUBMIT] Form loaded: ${form.formId} for entity: ${entityId}`);
+
+    // 2. Server-side Validation of Required Fields
+    const enabledFields = (form.fields || []).filter((f: any) => f.enabled !== false);
+    for (const field of enabledFields) {
+      const val = answers[field.key];
+      
+      if (field.required) {
+        // Special case for consent or mandatory checkboxes (must be true)
+        if (field.type === "checkbox" || field.key === "consent") {
+          if (val !== true) {
+            return NextResponse.json({ error: { message: `Veuillez accepter : ${field.label}` } }, { status: 400 });
+          }
         } 
-      }, { status: 400 });
+        // File validation
+        else if (field.type === "file") {
+          const file = formData.get(field.key);
+          if (!file || (file instanceof File && file.size === 0)) {
+            return NextResponse.json({ error: { message: `Le fichier "${field.label}" est obligatoire.` } }, { status: 400 });
+          }
+        } 
+        // Standard text/number/select validation
+        else if (isMissingRequiredValue(val)) {
+          return NextResponse.json({ error: { message: `Le champ "${field.label}" est obligatoire.` } }, { status: 400 });
+        }
+      }
     }
 
-    // 3. Stable Submission ID Generation
-    const submissionId = adminDb.collection("entities").doc(entityId).collection("applicationSubmissions").doc().id;
+    console.log(`[PUBLIC SUBMIT] Validation passed. Processing files...`);
 
-    // 4. Handle Attachments
-    const attachmentMetadata: any[] = [];
-    const filesToUpload: { file: File, type: "cv" | "cover_letter", path: string }[] = [];
-
-    const cvFile = formData.get("cv") as File | null;
-    const coverLetterFile = formData.get("coverLetter") as File | null;
-
-    if (cvFile && cvFile.size > 0) {
-      const attId = "att_cv_" + Date.now();
-      const safeName = cvFile.name.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
-      const path = `entities/${entityId}/applicationSubmissions/${submissionId}/attachments/${attId}-${safeName}`;
-      
-      attachmentMetadata.push({
-        id: attId,
-        type: "cv",
-        fileName: cvFile.name,
-        filePath: path,
-        mimeType: cvFile.type,
-        size: cvFile.size,
-        uploadedAt: new Date().toISOString()
-      });
-      filesToUpload.push({ file: cvFile, type: "cv", path });
-    }
-
-    if (coverLetterFile && coverLetterFile.size > 0) {
-      const attId = "att_cl_" + Date.now();
-      const safeName = coverLetterFile.name.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
-      const path = `entities/${entityId}/applicationSubmissions/${submissionId}/attachments/${attId}-${safeName}`;
-      
-      attachmentMetadata.push({
-        id: attId,
-        type: "cover_letter",
-        fileName: coverLetterFile.name,
-        filePath: path,
-        mimeType: coverLetterFile.type,
-        size: coverLetterFile.size,
-        uploadedAt: new Date().toISOString()
-      });
-      filesToUpload.push({ file: coverLetterFile, type: "cover_letter", path });
-    }
-
-    // 5. Upload to Storage
+    // 3. Process and Upload Attachments
+    const attachments: AttachmentMetadata[] = [];
     const bucket = adminStorage.bucket();
-    const uploadedPaths: string[] = [];
+    const fileFields = ["cv", "coverLetter"];
 
-    try {
-      for (const item of filesToUpload) {
-        const buffer = Buffer.from(await item.file.arrayBuffer());
-        await bucket.file(item.path).save(buffer, {
-          metadata: { contentType: item.file.type }
+    for (const type of fileFields) {
+      const file = formData.get(type) as File | null;
+      if (file && file.size > 0) {
+        const attachmentId = adminDb.collection("_temp_").doc().id;
+        const safeName = file.name.replace(/[^a-z0-9.]/gi, "_").toLowerCase();
+        const filePath = `entities/${entityId}/applicationSubmissions/${submissionId}/attachments/${attachmentId}-${safeName}`;
+        
+        const buffer = Buffer.from(await file.arrayBuffer());
+        await bucket.file(filePath).save(buffer, {
+          metadata: { contentType: file.type }
         });
-        uploadedPaths.push(item.path);
+        
+        uploadedFiles.push(filePath);
+        console.log(`[PUBLIC SUBMIT] Uploaded: ${filePath}`);
+
+        attachments.push({
+          id: attachmentId,
+          type: type === "cv" ? "cv" : "cover_letter",
+          fileName: file.name,
+          filePath: filePath,
+          mimeType: file.type,
+          size: file.size,
+          uploadedAt: new Date().toISOString()
+        });
       }
-
-      // 6. Execute Transactional Database Write
-      await executeSubmissionTransaction(entityId, form, answers, attachmentMetadata, submissionId);
-
-      return NextResponse.json({ success: true, submissionId });
-
-    } catch (dbError: any) {
-      // 7. Cleanup on DB failure: Delete uploaded files to prevent orphans
-      console.error("[Submission API] Transaction failed, cleaning up files...", dbError);
-      for (const path of uploadedPaths) {
-        await bucket.file(path).delete().catch(e => console.warn(`[Cleanup] Failed to delete ${path}:`, e));
-      }
-
-      if (dbError.message === "ALREADY_APPLIED_TO_THIS_JOB") {
-        return NextResponse.json({ 
-          error: { code: "ALREADY_APPLIED_TO_THIS_JOB", message: "Vous avez déjà postulé à ce poste." } 
-        }, { status: 400 });
-      }
-
-      throw dbError;
     }
 
-  } catch (err: any) {
-    console.error("[Submission API Error]", err);
-    return NextResponse.json({ 
-      error: "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer." 
-    }, { status: 500 });
+    // 4. Save Record to Firestore using atomic transaction
+    console.log(`[PUBLIC SUBMIT] Executing transaction for submission: ${submissionId}`);
+    await executeSubmissionTransaction(entityId, form, answers, attachments, submissionId);
+
+    console.log(`[PUBLIC SUBMIT] Successfully completed submission: ${submissionId}`);
+    return NextResponse.json({ success: true, submissionId });
+
+  } catch (error: any) {
+    console.error("[PUBLIC SUBMIT CRITICAL ERROR]", error);
+
+    // Cleanup: Remove orphaned files if the transaction failed
+    if (uploadedFiles.length > 0) {
+      const bucket = adminStorage.bucket();
+      console.log(`[PUBLIC SUBMIT] Cleaning up ${uploadedFiles.length} files...`);
+      for (const path of uploadedFiles) {
+        await bucket.file(path).delete().catch(e => console.warn(`[CLEANUP ERROR] Failed to delete ${path}`, e));
+      }
+    }
+
+    const isDuplicate = error.message === "ALREADY_APPLIED_TO_THIS_JOB";
+    const status = isDuplicate ? 400 : 500;
+    const message = isDuplicate 
+      ? "Vous avez déjà postulé à ce poste." 
+      : "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer.";
+
+    return NextResponse.json(
+      { 
+        error: { 
+          message, 
+          code: isDuplicate ? "ALREADY_APPLIED_TO_THIS_JOB" : "INTERNAL_ERROR",
+          technicalMessage: process.env.NODE_ENV === 'development' ? error.message : undefined
+        } 
+      }, 
+      { status }
+    );
   }
 }

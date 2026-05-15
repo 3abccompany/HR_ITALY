@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -74,7 +75,7 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
     setError(null);
 
     try {
-      // Basic validation check (Required fields)
+      // 1. Basic Client-side validation check (Required fields)
       for (const field of enabledFields) {
         if (field.type === 'file') {
           if (field.required && !files[field.key]) {
@@ -86,23 +87,23 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         }
 
         const val = answers[field.key];
-        const isEmpty = val === undefined || val === null || val === "" || (Array.isArray(val) && val.length === 0);
+        const isMissing = val === undefined || val === null || val === "";
 
-        if (field.required && isEmpty) {
+        if (field.required && isMissing) {
           setError(`Le champ "${field.label}" est obligatoire.`);
           setLoading(false);
           return;
         }
       }
 
-      // Build FormData for multipart submission
+      // 2. Build FormData for multipart submission
       const formData = new FormData();
       formData.append("publicSlug", form.publicSlug);
       
-      // Sanitize answers
+      // Sanitize answers (ensure no undefined values)
       const sanitizedAnswers: Record<string, any> = {};
       Object.entries(answers).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
+        if (value !== undefined) {
           sanitizedAnswers[key] = value;
         }
       });
@@ -112,6 +113,7 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       if (files["cv"]) formData.append("cv", files["cv"]);
       if (files["coverLetter"]) formData.append("coverLetter", files["coverLetter"]);
 
+      // 3. Submit to API
       const response = await fetch('/api/public/applications/submit', {
         method: 'POST',
         body: formData,
@@ -119,26 +121,34 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
 
       let result: any = null;
       try {
-        const rawText = await response.text();
-        result = rawText ? JSON.parse(rawText) : null;
-      } catch {
+        const text = await response.text();
+        result = text ? JSON.parse(text) : null;
+      } catch (err) {
         result = null;
       }
 
       if (!response.ok) {
-        if (result?.error?.code === "ALREADY_APPLIED_TO_THIS_JOB") {
-          setError("Vous avez déjà postulé à ce poste.");
-        } else {
-          setError(result?.error?.message || result?.error || "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer.");
+        // Handle structured error responses
+        let errorMsg = "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer.";
+        
+        if (result?.error) {
+          if (typeof result.error === 'object' && result.error.message) {
+            errorMsg = result.error.message;
+          } else if (typeof result.error === 'string') {
+            errorMsg = result.error;
+          }
         }
+        
+        setError(errorMsg);
         setLoading(false);
         return;
       }
 
+      // Success!
       router.push(`/apply/${form.publicSlug}/success`);
     } catch (err: any) {
-      console.error("Submission error:", err);
-      setError("Une erreur technique est survenue. Veuillez vérifier votre connexion et réessayer.");
+      console.error("Submission fetch error:", err);
+      setError("Erreur technique de connexion. Veuillez vérifier votre accès internet et réessayer.");
     } finally {
       setLoading(false);
     }
