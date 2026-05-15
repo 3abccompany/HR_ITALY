@@ -30,7 +30,7 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [files, setFiles] = useState<Record<string, File>>({});
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string, debug?: string } | null>(null);
 
   const enabledFields = [...(form.fields || [])]
     .filter(f => f.enabled !== false)
@@ -75,11 +75,11 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
     setError(null);
 
     try {
-      // 1. Basic Client-side validation check (Required fields)
+      // 1. Client-side validation
       for (const field of enabledFields) {
         if (field.type === 'file') {
           if (field.required && !files[field.key]) {
-            setError(`Le document "${field.label}" est obligatoire.`);
+            setError({ message: `Le document "${field.label}" est obligatoire.` });
             setLoading(false);
             return;
           }
@@ -90,17 +90,15 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         const isMissing = val === undefined || val === null || val === "";
 
         if (field.required && isMissing) {
-          setError(`Le champ "${field.label}" est obligatoire.`);
+          setError({ message: `Le champ "${field.label}" est obligatoire.` });
           setLoading(false);
           return;
         }
       }
 
-      // 2. Build FormData for multipart submission
       const formData = new FormData();
       formData.append("publicSlug", form.publicSlug);
       
-      // Sanitize answers (ensure no undefined values)
       const sanitizedAnswers: Record<string, any> = {};
       Object.entries(answers).forEach(([key, value]) => {
         if (value !== undefined) {
@@ -109,46 +107,30 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
       });
       formData.append("answers", JSON.stringify(sanitizedAnswers));
 
-      // Append files
       if (files["cv"]) formData.append("cv", files["cv"]);
       if (files["coverLetter"]) formData.append("coverLetter", files["coverLetter"]);
 
-      // 3. Submit to API
       const response = await fetch('/api/public/applications/submit', {
         method: 'POST',
         body: formData,
       });
 
-      let result: any = null;
-      try {
-        const text = await response.text();
-        result = text ? JSON.parse(text) : null;
-      } catch (err) {
-        result = null;
-      }
+      const result = await response.json().catch(() => null);
 
       if (!response.ok) {
-        // Handle structured error responses
-        let errorMsg = "Une erreur est survenue lors de l'envoi de votre candidature. Veuillez réessayer.";
+        const errorData = result?.error;
+        const message = typeof errorData === 'string' ? errorData : (errorData?.message || "Une erreur est survenue lors de l'envoi.");
+        const debug = errorData?.debugMessage;
         
-        if (result?.error) {
-          if (typeof result.error === 'object' && result.error.message) {
-            errorMsg = result.error.message;
-          } else if (typeof result.error === 'string') {
-            errorMsg = result.error;
-          }
-        }
-        
-        setError(errorMsg);
+        setError({ message, debug });
         setLoading(false);
         return;
       }
 
-      // Success!
       router.push(`/apply/${form.publicSlug}/success`);
     } catch (err: any) {
-      console.error("Submission fetch error:", err);
-      setError("Erreur technique de connexion. Veuillez vérifier votre accès internet et réessayer.");
+      console.error("Submission error:", err);
+      setError({ message: "Erreur technique de connexion. Veuillez réessayer." });
     } finally {
       setLoading(false);
     }
@@ -157,9 +139,16 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
       {error && (
-        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl flex items-center gap-3 text-destructive text-sm font-medium animate-in fade-in slide-in-from-top-2">
-          <AlertCircle className="w-5 h-5 shrink-0" />
-          <p>{error}</p>
+        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl space-y-2 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3 text-destructive text-sm font-bold">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <p>{error.message}</p>
+          </div>
+          {error.debug && (
+            <div className="mt-2 p-2 bg-black/5 rounded text-[10px] font-mono text-muted-foreground break-all overflow-hidden">
+              DEBUG: {error.debug}
+            </div>
+          )}
         </div>
       )}
 
