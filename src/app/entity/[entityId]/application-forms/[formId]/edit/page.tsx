@@ -424,8 +424,8 @@ export default function EditApplicationFormPage() {
                         </div>
                         <p className="text-[10px] text-muted-foreground uppercase font-mono">Type: {field.type}</p>
                         {field.type === 'file' && (
-                          <p className="text-[9px] text-orange-600 font-bold">
-                            Note: Le dépôt de fichier n'est pas encore disponible. Ce champ ne bloquera pas la soumission.
+                          <p className="text-[9px] text-primary/60 font-bold">
+                            Formats acceptés : PDF, DOC, DOCX — 5 Mo maximum.
                           </p>
                         )}
                       </div>
