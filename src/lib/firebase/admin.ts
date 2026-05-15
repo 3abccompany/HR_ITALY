@@ -1,6 +1,6 @@
 import { cert, getApps, initializeApp, App } from 'firebase-admin/app';
-import { getFirestore, Firestore } from 'firebase-admin/firestore';
-import { getAuth, Auth } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 
 /**
@@ -22,7 +22,6 @@ function getAdminApp(): App {
 
   if (!projectId || !clientEmail || !privateKey) {
     console.error("[Admin SDK] Missing required credentials. Check FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY.");
-    // We throw here to prevent the app from attempting privileged operations with invalid state
     throw new Error(
       "Missing Firebase Admin credentials. Please set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY in your environment."
     );
@@ -45,3 +44,10 @@ export const adminApp = getAdminApp();
 export const adminDb = getFirestore(adminApp);
 export const adminAuth = getAuth(adminApp);
 export const adminStorage = getStorage(adminApp);
+
+// Explicitly export the bucket with validation
+const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+if (!bucketName && typeof window === 'undefined') {
+  console.warn("[Admin SDK] FIREBASE_STORAGE_BUCKET environment variable is not set. Storage operations will fail.");
+}
+export const adminBucket = adminStorage.bucket(bucketName);

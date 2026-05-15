@@ -1,6 +1,5 @@
-
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminStorage } from "@/lib/firebase/admin";
+import { adminDb, adminBucket } from "@/lib/firebase/admin";
 import { getAuth } from "firebase-admin/auth";
 
 export const dynamic = 'force-dynamic';
@@ -49,8 +48,7 @@ export async function GET(
     }
 
     // 4. Generate Signed URL (15 minutes)
-    const bucket = adminStorage.bucket();
-    const file = bucket.file(attachment.filePath);
+    const file = adminBucket.file(attachment.filePath);
     
     const [url] = await file.getSignedUrl({
       version: 'v4',
