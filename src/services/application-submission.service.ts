@@ -75,6 +75,12 @@ export async function executeSubmissionTransaction(
   const email = (answers.email || "").toString().trim();
   const phone = (answers.phone || "").toString().trim();
 
+  // Extract location fields
+  const address = (answers.address || "").toString().trim();
+  const city = (answers.city || "").toString().trim();
+  const province = (answers.province || "").toString().trim();
+  const country = (answers.country || "").toString().trim();
+
   if (!email) throw new Error("L'email est obligatoire.");
 
   const normEmail = normalizeEmail(email);
@@ -194,6 +200,10 @@ export async function executeSubmissionTransaction(
         displayName: `${firstName} ${lastName}`,
         email: normEmail,
         phone: normPhone,
+        address: address || null,
+        city: city || null,
+        province: province || null,
+        country: country || null,
         currentLifecycleStatus: "candidate",
         currentCandidateId: candidateId,
         status: "active",
@@ -203,11 +213,19 @@ export async function executeSubmissionTransaction(
         updatedBy: "public_application",
       });
     } else {
-      transaction.update(adminDb.collection("entities").doc(entityId).collection("persons").doc(personId), {
+      const personUpdate: any = {
         currentLifecycleStatus: "candidate",
         currentCandidateId: candidateId,
         updatedAt: FieldValue.serverTimestamp(),
-      });
+      };
+      
+      // Update location fields only if they were provided (non-empty protection)
+      if (address) personUpdate.address = address;
+      if (city) personUpdate.city = city;
+      if (province) personUpdate.province = province;
+      if (country) personUpdate.country = country;
+
+      transaction.update(adminDb.collection("entities").doc(entityId).collection("persons").doc(personId), personUpdate);
     }
 
     transaction.set(timelineRef, {

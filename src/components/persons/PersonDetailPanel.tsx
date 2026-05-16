@@ -20,6 +20,12 @@ interface PersonDetailPanelProps {
 export function PersonDetailPanel({ entityId, person }: PersonDetailPanelProps) {
   if (!person) return null;
 
+  // Safe location formatter to avoid raw separators and "null/undefined" strings
+  const formatLocation = () => {
+    const parts = [person.city, person.province, person.country].filter(Boolean);
+    return parts.length > 0 ? parts.join(", ") : "Non renseigné";
+  };
+
   return (
     <Card className="h-full flex flex-col bg-white rounded-3xl border shadow-2xl shadow-primary/5 overflow-hidden">
       <ScrollArea className="flex-1">
@@ -47,7 +53,7 @@ export function PersonDetailPanel({ entityId, person }: PersonDetailPanelProps) 
                <SummaryItem icon={Mail} label="Email" value={person.email} />
                <SummaryItem icon={Phone} label="Téléphone" value={person.phone || "Non renseigné"} />
                <SummaryItem icon={Fingerprint} label="Identifiant National" value={person.codiceFiscale} code />
-               <SummaryItem icon={MapPin} label="Localisation" value={`${person.city || ""}, ${person.province || ""}`} />
+               <SummaryItem icon={MapPin} label="Localisation" value={formatLocation()} />
             </div>
           </div>
 
