@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -6,10 +5,10 @@ import { useParams } from "next/navigation";
 import { 
   Calendar, Search, Plus, Edit, PowerOff, RefreshCcw, 
   Loader2, User, Briefcase, MapPin, CheckCircle2, 
-  AlertCircle, MoreVertical, Star, MessageSquare, Mail, 
+  AlertCircle, MoreVertical, Mail, 
   Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
-  Clock, MapPinned, UserCircle, Timer, HandMetal,
-  X, Filter, ListFilter, Calendar as CalendarIcon
+  Clock, MapPinned, UserCircle, HandMetal,
+  X, Filter, ListFilter, Download, ChevronUp, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,14 +68,16 @@ import {
   subMonths,
   startOfDay,
   endOfDay,
-  isWithinInterval
+  isWithinInterval,
+  startOfYear,
+  endOfYear
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+
+// --- Types & Constants ---
 
 interface Filters {
   search: string;
@@ -84,8 +85,9 @@ interface Filters {
   decision: string;
   interviewer: string;
   job: string;
+  department: string;
   mode: string;
-  dateRange: { from: Date | undefined; to: Date | undefined };
+  date: string;
 }
 
 const initialFilters: Filters = {
@@ -94,8 +96,14 @@ const initialFilters: Filters = {
   decision: "all",
   interviewer: "all",
   job: "all",
+  department: "all",
   mode: "all",
-  dateRange: { from: undefined, to: undefined }
+  date: "all"
+};
+
+type SortConfig = {
+  field: keyof Interview | 'candidateDisplayName';
+  direction: 'asc' | 'desc' | null;
 };
 
 const initialForm = {
@@ -130,6 +138,8 @@ const initialDecisionForm = {
   feedback: ""
 };
 
+// --- Helpers ---
+
 /**
  * Robust date parser for mixed Firestore/Admin/Corrupted formats.
  */
@@ -152,6 +162,42 @@ function parseSafeDate(val: any): Date | null {
   return null;
 }
 
+function formatDateDisplay(val: any): string {
+  const d = parseSafeDate(val);
+  if (!d) return "Date non disponible";
+  return format(d, "dd/MM/yyyy HH:mm", { locale: fr });
+}
+
+function formatTimeOnly(val: any): string {
+  const d = parseSafeDate(val);
+  if (!d) return "";
+  return format(d, "HH:mm");
+}
+
+function getStatusLabel(status: string) {
+  switch (status) {
+    case 'scheduled': return "Planifié";
+    case 'completed': return "Réalisé";
+    case 'cancelled': return "Annulé";
+    case 'no_show': return "Absent";
+    case 'inactive': return "Inactif";
+    default: return status;
+  }
+}
+
+function getDecisionLabel(decision: string | undefined) {
+  const d = decision || "pending";
+  switch (d) {
+    case 'accepted': return "Accepté";
+    case 'rejected': return "Refusé";
+    case 'on_hold':
+    case 'stand_by': return "Stand by";
+    default: return "En attente";
+  }
+}
+
+// --- Main Component ---
+
 export default function InterviewsManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -164,8 +210,10 @@ export default function InterviewsManagementPage() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
-  // Filters State
+  // UX State: Filters, Sorting, Pagination
   const [filters, setFilters] = useState<Filters>(initialFilters);
+  const [sort, setSort] = useState<SortConfig>({ field: 'scheduledAt', direction: 'desc' });
+  const [pagination, setPagination] = useState({ page: 1, pageSize: 25 });
 
   // Form/Modal State
   const [isFormVisible, setIsFormVisible] = useState(false);
@@ -208,67 +256,126 @@ export default function InterviewsManagementPage() {
     return candidates?.filter(c => c.status === "interview_to_schedule") || [];
   }, [candidates]);
 
-  // dynamic filter options
-  const uniqueInterviewers = useMemo(() => 
-    Array.from(new Set(interviews?.map(i => i.interviewerName || "Non renseigné") || [])).sort(), 
-  [interviews]);
+  // --- Logic Chains ---
 
-  const uniqueJobs = useMemo(() => 
-    Array.from(new Set(interviews?.map(i => i.positionApplied || "Non renseigné") || [])).sort(), 
-  [interviews]);
+  // 1. Unique Options for Dropdowns
+  const uniqueOptions = useMemo(() => {
+    const interviewers = new Set<string>();
+    const jobs = new Set<string>();
+    const departments = new Set<string>();
+    const modes = new Set<string>();
 
-  const uniqueModes = useMemo(() => 
-    Array.from(new Set(interviews?.map(i => i.interviewType || "Non renseigné") || [])).sort(), 
-  [interviews]);
+    interviews?.forEach(i => {
+      if (i.interviewerName) interviewers.add(i.interviewerName);
+      if (i.positionApplied) jobs.add(i.positionApplied);
+      if ((i as any).departmentName) departments.add((i as any).departmentName);
+      if (i.interviewType) modes.add(i.interviewType);
+    });
 
-  // Primary Filtering Logic
+    return {
+      interviewers: Array.from(interviewers).sort(),
+      jobs: Array.from(jobs).sort(),
+      departments: Array.from(departments).sort(),
+      modes: Array.from(modes).sort()
+    };
+  }, [interviews]);
+
+  // 2. Filtering Logic
   const filteredInterviews = useMemo(() => {
     if (!interviews) return [];
     
     return interviews.filter(i => {
-      // 1. Search
+      // Search
       if (filters.search) {
-        const term = filters.search.toLowerCase();
+        const term = filters.search.toLowerCase().trim();
         const matchesSearch = 
-          i.candidateDisplayName.toLowerCase().includes(term) ||
-          i.positionApplied.toLowerCase().includes(term) ||
-          i.interviewerName.toLowerCase().includes(term) ||
-          (i.location && i.location.toLowerCase().includes(term));
+          i.candidateDisplayName?.toLowerCase().includes(term) ||
+          i.positionApplied?.toLowerCase().includes(term) ||
+          i.interviewerName?.toLowerCase().includes(term) ||
+          i.location?.toLowerCase().includes(term) ||
+          i.emailTo?.toLowerCase().includes(term);
         if (!matchesSearch) return false;
       }
 
-      // 2. Status
+      // Status
       if (filters.status !== "all" && i.status !== filters.status) return false;
 
-      // 3. Decision (Recruiter response)
-      if (filters.decision !== "all" && (i.decision || "pending") !== filters.decision) return false;
+      // Decision
+      if (filters.decision !== "all") {
+        const d = i.decision || "pending";
+        if (d !== filters.decision) return false;
+      }
 
-      // 4. Interviewer
+      // Interviewer
       if (filters.interviewer !== "all" && (i.interviewerName || "Non renseigné") !== filters.interviewer) return false;
 
-      // 5. Job
+      // Job
       if (filters.job !== "all" && (i.positionApplied || "Non renseigné") !== filters.job) return false;
 
-      // 6. Mode
+      // Department
+      if (filters.department !== "all" && ((i as any).departmentName || "Non renseigné") !== filters.department) return false;
+
+      // Mode
       if (filters.mode !== "all" && (i.interviewType || "Non renseigné") !== filters.mode) return false;
 
-      // 7. Date Range
-      if (filters.dateRange.from || filters.dateRange.to) {
+      // Date Range
+      if (filters.date !== "all") {
         const iDate = parseSafeDate(i.scheduledAt);
         if (!iDate) return false;
-
-        const from = filters.dateRange.from ? startOfDay(filters.dateRange.from) : undefined;
-        const to = filters.dateRange.to ? endOfDay(filters.dateRange.to) : undefined;
-
-        if (from && iDate < from) return false;
-        if (to && iDate > to) return false;
+        const now = new Date();
+        if (filters.date === "today" && !isWithinInterval(iDate, { start: startOfDay(now), end: endOfDay(now) })) return false;
+        if (filters.date === "this_week" && !isWithinInterval(iDate, { start: startOfWeek(now, { weekStartsOn: 1 }), end: endOfWeek(now, { weekStartsOn: 1 }) })) return false;
+        if (filters.date === "this_month" && !isWithinInterval(iDate, { start: startOfMonth(now), end: endOfMonth(now) })) return false;
+        if (filters.date === "this_year" && !isWithinInterval(iDate, { start: startOfYear(now), end: endOfYear(now) })) return false;
       }
 
       return true;
     });
   }, [interviews, filters]);
 
-  // Calendar Specific Memoized Data
+  // 3. Sorting Logic
+  const sortedInterviews = useMemo(() => {
+    if (!sort.field || !sort.direction) return filteredInterviews;
+
+    return [...filteredInterviews].sort((a, b) => {
+      let valA: any = a[sort.field as keyof Interview] ?? "";
+      let valB: any = b[sort.field as keyof Interview] ?? "";
+
+      if (sort.field === 'candidateDisplayName') {
+        valA = a.candidateDisplayName ?? "";
+        valB = b.candidateDisplayName ?? "";
+      }
+
+      // Date handling
+      if (sort.field === 'scheduledAt' || sort.field === 'createdAt') {
+        const dateA = parseSafeDate(valA)?.getTime() || 0;
+        const dateB = parseSafeDate(valB)?.getTime() || 0;
+        return sort.direction === 'asc' ? dateA - dateB : dateB - dateA;
+      }
+
+      // String comparison
+      const strA = String(valA).toLowerCase();
+      const strB = String(valB).toLowerCase();
+
+      if (sort.direction === 'asc') return strA.localeCompare(strB);
+      return strB.localeCompare(strA);
+    });
+  }, [filteredInterviews, sort]);
+
+  // 4. Pagination (LIST ONLY)
+  const totalResults = sortedInterviews.length;
+  const totalPages = Math.ceil(totalResults / pagination.pageSize);
+  const paginatedInterviews = useMemo(() => {
+    const start = (pagination.page - 1) * pagination.pageSize;
+    return sortedInterviews.slice(start, start + pagination.pageSize);
+  }, [sortedInterviews, pagination]);
+
+  // Reset pagination on criteria change
+  useEffect(() => {
+    setPagination(p => ({ ...p, page: 1 }));
+  }, [filters, sort, pagination.pageSize]);
+
+  // Calendar specific data (uses full sortedInterviews)
   const calendarDays = useMemo(() => {
     const monthStart = startOfMonth(currentMonth);
     const monthEnd = endOfMonth(monthStart);
@@ -279,7 +386,7 @@ export default function InterviewsManagementPage() {
 
   const interviewsByDate = useMemo(() => {
     const groups: Record<string, Interview[]> = {};
-    filteredInterviews.forEach(i => {
+    sortedInterviews.forEach(i => {
       const d = parseSafeDate(i.scheduledAt);
       if (d) {
         const key = format(d, 'yyyy-MM-dd');
@@ -288,27 +395,76 @@ export default function InterviewsManagementPage() {
       }
     });
     return groups;
-  }, [filteredInterviews]);
+  }, [sortedInterviews]);
 
   const interviewsWithoutDate = useMemo(() => {
-    return filteredInterviews.filter(i => !parseSafeDate(i.scheduledAt));
-  }, [filteredInterviews]);
+    return sortedInterviews.filter(i => !parseSafeDate(i.scheduledAt));
+  }, [sortedInterviews]);
 
-  // Handlers
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { id, value } = e.target;
-    setFormData(prev => ({ ...prev, [id]: value }));
-  };
+  // --- Handlers ---
 
-  const updateFilter = (key: keyof Filters, value: any) => {
+  const handleUpdateFilter = (key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
   };
 
-  const removeFilter = (key: keyof Filters) => {
+  const handleRemoveFilter = (key: keyof Filters) => {
     setFilters(prev => ({ ...prev, [key]: initialFilters[key] }));
   };
 
   const handleResetFilters = () => setFilters(initialFilters);
+
+  const handleToggleSort = (field: keyof Interview | 'candidateDisplayName') => {
+    setSort(prev => ({
+      field,
+      direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  const handleExportCSV = () => {
+    if (sortedInterviews.length === 0) return;
+
+    const headers = [
+      "Candidat", "Email candidat", "Poste", "Département", 
+      "Recruteur", "Mode d'entretien", "Date entretien", "Heure entretien", 
+      "Statut entretien", "Réponse recruteur", "Localisation/Lien"
+    ];
+
+    const rows = sortedInterviews.map(i => [
+      i.candidateDisplayName || "Non renseigné",
+      i.emailTo || "",
+      i.positionApplied || "Non renseigné",
+      (i as any).departmentName || "Non renseigné",
+      i.interviewerName || "Non renseigné",
+      i.interviewType || "Non renseigné",
+      parseSafeDate(i.scheduledAt) ? format(parseSafeDate(i.scheduledAt)!, "dd/MM/yyyy") : "N/A",
+      parseSafeDate(i.scheduledAt) ? format(parseSafeDate(i.scheduledAt)!, "HH:mm") : "N/A",
+      getStatusLabel(i.status),
+      getDecisionLabel(i.decision),
+      i.location || ""
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
+
+    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    const dateStr = format(new Date(), "yyyy-MM-dd");
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", `entretiens_${dateStr}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { id, value } = e.target;
+    setFormData(prev => ({ ...prev, [id]: value }));
+  };
 
   const handleReset = () => {
     setFormData(initialForm);
@@ -450,11 +606,16 @@ export default function InterviewsManagementPage() {
           <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Entretiens</h1>
           <p className="text-muted-foreground text-sm">Planification et évaluation des candidats.</p>
         </div>
-        {canCreate && (
-          <Button onClick={() => setIsFormVisible(true)} className="gap-2 shadow-lg shadow-primary/10">
-            <Plus className="w-4 h-4" /> Nouvel entretien
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={handleExportCSV} className="gap-2 bg-white" disabled={sortedInterviews.length === 0}>
+            <Download className="w-4 h-4" /> Exporter CSV
           </Button>
-        )}
+          {canCreate && (
+            <Button onClick={() => setIsFormVisible(true)} className="gap-2 shadow-lg shadow-primary/10">
+              <Plus className="w-4 h-4" /> Nouvel entretien
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-6">
@@ -469,7 +630,7 @@ export default function InterviewsManagementPage() {
                   placeholder="Rechercher..." 
                   className="h-9 pl-8 text-xs bg-background" 
                   value={filters.search}
-                  onChange={(e) => updateFilter('search', e.target.value)}
+                  onChange={(e) => handleUpdateFilter('search', e.target.value)}
                 />
               </div>
 
@@ -477,7 +638,7 @@ export default function InterviewsManagementPage() {
               <FilterDropdown 
                 label="Statut" 
                 value={filters.status} 
-                onValueChange={(v) => updateFilter('status', v)}
+                onValueChange={(v) => handleUpdateFilter('status', v)}
                 options={[
                   { label: "Planifié", value: "scheduled" },
                   { label: "Réalisé", value: "completed" },
@@ -490,7 +651,7 @@ export default function InterviewsManagementPage() {
               <FilterDropdown 
                 label="Réponse" 
                 value={filters.decision} 
-                onValueChange={(v) => updateFilter('decision', v)}
+                onValueChange={(v) => handleUpdateFilter('decision', v)}
                 options={[
                   { label: "En attente", value: "pending" },
                   { label: "Accepté", value: "accepted" },
@@ -503,54 +664,48 @@ export default function InterviewsManagementPage() {
               <FilterDropdown 
                 label="Recruteur" 
                 value={filters.interviewer} 
-                onValueChange={(v) => updateFilter('interviewer', v)}
-                options={uniqueInterviewers.map(n => ({ label: n, value: n }))}
+                onValueChange={(v) => handleUpdateFilter('interviewer', v)}
+                options={uniqueOptions.interviewers.map(n => ({ label: n, value: n }))}
               />
 
               {/* Job Filter */}
               <FilterDropdown 
                 label="Poste" 
                 value={filters.job} 
-                onValueChange={(v) => updateFilter('job', v)}
-                options={uniqueJobs.map(j => ({ label: j, value: j }))}
+                onValueChange={(v) => handleUpdateFilter('job', v)}
+                options={uniqueOptions.jobs.map(j => ({ label: j, value: j }))}
               />
+
+              {/* Dept Filter */}
+              {uniqueOptions.departments.length > 0 && (
+                <FilterDropdown 
+                  label="Département" 
+                  value={filters.department} 
+                  onValueChange={(v) => handleUpdateFilter('department', v)}
+                  options={uniqueOptions.departments.map(d => ({ label: d, value: d }))}
+                />
+              )}
 
               {/* Mode Filter */}
               <FilterDropdown 
                 label="Mode" 
                 value={filters.mode} 
-                onValueChange={(v) => updateFilter('mode', v)}
-                options={uniqueModes.map(m => ({ label: m, value: m }))}
+                onValueChange={(v) => handleUpdateFilter('mode', v)}
+                options={uniqueOptions.modes.map(m => ({ label: m, value: m }))}
               />
 
               {/* Date Filter */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="h-9 gap-2 text-xs font-medium bg-background">
-                    <CalendarIcon className="h-3.5 w-3.5" />
-                    {filters.dateRange.from ? (
-                      filters.dateRange.to ? (
-                        <>{format(filters.dateRange.from, "dd/MM")} - {format(filters.dateRange.to, "dd/MM")}</>
-                      ) : (
-                        format(filters.dateRange.from, "dd/MM/yyyy")
-                      )
-                    ) : (
-                      "Toutes les dates"
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <CalendarComponent
-                    initialFocus
-                    mode="range"
-                    defaultMonth={filters.dateRange.from}
-                    selected={{ from: filters.dateRange.from, to: filters.dateRange.to }}
-                    onSelect={(range: any) => updateFilter('dateRange', { from: range?.from, to: range?.to })}
-                    numberOfMonths={2}
-                    locale={fr}
-                  />
-                </PopoverContent>
-              </Popover>
+              <FilterDropdown 
+                label="Date" 
+                value={filters.date} 
+                onValueChange={(v) => handleUpdateFilter('date', v)}
+                options={[
+                  { label: "Aujourd'hui", value: "today" },
+                  { label: "Cette semaine", value: "this_week" },
+                  { label: "Ce mois", value: "this_month" },
+                  { label: "Cette année", value: "this_year" }
+                ]}
+              />
 
               <Button variant="ghost" size="sm" onClick={handleResetFilters} className="h-9 text-xs text-muted-foreground hover:text-primary">
                 Réinitialiser
@@ -562,34 +717,26 @@ export default function InterviewsManagementPage() {
           {/* Active Filter Chips */}
           <div className="flex flex-wrap items-center gap-2 px-1 min-h-[32px]">
             {Object.entries(filters).map(([key, value]) => {
-              if (key === 'search' || key === 'dateRange') return null;
-              if (value === 'all') return null;
+              if (key === 'search' || value === 'all' || !value) return null;
               
               let label = value;
               if (key === 'status') label = getStatusLabel(value);
               if (key === 'decision') label = getDecisionLabel(value);
+              if (key === 'date') label = value.replace('_', ' ');
 
               return (
                 <Badge key={key} variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
                   {label}
-                  <button onClick={() => removeFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5">
+                  <button onClick={() => handleRemoveFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5">
                     <X className="h-2.5 w-2.5" />
                   </button>
                 </Badge>
               );
             })}
-            {(filters.dateRange.from || filters.dateRange.to) && (
-              <Badge variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
-                Période: {filters.dateRange.from ? format(filters.dateRange.from, "dd/MM") : '?'} - {filters.dateRange.to ? format(filters.dateRange.to, "dd/MM") : '?'}
-                <button onClick={() => removeFilter('dateRange')} className="hover:bg-primary/10 rounded-full p-0.5">
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              </Badge>
-            )}
             
-            {filteredInterviews.length > 0 && !loadingInterviews && (
+            {totalResults > 0 && !loadingInterviews && (
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest ml-auto mr-2">
-                {filteredInterviews.length} entretien{filteredInterviews.length > 1 ? 's' : ''} trouvé{filteredInterviews.length > 1 ? 's' : ''}
+                {totalResults} entretien{totalResults > 1 ? 's' : ''} trouvé{totalResults > 1 ? 's' : ''}
               </span>
             )}
           </div>
@@ -612,11 +759,21 @@ export default function InterviewsManagementPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-secondary/20">
-                    <TableHead>Candidat & Poste</TableHead>
-                    <TableHead>Rendez-vous</TableHead>
-                    <TableHead>Recruteur</TableHead>
-                    <TableHead>Statut</TableHead>
-                    <TableHead>Réponse recruteur</TableHead>
+                    <TableHead>
+                      <SortableHeader label="Candidat & Poste" field="candidateDisplayName" currentSort={sort} onSort={handleToggleSort} />
+                    </TableHead>
+                    <TableHead>
+                      <SortableHeader label="Rendez-vous" field="scheduledAt" currentSort={sort} onSort={handleToggleSort} />
+                    </TableHead>
+                    <TableHead>
+                      <SortableHeader label="Recruteur" field="interviewerName" currentSort={sort} onSort={handleToggleSort} />
+                    </TableHead>
+                    <TableHead>
+                      <SortableHeader label="Statut" field="status" currentSort={sort} onSort={handleToggleSort} />
+                    </TableHead>
+                    <TableHead>
+                      <SortableHeader label="Réponse recruteur" field="decision" currentSort={sort} onSort={handleToggleSort} />
+                    </TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -634,7 +791,7 @@ export default function InterviewsManagementPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredInterviews.map((i) => (
+                    paginatedInterviews.map((i) => (
                       <TableRow key={i.interviewId} className="hover:bg-muted/50 transition-colors">
                         <TableCell>
                           <div className="font-bold text-primary">{i.candidateDisplayName}</div>
@@ -701,6 +858,55 @@ export default function InterviewsManagementPage() {
                   )}
                 </TableBody>
               </Table>
+              
+              {/* Pagination Footer */}
+              {!loadingInterviews && filteredInterviews.length > 0 && (
+                <div className="border-t bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground">Lignes par page:</span>
+                      <Select 
+                        value={String(pagination.pageSize)} 
+                        onValueChange={(v) => setPagination(p => ({ ...p, pageSize: Number(v), page: 1 }))}
+                      >
+                        <SelectTrigger className="h-7 w-20 text-[10px] font-bold">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="25">25</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                          <SelectItem value="100">100</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                      Page {pagination.page} sur {Math.max(1, totalPages)}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="icon" 
+                      className="h-8 w-8" 
+                      onClick={() => setPagination(p => ({ ...p, page: p.page - 1 }))}
+                      disabled={pagination.page <= 1}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="icon" 
+                      className="h-8 w-8" 
+                      onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
+                      disabled={pagination.page >= totalPages}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </Card>
           </TabsContent>
 
@@ -777,7 +983,7 @@ export default function InterviewsManagementPage() {
                                       handleEdit(interview);
                                    }}
                                  >
-                                    {format(parseSafeDate(interview.scheduledAt) || new Date(), 'HH:mm')} • {interview.candidateDisplayName}
+                                    {formatTimeOnly(interview.scheduledAt)} • {interview.candidateDisplayName}
                                  </button>
                                ))}
                                {dayInterviews.length > 3 && (
@@ -832,7 +1038,7 @@ export default function InterviewsManagementPage() {
                      {selectedDay && format(selectedDay, 'EEEE d MMMM yyyy', { locale: fr })}
                    </SheetTitle>
                    <SheetDescription className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                      Programme de la journée
+                      Programme de la journée (filtré)
                    </SheetDescription>
                 </div>
              </div>
@@ -852,7 +1058,7 @@ export default function InterviewsManagementPage() {
                            <div className="flex items-center gap-2">
                              <Clock className="w-3.5 h-3.5 text-primary" />
                              <span className="text-sm font-black text-primary">
-                               {format(parseSafeDate(i.scheduledAt) || new Date(), 'HH:mm')}
+                               {formatTimeOnly(i.scheduledAt)}
                              </span>
                            </div>
                            <div className="flex items-center gap-2">
@@ -1102,91 +1308,29 @@ export default function InterviewsManagementPage() {
   );
 }
 
-function DetailMini({ label, value, icon: Icon }: { label: string, value: any, icon: any }) {
+// --- Local Components ---
+
+function SortableHeader({ label, field, currentSort, onSort }: { label: string, field: keyof Interview | 'candidateDisplayName', currentSort: SortConfig, onSort: (f: any) => void }) {
+  const isActive = currentSort.field === field;
   return (
-    <div className="space-y-1">
-      <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
-      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
-        <Icon className="w-3 h-3 text-muted-foreground" />
-        <span className="truncate">{value || "N/A"}</span>
-      </div>
-    </div>
+    <button 
+      onClick={() => onSort(field)}
+      className={cn(
+        "flex items-center gap-1 hover:text-primary transition-colors uppercase text-[10px] font-black tracking-widest",
+        isActive ? "text-primary" : "text-muted-foreground"
+      )}
+    >
+      {label}
+      {isActive ? (
+        currentSort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+      ) : (
+        <div className="w-3 h-3 opacity-20"><ChevronUp className="w-3 h-3" /></div>
+      )}
+    </button>
   );
 }
 
-function formatDateDisplay(val: any): string {
-  const d = parseSafeDate(val);
-  if (!d) return "Date non disponible";
-  return format(d, "dd/MM/yyyy HH:mm", { locale: fr });
-}
-
-function getStatusBadge(status: string) {
-  switch (status) {
-    case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase text-[9px] font-bold">Planifié</Badge>;
-    case 'completed': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 uppercase text-[9px] font-bold">Réalisé</Badge>;
-    case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase text-[9px] font-bold">Annulé</Badge>;
-    case 'no_show': return <Badge variant="destructive" className="bg-slate-100 text-slate-700 border-slate-200 uppercase text-[9px] font-bold">Absent</Badge>;
-    case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300 uppercase text-[9px] font-bold">Inactif</Badge>;
-    default: return <Badge variant="outline" className="uppercase text-[9px] font-bold">{status}</Badge>;
-  }
-}
-
-function getStatusLabel(status: string) {
-  switch (status) {
-    case 'scheduled': return "Planifié";
-    case 'completed': return "Réalisé";
-    case 'cancelled': return "Annulé";
-    case 'no_show': return "Absent";
-    default: return status;
-  }
-}
-
-function getDecisionBadge(decision: string | undefined) {
-  const d = decision || "pending";
-  switch (d) {
-    case 'accepted': return <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200 gap-1.5"><CheckCircle2 className="w-3 h-3" /> Accepté</Badge>;
-    case 'rejected': return <Badge variant="secondary" className="bg-red-100 text-red-800 border-red-200 gap-1.5"><AlertCircle className="w-3 h-3" /> Refusé</Badge>;
-    case 'on_hold':
-    case 'stand_by': return <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-200 gap-1.5"><Timer className="w-3 h-3" /> Stand by</Badge>;
-    default: return <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 gap-1.5"><HandMetal className="w-3 h-3 opacity-50" /> En attente</Badge>;
-  }
-}
-
-function getDecisionLabel(decision: string) {
-  switch (decision) {
-    case 'accepted': return "Accepté";
-    case 'rejected': return "Refusé";
-    case 'on_hold': return "Stand by";
-    case 'pending': return "En attente";
-    default: return decision;
-  }
-}
-
-function getEventClasses(i: Interview) {
-  // Decision takes precedence for coloring
-  if (i.decision === 'accepted') return "bg-green-50 border-green-200 text-green-700";
-  if (i.decision === 'rejected') return "bg-red-50 border-red-200 text-red-700";
-  if (i.decision === 'on_hold' || i.decision === 'stand_by') return "bg-orange-50 border-orange-200 text-orange-700";
-  
-  // Fallback to status
-  if (i.status === 'completed') return "bg-emerald-50 border-emerald-200 text-emerald-700";
-  if (i.status === 'cancelled' || i.status === 'no_show') return "bg-slate-100 border-slate-300 text-slate-500 opacity-60";
-  if (i.status === 'inactive') return "bg-slate-50 border-slate-100 text-slate-400 opacity-40";
-  
-  return "bg-blue-50 border-blue-200 text-blue-700";
-}
-
-function FilterDropdown({ 
-  label, 
-  value, 
-  onValueChange, 
-  options 
-}: { 
-  label: string, 
-  value: string, 
-  onValueChange: (v: string) => void, 
-  options: { label: string, value: string }[] 
-}) {
+function FilterDropdown({ label, value, onValueChange, options }: { label: string, value: string, onValueChange: (v: string) => void, options: { label: string, value: string }[] }) {
   return (
     <Select value={value} onValueChange={onValueChange}>
       <SelectTrigger className={cn(
@@ -1208,3 +1352,45 @@ function FilterDropdown({
   );
 }
 
+function DetailMini({ label, value, icon: Icon }: { label: string, value: any, icon: any }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
+      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+        <Icon className="w-3 h-3 text-muted-foreground" />
+        <span className="truncate">{value || "N/A"}</span>
+      </div>
+    </div>
+  );
+}
+
+function getStatusBadge(status: string) {
+  switch (status) {
+    case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase text-[9px] font-bold">Planifié</Badge>;
+    case 'completed': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 uppercase text-[9px] font-bold">Réalisé</Badge>;
+    case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase text-[9px] font-bold">Annulé</Badge>;
+    case 'no_show': return <Badge variant="destructive" className="bg-slate-100 text-slate-700 border-slate-200 uppercase text-[9px] font-bold">Absent</Badge>;
+    case 'inactive': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300 uppercase text-[9px] font-bold">Inactif</Badge>;
+    default: return <Badge variant="outline" className="uppercase text-[9px] font-bold">{status}</Badge>;
+  }
+}
+
+function getDecisionBadge(decision: string | undefined) {
+  const d = decision || "pending";
+  switch (d) {
+    case 'accepted': return <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200 gap-1.5"><CheckCircle2 className="w-3 h-3" /> Accepté</Badge>;
+    case 'rejected': return <Badge variant="secondary" className="bg-red-100 text-red-800 border-red-200 gap-1.5"><AlertCircle className="w-3 h-3" /> Refusé</Badge>;
+    case 'on_hold':
+    case 'stand_by': return <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-200 gap-1.5"><HandMetal className="w-3 h-3" /> Stand by</Badge>;
+    default: return <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 gap-1.5"><HandMetal className="w-3 h-3 opacity-50" /> En attente</Badge>;
+  }
+}
+
+function getEventClasses(i: Interview) {
+  if (i.decision === 'accepted') return "bg-green-50 border-green-200 text-green-700";
+  if (i.decision === 'rejected') return "bg-red-50 border-red-200 text-red-700";
+  if (i.decision === 'on_hold' || i.decision === 'stand_by') return "bg-orange-50 border-orange-200 text-orange-700";
+  if (i.status === 'completed') return "bg-emerald-50 border-emerald-200 text-emerald-700";
+  if (i.status === 'cancelled' || i.status === 'no_show') return "bg-slate-100 border-slate-300 text-slate-500 opacity-60";
+  return "bg-blue-50 border-blue-200 text-blue-700";
+}
