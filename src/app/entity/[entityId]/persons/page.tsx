@@ -57,7 +57,7 @@ import { ITALIAN_PROVINCES, getCitiesForProvince } from "@/config/geo-italy";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { PersonDetailPanel } from "@/components/persons/PersonDetailPanel";
 import { cn } from "@/lib/utils";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { format, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from "date-fns";
@@ -573,9 +573,9 @@ export default function PersonsManagementPage() {
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden p-8 pt-0 gap-8">
-        {/* Left Table Section */}
-        <div className={cn("flex-1 flex flex-col gap-4 min-w-0", selectedPerson && "hidden lg:flex")}>
+      <div className="flex-1 flex overflow-hidden p-8 pt-0">
+        {/* Full Width Table Section */}
+        <div className="flex-1 flex flex-col gap-4 min-w-0">
           <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
             <div className="flex-1 overflow-auto">
               <Table>
@@ -715,51 +715,31 @@ export default function PersonsManagementPage() {
             </div>
           </Card>
         </div>
-
-        {/* Right Detail Panel - Desktop */}
-        {!isMobile && selectedPerson && (
-          <div className="w-[500px] flex flex-col gap-4 animate-in slide-in-from-right-4 duration-300">
-             <div className="flex items-center justify-between shrink-0">
-                <h3 className="text-sm font-black uppercase text-primary tracking-widest flex items-center gap-2">
-                   <LayoutDashboard className="w-4 h-4" /> Fiche Identité & Parcours
-                </h3>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedPerson(null)}>
-                   <X className="w-4 h-4" />
-                </Button>
-             </div>
-             <div className="flex-1 min-h-0">
-               <PersonDetailPanel 
-                 entityId={entityId} 
-                 person={selectedPerson} 
-               />
-             </div>
-          </div>
-        )}
-
-        {!isMobile && !selectedPerson && (
-          <div className="w-[500px] hidden lg:flex flex-col items-center justify-center border-2 border-dashed rounded-3xl bg-secondary/5 text-center p-8">
-             <Fingerprint className="w-12 h-12 text-muted-foreground/20 mb-4" />
-             <p className="text-sm text-muted-foreground font-medium">Sélectionnez une personne pour consulter sa fiche complète et son historique.</p>
-          </div>
-        )}
       </div>
 
-      {/* Mobile Detail Panel */}
-      {isMobile && (
-        <Sheet open={!!selectedPerson} onOpenChange={(open) => !open && setSelectedPerson(null)}>
-          <SheetContent side="bottom" className="h-[90vh] px-0">
-            <SheetHeader className="px-6 mb-4">
-              <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs">Fiche Identité</SheetTitle>
-            </SheetHeader>
-            <div className="h-full pb-20">
-              <PersonDetailPanel 
-                 entityId={entityId} 
-                 person={selectedPerson} 
-              />
+      {/* Person Detail Right-side Drawer */}
+      <Sheet open={!!selectedPerson} onOpenChange={(open) => !open && setSelectedPerson(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-[620px] p-0 flex flex-col gap-0 border-l shadow-2xl">
+          <SheetHeader className="px-8 py-6 border-b shrink-0">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="text-left font-black uppercase text-primary tracking-widest text-xs flex items-center gap-2">
+                <LayoutDashboard className="w-4 h-4" /> Fiche Identité & Parcours
+              </SheetTitle>
             </div>
-          </SheetContent>
-        </Sheet>
-      )}
+            {selectedPerson && (
+              <SheetDescription className="text-[10px] font-bold uppercase text-muted-foreground truncate mt-1">
+                {selectedPerson.displayName} • {selectedPerson.email}
+              </SheetDescription>
+            )}
+          </SheetHeader>
+          <div className="flex-1 min-h-0">
+            <PersonDetailPanel 
+               entityId={entityId} 
+               person={selectedPerson} 
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Forms & Dialogs */}
       <Dialog open={isFormVisible} onOpenChange={(open) => !open && handleReset()}>
