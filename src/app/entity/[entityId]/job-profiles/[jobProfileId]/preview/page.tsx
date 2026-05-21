@@ -5,7 +5,8 @@ import { useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   ArrowLeft, Printer, Download, FileBadge, 
-  Calendar, Building2, UserCircle, Users, Loader2 
+  Calendar, Building2, UserCircle, Users, Loader2,
+  Scale, Clock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,6 +14,7 @@ import { useFirebase, useDoc } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
 import { JobProfile } from "@/types/job-profile";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 
 export default function JobProfilePreviewPage() {
   const params = useParams();
@@ -129,6 +131,21 @@ export default function JobProfilePreviewPage() {
                 </p>
               </div>
             </div>
+
+            {/* Internal Recommendations (Print context: internal report) */}
+            {(profile.defaultCcnlName || profile.defaultContractType) && (
+               <div className="mb-12 p-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 print:bg-white">
+                  <div className="flex items-center gap-2 text-primary font-black text-xs uppercase tracking-widest mb-4">
+                     <Scale className="w-4 h-4" /> Recommandations Contractuelles Internes
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                     <PreviewInfo label="CCNL" value={profile.defaultCcnlName} />
+                     <PreviewInfo label="Niveau" value={profile.defaultLevelCode ? `${profile.defaultLevelCode} (${profile.defaultLevelLabel})` : undefined} />
+                     <PreviewInfo label="Contrat" value={profile.defaultContractType} />
+                     <PreviewInfo label="Temps de travail" value={profile.defaultWeeklyHours ? `${profile.defaultWeeklyHours}h / semaine` : undefined} />
+                  </div>
+               </div>
+            )}
 
             <div className="grid grid-cols-2 gap-12 mb-12">
                <SectionBox icon={Building2} title="Département">
@@ -296,6 +313,15 @@ function DocumentSection({ title, children }: any) {
       <div className="pl-4">
         {children}
       </div>
+    </div>
+  );
+}
+
+function PreviewInfo({ label, value }: { label: string, value?: string }) {
+  return (
+    <div className="space-y-1">
+       <p className="text-[9px] font-bold text-muted-foreground uppercase">{label}</p>
+       <p className="text-xs font-bold text-slate-800">{value || "Non renseigné"}</p>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import {
   FileBadge, Plus, Search, Edit, PowerOff, RefreshCcw, 
   Loader2, Calendar as CalendarIcon, Building2, Eye,
   AlertCircle, MoreVertical, Filter, X, ChevronDown, ListFilter,
-  History, Settings2, Trash2
+  History, Settings2, Trash2, Scale
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,9 +64,6 @@ const initialFilters: Filters = {
   search: ''
 };
 
-/**
- * Robust date parser for mixed Firestore/Admin/Corrupted formats.
- */
 function parseSafeDate(val: any): Date | null {
   if (!val) return null;
   if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
@@ -101,18 +98,15 @@ export default function JobProfilesManagementPage() {
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
-  // State
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [visibleFilters, setVisibleFilters] = useState<string[]>(['department']);
   const [statusChange, setStatusChange] = useState<{ id: string, action: 'disable' | 'reactivate' } | null>(null);
 
-  // Permissions
   const canRead = hasPermission("jobProfiles.read");
   const canCreate = hasPermission("jobProfiles.create");
   const canUpdate = hasPermission("jobProfiles.update");
 
-  // Queries
   const profilesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
     return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc"));
@@ -120,7 +114,6 @@ export default function JobProfilesManagementPage() {
 
   const { data: profiles, loading: loadingProfiles } = useCollection<JobProfile>(profilesQuery);
 
-  // Dynamic Options
   const uniqueDepartments = useMemo(() => 
     Array.from(new Set(profiles?.map(p => p.departmentName || 'Non renseigné') || [])).sort(), 
   [profiles]);
@@ -129,12 +122,10 @@ export default function JobProfilesManagementPage() {
     Array.from(new Set(profiles?.map(p => p.versionLabel || 'V1') || [])).sort(), 
   [profiles]);
 
-  // Filtering Logic
   const filteredProfiles = useMemo(() => {
     if (!profiles) return [];
     
     return profiles.filter(p => {
-      // 1. Search
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const matchesSearch = 
@@ -143,28 +134,17 @@ export default function JobProfilesManagementPage() {
           p.jobProfileId.toLowerCase().includes(term);
         if (!matchesSearch) return false;
       }
-
-      // 2. Department
       if (filters.department !== 'all' && (p.departmentName || 'Non renseigné') !== filters.department) return false;
-
-      // 3. Status
       if (filters.status !== 'all' && p.status !== filters.status) return false;
-
-      // 4. Version
       if (filters.version !== 'all' && (p.versionLabel || 'V1') !== filters.version) return false;
-
-      // 5. Date Range
       if (filters.dateRange.from || filters.dateRange.to) {
         const pDate = parseSafeDate(p.lastModifiedAt) || parseSafeDate(p.updatedAt);
         if (!pDate) return false;
-
         const from = filters.dateRange.from ? startOfDay(filters.dateRange.from) : undefined;
         const to = filters.dateRange.to ? endOfDay(filters.dateRange.to) : undefined;
-
         if (from && pDate < from) return false;
         if (to && pDate > to) return false;
       }
-
       return true;
     });
   }, [profiles, filters]);
@@ -248,7 +228,6 @@ export default function JobProfilesManagementPage() {
       </div>
 
       <div className="space-y-6">
-        {/* Advanced Filter Bar */}
         <div className="flex flex-col gap-4">
           <div className="flex flex-col lg:flex-row lg:items-center gap-3">
             <div className="relative w-full lg:max-w-md shrink-0">
@@ -260,10 +239,8 @@ export default function JobProfilesManagementPage() {
                 onChange={(e) => updateFilter('search', e.target.value)} 
               />
             </div>
-
             <ScrollArea className="w-full whitespace-nowrap lg:flex-1">
               <div className="flex items-center gap-3 p-1">
-                {/* Department (Always visible) */}
                 <FilterDropdown 
                   label="Département" 
                   value={filters.department} 
@@ -271,8 +248,6 @@ export default function JobProfilesManagementPage() {
                   options={uniqueDepartments.map(d => ({ label: d, value: d }))}
                   icon={Building2}
                 />
-
-                {/* Optional Status */}
                 {visibleFilters.includes('status') && (
                   <FilterDropdown 
                     label="Statut" 
@@ -286,8 +261,6 @@ export default function JobProfilesManagementPage() {
                     icon={Settings2}
                   />
                 )}
-
-                {/* Optional Version */}
                 {visibleFilters.includes('version') && (
                   <FilterDropdown 
                     label="Version" 
@@ -297,8 +270,6 @@ export default function JobProfilesManagementPage() {
                     icon={History}
                   />
                 )}
-
-                {/* Optional Date */}
                 {visibleFilters.includes('date') && (
                   <Popover>
                     <PopoverTrigger asChild>
@@ -328,10 +299,7 @@ export default function JobProfilesManagementPage() {
                     </PopoverContent>
                   </Popover>
                 )}
-
                 <div className="h-8 w-px bg-border mx-1" />
-
-                {/* Add Filter Menu */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm" className="h-10 gap-2 text-primary font-bold">
@@ -339,22 +307,13 @@ export default function JobProfilesManagementPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem 
-                      onClick={() => toggleFilterVisibility('status')}
-                      className={cn("gap-2", visibleFilters.includes('status') && "text-primary font-bold")}
-                    >
+                    <DropdownMenuItem onClick={() => toggleFilterVisibility('status')} className={cn("gap-2", visibleFilters.includes('status') && "text-primary font-bold")}>
                       <Settings2 className="w-4 h-4" /> Statut {visibleFilters.includes('status') && "✓"}
                     </DropdownMenuItem>
-                    <DropdownMenuItem 
-                      onClick={() => toggleFilterVisibility('version')}
-                      className={cn("gap-2", visibleFilters.includes('version') && "text-primary font-bold")}
-                    >
+                    <DropdownMenuItem onClick={() => toggleFilterVisibility('version')} className={cn("gap-2", visibleFilters.includes('version') && "text-primary font-bold")}>
                       <History className="w-4 h-4" /> Version {visibleFilters.includes('version') && "✓"}
                     </DropdownMenuItem>
-                    <DropdownMenuItem 
-                      onClick={() => toggleFilterVisibility('date')}
-                      className={cn("gap-2", visibleFilters.includes('date') && "text-primary font-bold")}
-                    >
+                    <DropdownMenuItem onClick={() => toggleFilterVisibility('date')} className={cn("gap-2", visibleFilters.includes('date') && "text-primary font-bold")}>
                       <CalendarIcon className="w-4 h-4" /> Date de modification {visibleFilters.includes('date') && "✓"}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
@@ -367,35 +326,26 @@ export default function JobProfilesManagementPage() {
               <ScrollBar orientation="horizontal" />
             </ScrollArea>
           </div>
-
-          {/* Active Chips */}
           <div className="flex flex-wrap items-center gap-2 px-1 min-h-[32px]">
             {Object.entries(filters).map(([key, value]) => {
               if (key === 'search' || key === 'dateRange') return null;
               if (value === 'all') return null;
-              
               let label = value;
               if (key === 'status') label = value === 'active' ? 'Actif' : value === 'inactive' ? 'Inactif' : 'Archivé';
               if (key === 'department') label = `Dépt: ${value}`;
-
               return (
                 <Badge key={key} variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
                   {label}
-                  <button onClick={() => removeFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5">
-                    <X className="h-2.5 w-2.5" />
-                  </button>
+                  <button onClick={() => removeFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5"><X className="h-2.5 w-2.5" /></button>
                 </Badge>
               );
             })}
             {(filters.dateRange.from || filters.dateRange.to) && (
               <Badge variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
                 Période: {filters.dateRange.from ? format(filters.dateRange.from, "dd/MM") : '?'} - {filters.dateRange.to ? format(filters.dateRange.to, "dd/MM") : '?'}
-                <button onClick={() => removeFilter('dateRange')} className="hover:bg-primary/10 rounded-full p-0.5">
-                  <X className="h-2.5 w-2.5" />
-                </button>
+                <button onClick={() => removeFilter('dateRange')} className="hover:bg-primary/10 rounded-full p-0.5"><X className="h-2.5 w-2.5" /></button>
               </Badge>
             )}
-            
             {filteredProfiles.length > 0 && !loadingProfiles && (
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest ml-auto mr-2">
                 {filteredProfiles.length} fiche{filteredProfiles.length > 1 ? 's' : ''} trouvée{filteredProfiles.length > 1 ? 's' : ''}
@@ -403,7 +353,6 @@ export default function JobProfilesManagementPage() {
             )}
           </div>
         </div>
-
         <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
           <Table>
             <TableHeader>
@@ -434,7 +383,12 @@ export default function JobProfilesManagementPage() {
                   <TableRow key={p.jobProfileId} className="hover:bg-muted/50 transition-colors">
                     <TableCell>
                       <div className="font-bold text-primary">{p.jobTitleName}</div>
-                      <div className="text-[10px] text-muted-foreground uppercase font-mono mt-1 opacity-60">ID: {p.jobProfileId.substring(0,8)}...</div>
+                      {p.defaultCcnlName && (
+                        <div className="flex items-center gap-1.5 text-[9px] font-bold text-accent uppercase mt-1">
+                          <Scale className="w-2.5 h-2.5" />
+                          <span>{p.defaultCcnlName} • {p.defaultLevelCode || "Sél. Niveau"}</span>
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
                        <div className="flex items-center gap-1.5 text-sm font-medium">
@@ -458,15 +412,10 @@ export default function JobProfilesManagementPage() {
                           <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
-                          <DropdownMenuItem 
-                            onClick={() => router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`)}
-                            className="gap-2 text-primary font-bold"
-                          >
+                          <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`)} className="gap-2 text-primary font-bold">
                             <Eye className="w-4 h-4" /> Consulter / Imprimer
                           </DropdownMenuItem>
-                          
                           <DropdownMenuSeparator />
-
                           {canUpdate && (
                             <>
                               <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/edit`)} className="gap-2">
@@ -493,25 +442,17 @@ export default function JobProfilesManagementPage() {
           </Table>
         </Card>
       </div>
-
-      {/* Status AlertDialog */}
       <AlertDialog open={!!statusChange} onOpenChange={() => setStatusChange(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmation</AlertDialogTitle>
             <AlertDialogDescription>
-              {statusChange?.action === 'disable' 
-                ? "Souhaitez-vous désactiver cette fiche de poste ? Elle ne sera plus proposée pour les recrutements."
-                : "Souhaitez-vous réactiver cette fiche de poste ?"}
+              {statusChange?.action === 'disable' ? "Souhaitez-vous désactiver cette fiche de poste ? Elle ne sera plus proposée pour les recrutements." : "Souhaitez-vous réactiver cette fiche de poste ?"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={(e) => { e.preventDefault(); executeStatusChange(); }}
-              className={statusChange?.action === 'disable' ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}
-              disabled={loading}
-            >
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); executeStatusChange(); }} className={statusChange?.action === 'disable' ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"} disabled={loading}>
               {loading ? "Traitement..." : "Confirmer"}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -521,25 +462,10 @@ export default function JobProfilesManagementPage() {
   );
 }
 
-function FilterDropdown({ 
-  label, 
-  value, 
-  onValueChange, 
-  options,
-  icon: Icon
-}: { 
-  label: string, 
-  value: string, 
-  onValueChange: (v: string) => void, 
-  options: { label: string, value: string }[],
-  icon?: any
-}) {
+function FilterDropdown({ label, value, onValueChange, options, icon: Icon }: { label: string, value: string, onValueChange: (v: string) => void, options: { label: string, value: string }[], icon?: any }) {
   return (
     <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger className={cn(
-        "h-10 w-auto min-w-[150px] text-xs font-medium bg-background border-primary/10",
-        value !== 'all' && "border-primary ring-1 ring-primary/10"
-      )}>
+      <SelectTrigger className={cn("h-10 w-auto min-w-[150px] text-xs font-medium bg-background border-primary/10", value !== 'all' && "border-primary ring-1 ring-primary/10")}>
         <div className="flex items-center gap-2">
           {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" />}
           <span className="text-muted-foreground">{label}:</span>

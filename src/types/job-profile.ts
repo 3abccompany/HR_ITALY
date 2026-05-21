@@ -30,6 +30,15 @@ export interface JobProfile {
   softSkills: string[];
   status: JobProfileStatus;
   notes?: string;
+
+  // Internal Contractual Recommendations (Milestone 7K-B)
+  defaultCcnlId?: string;
+  defaultCcnlName?: string;
+  defaultLevelId?: string;
+  defaultLevelCode?: string;
+  defaultLevelLabel?: string;
+  defaultContractType?: string;
+  defaultWeeklyHours?: number;
   
   // Versioning
   version: number;
