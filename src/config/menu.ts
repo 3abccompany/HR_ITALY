@@ -19,6 +19,7 @@ import {
   Stethoscope, 
   BarChart, 
   Settings,
+  Library,
   LucideIcon
 } from "lucide-react";
 
@@ -39,6 +40,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Fiches de postes", href: "job-profiles", permission: "jobProfiles.read", icon: FileBadge },
   { label: "Besoins RH", href: "recruitment-needs", permission: "recruitmentNeeds.read", icon: Briefcase },
   { label: "Formulaires de candidature", href: "application-forms", permission: "applicationForms.read", icon: FileCode },
+  { label: "Référentiel CCNL", href: "ccnls", permission: "settings.read", icon: Library },
   { label: "Employés", href: "employees", permission: "employees.read", icon: UserCheck },
   { label: "Contrats", href: "contracts", permission: "contracts.read", icon: FileText },
   { label: "Documents", href: "documents", permission: "documents.read", icon: FolderOpen },
