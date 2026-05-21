@@ -98,6 +98,20 @@ type SortConfig = {
   direction: 'asc' | 'desc' | null;
 };
 
+const STATUS_ORDER: CandidateStatus[] = [
+  "new",
+  "under_review",
+  "shortlisted",
+  "interview_to_schedule",
+  "interview_scheduled",
+  "interview_completed",
+  "accepted",
+  "hired",
+  "rejected",
+  "archived",
+  "inactive"
+];
+
 /**
  * Robust date parser for mixed formats.
  */
@@ -260,7 +274,7 @@ export default function CandidatesManagementPage() {
     setPagination(p => ({ ...p, page: 1 }));
   }, [filters, pagination.pageSize, sort]);
 
-  // 4. Grouping Logic (Applied to Paginated Set for consistency, or Filtered Set depending on preference)
+  // 4. Grouping Logic
   const groupedData = useMemo(() => {
     if (groupBy === 'none') return null;
 
@@ -288,6 +302,19 @@ export default function CandidatesManagementPage() {
 
     return groups;
   }, [paginatedCandidates, groupBy]);
+
+  const groupedByStatus = useMemo(() => {
+    if (filters.status !== 'all' || groupBy !== 'none') return null;
+
+    const groups: Record<string, Candidate[]> = {};
+    paginatedCandidates.forEach(c => {
+      const status = c.status || 'new';
+      if (!groups[status]) groups[status] = [];
+      groups[status].push(c);
+    });
+
+    return groups;
+  }, [paginatedCandidates, filters.status, groupBy]);
 
   // Dynamic values for dropdowns
   const uniqueJobs = useMemo(() => Array.from(new Set(candidates?.map(c => c.positionApplied || 'Non renseigné') || [])).sort(), [candidates]);
@@ -600,17 +627,54 @@ export default function CandidatesManagementPage() {
         </div>
 
         {/* Main Content Area */}
-        <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
-          <div className="overflow-x-auto">
-            {loadingCandidates ? (
-              <div className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></div>
-            ) : filteredCandidates.length === 0 ? (
-              <div className="py-20 text-center text-muted-foreground flex flex-col items-center gap-3">
+        <div className="min-h-0">
+          {loadingCandidates ? (
+            <div className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></div>
+          ) : filteredCandidates.length === 0 ? (
+            <Card className="border-dashed border-2 py-20">
+              <div className="text-center py-20 text-muted-foreground flex flex-col items-center gap-3">
                 <ListFilterIcon className="h-10 w-10 opacity-20" />
                 <p className="font-medium">Aucun candidat ne correspond à vos critères.</p>
                 <Button variant="outline" size="sm" onClick={handleResetFilters}>Effacer les filtres</Button>
               </div>
-            ) : groupBy === 'none' ? (
+            </Card>
+          ) : groupedByStatus ? (
+            /* Grouped by Status Sections View */
+            <div className="space-y-10">
+              {STATUS_ORDER.map(statusKey => {
+                const group = groupedByStatus[statusKey] || [];
+                if (group.length === 0) return null;
+
+                return (
+                  <div key={statusKey} className="space-y-4">
+                    <div className="flex items-center gap-3 px-1">
+                      <h2 className="font-black text-sm uppercase tracking-wider text-primary">
+                        {CANDIDATE_STATUS_LABELS[statusKey]}
+                      </h2>
+                      <Badge variant="secondary" className="h-5 px-1.5 min-w-[1.5rem] flex items-center justify-center font-bold">
+                        {group.length}
+                      </Badge>
+                    </div>
+                    <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
+                      <CandidateTable 
+                        candidates={group} 
+                        selectedId={selectedCandidate?.candidateId} 
+                        onSelect={setSelectedCandidate}
+                        canUpdate={canUpdate}
+                        onEdit={handleEdit}
+                        onDisable={setDisablingId}
+                        onReactivate={setReactivatingId}
+                        sort={sort}
+                        onSort={handleToggleSort}
+                      />
+                    </Card>
+                  </div>
+                );
+              })}
+            </div>
+          ) : groupBy === 'none' ? (
+            /* Flat Table View (Single status filter active) */
+            <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
               <CandidateTable 
                 candidates={paginatedCandidates} 
                 selectedId={selectedCandidate?.candidateId} 
@@ -622,119 +686,120 @@ export default function CandidatesManagementPage() {
                 sort={sort}
                 onSort={handleToggleSort}
               />
-            ) : (
-              <div className="p-4 space-y-4">
-                <Accordion type="multiple" defaultValue={Object.keys(groupedData || {})} className="space-y-4">
-                  {Object.entries(groupedData || {}).map(([groupName, content]) => {
-                    const count = groupBy === 'status_then_job' 
-                      ? Object.values(content).reduce((sum: number, arr: any) => sum + arr.length, 0)
-                      : (content as any[]).length;
+            </Card>
+          ) : (
+            /* Custom GroupBy Accordion View */
+            <div className="space-y-4">
+              <Accordion type="multiple" defaultValue={Object.keys(groupedData || {})} className="space-y-4">
+                {Object.entries(groupedData || {}).map(([groupName, content]) => {
+                  const count = groupBy === 'status_then_job' 
+                    ? Object.values(content).reduce((sum: number, arr: any) => sum + arr.length, 0)
+                    : (content as any[]).length;
 
-                    return (
-                      <AccordionItem key={groupName} value={groupName} className="border rounded-2xl bg-card overflow-hidden">
-                        <AccordionTrigger className="hover:no-underline px-6 py-4 bg-secondary/10">
-                          <div className="flex items-center gap-3">
-                            <span className="font-black text-sm uppercase tracking-wider text-primary">{groupName}</span>
-                            <Badge variant="secondary" className="h-5 px-1.5 min-w-[1.5rem] flex items-center justify-center font-bold">{count}</Badge>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="pb-0">
-                          {groupBy === 'status_then_job' ? (
-                            <div className="space-y-4 p-4">
-                              {Object.entries(content).map(([jobName, candidatesList]: [string, any]) => (
-                                <div key={jobName} className="space-y-2">
-                                  <div className="flex items-center gap-2 px-2">
-                                    <Briefcase className="h-3 w-3 text-muted-foreground" />
-                                    <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{jobName} ({candidatesList.length})</span>
-                                  </div>
-                                  <div className="border rounded-xl overflow-hidden">
-                                    <CandidateTable 
-                                      candidates={candidatesList} 
-                                      selectedId={selectedCandidate?.candidateId} 
-                                      onSelect={setSelectedCandidate}
-                                      canUpdate={canUpdate}
-                                      onEdit={handleEdit}
-                                      onDisable={setDisablingId}
-                                      onReactivate={setReactivatingId}
-                                      compact
-                                      sort={sort}
-                                      onSort={handleToggleSort}
-                                    />
-                                  </div>
+                  return (
+                    <AccordionItem key={groupName} value={groupName} className="border rounded-2xl bg-card overflow-hidden">
+                      <AccordionTrigger className="hover:no-underline px-6 py-4 bg-secondary/10">
+                        <div className="flex items-center gap-3">
+                          <span className="font-black text-sm uppercase tracking-wider text-primary">{groupName}</span>
+                          <Badge variant="secondary" className="h-5 px-1.5 min-w-[1.5rem] flex items-center justify-center font-bold">{count}</Badge>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="pb-0">
+                        {groupBy === 'status_then_job' ? (
+                          <div className="space-y-4 p-4">
+                            {Object.entries(content).map(([jobName, candidatesList]: [string, any]) => (
+                              <div key={jobName} className="space-y-2">
+                                <div className="flex items-center gap-2 px-2">
+                                  <Briefcase className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{jobName} ({candidatesList.length})</span>
                                 </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <CandidateTable 
-                              candidates={content as any[]} 
-                              selectedId={selectedCandidate?.candidateId} 
-                              onSelect={setSelectedCandidate}
-                              canUpdate={canUpdate}
-                              onEdit={handleEdit}
-                              onDisable={setDisablingId}
-                              onReactivate={setReactivatingId}
-                              sort={sort}
-                              onSort={handleToggleSort}
-                            />
-                          )}
-                        </AccordionContent>
-                      </AccordionItem>
-                    );
-                  })}
-                </Accordion>
-              </div>
-            )}
-          </div>
-          
-          {/* Pagination Footer */}
-          {!loadingCandidates && filteredCandidates.length > 0 && (
-            <div className="border-t bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Lignes par page:</span>
-                  <Select 
-                    value={String(pagination.pageSize)} 
-                    onValueChange={(v) => setPagination(p => ({ ...p, pageSize: Number(v), page: 1 }))}
-                  >
-                    <SelectTrigger className="h-7 w-20 text-[10px] font-bold">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">10</SelectItem>
-                      <SelectItem value="25">25</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
-                      <SelectItem value="100">100</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <span className="text-[10px] font-bold text-muted-foreground uppercase">
-                  Page {pagination.page} sur {Math.max(1, totalPages)}
-                </span>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  className="h-8 w-8" 
-                  onClick={() => setPagination(p => ({ ...p, page: p.page - 1 }))}
-                  disabled={pagination.page <= 1}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  className="h-8 w-8" 
-                  onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
-                  disabled={pagination.page >= totalPages}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
+                                <div className="border rounded-xl overflow-hidden">
+                                  <CandidateTable 
+                                    candidates={candidatesList} 
+                                    selectedId={selectedCandidate?.candidateId} 
+                                    onSelect={setSelectedCandidate}
+                                    canUpdate={canUpdate}
+                                    onEdit={handleEdit}
+                                    onDisable={setDisablingId}
+                                    onReactivate={setReactivatingId}
+                                    compact
+                                    sort={sort}
+                                    onSort={handleToggleSort}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <CandidateTable 
+                            candidates={content as any[]} 
+                            selectedId={selectedCandidate?.candidateId} 
+                            onSelect={setSelectedCandidate}
+                            canUpdate={canUpdate}
+                            onEdit={handleEdit}
+                            onDisable={setDisablingId}
+                            onReactivate={setReactivatingId}
+                            sort={sort}
+                            onSort={handleToggleSort}
+                          />
+                        )}
+                      </AccordionContent>
+                    </AccordionItem>
+                  );
+                })}
+              </Accordion>
             </div>
           )}
-        </Card>
+        </div>
+        
+        {/* Pagination Footer */}
+        {!loadingCandidates && filteredCandidates.length > 0 && (
+          <div className="mt-4 border rounded-xl bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-muted-foreground">Lignes par page:</span>
+                <Select 
+                  value={String(pagination.pageSize)} 
+                  onValueChange={(v) => setPagination(p => ({ ...p, pageSize: Number(v), page: 1 }))}
+                >
+                  <SelectTrigger className="h-7 w-20 text-[10px] font-bold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                Page {pagination.page} sur {Math.max(1, totalPages)}
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="outline" 
+                size="icon" 
+                className="h-8 w-8" 
+                onClick={() => setPagination(p => ({ ...p, page: p.page - 1 }))}
+                disabled={pagination.page <= 1}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Button 
+                variant="outline" 
+                size="icon" 
+                className="h-8 w-8" 
+                onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
+                disabled={pagination.page >= totalPages}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Review Side Drawer */}
