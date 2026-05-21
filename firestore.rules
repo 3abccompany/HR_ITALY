@@ -130,6 +130,16 @@ service cloud.firestore {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'candidates.decide') || hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'persons.update') || hasPermission(entityId, 'interviews.create') || isPlatformAdmin();
       }
+
+      match /ccnls/{ccnlId} {
+        allow read: if hasPermission(entityId, 'settings.read') || hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+
+        match /levels/{levelId} {
+          allow read: if hasPermission(entityId, 'settings.read') || hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+          allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+        }
+      }
     }
 
     // --- Global Reference Data ---
