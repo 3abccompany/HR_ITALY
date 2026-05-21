@@ -132,11 +132,23 @@ service cloud.firestore {
       }
 
       match /ccnls/{ccnlId} {
-        allow read: if hasPermission(entityId, 'settings.read') || hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'settings.read') || 
+                     hasPermission(entityId, 'settings.manage') ||
+                     ((hasPermission(entityId, 'jobProfiles.read') || 
+                       hasPermission(entityId, 'jobProfiles.create') || 
+                       hasPermission(entityId, 'jobProfiles.update')) && 
+                      resource.data.status == 'active') ||
+                     isPlatformAdmin();
         allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
 
         match /levels/{levelId} {
-          allow read: if hasPermission(entityId, 'settings.read') || hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+          allow read: if hasPermission(entityId, 'settings.read') || 
+                       hasPermission(entityId, 'settings.manage') ||
+                       ((hasPermission(entityId, 'jobProfiles.read') || 
+                         hasPermission(entityId, 'jobProfiles.create') || 
+                         hasPermission(entityId, 'jobProfiles.update')) && 
+                        resource.data.status == 'active') ||
+                       isPlatformAdmin();
           allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
         }
       }

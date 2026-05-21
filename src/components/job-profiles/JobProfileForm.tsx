@@ -68,7 +68,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   const router = useRouter();
   const { db } = useFirebase();
   const { toast } = useToast();
-  const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
+  const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
   
   const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
@@ -80,32 +80,36 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
     softSkill: ""
   });
 
+  // Permissions check for queries
+  const canReadProfiles = !membershipLoading && !!membership && hasPermission("jobProfiles.read");
+  const canModifyProfiles = !membershipLoading && !!membership && (hasPermission("jobProfiles.create") || hasPermission("jobProfiles.update"));
+
   // Masters
   const deptsQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || !canReadProfiles) return null;
     return query(collection(db, `entities/${entityId}/departments`), orderBy("name", "asc"));
-  }, [db, entityId]);
+  }, [db, entityId, canReadProfiles]);
 
   const jobsQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || !canReadProfiles) return null;
     return query(collection(db, `entities/${entityId}/jobTitles`), orderBy("title", "asc"));
-  }, [db, entityId]);
+  }, [db, entityId, canReadProfiles]);
 
   const catalogQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || !canReadProfiles) return null;
     return query(collection(db, `entities/${entityId}/jobProfileCatalogItems`), orderBy("label", "asc"));
-  }, [db, entityId]);
+  }, [db, entityId, canReadProfiles]);
 
   // CCNL / Levels
   const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || (!canReadProfiles && !canModifyProfiles)) return null;
     return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active"));
-  }, [db, entityId]);
+  }, [db, entityId, canReadProfiles, canModifyProfiles]);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !formData.defaultCcnlId) return null;
+    if (!db || !entityId || !formData.defaultCcnlId || (!canReadProfiles && !canModifyProfiles)) return null;
     return query(collection(db, `entities/${entityId}/ccnls/${formData.defaultCcnlId}/levels`), where("status", "==", "active"));
-  }, [db, entityId, formData.defaultCcnlId]);
+  }, [db, entityId, formData.defaultCcnlId, canReadProfiles, canModifyProfiles]);
 
   const { data: departments } = useCollection<Department>(deptsQuery);
   const { data: jobTitles } = useCollection<JobTitle>(jobsQuery);
