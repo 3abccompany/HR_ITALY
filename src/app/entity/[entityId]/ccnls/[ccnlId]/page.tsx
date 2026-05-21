@@ -35,12 +35,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 
+// Use strings for numeric inputs in form state to allow empty values while typing
 const initialLevelForm = {
   levelCode: "",
   label: "",
   qualificationLabel: "",
-  minimumGrossMonthly: 0,
-  minimumGrossHourly: 0,
+  minimumGrossMonthly: "0",
+  minimumGrossHourly: "0",
   effectiveFrom: new Date().toISOString().split('T')[0],
   notes: ""
 };
@@ -83,8 +84,8 @@ export default function CcnlLevelsPage() {
       levelCode: l.levelCode,
       label: l.label,
       qualificationLabel: l.qualificationLabel,
-      minimumGrossMonthly: l.minimumGrossMonthly,
-      minimumGrossHourly: l.minimumGrossHourly,
+      minimumGrossMonthly: l.minimumGrossMonthly.toString(),
+      minimumGrossHourly: l.minimumGrossHourly.toString(),
       effectiveFrom: l.effectiveFrom,
       notes: l.notes || ""
     });
@@ -96,6 +97,32 @@ export default function CcnlLevelsPage() {
     e.preventDefault();
     if (!user) return;
 
+    // Numeric Validation
+    const mStr = formData.minimumGrossMonthly.toString().trim().replace(',', '.');
+    const hStr = formData.minimumGrossHourly.toString().trim().replace(',', '.');
+
+    if (mStr === "") {
+      toast({ variant: "destructive", title: "Erreur", description: "Le brut mensuel minimum est obligatoire." });
+      return;
+    }
+    if (hStr === "") {
+      toast({ variant: "destructive", title: "Erreur", description: "Le brut horaire minimum est obligatoire." });
+      return;
+    }
+
+    const monthlyNum = Number(mStr);
+    const hourlyNum = Number(hStr);
+
+    if (isNaN(monthlyNum) || isNaN(hourlyNum)) {
+      toast({ variant: "destructive", title: "Erreur", description: "Veuillez saisir des montants valides." });
+      return;
+    }
+
+    if (monthlyNum < 0 || hourlyNum < 0) {
+      toast({ variant: "destructive", title: "Erreur", description: "Le montant ne peut pas être négatif." });
+      return;
+    }
+
     if (levels?.some(l => l.levelCode === formData.levelCode && l.levelId !== editingLevelId && l.status === "active")) {
         toast({ variant: "destructive", title: "Doublon", description: "Ce code de niveau est déjà actif pour ce CCNL." });
         return;
@@ -103,11 +130,17 @@ export default function CcnlLevelsPage() {
 
     setLoading(true);
     try {
+      const finalPayload = {
+        ...formData,
+        minimumGrossMonthly: monthlyNum,
+        minimumGrossHourly: hourlyNum
+      };
+
       if (editingLevelId) {
-        await updateCcnlLevel(entityId, ccnlId, editingLevelId, formData, user.uid);
+        await updateCcnlLevel(entityId, ccnlId, editingLevelId, finalPayload, user.uid);
         toast({ title: "Niveau mis à jour" });
       } else {
-        await createCcnlLevel(entityId, ccnlId, formData, user.uid);
+        await createCcnlLevel(entityId, ccnlId, finalPayload, user.uid);
         toast({ title: "Niveau ajouté" });
       }
       handleReset();
@@ -266,11 +299,21 @@ export default function CcnlLevelsPage() {
             <div className="grid grid-cols-2 gap-4 pt-2 border-t">
                <div className="space-y-2">
                  <Label className="flex items-center gap-1"><Euro className="w-3 h-3" /> Brut Mensuel Min.</Label>
-                 <Input type="number" step="0.01" value={formData.minimumGrossMonthly} onChange={(e) => setFormData(p => ({...p, minimumGrossMonthly: parseFloat(e.target.value)}))} required />
+                 <Input 
+                   type="text" 
+                   inputMode="decimal"
+                   value={formData.minimumGrossMonthly} 
+                   onChange={(e) => setFormData(p => ({...p, minimumGrossMonthly: e.target.value}))} 
+                 />
                </div>
                <div className="space-y-2">
                  <Label className="flex items-center gap-1"><Euro className="w-3 h-3" /> Brut Horaire Min.</Label>
-                 <Input type="number" step="0.0001" value={formData.minimumGrossHourly} onChange={(e) => setFormData(p => ({...p, minimumGrossHourly: parseFloat(e.target.value)}))} required />
+                 <Input 
+                   type="text" 
+                   inputMode="decimal"
+                   value={formData.minimumGrossHourly} 
+                   onChange={(e) => setFormData(p => ({...p, minimumGrossHourly: e.target.value}))} 
+                 />
                </div>
             </div>
 
