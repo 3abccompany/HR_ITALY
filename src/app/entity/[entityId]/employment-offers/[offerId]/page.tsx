@@ -79,7 +79,6 @@ export default function EditEmploymentOfferPage() {
   // Queries for selectors
   const ccnlsQuery = useMemo(() => {
     if (!db || !entityId) return null;
-    // Allow users with contract permissions to read active CCNLs
     return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active"));
   }, [db, entityId]);
 
@@ -147,6 +146,18 @@ export default function EditEmploymentOfferPage() {
     }));
   };
 
+  const isFixedTermContract = (type?: string): boolean => {
+    const value = (type ?? "").trim().toLowerCase();
+    const fixedTermKeys = [
+      "tempo determinato",
+      "cdd",
+      "fixed_term",
+      "fixed term",
+      "determinato"
+    ];
+    return fixedTermKeys.includes(value);
+  };
+
   const validateStatusChange = (targetStatus: EmploymentOfferStatus) => {
     if (targetStatus !== 'ready_to_send') return true;
 
@@ -164,8 +175,7 @@ export default function EditEmploymentOfferPage() {
     }
 
     // Fixed-term validation
-    const isFixedTerm = ["Tempo indeterminato", "fixed_term", "determinato"].some(s => formData.contractType?.toLowerCase().includes(s.toLowerCase()));
-    if (isFixedTerm && !formData.proposedEndDate) {
+    if (isFixedTermContract(formData.contractType) && !formData.proposedEndDate) {
       toast({ variant: "destructive", title: "Validation échouée", description: "Une date de fin est obligatoire pour un contrat à durée déterminée." });
       return false;
     }
@@ -213,7 +223,7 @@ export default function EditEmploymentOfferPage() {
       
       toast({ 
         title: targetStatus !== formData.status ? "Statut mis à jour" : "Proposition enregistrée", 
-        description: targetStatus !== formData.status ? `La proposition est maintenant en statut: ${getStatusLabel(targetStatus)}` : "Les informations ont été mises à jour." 
+        description: targetStatus !== formData.status ? `La proposition est maintenant en statut: ${targetStatus}` : "Les informations ont été mises à jour." 
       });
     } catch (err: any) {
       console.error("Save error:", err);
@@ -248,12 +258,7 @@ export default function EditEmploymentOfferPage() {
     if (!offer) return "";
     if (offer.recruitmentNeedTitle) return offer.recruitmentNeedTitle;
     if (!offer.recruitmentNeedId) return "Saisie directe";
-    
-    if (offer.jobTitleName) {
-      return `${offer.jobTitleName}${offer.departmentName ? ` — ${offer.departmentName}` : ""}`;
-    }
-    
-    return "Besoin RH lié";
+    return offer.jobTitleName || "Besoin RH lié";
   }, [offer]);
 
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
@@ -271,7 +276,7 @@ export default function EditEmploymentOfferPage() {
           <div className="space-y-0.5">
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-black text-primary tracking-tight truncate max-w-[300px] md:max-w-md">
-                {offer.candidateDisplayName || "Candidat"}
+                Proposition : {offer.candidateDisplayName}
               </h1>
               {getStatusBadge(offer.status)}
             </div>
@@ -298,13 +303,13 @@ export default function EditEmploymentOfferPage() {
 
               {offer.status === 'internal_review' && (
                 <Button variant="ghost" onClick={() => handleSave('draft')} disabled={saving} className="gap-2">
-                  <Undo2 className="w-4 h-4" /> Retour en brouillon
+                  <Undo2 className="w-4 h-4" /> Revenir en brouillon
                 </Button>
               )}
 
               {offer.status !== 'ready_to_send' && (
                 <Button onClick={() => handleSave('ready_to_send')} disabled={saving} className="gap-2 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 font-bold">
-                  <CheckCircle2 className="w-4 h-4" /> Prêt à envoyer
+                  <CheckCircle2 className="w-4 h-4" /> Prête à envoyer
                 </Button>
               )}
 
@@ -324,7 +329,7 @@ export default function EditEmploymentOfferPage() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Annuler la proposition ?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Cette action est définitive pour ce projet. Le candidat ne pourra jamais recevoir cette version de l'offre.
+                      Cette action est définitive pour ce projet d'offre.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -344,18 +349,6 @@ export default function EditEmploymentOfferPage() {
         </div>
       </header>
 
-      {isCancelled && (
-        <div className="mb-8 p-6 bg-red-50 border border-red-100 rounded-3xl flex items-start gap-4 animate-in fade-in slide-in-from-top-4">
-           <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
-           <div>
-              <h3 className="font-bold text-red-900">Document archivé (Annulé)</h3>
-              <p className="text-sm text-red-700 leading-relaxed">
-                Cette proposition a été annulée. Elle reste consultable pour l'historique mais ne peut plus être modifiée.
-              </p>
-           </div>
-        </div>
-      )}
-
       <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-8", isCancelled && "opacity-60 pointer-events-none")}>
         <div className="lg:col-span-2 space-y-8">
           
@@ -363,7 +356,7 @@ export default function EditEmploymentOfferPage() {
           <Card className="border-primary/10 shadow-xl shadow-primary/5 overflow-hidden rounded-3xl">
             <CardHeader className="bg-primary/5 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
-                <User className="w-4 h-4" /> Candidat & Poste d'affectation
+                <User className="w-4 h-4" /> Candidat & Poste
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6 space-y-6">
@@ -377,12 +370,11 @@ export default function EditEmploymentOfferPage() {
                   <p className="text-xs text-muted-foreground pl-6">{offer.candidateEmail}</p>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Intitulé du poste (Cible)</Label>
+                  <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Intitulé du poste</Label>
                   <Input 
                     value={formData.jobTitleName || ""} 
                     onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))}
                     className="h-10 font-bold text-primary border-primary/20 bg-white rounded-xl"
-                    placeholder="Ex: Responsable d'exploitation..."
                   />
                   <p className="text-[10px] text-muted-foreground uppercase font-bold pl-2 pt-1">{offer.departmentName}</p>
                 </div>
@@ -397,7 +389,7 @@ export default function EditEmploymentOfferPage() {
                    </div>
                 </div>
                 <div className="space-y-1">
-                   <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Source Recrutement</Label>
+                   <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Besoin RH source</Label>
                    <div className="flex items-center gap-2 h-10 px-3 bg-slate-50 border rounded-xl text-[11px] font-bold text-primary truncate" title={recruitmentNeedLabel}>
                       <Briefcase className="w-4 h-4 text-primary/40" />
                       {recruitmentNeedLabel}
@@ -411,7 +403,7 @@ export default function EditEmploymentOfferPage() {
           <Card className="border-primary/10 shadow-xl shadow-primary/5 overflow-hidden rounded-3xl">
             <CardHeader className="bg-primary/5 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
-                <Briefcase className="w-4 h-4" /> Paramètres du futur contrat
+                <Briefcase className="w-4 h-4" /> Paramètres contractuels
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6 space-y-6">
@@ -429,11 +421,11 @@ export default function EditEmploymentOfferPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de début (Prévue)</Label>
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de début</Label>
                   <Input type="date" value={formData.proposedStartDate || ""} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} required className="h-11 rounded-xl border-primary/20 bg-white" />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de fin (Si CDD)</Label>
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de fin (CDD)</Label>
                   <Input type="date" value={formData.proposedEndDate || ""} onChange={(e) => setFormData(p => ({...p, proposedEndDate: e.target.value}))} className="h-11 rounded-xl border-primary/20 bg-white" />
                 </div>
                 <div className="space-y-2">
@@ -459,8 +451,8 @@ export default function EditEmploymentOfferPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Notes sur l'organisation / Horaires</Label>
-                <Textarea value={formData.workingScheduleNotes || ""} onChange={(e) => setFormData(p => ({...p, workingScheduleNotes: e.target.value}))} placeholder="Ex: Travail posté, temps partiel 80%..." className="min-h-[100px] rounded-xl border-primary/20 bg-white" />
+                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Notes organisation / Horaires</Label>
+                <Textarea value={formData.workingScheduleNotes || ""} onChange={(e) => setFormData(p => ({...p, workingScheduleNotes: e.target.value}))} placeholder="Ex: Travail posté, temps partiel..." className="min-h-[100px] rounded-xl border-primary/20 bg-white" />
               </div>
             </CardContent>
           </Card>
@@ -509,12 +501,12 @@ export default function EditEmploymentOfferPage() {
                   </div>
                </div>
                <div className="space-y-2">
-                 <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Primes, bonus et notes sur la paie</Label>
+                 <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Primes, bonus et notes paie</Label>
                  <Textarea 
                    className="bg-white rounded-xl border-accent/20 min-h-[100px]"
                    value={formData.salaryNotes || ""} 
                    onChange={(e) => setFormData(p => ({...p, salaryNotes: e.target.value}))} 
-                   placeholder="Ex: Prime de performance annuelle de 1500€..." 
+                   placeholder="Ex: Prime de performance de 1500€..." 
                  />
                </div>
             </CardContent>
@@ -528,13 +520,13 @@ export default function EditEmploymentOfferPage() {
           <Card className="border-primary/10 shadow-xl shadow-primary/5 overflow-hidden rounded-3xl">
             <CardHeader className="bg-secondary/40 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
-                <Scale className="w-4 h-4" /> Référentiel Grille (CCNL)
+                <Scale className="w-4 h-4" /> Grille Salariale (CCNL)
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6 space-y-6">
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label className="text-[9px] uppercase font-black text-muted-foreground tracking-widest">Contrat Collectif (CCNL)</Label>
+                  <Label className="text-[9px] uppercase font-black text-muted-foreground tracking-widest">CCNL</Label>
                   <Select 
                     value={formData.ccnlId || "none_clear"} 
                     onValueChange={handleCcnlChange}
@@ -589,7 +581,7 @@ export default function EditEmploymentOfferPage() {
           <Card className="border-primary/20 bg-primary/90 text-white shadow-2xl shadow-primary/20 rounded-3xl overflow-hidden">
              <CardHeader className="bg-white/10 py-4 border-b border-white/10">
                 <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                   <ClipboardList className="w-4 h-4" /> Résumé du projet
+                   <ClipboardList className="w-4 h-4" /> Résumé de la proposition
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-6 space-y-4">
@@ -614,7 +606,7 @@ export default function EditEmploymentOfferPage() {
                 <Separator className="bg-white/10" />
                 
                 <div className="flex justify-between items-center">
-                   <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Statut Interne</p>
+                   <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Statut</p>
                    {getStatusBadge(formData.status as any)}
                 </div>
              </CardContent>
@@ -628,7 +620,7 @@ export default function EditEmploymentOfferPage() {
                    value={formData.notes || ""} 
                    onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} 
                    className="min-h-[140px] text-xs bg-white/50 border-primary/10 rounded-2xl"
-                   placeholder="Ajoutez ici des commentaires sur la validation, les bonus négociés ou des clauses spécifiques..."
+                   placeholder="Commentaires sur la validation..."
                 />
              </CardContent>
           </Card>
@@ -645,16 +637,6 @@ function getStatusBadge(status: string | undefined) {
     case 'ready_to_send': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase text-[9px] font-black px-2 tracking-tighter">Prête</Badge>;
     case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase text-[9px] font-black px-2 tracking-tighter">Annulée</Badge>;
     default: return <Badge variant="outline" className="uppercase text-[9px] font-black px-2">Inconnu</Badge>;
-  }
-}
-
-function getStatusLabel(status: string) {
-  switch (status) {
-    case 'draft': return "Brouillon";
-    case 'internal_review': return "Validation interne";
-    case 'ready_to_send': return "Prêt à envoyer";
-    case 'cancelled': return "Annulé";
-    default: return status;
   }
 }
 
