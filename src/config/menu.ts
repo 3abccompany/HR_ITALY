@@ -1,4 +1,3 @@
-
 import { 
   LayoutDashboard, 
   Users, 
@@ -20,6 +19,8 @@ import {
   BarChart, 
   Settings,
   Library,
+  Scroll,
+  FileSignature,
   LucideIcon
 } from "lucide-react";
 
@@ -35,6 +36,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Personnes", href: "persons", permission: "persons.read", icon: Users },
   { label: "Candidats", href: "candidates", permission: "candidates.read", icon: Search },
   { label: "Entretiens", href: "interviews", permission: "interviews.read", icon: Calendar },
+  { label: "Propositions d'embauche", href: "employment-offers", permission: "contracts.read", icon: FileSignature },
   { label: "Départements", href: "departments", permission: "departments.read", icon: Building2 },
   { label: "Lieux de travail", href: "worksites", permission: "worksites.read", icon: MapPin },
   { label: "Fiches de postes", href: "job-profiles", permission: "jobProfiles.read", icon: FileBadge },

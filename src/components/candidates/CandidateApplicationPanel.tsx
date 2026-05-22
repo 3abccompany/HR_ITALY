@@ -6,7 +6,7 @@ import {
   AlertTriangle, Briefcase, Building2, MapPin, 
   ArrowRight, XCircle, UserCheck, Clock, MessageSquare, AlertCircle,
   Calendar, Phone, Fingerprint, Info, ChevronDown, Globe, Home, FileText, Download, Eye,
-  GraduationCap, ListTodo
+  GraduationCap, ListTodo, FileSignature
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,9 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { updateCandidateStatus } from "@/services/candidate.service";
+import { createEmploymentOfferDraft, getActiveOfferForCandidate } from "@/services/employment-offer.service";
 import { useToast } from "@/hooks/use-toast";
+import { useRouter } from "next/navigation";
 import { 
   Dialog, 
   DialogContent, 
@@ -63,6 +65,7 @@ const FIELD_LABELS: Record<string, string> = {
 export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate }: CandidateApplicationPanelProps) {
   const db = useFirestore();
   const auth = useAuth();
+  const router = useRouter();
   const { user } = useUser();
   const { toast } = useToast();
   
@@ -98,6 +101,52 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
       if (onStatusUpdate) {
         onStatusUpdate({ ...candidate!, status: nextStatus, rejectionReason: reason });
       }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handlePrepareOffer = async () => {
+    if (!user || !candidate || !entityId) return;
+    setLoadingAction(true);
+    try {
+      // 1. Check if an active offer already exists
+      const existingOffer = await getActiveOfferForCandidate(entityId, candidate.candidateId);
+      if (existingOffer) {
+        toast({ title: "Proposition déjà existante", description: "Ouverture du brouillon en cours..." });
+        router.push(`/entity/${entityId}/employment-offers/${existingOffer.offerId}`);
+        return;
+      }
+
+      // 2. Fetch context for pre-filling (Need & Profile)
+      let need = null;
+      let profile = null;
+
+      if (candidate.recruitmentNeedId) {
+         const needSnap = await doc(db!, `entities/${entityId}/recruitmentNeeds`, candidate.recruitmentNeedId);
+         const n = await (await import("firebase/firestore")).getDoc(needSnap);
+         if (n.exists()) need = n.data() as any;
+      }
+
+      if (candidate.jobProfileId || need?.jobProfileId) {
+         const profileSnap = await doc(db!, `entities/${entityId}/jobProfiles`, candidate.jobProfileId || need?.jobProfileId);
+         const p = await (await import("firebase/firestore")).getDoc(profileSnap);
+         if (p.exists()) profile = p.data() as any;
+      }
+
+      // 3. Create Draft
+      const offerId = await createEmploymentOfferDraft({
+        entityId,
+        candidate,
+        need,
+        profile,
+        actorUid: user.uid
+      });
+
+      toast({ title: "Brouillon initialisé", description: "La proposition d'embauche est prête à être éditée." });
+      router.push(`/entity/${entityId}/employment-offers/${offerId}`);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -192,7 +241,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
                <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Actions de décision RH</p>
              </div>
              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-               {renderDecisionActions(candidate, loadingAction, handleStatusChange, () => setRejectDialogOpen(true))}
+               {renderDecisionActions(candidate, loadingAction, handleStatusChange, () => setRejectDialogOpen(true), handlePrepareOffer)}
              </div>
           </div>
 
@@ -340,8 +389,29 @@ function renderAttachmentCard(label: string, attachment: AttachmentMetadata | un
   );
 }
 
-function renderDecisionActions(candidate: Candidate, loading: boolean, onStatus: any, onReject: () => void) {
+function renderDecisionActions(
+  candidate: Candidate, 
+  loading: boolean, 
+  onStatus: any, 
+  onReject: () => void,
+  onPrepareOffer: () => void
+) {
   const s = candidate.status || "new";
+  
+  if (s === "accepted") {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3 text-green-700 font-bold text-sm bg-green-50 p-3 rounded-xl border border-green-100">
+          <CheckCircle2 className="w-5 h-5" /> Candidat validé pour embauche
+        </div>
+        <Button className="w-full h-11 rounded-xl font-black gap-2 shadow-lg shadow-accent/20" onClick={onPrepareOffer} disabled={loading}>
+           <FileSignature className="w-5 h-5" />
+           Préparer une proposition
+        </Button>
+      </div>
+    );
+  }
+
   if (s === "hired") return <div className="flex items-center gap-3 text-green-700 font-bold text-sm"><UserCheck className="w-5 h-5" /> Candidat déjà embauché</div>;
   if (s === "rejected") return <div className="flex items-center gap-3 text-red-700 font-bold text-sm"><XCircle className="w-5 h-5" /> Candidature refusée</div>;
 
