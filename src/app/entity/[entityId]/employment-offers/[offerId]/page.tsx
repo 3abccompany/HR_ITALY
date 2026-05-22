@@ -6,7 +6,8 @@ import {
   Loader2, ArrowLeft, ShieldCheck, User, Briefcase, 
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
   Clock, Hash, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
-  FileSignature, ChevronRight, Building2, UserCircle, Send, Eye, MousePointer2
+  FileSignature, ChevronRight, Building2, UserCircle, Send, Eye, MousePointer2,
+  FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
