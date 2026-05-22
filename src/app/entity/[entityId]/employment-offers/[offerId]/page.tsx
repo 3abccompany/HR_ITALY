@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -56,6 +57,7 @@ export default function EditEmploymentOfferPage() {
   // Numeric Input string states to allow empty values while typing
   const [numInputs, setNumericInputs] = useState({
     proposedGrossMonthly: "0",
+    proposedGrossHourly: "0",
     monthlyPayments: "13",
     weeklyHours: "40",
     trialPeriodDays: "30"
@@ -68,11 +70,9 @@ export default function EditEmploymentOfferPage() {
   }, [db, entityId]);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !formData.defaultCcnlId) return null; // We use ccnlId in the real payload but defaultCcnlId was in some pre-fill logic
-    const cid = formData.ccnlId || formData.defaultCcnlId;
-    if (!cid) return null;
-    return query(collection(db, `entities/${entityId}/ccnls/${cid}/levels`), where("status", "==", "active"));
-  }, [db, entityId, formData.ccnlId, formData.defaultCcnlId]);
+    if (!db || !entityId || !formData.ccnlId || formData.ccnlId === "none_clear") return null;
+    return query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"));
+  }, [db, entityId, formData.ccnlId]);
 
   const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
   const { data: activeLevels } = useCollection<CCNLLevel>(levelsQuery);
@@ -82,6 +82,7 @@ export default function EditEmploymentOfferPage() {
       setFormData(offer);
       setNumericInputs({
         proposedGrossMonthly: (offer.proposedGrossMonthly ?? 0).toString(),
+        proposedGrossHourly: (offer.proposedGrossHourly ?? 0).toString(),
         monthlyPayments: (offer.monthlyPayments ?? 13).toString(),
         weeklyHours: (offer.weeklyHours ?? 40).toString(),
         trialPeriodDays: (offer.trialPeriodDays ?? 30).toString()
@@ -101,6 +102,8 @@ export default function EditEmploymentOfferPage() {
       qualificationLabel: "",
       minGrossMonthly: 0,
       minGrossHourly: 0,
+      monthlyPayments: ccnl?.monthlyPayments || 13,
+      hourlyDivisor: ccnl?.hourlyDivisor || 173,
     }));
     setNumericInputs(prev => ({
       ...prev,
@@ -111,18 +114,22 @@ export default function EditEmploymentOfferPage() {
 
   const handleLevelChange = (id: string) => {
     const level = activeLevels?.find(l => l.levelId === id);
+    if (!level) return;
+
     setFormData(prev => ({
       ...prev,
       levelId: id,
-      levelCode: level?.levelCode || "",
-      levelLabel: level?.label || "",
-      qualificationLabel: level?.qualificationLabel || "",
-      minGrossMonthly: level?.minimumGrossMonthly || 0,
-      minGrossHourly: level?.minimumGrossHourly || 0,
+      levelCode: level.levelCode,
+      levelLabel: level.label,
+      qualificationLabel: level.qualificationLabel,
+      minGrossMonthly: level.minimumGrossMonthly,
+      minGrossHourly: level.minimumGrossHourly,
     }));
+    
     setNumericInputs(prev => ({
       ...prev,
-      proposedGrossMonthly: (level?.minimumGrossMonthly ?? prev.proposedGrossMonthly ?? 0).toString()
+      proposedGrossMonthly: level.minimumGrossMonthly.toString(),
+      proposedGrossHourly: level.minimumGrossHourly.toString()
     }));
   };
 
@@ -163,16 +170,17 @@ export default function EditEmploymentOfferPage() {
     try {
       // 1. Normalize Numeric Inputs
       const monthly = parseFloat(numInputs.proposedGrossMonthly.replace(',', '.'));
+      const hourly = parseFloat(numInputs.proposedGrossHourly.replace(',', '.'));
       const payments = parseInt(numInputs.monthlyPayments);
       const hours = parseFloat(numInputs.weeklyHours.replace(',', '.'));
       const trial = parseInt(numInputs.trialPeriodDays);
 
-      if (isNaN(monthly) || isNaN(payments) || isNaN(hours) || isNaN(trial)) {
+      if (isNaN(monthly) || isNaN(payments) || isNaN(hours) || isNaN(trial) || isNaN(hourly)) {
         throw new Error("Veuillez saisir des valeurs numériques valides.");
       }
 
       if (hours <= 0) throw new Error("Le temps de travail hebdomadaire doit être supérieur à 0.");
-      if (monthly < 0 || payments < 0 || trial < 0) throw new Error("Les valeurs numériques ne peuvent pas être négatives.");
+      if (monthly < 0 || payments < 0 || trial < 0 || hourly < 0) throw new Error("Les valeurs numériques ne peuvent pas être négatives.");
 
       const annual = monthly * payments;
 
@@ -180,6 +188,7 @@ export default function EditEmploymentOfferPage() {
       await updateEmploymentOffer(entityId, offerId, {
         ...formData,
         proposedGrossMonthly: monthly,
+        proposedGrossHourly: hourly,
         monthlyPayments: payments,
         weeklyHours: hours,
         trialPeriodDays: trial,
@@ -194,6 +203,13 @@ export default function EditEmploymentOfferPage() {
       setSaving(false);
     }
   };
+
+  const annualTotal = useMemo(() => {
+    const monthly = parseFloat(numInputs.proposedGrossMonthly.replace(',', '.'));
+    const payments = parseInt(numInputs.monthlyPayments);
+    if (isNaN(monthly) || isNaN(payments)) return 0;
+    return monthly * payments;
+  }, [numInputs.proposedGrossMonthly, numInputs.monthlyPayments]);
 
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (!offer) return <div className="p-8 text-center">Proposition introuvable.</div>;
@@ -354,8 +370,8 @@ export default function EditEmploymentOfferPage() {
                   </div>
                   <div className="bg-white p-4 rounded-xl border border-accent/20 flex flex-col justify-center">
                      <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Total Brut Annuel (est.)</p>
-                     <p className="text-2xl font-black text-accent-foreground">
-                        € {( (parseFloat(numInputs.proposedGrossMonthly.replace(',', '.') || '0') || 0) * (parseInt(numInputs.monthlyPayments || '13') || 0) ).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+                     <p className="text-2xl font-black text-primary">
+                        {annualTotal > 0 ? `€ ${annualTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}` : "Non renseigné"}
                      </p>
                   </div>
                </div>
@@ -412,7 +428,11 @@ export default function EditEmploymentOfferPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none_clear">--- Aucun ---</SelectItem>
-                      {activeLevels?.map(l => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} — {l.label}</SelectItem>)}
+                      {activeLevels?.map(l => (
+                        <SelectItem key={l.levelId} value={l.levelId}>
+                          {l.levelCode} — {l.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
