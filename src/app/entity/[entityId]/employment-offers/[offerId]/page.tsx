@@ -6,7 +6,7 @@ import {
   Loader2, ArrowLeft, ShieldCheck, User, Briefcase, 
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
   Clock, Hash, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
-  FileSignature, ChevronRight, Building2, UserCircle
+  FileSignature, ChevronRight, Building2, UserCircle, Send, Eye, MousePointer2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,7 @@ import { doc, DocumentReference, collection, query, where } from "firebase/fires
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
-import { updateEmploymentOffer } from "@/services/employment-offer.service";
+import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -65,9 +65,10 @@ export default function EditEmploymentOfferPage() {
   // States
   const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
 
-  // Numeric Input string states to allow empty values while typing
+  // Numeric Input string states
   const [numInputs, setNumericInputs] = useState({
     proposedGrossMonthly: "0",
     proposedGrossHourly: "0",
@@ -76,16 +77,15 @@ export default function EditEmploymentOfferPage() {
     trialPeriodDays: "30"
   });
 
-  // Queries for selectors
   const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || !hasPermission("contracts.read")) return null;
     return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active"));
-  }, [db, entityId]);
+  }, [db, entityId, hasPermission]);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !formData.ccnlId || formData.ccnlId === "none_clear") return null;
+    if (!db || !entityId || !formData.ccnlId || !hasPermission("contracts.read")) return null;
     return query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"));
-  }, [db, entityId, formData.ccnlId]);
+  }, [db, entityId, formData.ccnlId, hasPermission]);
 
   const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
   const { data: activeLevels } = useCollection<CCNLLevel>(levelsQuery);
@@ -109,7 +109,7 @@ export default function EditEmploymentOfferPage() {
       ...prev,
       ccnlId: id,
       ccnlName: ccnl?.name || "",
-      levelId: "", // Reset level
+      levelId: "",
       levelCode: "",
       levelLabel: "",
       qualificationLabel: "",
@@ -148,38 +148,28 @@ export default function EditEmploymentOfferPage() {
 
   const isFixedTermContract = (type?: string): boolean => {
     const value = (type ?? "").trim().toLowerCase();
-    const fixedTermKeys = [
-      "tempo determinato",
-      "cdd",
-      "fixed_term",
-      "fixed term",
-      "determinato"
-    ];
-    return fixedTermKeys.includes(value);
+    return ["tempo determinato", "cdd", "fixed_term", "fixed term", "determinato"].includes(value);
   };
 
   const validateStatusChange = (targetStatus: EmploymentOfferStatus) => {
-    if (targetStatus !== 'ready_to_send') return true;
+    if (targetStatus !== 'ready_to_send' && targetStatus !== 'sent') return true;
 
     if (!formData.jobTitleName?.trim()) {
-      toast({ variant: "destructive", title: "Validation échouée", description: "Le poste est obligatoire avant de marquer la proposition comme prête à envoyer." });
+      toast({ variant: "destructive", title: "Validation échouée", description: "Le poste est obligatoire avant de finaliser la proposition." });
       return false;
     }
     if (!formData.contractType || formData.contractType === 'none_clear') {
-      toast({ variant: "destructive", title: "Validation échouée", description: "Le type de contrat est obligatoire avant de marquer la proposition comme prête à envoyer." });
+      toast({ variant: "destructive", title: "Validation échouée", description: "Le type de contrat est obligatoire." });
       return false;
     }
     if (!formData.proposedStartDate) {
-      toast({ variant: "destructive", title: "Validation échouée", description: "La date de début proposée est obligatoire avant de marquer la proposition comme prête à envoyer." });
+      toast({ variant: "destructive", title: "Validation échouée", description: "La date de début proposée est obligatoire." });
       return false;
     }
-
-    // Fixed-term validation
     if (isFixedTermContract(formData.contractType) && !formData.proposedEndDate) {
       toast({ variant: "destructive", title: "Validation échouée", description: "Une date de fin est obligatoire pour un contrat à durée déterminée." });
       return false;
     }
-
     return true;
   };
 
@@ -187,29 +177,19 @@ export default function EditEmploymentOfferPage() {
     if (!user || !entityId || !offerId) return;
 
     const targetStatus = nextStatus || formData.status || 'draft';
-
     if (!validateStatusChange(targetStatus)) return;
 
     setSaving(true);
-    
     try {
-      // 1. Normalize Numeric Inputs
       const monthly = parseFloat(numInputs.proposedGrossMonthly.replace(',', '.'));
       const hourly = parseFloat(numInputs.proposedGrossHourly.replace(',', '.'));
       const payments = parseInt(numInputs.monthlyPayments);
       const hours = parseFloat(numInputs.weeklyHours.replace(',', '.'));
       const trial = parseInt(numInputs.trialPeriodDays);
 
-      if (isNaN(monthly) || isNaN(payments) || isNaN(hours) || isNaN(trial) || isNaN(hourly)) {
-        throw new Error("Veuillez saisir des valeurs numériques valides.");
-      }
-
-      if (hours <= 0) throw new Error("Le temps de travail hebdomadaire doit être supérieur à 0.");
-      if (monthly < 0 || payments < 0 || trial < 0 || hourly < 0) throw new Error("Les valeurs numériques ne peuvent pas être négatives.");
-
+      if (isNaN(monthly) || isNaN(payments) || isNaN(hours) || isNaN(trial) || isNaN(hourly)) throw new Error("Veuillez saisir des valeurs numériques valides.");
       const annual = monthly * payments;
 
-      // 2. Perform Update
       await updateEmploymentOffer(entityId, offerId, {
         ...formData,
         status: targetStatus,
@@ -221,15 +201,28 @@ export default function EditEmploymentOfferPage() {
         proposedGrossAnnual: annual
       }, user.uid);
       
-      toast({ 
-        title: targetStatus !== formData.status ? "Statut mis à jour" : "Proposition enregistrée", 
-        description: targetStatus !== formData.status ? `La proposition est maintenant en statut: ${targetStatus}` : "Les informations ont été mises à jour." 
-      });
+      toast({ title: targetStatus !== formData.status ? "Statut mis à jour" : "Proposition enregistrée" });
     } catch (err: any) {
-      console.error("Save error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!user || !entityId || !offerId) return;
+    setSending(true);
+    try {
+      const result = await initiateOfferSend(entityId, offerId, user.uid);
+      if (result.success) {
+        toast({ title: "Proposition envoyée", description: "Le candidat va recevoir le lien sécurisé par email." });
+      } else {
+        toast({ variant: "destructive", title: "Erreur d'envoi", description: result.error });
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setSending(false);
     }
   };
 
@@ -254,20 +247,40 @@ export default function EditEmploymentOfferPage() {
     return monthly * payments;
   }, [numInputs.proposedGrossMonthly, numInputs.monthlyPayments]);
 
-  const recruitmentNeedLabel = useMemo(() => {
-    if (!offer) return "";
-    if (offer.recruitmentNeedTitle) return offer.recruitmentNeedTitle;
-    if (!offer.recruitmentNeedId) return "Saisie directe";
-    return offer.jobTitleName || "Besoin RH lié";
-  }, [offer]);
-
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (!offer) return <div className="p-8 text-center">Proposition introuvable.</div>;
 
   const isCancelled = offer.status === 'cancelled';
+  const isAccepted = offer.status === 'accepted';
+  const isDeclined = offer.status === 'declined';
+  const isSentOrViewed = ["sent", "viewed"].includes(offer.status);
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
+      {isAccepted && (
+        <div className="mb-8 p-4 bg-green-50 border-2 border-green-200 rounded-3xl flex items-center justify-between shadow-lg shadow-green-100 animate-in fade-in slide-in-from-top-2">
+           <div className="flex items-center gap-3 text-green-800 font-bold">
+              <CheckCircle2 className="w-6 h-6 text-green-600" />
+              <div>
+                <p>Proposition acceptée par le candidat !</p>
+                <p className="text-[10px] uppercase font-black tracking-widest text-green-600">Prochaine étape : création employé et contrat.</p>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {isDeclined && (
+        <div className="mb-8 p-4 bg-red-50 border-2 border-red-200 rounded-3xl flex items-center justify-between shadow-lg shadow-red-100">
+           <div className="flex items-center gap-3 text-red-800 font-bold">
+              <XCircle className="w-6 h-6 text-red-600" />
+              <div>
+                <p>Proposition déclinée.</p>
+                {offer.declinedReason && <p className="text-xs font-medium text-red-600 mt-1 italic">"{offer.declinedReason}"</p>}
+              </div>
+           </div>
+        </div>
+      )}
+
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b gap-4">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" type="button" onClick={() => router.back()} className="rounded-full">
@@ -288,9 +301,9 @@ export default function EditEmploymentOfferPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {!isCancelled ? (
+          {!isCancelled && !isAccepted && !isDeclined ? (
             <>
-              <Button variant="outline" onClick={() => handleSave(formData.status)} disabled={saving} className="gap-2 border-primary/20 bg-white">
+              <Button variant="outline" onClick={() => handleSave(formData.status)} disabled={saving} className="gap-2 border-primary/20 bg-white shadow-sm">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Enregistrer
               </Button>
@@ -301,21 +314,23 @@ export default function EditEmploymentOfferPage() {
                 </Button>
               )}
 
-              {offer.status === 'internal_review' && (
-                <Button variant="ghost" onClick={() => handleSave('draft')} disabled={saving} className="gap-2">
-                  <Undo2 className="w-4 h-4" /> Revenir en brouillon
-                </Button>
-              )}
-
-              {offer.status !== 'ready_to_send' && (
+              {(offer.status === 'draft' || offer.status === 'internal_review') && (
                 <Button onClick={() => handleSave('ready_to_send')} disabled={saving} className="gap-2 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 font-bold">
                   <CheckCircle2 className="w-4 h-4" /> Prête à envoyer
                 </Button>
               )}
 
               {offer.status === 'ready_to_send' && (
-                <Button variant="ghost" onClick={() => handleSave('internal_review')} disabled={saving} className="gap-2">
-                  <Undo2 className="w-4 h-4" /> Revenir en validation
+                 <Button onClick={handleSend} disabled={sending} className="gap-2 bg-primary text-white shadow-lg shadow-primary/20 font-black px-6">
+                    {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    Envoyer au candidat
+                 </Button>
+              )}
+
+              {isSentOrViewed && (
+                <Button variant="outline" onClick={handleSend} disabled={sending} className="gap-2 border-primary text-primary hover:bg-primary/5">
+                   {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                   Renvoyer le lien
                 </Button>
               )}
 
@@ -328,32 +343,53 @@ export default function EditEmploymentOfferPage() {
                 <AlertDialogContent className="rounded-[2rem]">
                   <AlertDialogHeader>
                     <AlertDialogTitle>Annuler la proposition ?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Cette action est définitive pour ce projet d'offre.
-                    </AlertDialogDescription>
+                    <AlertDialogDescription>Cette action est définitive pour ce projet d'offre.</AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel disabled={saving}>Retour</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleCancelOffer} disabled={saving} className="bg-red-600 hover:bg-red-700">
-                      Confirmer l'annulation
-                    </AlertDialogAction>
+                    <AlertDialogAction onClick={handleCancelOffer} disabled={saving} className="bg-red-600 hover:bg-red-700">Confirmer</AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
             </>
-          ) : (
-            <div className="bg-red-50 text-red-700 px-4 py-2 rounded-xl border border-red-200 text-xs font-black uppercase flex items-center gap-2">
-               <XCircle className="w-4 h-4" /> Proposition Annulée
-            </div>
-          )}
+          ) : null}
         </div>
       </header>
 
-      <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-8", isCancelled && "opacity-60 pointer-events-none")}>
+      <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-8", (isCancelled || isAccepted || isDeclined) && "opacity-60")}>
         <div className="lg:col-span-2 space-y-8">
-          
-          {/* Candidate & Position Section */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 overflow-hidden rounded-3xl">
+          {/* Tracking Card (7K-D) */}
+          {isSentOrViewed && (
+            <Card className="border-accent/20 bg-accent/5 rounded-3xl overflow-hidden shadow-sm">
+               <CardContent className="p-6 flex flex-wrap items-center justify-between gap-6">
+                  <div className="flex items-center gap-4">
+                     <div className="bg-accent/20 p-2.5 rounded-xl text-accent-foreground"><Send className="w-5 h-5" /></div>
+                     <div>
+                        <p className="text-[10px] font-black uppercase text-accent-foreground/60 tracking-widest">Dernier envoi</p>
+                        <p className="text-sm font-bold text-primary">{formatDateTime(offer.sentAt)}</p>
+                     </div>
+                  </div>
+                  {offer.viewedAt ? (
+                    <div className="flex items-center gap-4">
+                       <div className="bg-green-100 p-2.5 rounded-xl text-green-700"><Eye className="w-5 h-5" /></div>
+                       <div>
+                          <p className="text-[10px] font-black uppercase text-green-700/60 tracking-widest">Première lecture</p>
+                          <p className="text-sm font-bold text-primary">{formatDateTime(offer.viewedAt)}</p>
+                       </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 text-slate-400 font-bold italic text-xs">
+                       <Clock className="w-4 h-4" /> En attente de lecture...
+                    </div>
+                  )}
+                  {offer.resendCount && offer.resendCount > 0 && (
+                    <Badge variant="secondary" className="bg-white/50 text-[10px] h-6 px-2">Renvoyée {offer.resendCount} fois</Badge>
+                  )}
+               </CardContent>
+            </Card>
+          )}
+
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
             <CardHeader className="bg-primary/5 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
                 <User className="w-4 h-4" /> Candidat & Poste
@@ -363,44 +399,33 @@ export default function EditEmploymentOfferPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-1 p-3 bg-secondary/20 rounded-2xl border border-secondary">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Candidat</Label>
-                  <p className="font-black text-primary flex items-center gap-2">
-                    <UserCircle className="w-4 h-4 text-primary/40" />
-                    {offer.candidateDisplayName}
-                  </p>
+                  <p className="font-black text-primary flex items-center gap-2"><UserCircle className="w-4 h-4 text-primary/40" />{offer.candidateDisplayName}</p>
                   <p className="text-xs text-muted-foreground pl-6">{offer.candidateEmail}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Intitulé du poste</Label>
-                  <Input 
-                    value={formData.jobTitleName || ""} 
-                    onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))}
-                    className="h-10 font-bold text-primary border-primary/20 bg-white rounded-xl"
-                  />
+                  <Input value={formData.jobTitleName || ""} onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))} className="h-10 font-bold text-primary border-primary/20 rounded-xl" />
                   <p className="text-[10px] text-muted-foreground uppercase font-bold pl-2 pt-1">{offer.departmentName}</p>
                 </div>
               </div>
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-1">
                    <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Site d'affectation</Label>
                    <div className="flex items-center gap-2 h-10 px-3 bg-slate-50 border rounded-xl text-sm font-bold text-slate-700">
-                     <MapPin className="w-4 h-4 text-primary/40" />
-                     {offer.worksiteName || "Non renseigné"}
+                     <MapPin className="w-4 h-4 text-primary/40" />{offer.worksiteName || "Non renseigné"}
                    </div>
                 </div>
                 <div className="space-y-1">
                    <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Besoin RH source</Label>
-                   <div className="flex items-center gap-2 h-10 px-3 bg-slate-50 border rounded-xl text-[11px] font-bold text-primary truncate" title={recruitmentNeedLabel}>
-                      <Briefcase className="w-4 h-4 text-primary/40" />
-                      {recruitmentNeedLabel}
+                   <div className="flex items-center gap-2 h-10 px-3 bg-slate-50 border rounded-xl text-[11px] font-bold text-primary truncate">
+                      <Briefcase className="w-4 h-4 text-primary/40" />{offer.recruitmentNeedTitle || offer.recruitmentNeedId || "Saisie directe"}
                    </div>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Contractual Parameters Card */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 overflow-hidden rounded-3xl">
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
             <CardHeader className="bg-primary/5 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
                 <Briefcase className="w-4 h-4" /> Paramètres contractuels
@@ -410,19 +435,14 @@ export default function EditEmploymentOfferPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Type de contrat</Label>
-                  <Select 
-                    value={formData.contractType} 
-                    onValueChange={(v) => setFormData(p => ({...p, contractType: v}))}
-                  >
+                  <Select value={formData.contractType} onValueChange={(v) => setFormData(p => ({...p, contractType: v}))}>
                     <SelectTrigger className="h-11 rounded-xl border-primary/20 bg-white"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {CONTRACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                    </SelectContent>
+                    <SelectContent>{CONTRACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de début</Label>
-                  <Input type="date" value={formData.proposedStartDate || ""} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} required className="h-11 rounded-xl border-primary/20 bg-white" />
+                  <Input type="date" value={formData.proposedStartDate || ""} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} className="h-11 rounded-xl border-primary/20 bg-white" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de fin (CDD)</Label>
@@ -432,33 +452,14 @@ export default function EditEmploymentOfferPage() {
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Temps de travail (H/Sem)</Label>
                   <div className="relative">
                     <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input 
-                      type="text" 
-                      value={numInputs.weeklyHours} 
-                      onChange={(e) => setNumericInputs(p => ({...p, weeklyHours: e.target.value}))} 
-                      className="h-11 pl-10 rounded-xl border-primary/20 bg-white font-bold"
-                    />
+                    <Input type="text" value={numInputs.weeklyHours} onChange={(e) => setNumericInputs(p => ({...p, weeklyHours: e.target.value}))} className="h-11 pl-10 rounded-xl border-primary/20 bg-white font-bold" />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Période d'essai (Jours)</Label>
-                  <Input 
-                    type="text" 
-                    value={numInputs.trialPeriodDays} 
-                    onChange={(e) => setNumericInputs(p => ({...p, trialPeriodDays: e.target.value}))} 
-                    className="h-11 rounded-xl border-primary/20 bg-white"
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Notes organisation / Horaires</Label>
-                <Textarea value={formData.workingScheduleNotes || ""} onChange={(e) => setFormData(p => ({...p, workingScheduleNotes: e.target.value}))} placeholder="Ex: Travail posté, temps partiel..." className="min-h-[100px] rounded-xl border-primary/20 bg-white" />
               </div>
             </CardContent>
           </Card>
 
-          {/* Proposed Remuneration Section */}
-          <Card className="border-accent/20 bg-accent/5 shadow-xl shadow-accent/5 overflow-hidden rounded-3xl">
+          <Card className="border-accent/20 bg-accent/5 shadow-xl shadow-accent/5 rounded-3xl overflow-hidden">
             <CardHeader className="bg-accent/10 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
                 <Euro className="w-4 h-4" /> Rémunération proposée
@@ -470,54 +471,24 @@ export default function EditEmploymentOfferPage() {
                     <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Salaire Brut Mensuel (€)</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-primary/40 font-bold">€</span>
-                      <Input 
-                        type="text" 
-                        className="bg-white text-xl font-black text-primary h-14 pl-8 rounded-xl border-accent/20 shadow-sm"
-                        value={numInputs.proposedGrossMonthly} 
-                        onChange={(e) => setNumericInputs(p => ({...p, proposedGrossMonthly: e.target.value}))} 
-                      />
+                      <Input type="text" className="bg-white text-xl font-black text-primary h-14 pl-8 rounded-xl border-accent/20 shadow-sm" value={numInputs.proposedGrossMonthly} onChange={(e) => setNumericInputs(p => ({...p, proposedGrossMonthly: e.target.value}))} />
                     </div>
-                    {formData.minGrossMonthly ? (
-                      <p className="text-[10px] font-bold text-accent-foreground/60 flex items-center gap-1.5 pl-1">
-                        <Scale className="w-3 h-3" /> Min. CCNL: {formData.minGrossMonthly}€
-                      </p>
-                    ) : null}
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Nombre de mensualités</Label>
-                    <Input 
-                      type="text" 
-                      className="bg-accent/10 border-accent/20 h-14 text-lg font-black text-primary rounded-xl text-center"
-                      value={numInputs.monthlyPayments} 
-                      onChange={(e) => setNumericInputs(p => ({...p, monthlyPayments: e.target.value}))} 
-                    />
+                    <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Mensualités</Label>
+                    <Input type="text" className="bg-accent/10 border-accent/20 h-14 text-lg font-black text-primary rounded-xl text-center" value={numInputs.monthlyPayments} onChange={(e) => setNumericInputs(p => ({...p, monthlyPayments: e.target.value}))} />
                   </div>
-                  <div className="bg-white p-5 rounded-2xl border border-accent/30 flex flex-col justify-center shadow-lg shadow-accent/10 relative overflow-hidden">
-                     <div className="absolute top-0 right-0 p-1 opacity-5"><Euro className="w-12 h-12" /></div>
+                  <div className="bg-white p-5 rounded-2xl border border-accent/30 flex flex-col justify-center shadow-lg shadow-accent/10">
                      <p className="text-[9px] font-black uppercase text-accent/60 mb-1 tracking-widest">Total Brut Annuel (Est.)</p>
-                     <p className="text-2xl font-black text-accent">
-                        {annualTotal > 0 ? `€ ${annualTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}` : "Non renseigné"}
-                     </p>
+                     <p className="text-2xl font-black text-accent">{annualTotal > 0 ? `€ ${annualTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}` : "Non renseigné"}</p>
                   </div>
-               </div>
-               <div className="space-y-2">
-                 <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Primes, bonus et notes paie</Label>
-                 <Textarea 
-                   className="bg-white rounded-xl border-accent/20 min-h-[100px]"
-                   value={formData.salaryNotes || ""} 
-                   onChange={(e) => setFormData(p => ({...p, salaryNotes: e.target.value}))} 
-                   placeholder="Ex: Prime de performance de 1500€..." 
-                 />
                </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Sidebar Column */}
         <div className="space-y-8">
-          
-          {/* CCNL Snapshot Selection */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 overflow-hidden rounded-3xl">
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
             <CardHeader className="bg-secondary/40 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
                 <Scale className="w-4 h-4" /> Grille Salariale (CCNL)
@@ -527,101 +498,38 @@ export default function EditEmploymentOfferPage() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-[9px] uppercase font-black text-muted-foreground tracking-widest">CCNL</Label>
-                  <Select 
-                    value={formData.ccnlId || "none_clear"} 
-                    onValueChange={handleCcnlChange}
-                  >
-                    <SelectTrigger className="h-12 rounded-xl border-primary/20 bg-white">
-                       <SelectValue placeholder="Choisir un CCNL..." />
-                    </SelectTrigger>
+                  <Select value={formData.ccnlId || "none_clear"} onValueChange={handleCcnlChange}>
+                    <SelectTrigger className="h-12 rounded-xl border-primary/20 bg-white"><SelectValue placeholder="Choisir un CCNL..." /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none_clear">--- Aucun ---</SelectItem>
                       {activeCcnls?.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="space-y-2">
-                  <Label className="text-[9px] uppercase font-black text-muted-foreground tracking-widest">Niveau de classification</Label>
-                  <Select 
-                    value={formData.levelId || "none_clear"} 
-                    onValueChange={handleLevelChange}
-                    disabled={!formData.ccnlId || formData.ccnlId === "none_clear"}
-                  >
-                    <SelectTrigger className="h-12 rounded-xl border-primary/20 bg-white">
-                       <SelectValue placeholder={formData.ccnlId ? "Sélectionner un niveau..." : "Sél. CCNL d'abord"} />
-                    </SelectTrigger>
+                  <Label className="text-[9px] uppercase font-black text-muted-foreground tracking-widest">Niveau</Label>
+                  <Select value={formData.levelId || "none_clear"} onValueChange={handleLevelChange} disabled={!formData.ccnlId || formData.ccnlId === "none_clear"}>
+                    <SelectTrigger className="h-12 rounded-xl border-primary/20 bg-white"><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none_clear">--- Aucun ---</SelectItem>
-                      {activeLevels?.map(l => (
-                        <SelectItem key={l.levelId} value={l.levelId}>
-                          {l.levelCode} • {l.label}
-                        </SelectItem>
-                      ))}
+                      {activeLevels?.map(l => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-
-                {formData.levelCode && (
-                  <div className="p-4 bg-primary/5 rounded-2xl border border-dashed border-primary/20 text-xs space-y-2 animate-in fade-in zoom-in-95">
-                     <p className="font-black text-primary flex items-center gap-1.5 uppercase tracking-tighter">
-                        <ShieldCheck className="w-3.5 h-3.5" /> Classification Snapshot
-                     </p>
-                     <div className="pl-5 space-y-1">
-                        <p className="font-black text-sm text-primary">{formData.levelCode} • {formData.levelLabel}</p>
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold">{formData.qualificationLabel}</p>
-                     </div>
-                  </div>
-                )}
               </div>
             </CardContent>
           </Card>
 
-          {/* Proposition Summary Box */}
           <Card className="border-primary/20 bg-primary/90 text-white shadow-2xl shadow-primary/20 rounded-3xl overflow-hidden">
-             <CardHeader className="bg-white/10 py-4 border-b border-white/10">
-                <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                   <ClipboardList className="w-4 h-4" /> Résumé de la proposition
-                </CardTitle>
-             </CardHeader>
+             <CardHeader className="bg-white/10 py-4 border-b border-white/10"><CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2"><FileText className="w-4 h-4" /> Résumé</CardTitle></CardHeader>
              <CardContent className="p-6 space-y-4">
                 <SummaryRow label="Candidat" value={offer.candidateDisplayName} />
                 <SummaryRow label="Poste" value={formData.jobTitleName} />
-                <SummaryRow label="Site" value={offer.worksiteName} />
                 <SummaryRow label="Contrat" value={formData.contractType} />
-                <SummaryRow label="Début" value={formData.proposedStartDate ? new Date(formData.proposedStartDate).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : "-"} />
-                <SummaryRow label="Classification" value={formData.levelCode ? `${formData.ccnlName} — ${formData.levelCode}` : "-"} />
-                
+                <SummaryRow label="Brut Mensuel" value={`${numInputs.proposedGrossMonthly} €`} />
+                <SummaryRow label="Brut Annuel" value={annualTotal > 0 ? `${annualTotal.toLocaleString('fr-FR')} €` : "-"} />
                 <Separator className="bg-white/10" />
-                
-                <div className="flex justify-between items-end">
-                   <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Brut Mensuel</p>
-                   <p className="text-lg font-black">{numInputs.proposedGrossMonthly} €</p>
-                </div>
-                <div className="flex justify-between items-end">
-                   <p className="text-[10px] font-black uppercase text-accent tracking-widest">Brut Annuel (Est.)</p>
-                   <p className="text-xl font-black text-accent">{annualTotal > 0 ? `${annualTotal.toLocaleString('fr-FR')} €` : "-"}</p>
-                </div>
-                
-                <Separator className="bg-white/10" />
-                
-                <div className="flex justify-between items-center">
-                   <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Statut</p>
-                   {getStatusBadge(formData.status as any)}
-                </div>
-             </CardContent>
-          </Card>
-
-          {/* HR Internal Notes Card */}
-          <Card className="border-primary/10 bg-secondary/5 rounded-3xl overflow-hidden">
-             <CardHeader className="py-4 border-b"><CardTitle className="text-[10px] font-black uppercase tracking-widest">Notes Internes RH</CardTitle></CardHeader>
-             <CardContent className="pt-4">
-                <Textarea 
-                   value={formData.notes || ""} 
-                   onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} 
-                   className="min-h-[140px] text-xs bg-white/50 border-primary/10 rounded-2xl"
-                   placeholder="Commentaires sur la validation..."
-                />
+                <div className="flex justify-between items-center"><p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Statut</p>{getStatusBadge(offer.status)}</div>
              </CardContent>
           </Card>
         </div>
@@ -630,11 +538,16 @@ export default function EditEmploymentOfferPage() {
   );
 }
 
-function getStatusBadge(status: string | undefined) {
+function getStatusBadge(status: EmploymentOfferStatus) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-slate-200 uppercase text-[9px] font-black px-2 tracking-tighter">Brouillon</Badge>;
     case 'internal_review': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 uppercase text-[9px] font-black px-2 tracking-tighter">Validation</Badge>;
     case 'ready_to_send': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase text-[9px] font-black px-2 tracking-tighter">Prête</Badge>;
+    case 'sent': return <Badge variant="secondary" className="bg-primary text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Envoyée</Badge>;
+    case 'viewed': return <Badge variant="secondary" className="bg-cyan-500 text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Consultée</Badge>;
+    case 'accepted': return <Badge variant="secondary" className="bg-green-500 text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Acceptée</Badge>;
+    case 'declined': return <Badge variant="destructive" className="bg-red-500 text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Refusée</Badge>;
+    case 'expired': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200 uppercase text-[9px] font-black px-2 tracking-tighter">Expirée</Badge>;
     case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase text-[9px] font-black px-2 tracking-tighter">Annulée</Badge>;
     default: return <Badge variant="outline" className="uppercase text-[9px] font-black px-2">Inconnu</Badge>;
   }
@@ -649,26 +562,8 @@ function SummaryRow({ label, value }: { label: string, value: any }) {
   );
 }
 
-function ClipboardList(props: any) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-      <path d="M12 11h4" />
-      <path d="M12 16h4" />
-      <path d="M8 11h.01" />
-      <path d="M8 16h.01" />
-    </svg>
-  )
+function formatDateTime(val: any): string {
+  if (!val) return "N/A";
+  const d = val.toDate ? val.toDate() : new Date(val);
+  return d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }

@@ -1,4 +1,3 @@
-
 'use server';
 /**
  * @fileOverview Server-only email service for HR communications.
@@ -25,6 +24,16 @@ export interface SendInterviewEmailParams {
   };
 }
 
+export interface SendOfferEmailParams {
+  to: string;
+  subject: string;
+  candidateName: string;
+  companyName: string;
+  jobTitle: string;
+  offerLink: string;
+  expiresAt: string;
+}
+
 /**
  * Replaces {{variable}} placeholders in a string.
  */
@@ -39,8 +48,6 @@ function renderTemplate(template: string, data: Record<string, string>): string 
 
 /**
  * Server Action to send an interview notification.
- * Implementation note: This currently simulates a send and updates Firestore logs.
- * In a real production environment, this would call Resend, SendGrid, or Postmark.
  */
 export async function sendInterviewEmailAction(params: SendInterviewEmailParams) {
   const { entityId, interviewId, to, subject, message, templateData } = params;
@@ -52,21 +59,17 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
 
   try {
     // --- PROVIDER INTEGRATION POINT ---
-    // Example: const response = await resend.emails.send({ ... });
+    // In a real environment, use Resend, SendGrid, etc.
     console.log(`[Email Service] Mock sending email to: ${to}`);
-    console.log(`[Email Service] Subject: ${renderedSubject}`);
     
-    // Simulate network latency
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500));
 
-    // Update Logs & Interview Document
     const interviewRef = adminDb.collection("entities").doc(entityId).collection("interviews").doc(interviewId);
     await interviewRef.update({
       emailStatus: "sent",
       emailSentAt: FieldValue.serverTimestamp(),
     });
 
-    // Update EmailLog in the subcollection (using a query since we might not have the logId easily)
     const logsRef = adminDb.collection("entities").doc(entityId).collection("emailLogs");
     const logSnap = await logsRef.where("interviewId", "==", interviewId).limit(1).get();
     
@@ -82,14 +85,25 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
     return { success: true };
   } catch (error: any) {
     console.error("[Email Service] Failed to send email:", error);
-    
-    // Update Interview with failure
-    const interviewRef = adminDb.collection("entities").doc(entityId).collection("interviews").doc(interviewId);
-    await interviewRef.update({
-      emailStatus: "failed",
-      emailError: error.message || "Unknown error",
-    }).catch(() => {});
-
     return { success: false, error: error.message };
   }
+}
+
+/**
+ * Sends the formal employment offer link to the candidate.
+ * 7K-D requirement: Return error if no provider is configured.
+ */
+export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
+  // CONFIGURATION CHECK: Throw if no real SMTP/API key is present to avoid silent fakes.
+  // Replace 'MOCK' with your real env variable check if available.
+  const hasProvider = false; // Set to true when Resend/SendGrid is integrated.
+
+  if (!hasProvider) {
+    throw new Error("Configuration du service email requise.");
+  }
+
+  console.log(`[Email Service] Sending Offer to ${params.to} for ${params.jobTitle}`);
+  
+  // Real implementation would go here...
+  return { success: true };
 }

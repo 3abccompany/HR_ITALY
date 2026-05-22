@@ -9,13 +9,15 @@ import {
   query, 
   where, 
   serverTimestamp,
-  limit
+  limit,
+  runTransaction
 } from "firebase/firestore";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { Candidate } from "@/types/candidate";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { JobProfile } from "@/types/job-profile";
 import { createAuditLog } from "./audit.service";
+import { sendEmploymentOfferEmail } from "./email.service";
 
 /**
  * Checks if an active offer draft already exists for a candidate.
@@ -25,7 +27,7 @@ export async function getActiveOfferForCandidate(entityId: string, candidateId: 
   const q = query(
     collection(db, `entities/${entityId}/employmentOffers`),
     where("candidateId", "==", candidateId),
-    where("status", "in", ["draft", "internal_review", "ready_to_send"]),
+    where("status", "in", ["draft", "internal_review", "ready_to_send", "sent", "viewed"]),
     limit(1)
   );
   const snap = await getDocs(q);
@@ -48,15 +50,10 @@ export async function createEmploymentOfferDraft(params: {
   const offerRef = doc(collection(db, `entities/${entityId}/employmentOffers`));
   const offerId = offerRef.id;
 
-  // Resolve recruitment need ID correctly
   const recruitmentNeedId = need?.needId || (candidate as any).recruitmentNeedId || "";
-  
-  // Create a readable title for the source reference
-  const recruitmentNeedTitle = need?.jobTitleName 
-    ? `${need.jobTitleName}${need.departmentName ? ` — ${need.departmentName}` : ''}`
-    : "";
+  const recruitmentNeedTitle = need?.recruitmentNeedTitle || 
+    (need?.jobTitleName ? `${need.jobTitleName}${need.departmentName ? ` — ${need.departmentName}` : ''}` : "");
 
-  // Worksite resolution logic (matching preview pages for consistency)
   const worksiteId = need?.worksiteId || "";
   const worksiteName = need?.worksiteName || need?.worksiteNameSnapshot || need?.siteName || need?.location || "";
 
@@ -69,25 +66,21 @@ export async function createEmploymentOfferDraft(params: {
     recruitmentNeedTitle: recruitmentNeedTitle || undefined,
     jobProfileId: profile?.jobProfileId || (candidate as any).jobProfileId || need?.jobProfileId || "",
     
-    // Candidate Identity Snapshot
     candidateDisplayName: candidate.displayName,
     candidateEmail: candidate.email,
     candidatePhone: candidate.phone,
 
-    // Job Details Snapshot
     jobTitleName: need?.jobTitleName || profile?.jobTitleName || candidate.positionApplied || "",
     departmentId: need?.departmentId || profile?.departmentId || candidate.department || "",
     departmentName: need?.departmentName || profile?.departmentName || candidate.department || "",
     worksiteId,
     worksiteName,
 
-    // Contractual Defaults from Job Profile
     contractType: profile?.defaultContractType || "Tempo indeterminato",
     proposedStartDate: need?.desiredAvailabilityDate || new Date().toISOString().split('T')[0],
     weeklyHours: profile?.defaultWeeklyHours || 40,
     trialPeriodDays: 30,
 
-    // CCNL Snapshot from Job Profile Defaults
     ccnlId: profile?.defaultCcnlId || "",
     ccnlName: profile?.defaultCcnlName || "",
     levelId: profile?.defaultLevelId || "",
@@ -96,7 +89,6 @@ export async function createEmploymentOfferDraft(params: {
     monthlyPayments: profile?.defaultMonthlyPayments || 13,
     minGrossMonthly: profile?.defaultMinimumGrossMonthly || 0,
 
-    // Remuneration initial values
     proposedGrossMonthly: profile?.defaultMinimumGrossMonthly || 0,
     proposedGrossHourly: profile?.defaultMinimumGrossHourly || 0,
 
@@ -157,4 +149,31 @@ export async function cancelEmploymentOffer(entityId: string, offerId: string, a
     resourceType: "employmentOffer",
     resourceId: offerId,
   });
+}
+
+/**
+ * 7K-D: Sends the offer to the candidate via Server Action.
+ * This function triggers the secure token generation and email dispatch.
+ */
+export async function initiateOfferSend(entityId: string, offerId: string, actorUid: string) {
+  // Use dynamic import to keep crypto/admin logic server-side
+  const { sendOfferToCandidateAction } = await import("@/app/offer/[token]/actions");
+  
+  const result = await sendOfferToCandidateAction({
+    entityId,
+    offerId,
+    actorUid
+  });
+
+  if (result.success) {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "employmentOffer.sent",
+      resourceType: "employmentOffer",
+      resourceId: offerId,
+    });
+  }
+
+  return result;
 }

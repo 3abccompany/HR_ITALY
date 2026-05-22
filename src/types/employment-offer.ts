@@ -1,6 +1,15 @@
 import { FieldValue } from "firebase/firestore";
 
-export type EmploymentOfferStatus = "draft" | "internal_review" | "ready_to_send" | "cancelled";
+export type EmploymentOfferStatus = 
+  | "draft" 
+  | "internal_review" 
+  | "ready_to_send" 
+  | "sent" 
+  | "viewed" 
+  | "accepted" 
+  | "declined" 
+  | "expired" 
+  | "cancelled";
 
 export interface EmploymentOffer {
   offerId: string;
@@ -55,9 +64,48 @@ export interface EmploymentOffer {
   status: EmploymentOfferStatus;
   notes?: string;
 
+  // 7K-D Communication & Token Tracking
+  publicAccessTokenHash?: string;
+  publicAccessTokenExpiresAt?: any; // Firestore Timestamp
+  sentAt?: any;
+  sentBy?: string;
+  viewedAt?: any;
+  respondedAt?: any;
+  candidateResponse?: "accepted" | "declined";
+  declinedReason?: string;
+  resendCount?: number;
+  lastResentAt?: any;
+  lastResentBy?: string;
+
   // Audit
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
   updatedBy: string;
+}
+
+/**
+ * Sanitized version of the offer for public candidate view.
+ * Excludes internal notes, audit fields, and sensitive metadata.
+ */
+export interface PublicOfferDTO {
+  entityName: string;
+  candidateDisplayName: string;
+  jobTitleName: string;
+  departmentName?: string;
+  worksiteName?: string;
+  contractType: string;
+  proposedStartDate: string;
+  proposedEndDate?: string;
+  weeklyHours: number;
+  trialPeriodDays?: number;
+  ccnlName?: string;
+  levelCode?: string;
+  levelLabel?: string;
+  qualificationLabel?: string;
+  proposedGrossMonthly?: number;
+  proposedGrossAnnual?: number;
+  salaryNotes?: string;
+  status: EmploymentOfferStatus;
+  expiresAt: string;
 }

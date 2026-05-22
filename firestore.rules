@@ -1,4 +1,3 @@
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -39,6 +38,11 @@ service cloud.firestore {
     match /memberships/{membershipId} {
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.uid || isPlatformAdmin());
       allow write: if isPlatformAdmin();
+    }
+
+    match /publicOfferTokens/{tokenHash} {
+      // Secure tokens are strictly handled by Admin SDK server-side
+      allow read, write: if false;
     }
 
     match /entities/{entityId} {
@@ -139,24 +143,22 @@ service cloud.firestore {
       match /ccnls/{ccnlId} {
         allow read: if hasPermission(entityId, 'settings.read') || 
                      hasPermission(entityId, 'settings.manage') ||
-                     ((hasPermission(entityId, 'jobProfiles.read') || 
-                       hasPermission(entityId, 'jobProfiles.create') || 
-                       hasPermission(entityId, 'jobProfiles.update') ||
-                       hasPermission(entityId, 'contracts.read') ||
-                       hasPermission(entityId, 'contracts.create')) && 
-                      resource.data.status == 'active') ||
+                     hasPermission(entityId, 'jobProfiles.read') || 
+                     hasPermission(entityId, 'jobProfiles.create') || 
+                     hasPermission(entityId, 'jobProfiles.update') ||
+                     hasPermission(entityId, 'contracts.read') ||
+                     hasPermission(entityId, 'contracts.create') ||
                      isPlatformAdmin();
         allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
 
         match /levels/{levelId} {
           allow read: if hasPermission(entityId, 'settings.read') || 
                        hasPermission(entityId, 'settings.manage') ||
-                       ((hasPermission(entityId, 'jobProfiles.read') || 
-                         hasPermission(entityId, 'jobProfiles.create') || 
-                         hasPermission(entityId, 'jobProfiles.update') ||
-                         hasPermission(entityId, 'contracts.read') ||
-                         hasPermission(entityId, 'contracts.create')) && 
-                        resource.data.status == 'active') ||
+                       hasPermission(entityId, 'jobProfiles.read') || 
+                       hasPermission(entityId, 'jobProfiles.create') || 
+                       hasPermission(entityId, 'jobProfiles.update') ||
+                       hasPermission(entityId, 'contracts.read') ||
+                       hasPermission(entityId, 'contracts.create') ||
                        isPlatformAdmin();
           allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
         }
