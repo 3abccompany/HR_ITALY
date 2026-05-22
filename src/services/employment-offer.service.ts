@@ -50,6 +50,11 @@ export async function createEmploymentOfferDraft(params: {
 
   // Resolve recruitment need ID correctly
   const recruitmentNeedId = need?.needId || (candidate as any).recruitmentNeedId || "";
+  
+  // Create a readable title for the source reference
+  const recruitmentNeedTitle = need?.jobTitleName 
+    ? `${need.jobTitleName}${need.departmentName ? ` — ${need.departmentName}` : ''}`
+    : "";
 
   // Worksite resolution logic (matching preview pages for consistency)
   const worksiteId = need?.worksiteId || "";
@@ -60,7 +65,8 @@ export async function createEmploymentOfferDraft(params: {
     entityId,
     personId: candidate.personId,
     candidateId: candidate.candidateId,
-    recruitmentNeedId,
+    recruitmentNeedId: recruitmentNeedId || undefined,
+    recruitmentNeedTitle: recruitmentNeedTitle || undefined,
     jobProfileId: profile?.jobProfileId || (candidate as any).jobProfileId || need?.jobProfileId || "",
     
     // Candidate Identity Snapshot

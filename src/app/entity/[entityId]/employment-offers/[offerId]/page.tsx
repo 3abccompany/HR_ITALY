@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -150,7 +149,7 @@ export default function EditEmploymentOfferPage() {
     }
 
     // Fixed-term validation
-    const isFixedTerm = ["Tempo determinato", "fixed_term", "determinato"].some(s => formData.contractType?.toLowerCase().includes(s.toLowerCase()));
+    const isFixedTerm = ["Tempo indeterminato", "fixed_term", "determinato"].some(s => formData.contractType?.toLowerCase().includes(s.toLowerCase()));
     if (isFixedTerm && !formData.proposedEndDate) {
       toast({ variant: "destructive", title: "Validation échouée", description: "Une date de fin est obligatoire pour un contrat à durée déterminée." });
       return false;
@@ -211,6 +210,19 @@ export default function EditEmploymentOfferPage() {
     return monthly * payments;
   }, [numInputs.proposedGrossMonthly, numInputs.monthlyPayments]);
 
+  const recruitmentNeedLabel = useMemo(() => {
+    if (!offer) return "";
+    if (offer.recruitmentNeedTitle) return offer.recruitmentNeedTitle;
+    if (!offer.recruitmentNeedId) return "Saisie directe";
+    
+    // Fallback using snapshotted info if title is missing
+    if (offer.jobTitleName) {
+      return `${offer.jobTitleName}${offer.departmentName ? ` — ${offer.departmentName}` : ""}`;
+    }
+    
+    return "Besoin RH lié";
+  }, [offer]);
+
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (!offer) return <div className="p-8 text-center">Proposition introuvable.</div>;
 
@@ -218,7 +230,7 @@ export default function EditEmploymentOfferPage() {
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <header className="flex items-center justify-between mb-8 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+          <Button variant="ghost" size="icon" type="button" onClick={() => router.back()}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
@@ -281,7 +293,7 @@ export default function EditEmploymentOfferPage() {
               </div>
               <div className="space-y-1">
                  <p className="text-[10px] font-black uppercase text-muted-foreground">Besoin RH Source</p>
-                 <p className="text-xs font-mono text-muted-foreground truncate">{offer.recruitmentNeedId || "Saisie directe"}</p>
+                 <p className="text-xs font-bold text-primary truncate" title={recruitmentNeedLabel}>{recruitmentNeedLabel}</p>
               </div>
             </CardContent>
           </Card>
@@ -370,7 +382,7 @@ export default function EditEmploymentOfferPage() {
                   </div>
                   <div className="bg-white p-4 rounded-xl border border-accent/20 flex flex-col justify-center">
                      <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Total Brut Annuel (est.)</p>
-                     <p className="text-2xl font-black text-primary">
+                     <p className="text-2xl font-black text-accent">
                         {annualTotal > 0 ? `€ ${annualTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}` : "Non renseigné"}
                      </p>
                   </div>

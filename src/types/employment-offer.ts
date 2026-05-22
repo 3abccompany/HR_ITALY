@@ -8,6 +8,7 @@ export interface EmploymentOffer {
   personId: string;
   candidateId: string;
   recruitmentNeedId?: string;
+  recruitmentNeedTitle?: string;
   jobProfileId?: string;
   interviewId?: string;
 
