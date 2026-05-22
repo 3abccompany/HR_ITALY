@@ -48,13 +48,20 @@ export async function createEmploymentOfferDraft(params: {
   const offerRef = doc(collection(db, `entities/${entityId}/employmentOffers`));
   const offerId = offerRef.id;
 
+  // Resolve recruitment need ID correctly
+  const recruitmentNeedId = need?.needId || (candidate as any).recruitmentNeedId || "";
+
+  // Worksite resolution logic (matching preview pages for consistency)
+  const worksiteId = need?.worksiteId || "";
+  const worksiteName = need?.worksiteName || need?.worksiteNameSnapshot || need?.siteName || need?.location || "";
+
   const payload: EmploymentOffer = {
     offerId,
     entityId,
     personId: candidate.personId,
     candidateId: candidate.candidateId,
-    recruitmentNeedId: need?.needId || candidate.recruitmentNeedId || "",
-    jobProfileId: profile?.jobProfileId || candidate.jobProfileId || "",
+    recruitmentNeedId,
+    jobProfileId: profile?.jobProfileId || (candidate as any).jobProfileId || need?.jobProfileId || "",
     
     // Candidate Identity Snapshot
     candidateDisplayName: candidate.displayName,
@@ -63,10 +70,10 @@ export async function createEmploymentOfferDraft(params: {
 
     // Job Details Snapshot
     jobTitleName: need?.jobTitleName || profile?.jobTitleName || candidate.positionApplied || "",
-    departmentId: need?.departmentId || profile?.departmentId || "",
+    departmentId: need?.departmentId || profile?.departmentId || candidate.department || "",
     departmentName: need?.departmentName || profile?.departmentName || candidate.department || "",
-    worksiteId: need?.worksiteId || "",
-    worksiteName: need?.worksiteNameSnapshot || need?.worksiteName || "",
+    worksiteId,
+    worksiteName,
 
     // Contractual Defaults from Job Profile
     contractType: profile?.defaultContractType || "Tempo indeterminato",
@@ -102,7 +109,7 @@ export async function createEmploymentOfferDraft(params: {
     action: "employmentOffer.draft_created",
     resourceType: "employmentOffer",
     resourceId: offerId,
-    details: { candidateId: candidate.candidateId }
+    details: { candidateId: candidate.candidateId, recruitmentNeedId }
   });
 
   return offerId;

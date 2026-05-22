@@ -11,7 +11,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDoc, useUser, useAuth } from "@/firebase";
-import { doc, DocumentReference } from "firebase/firestore";
+import { doc, DocumentReference, getDoc } from "firebase/firestore";
 import { ApplicationSubmission, AttachmentMetadata } from "@/types/application-submission";
 import { Candidate, CandidateStatus, CANDIDATE_STATUS_LABELS } from "@/types/candidate";
 import { useFirestore } from "@/firebase/provider";
@@ -124,16 +124,25 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
       let need = null;
       let profile = null;
 
-      if (candidate.recruitmentNeedId) {
-         const needSnap = await doc(db!, `entities/${entityId}/recruitmentNeeds`, candidate.recruitmentNeedId);
-         const n = await (await import("firebase/firestore")).getDoc(needSnap);
-         if (n.exists()) need = n.data() as any;
+      // Candidate might have recruitmentNeedId directly, or it might be in the submission
+      const effectiveNeedId = (candidate as any).recruitmentNeedId || submission?.recruitmentNeedId;
+
+      if (effectiveNeedId) {
+         const needRef = doc(db!, `entities/${entityId}/recruitmentNeeds`, effectiveNeedId);
+         const n = await getDoc(needRef);
+         if (n.exists()) {
+           need = { ...n.data(), needId: n.id } as any;
+         }
       }
 
-      if (candidate.jobProfileId || need?.jobProfileId) {
-         const profileSnap = await doc(db!, `entities/${entityId}/jobProfiles`, candidate.jobProfileId || need?.jobProfileId);
-         const p = await (await import("firebase/firestore")).getDoc(profileSnap);
-         if (p.exists()) profile = p.data() as any;
+      const effectiveProfileId = (candidate as any).jobProfileId || need?.jobProfileId;
+
+      if (effectiveProfileId) {
+         const profileRef = doc(db!, `entities/${entityId}/jobProfiles`, effectiveProfileId);
+         const p = await getDoc(profileRef);
+         if (p.exists()) {
+           profile = { ...p.data(), jobProfileId: p.id } as any;
+         }
       }
 
       // 3. Create Draft
@@ -148,6 +157,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
       toast({ title: "Brouillon initialisé", description: "La proposition d'embauche est prête à être éditée." });
       router.push(`/entity/${entityId}/employment-offers/${offerId}`);
     } catch (err: any) {
+      console.error("Prepare offer error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoadingAction(false);
