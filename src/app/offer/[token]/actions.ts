@@ -9,6 +9,7 @@ import { sendEmploymentOfferEmail } from "@/services/email.service";
 /**
  * 7K-D Server Action: Sends the offer to the candidate.
  * Generates token, creates global lookup, and updates offer status.
+ * Reordered to ensure status only updates on successful email send.
  */
 export async function sendOfferToCandidateAction(params: {
   entityId: string;
@@ -24,8 +25,10 @@ export async function sendOfferToCandidateAction(params: {
     if (!snap.exists) throw new Error("Proposition introuvable.");
     const offer = snap.data() as EmploymentOffer;
 
-    if (offer.status !== "ready_to_send" && offer.status !== "sent") {
-      throw new Error("La proposition doit être marquée comme 'Prête à envoyer' avant d'être expédiée.");
+    // Allowed statuses for sending/resending
+    const allowed = ["ready_to_send", "sent", "viewed"];
+    if (!allowed.includes(offer.status)) {
+      throw new Error("Le statut actuel de la proposition ne permet pas l'envoi.");
     }
 
     // 1. Generate Token
@@ -34,16 +37,37 @@ export async function sendOfferToCandidateAction(params: {
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + 7); // Default 7 days
 
-    // 2. Revoke old token if exists
+    // 2. Prepare Link
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
+    const offerLink = `${baseUrl}/offer/${rawToken}`;
+
+    // 3. Attempt to Send Email (CRITICAL STEP)
+    // This will throw if the provider is not configured or fails.
+    await sendEmploymentOfferEmail({
+      to: offer.candidateEmail,
+      subject: `Proposition d'embauche — ${offer.entityName}`,
+      candidateName: offer.candidateDisplayName,
+      companyName: offer.entityName,
+      jobTitle: offer.jobTitleName,
+      offerLink,
+      expiresAt: expiry.toLocaleDateString('fr-FR', { dateStyle: 'long' })
+    });
+
+    // 4. Update Database (Only if email was accepted by provider)
+    const batch = adminDb.batch();
+
+    // Revoke old token if exists
     if (offer.publicAccessTokenHash) {
-      await adminDb.collection("publicOfferTokens").doc(offer.publicAccessTokenHash).update({
+      const oldTokenRef = adminDb.collection("publicOfferTokens").doc(offer.publicAccessTokenHash);
+      batch.update(oldTokenRef, {
         status: "revoked",
         updatedAt: FieldValue.serverTimestamp()
-      }).catch(() => {}); // Ignore if document doesn't exist
+      });
     }
 
-    // 3. Create Global Lookup
-    await adminDb.collection("publicOfferTokens").doc(tokenHash).set({
+    // Create Global Lookup
+    const lookupRef = adminDb.collection("publicOfferTokens").doc(tokenHash);
+    batch.set(lookupRef, {
       tokenHash,
       entityId,
       offerId,
@@ -53,9 +77,9 @@ export async function sendOfferToCandidateAction(params: {
       createdBy: actorUid
     });
 
-    // 4. Update Offer
-    const isResend = offer.status === "sent";
-    await offerRef.update({
+    // Update Offer
+    const isResend = offer.status === "sent" || offer.status === "viewed";
+    batch.update(offerRef, {
       status: "sent",
       publicAccessTokenHash: tokenHash,
       publicAccessTokenExpiresAt: Timestamp.fromDate(expiry),
@@ -68,24 +92,12 @@ export async function sendOfferToCandidateAction(params: {
       updatedBy: actorUid
     });
 
-    // 5. Send Email
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
-    const offerLink = `${baseUrl}/offer/${rawToken}`;
-
-    // Note: This service currently throws an error if provider is not configured.
-    await sendEmploymentOfferEmail({
-      to: offer.candidateEmail,
-      subject: `Proposition d'embauche — ${offer.entityName}`,
-      candidateName: offer.candidateDisplayName,
-      companyName: offer.entityName,
-      jobTitle: offer.jobTitleName,
-      offerLink,
-      expiresAt: expiry.toLocaleDateString('fr-FR', { dateStyle: 'long' })
-    });
+    await batch.commit();
 
     return { success: true };
   } catch (err: any) {
     console.error("[Send Offer Action] Error:", err);
+    // If we catch an error here, no DB updates (batch) will have been committed.
     return { success: false, error: err.message };
   }
 }
