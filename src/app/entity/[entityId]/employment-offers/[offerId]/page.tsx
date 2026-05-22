@@ -53,6 +53,14 @@ export default function EditEmploymentOfferPage() {
   const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
   const [saving, setSaving] = useState(false);
 
+  // Numeric Input string states to allow empty values while typing
+  const [numInputs, setNumericInputs] = useState({
+    proposedGrossMonthly: "0",
+    monthlyPayments: "13",
+    weeklyHours: "40",
+    trialPeriodDays: "30"
+  });
+
   // Queries for selectors
   const ccnlsQuery = useMemo(() => {
     if (!db || !entityId) return null;
@@ -60,15 +68,25 @@ export default function EditEmploymentOfferPage() {
   }, [db, entityId]);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !formData.ccnlId) return null;
-    return query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"));
-  }, [db, entityId, formData.ccnlId]);
+    if (!db || !entityId || !formData.defaultCcnlId) return null; // We use ccnlId in the real payload but defaultCcnlId was in some pre-fill logic
+    const cid = formData.ccnlId || formData.defaultCcnlId;
+    if (!cid) return null;
+    return query(collection(db, `entities/${entityId}/ccnls/${cid}/levels`), where("status", "==", "active"));
+  }, [db, entityId, formData.ccnlId, formData.defaultCcnlId]);
 
   const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
   const { data: activeLevels } = useCollection<CCNLLevel>(levelsQuery);
 
   useEffect(() => {
-    if (offer) setFormData(offer);
+    if (offer) {
+      setFormData(offer);
+      setNumericInputs({
+        proposedGrossMonthly: (offer.proposedGrossMonthly ?? 0).toString(),
+        monthlyPayments: (offer.monthlyPayments ?? 13).toString(),
+        weeklyHours: (offer.weeklyHours ?? 40).toString(),
+        trialPeriodDays: (offer.trialPeriodDays ?? 30).toString()
+      });
+    }
   }, [offer]);
 
   const handleCcnlChange = (id: string) => {
@@ -81,10 +99,13 @@ export default function EditEmploymentOfferPage() {
       levelCode: "",
       levelLabel: "",
       qualificationLabel: "",
-      monthlyPayments: ccnl?.monthlyPayments || 13,
       minGrossMonthly: 0,
       minGrossHourly: 0,
-      weeklyHours: ccnl?.standardWeeklyHours || prev.weeklyHours || 40
+    }));
+    setNumericInputs(prev => ({
+      ...prev,
+      monthlyPayments: (ccnl?.monthlyPayments ?? 13).toString(),
+      weeklyHours: (ccnl?.standardWeeklyHours ?? prev.weeklyHours ?? 40).toString()
     }));
   };
 
@@ -98,28 +119,76 @@ export default function EditEmploymentOfferPage() {
       qualificationLabel: level?.qualificationLabel || "",
       minGrossMonthly: level?.minimumGrossMonthly || 0,
       minGrossHourly: level?.minimumGrossHourly || 0,
-      proposedGrossMonthly: level?.minimumGrossMonthly || prev.proposedGrossMonthly
     }));
+    setNumericInputs(prev => ({
+      ...prev,
+      proposedGrossMonthly: (level?.minimumGrossMonthly ?? prev.proposedGrossMonthly ?? 0).toString()
+    }));
+  };
+
+  const validateStatusChange = (targetStatus: EmploymentOfferStatus) => {
+    if (targetStatus !== 'ready_to_send') return true;
+
+    if (!formData.jobTitleName?.trim()) {
+      toast({ variant: "destructive", title: "Validation échouée", description: "Le poste est obligatoire avant de marquer la proposition comme prête à envoyer." });
+      return false;
+    }
+    if (!formData.contractType || formData.contractType === 'none_clear') {
+      toast({ variant: "destructive", title: "Validation échouée", description: "Le type de contrat est obligatoire avant de marquer la proposition comme prête à envoyer." });
+      return false;
+    }
+    if (!formData.proposedStartDate) {
+      toast({ variant: "destructive", title: "Validation échouée", description: "La date de début proposée est obligatoire avant de marquer la proposition comme prête à envoyer." });
+      return false;
+    }
+
+    // Fixed-term validation
+    const isFixedTerm = ["Tempo determinato", "fixed_term", "determinato"].some(s => formData.contractType?.toLowerCase().includes(s.toLowerCase()));
+    if (isFixedTerm && !formData.proposedEndDate) {
+      toast({ variant: "destructive", title: "Validation échouée", description: "Une date de fin est obligatoire pour un contrat à durée déterminée." });
+      return false;
+    }
+
+    return true;
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !entityId || !offerId) return;
+
+    if (!validateStatusChange(formData.status as EmploymentOfferStatus)) return;
+
     setSaving(true);
     
     try {
-      // Calculate annual if possible
-      const payments = formData.monthlyPayments || 13;
-      const monthly = formData.proposedGrossMonthly || 0;
+      // 1. Normalize Numeric Inputs
+      const monthly = parseFloat(numInputs.proposedGrossMonthly.replace(',', '.'));
+      const payments = parseInt(numInputs.monthlyPayments);
+      const hours = parseFloat(numInputs.weeklyHours.replace(',', '.'));
+      const trial = parseInt(numInputs.trialPeriodDays);
+
+      if (isNaN(monthly) || isNaN(payments) || isNaN(hours) || isNaN(trial)) {
+        throw new Error("Veuillez saisir des valeurs numériques valides.");
+      }
+
+      if (hours <= 0) throw new Error("Le temps de travail hebdomadaire doit être supérieur à 0.");
+      if (monthly < 0 || payments < 0 || trial < 0) throw new Error("Les valeurs numériques ne peuvent pas être négatives.");
+
       const annual = monthly * payments;
 
+      // 2. Perform Update
       await updateEmploymentOffer(entityId, offerId, {
         ...formData,
+        proposedGrossMonthly: monthly,
+        monthlyPayments: payments,
+        weeklyHours: hours,
+        trialPeriodDays: trial,
         proposedGrossAnnual: annual
       }, user.uid);
       
-      toast({ title: "Proposition enregistrée", description: "Le brouillon a été mis à jour." });
+      toast({ title: "Proposition enregistrée", description: "Les informations ont été mises à jour." });
     } catch (err: any) {
+      console.error("Save error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setSaving(false);
@@ -137,7 +206,7 @@ export default function EditEmploymentOfferPage() {
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-black text-primary truncate max-w-md">Proposition : {offer.candidateDisplayName}</h1>
+            <h1 className="text-2xl font-black text-primary truncate max-w-md">Proposition : {offer.candidateDisplayName || "Candidat"}</h1>
             <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Édition du projet de contrat</p>
           </div>
         </div>
@@ -180,7 +249,12 @@ export default function EditEmploymentOfferPage() {
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-black uppercase text-muted-foreground">Poste visé</p>
-                <p className="font-bold text-primary">{offer.jobTitleName}</p>
+                <Input 
+                  value={formData.jobTitleName || ""} 
+                  onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))}
+                  className="h-8 font-bold text-primary"
+                  placeholder="Intitulé du poste..."
+                />
                 <p className="text-xs text-muted-foreground uppercase">{offer.departmentName}</p>
               </div>
               <div className="space-y-1">
@@ -216,20 +290,32 @@ export default function EditEmploymentOfferPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Date de début prévue</Label>
-                  <Input type="date" value={formData.proposedStartDate} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} required />
+                  <Input type="date" value={formData.proposedStartDate || ""} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Date de fin (si CDD)</Label>
+                  <Input type="date" value={formData.proposedEndDate || ""} onChange={(e) => setFormData(p => ({...p, proposedEndDate: e.target.value}))} />
                 </div>
                 <div className="space-y-2">
                   <Label>Temps de travail (h/sem)</Label>
-                  <Input type="number" step="0.5" value={formData.weeklyHours} onChange={(e) => setFormData(p => ({...p, weeklyHours: parseFloat(e.target.value)}))} />
+                  <Input 
+                    type="text" 
+                    value={numInputs.weeklyHours} 
+                    onChange={(e) => setNumericInputs(p => ({...p, weeklyHours: e.target.value}))} 
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Période d'essai (jours)</Label>
-                  <Input type="number" value={formData.trialPeriodDays} onChange={(e) => setFormData(p => ({...p, trialPeriodDays: parseInt(e.target.value)}))} />
+                  <Input 
+                    type="text" 
+                    value={numInputs.trialPeriodDays} 
+                    onChange={(e) => setNumericInputs(p => ({...p, trialPeriodDays: e.target.value}))} 
+                  />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Notes sur les horaires / Organisation</Label>
-                <Textarea value={formData.workingScheduleNotes} onChange={(e) => setFormData(p => ({...p, workingScheduleNotes: e.target.value}))} placeholder="Ex: Travail posté 2x8..." />
+                <Textarea value={formData.workingScheduleNotes || ""} onChange={(e) => setFormData(p => ({...p, workingScheduleNotes: e.target.value}))} placeholder="Ex: Travail posté 2x8..." />
               </div>
             </CardContent>
           </Card>
@@ -246,11 +332,10 @@ export default function EditEmploymentOfferPage() {
                   <div className="space-y-2">
                     <Label className="font-bold">Brut Mensuel (€)</Label>
                     <Input 
-                      type="number" 
-                      step="0.01" 
+                      type="text" 
                       className="bg-white text-lg font-black text-primary h-12"
-                      value={formData.proposedGrossMonthly} 
-                      onChange={(e) => setFormData(p => ({...p, proposedGrossMonthly: parseFloat(e.target.value)}))} 
+                      value={numInputs.proposedGrossMonthly} 
+                      onChange={(e) => setNumericInputs(p => ({...p, proposedGrossMonthly: e.target.value}))} 
                     />
                     {formData.minGrossMonthly ? (
                       <p className="text-[10px] text-muted-foreground flex items-center gap-1">
@@ -261,16 +346,16 @@ export default function EditEmploymentOfferPage() {
                   <div className="space-y-2">
                     <Label className="text-muted-foreground">Mensualités</Label>
                     <Input 
-                      type="number" 
+                      type="text" 
                       className="bg-secondary/30 h-12"
-                      value={formData.monthlyPayments} 
-                      onChange={(e) => setFormData(p => ({...p, monthlyPayments: parseInt(e.target.value)}))} 
+                      value={numInputs.monthlyPayments} 
+                      onChange={(e) => setNumericInputs(p => ({...p, monthlyPayments: e.target.value}))} 
                     />
                   </div>
                   <div className="bg-white p-4 rounded-xl border border-accent/20 flex flex-col justify-center">
                      <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Total Brut Annuel (est.)</p>
                      <p className="text-2xl font-black text-accent-foreground">
-                        € {((formData.proposedGrossMonthly || 0) * (formData.monthlyPayments || 13)).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+                        € {( (parseFloat(numInputs.proposedGrossMonthly.replace(',', '.') || '0') || 0) * (parseInt(numInputs.monthlyPayments || '13') || 0) ).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
                      </p>
                   </div>
                </div>
@@ -278,7 +363,7 @@ export default function EditEmploymentOfferPage() {
                  <Label>Primes / Notes sur le salaire</Label>
                  <Textarea 
                    className="bg-white"
-                   value={formData.salaryNotes} 
+                   value={formData.salaryNotes || ""} 
                    onChange={(e) => setFormData(p => ({...p, salaryNotes: e.target.value}))} 
                    placeholder="Ex: Prime de performance de 10%..." 
                  />
@@ -299,7 +384,7 @@ export default function EditEmploymentOfferPage() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-bold text-muted-foreground">Contrat Collectif</Label>
-                  <Select value={formData.ccnlId} onValueChange={handleCcnlChange}>
+                  <Select value={formData.ccnlId || "none_clear"} onValueChange={handleCcnlChange}>
                     <SelectTrigger className="h-11">
                        <SelectValue placeholder="Sélectionner..." />
                     </SelectTrigger>
@@ -308,7 +393,7 @@ export default function EditEmploymentOfferPage() {
                       {activeCcnls?.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  {offer.ccnlName && !activeCcnls?.some(c => c.ccnlId === formData.ccnlId) && (
+                  {offer.ccnlName && formData.ccnlId !== "none_clear" && !activeCcnls?.some(c => c.ccnlId === formData.ccnlId) && (
                     <div className="flex items-center gap-1 text-[10px] text-orange-600 font-bold bg-orange-50 p-1.5 rounded">
                        <AlertCircle className="w-3 h-3" /> CCNL archivé ou introuvable
                     </div>
@@ -318,7 +403,7 @@ export default function EditEmploymentOfferPage() {
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-bold text-muted-foreground">Niveau de classification</Label>
                   <Select 
-                    value={formData.levelId} 
+                    value={formData.levelId || "none_clear"} 
                     onValueChange={handleLevelChange}
                     disabled={!formData.ccnlId || formData.ccnlId === "none_clear"}
                   >
@@ -347,7 +432,7 @@ export default function EditEmploymentOfferPage() {
              <CardHeader><CardTitle className="text-xs font-bold uppercase">Notes Internes RH</CardTitle></CardHeader>
              <CardContent>
                 <Textarea 
-                   value={formData.notes} 
+                   value={formData.notes || ""} 
                    onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} 
                    className="min-h-[150px] text-xs"
                    placeholder="Commentaires sur la validation de cette proposition..."

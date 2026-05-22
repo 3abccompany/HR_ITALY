@@ -65,9 +65,10 @@ export default function EmploymentOffersListPage() {
   const filteredOffers = useMemo(() => {
     const term = search.toLowerCase();
     return offers?.filter(o => 
-      o.candidateDisplayName.toLowerCase().includes(term) ||
-      o.jobTitleName.toLowerCase().includes(term) ||
-      o.offerId.toLowerCase().includes(term)
+      (o.candidateDisplayName ?? "").toLowerCase().includes(term) ||
+      (o.jobTitleName ?? "").toLowerCase().includes(term) ||
+      (o.offerId ?? "").toLowerCase().includes(term) ||
+      (o.candidateEmail ?? "").toLowerCase().includes(term)
     ) || [];
   }, [offers, search]);
 
@@ -91,7 +92,7 @@ export default function EmploymentOffersListPage() {
       case 'internal_review': return <Badge variant="secondary" className="bg-orange-50 text-orange-700">En revue</Badge>;
       case 'ready_to_send': return <Badge variant="secondary" className="bg-blue-50 text-blue-700">Prêt à envoyer</Badge>;
       case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700">Annulé</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      default: return <Badge variant="outline">{status || "Non renseigné"}</Badge>;
     }
   };
 
@@ -148,9 +149,9 @@ export default function EmploymentOffersListPage() {
                 filteredOffers.map((o) => (
                   <TableRow key={o.offerId} className="hover:bg-muted/50 transition-colors">
                     <TableCell>
-                      <div className="font-bold text-primary">{o.candidateDisplayName}</div>
+                      <div className="font-bold text-primary">{o.candidateDisplayName || "Non renseigné"}</div>
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase mt-1">
-                        <Briefcase className="w-3 h-3" /> {o.jobTitleName}
+                        <Briefcase className="w-3 h-3" /> {o.jobTitleName || "Non renseigné"}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -158,7 +159,7 @@ export default function EmploymentOffersListPage() {
                     </TableCell>
                     <TableCell>
                       <div className="text-xs space-y-1">
-                         <div className="font-medium">{o.contractType}</div>
+                         <div className="font-medium">{o.contractType || "Non renseigné"}</div>
                          <div className="flex items-center gap-1 text-muted-foreground">
                             <CalendarIcon className="w-3 h-3" /> 
                             Début: {o.proposedStartDate || "Non fixée"}
@@ -222,22 +223,6 @@ export default function EmploymentOffersListPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-function FilterDropdown({ label, value, onValueChange, options }: { label: string, value: string, onValueChange: (v: string) => void, options: { label: string, value: string }[] }) {
-  return (
-    <div className="flex items-center gap-2">
-       <span className="text-xs font-bold text-muted-foreground uppercase">{label}:</span>
-       <select 
-          value={value} 
-          onChange={(e) => onValueChange(e.target.value)}
-          className="text-xs bg-background border rounded px-2 py-1 outline-none"
-       >
-          <option value="all">Tous</option>
-          {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-       </select>
     </div>
   );
 }

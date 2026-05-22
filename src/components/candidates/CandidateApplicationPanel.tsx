@@ -115,7 +115,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
       // 1. Check if an active offer already exists
       const existingOffer = await getActiveOfferForCandidate(entityId, candidate.candidateId);
       if (existingOffer) {
-        toast({ title: "Proposition déjà existante", description: "Ouverture du brouillon en cours..." });
+        toast({ title: "Proposition déjà existante", description: "Ouverture de la proposition existante." });
         router.push(`/entity/${entityId}/employment-offers/${existingOffer.offerId}`);
         return;
       }
