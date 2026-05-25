@@ -83,7 +83,11 @@ service cloud.firestore {
       }
 
       match /departments/{departmentId} {
-        allow read: if hasPermission(entityId, 'departments.read') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'departments.read') || 
+                     hasPermission(entityId, 'candidates.read') || 
+                     hasPermission(entityId, 'recruitmentNeeds.read') || 
+                     hasPermission(entityId, 'employees.read') || 
+                     isPlatformAdmin();
         allow write: if hasPermission(entityId, 'departments.update') || isPlatformAdmin();
       }
 
@@ -95,7 +99,11 @@ service cloud.firestore {
       }
 
       match /jobTitles/{jobId} {
-        allow read: if hasPermission(entityId, 'jobTitles.read') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'jobTitles.read') || 
+                     hasPermission(entityId, 'candidates.read') || 
+                     hasPermission(entityId, 'recruitmentNeeds.read') || 
+                     hasPermission(entityId, 'employees.read') || 
+                     isPlatformAdmin();
         allow write: if hasPermission(entityId, 'jobTitles.update') || isPlatformAdmin();
       }
 
@@ -115,7 +123,9 @@ service cloud.firestore {
       }
 
       match /recruitmentNeeds/{needId} {
-        allow read: if hasPermission(entityId, 'recruitmentNeeds.read') || isPlatformAdmin() || (request.auth == null && resource.data.status in ['open', 'partially_fulfilled']);
+        allow read: if hasPermission(entityId, 'recruitmentNeeds.read') || 
+                     isPlatformAdmin() || 
+                     (isAuthenticated() && resource.data.status in ['open', 'partially_fulfilled']);
         allow write: if hasPermission(entityId, 'recruitmentNeeds.create') || hasPermission(entityId, 'recruitmentNeeds.update') || hasPermission(entityId, 'recruitmentNeeds.cancel') || isPlatformAdmin();
       }
 

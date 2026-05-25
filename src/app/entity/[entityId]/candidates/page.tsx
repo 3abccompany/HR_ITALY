@@ -16,7 +16,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy, Query, where } from "firebase/firestore";
+import { collection, query, orderBy, Query, where, getDocs } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   createCandidate, 
@@ -159,6 +159,12 @@ export default function CandidatesManagementPage() {
   const [disablingId, setDisablingId] = useState<string | null>(null);
   const [reactivatingId, setReactivatingId] = useState<string | null>(null);
 
+  // --- Master Data (Manual Fetch for stability in modal) ---
+  const [persons, setPersons] = useState<Person[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [needs, setNeeds] = useState<RecruitmentNeed[]>([]);
+  const [loadingMasters, setLoadingMasters] = useState(false);
+
   // --- Table UX State ---
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [groupBy, setGroupBy] = useState<GroupByType>('none');
@@ -173,33 +179,40 @@ export default function CandidatesManagementPage() {
   const canReadDepts = hasPermission("departments.read");
   const canReadNeeds = hasPermission("recruitmentNeeds.read");
 
-  // Queries
+  // Main real-time candidates query
   const candidatesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
     return query(collection(db, `entities/${entityId}/candidates`), orderBy("createdAt", "desc")) as Query<Candidate>;
   }, [db, entityId, canRead]);
 
-  const personsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadPersons) return null;
-    return query(collection(db, `entities/${entityId}/persons`), orderBy("lastName", "asc")) as Query<Person>;
-  }, [db, entityId, canReadPersons]);
-
-  const deptsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadDepts) return null;
-    return query(collection(db, `entities/${entityId}/departments`), where("status", "==", "active"), orderBy("name", "asc")) as Query<Department>;
-  }, [db, entityId, canReadDepts]);
-
-  const needsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadNeeds) return null;
-    return query(collection(db, `entities/${entityId}/recruitmentNeeds`), 
-                 where("status", "in", ["open", "partially_fulfilled"]),
-                 orderBy("createdAt", "desc")) as Query<RecruitmentNeed>;
-  }, [db, entityId, canReadNeeds]);
-
   const { data: candidates, loading: loadingCandidates } = useCollection<Candidate>(candidatesQuery);
-  const { data: persons, loading: loadingPersons } = useCollection<Person>(personsQuery);
-  const { data: departments, loading: loadingDepts } = useCollection<Department>(deptsQuery);
-  const { data: needs, loading: loadingNeeds } = useCollection<RecruitmentNeed>(needsQuery);
+
+  // Manual master data fetch logic
+  useEffect(() => {
+    async function fetchMasters() {
+      if (!db || !entityId || !isFormVisible) return;
+      
+      setLoadingMasters(true);
+      try {
+        const results = await Promise.all([
+          canReadPersons ? getDocs(query(collection(db, `entities/${entityId}/persons`), orderBy("lastName", "asc"))) : null,
+          canReadDepts ? getDocs(query(collection(db, `entities/${entityId}/departments`), where("status", "==", "active"), orderBy("name", "asc"))) : null,
+          canReadNeeds ? getDocs(query(collection(db, `entities/${entityId}/recruitmentNeeds`), where("status", "in", ["open", "partially_fulfilled"]), orderBy("createdAt", "desc"))) : null
+        ]);
+
+        if (results[0]) setPersons(results[0].docs.map(d => ({ ...d.data(), personId: d.id } as Person)));
+        if (results[1]) setDepartments(results[1].docs.map(d => ({ ...d.data(), departmentId: d.id } as Department)));
+        if (results[2]) setNeeds(results[2].docs.map(d => ({ ...d.data(), needId: d.id } as RecruitmentNeed)));
+      } catch (err: any) {
+        console.error("Error fetching master data:", err);
+        // Silently fail or show minimal warning; rules might be tighter for specific users
+      } finally {
+        setLoadingMasters(false);
+      }
+    }
+
+    fetchMasters();
+  }, [db, entityId, isFormVisible, canReadPersons, canReadDepts, canReadNeeds]);
 
   // Filtered Needs based on selected department in form
   const filteredNeedsForForm = useMemo(() => {
@@ -884,7 +897,7 @@ export default function CandidatesManagementPage() {
                 <Label htmlFor="personId">Personne concernée</Label>
                 <Select value={formData.personId} onValueChange={(v) => setFormData(p => ({...p, personId: v}))}>
                   <SelectTrigger>
-                    <SelectValue placeholder={loadingPersons ? "Chargement..." : "Sélectionner une personne active"} />
+                    <SelectValue placeholder={loadingMasters ? "Chargement..." : "Sélectionner une personne active"} />
                   </SelectTrigger>
                   <SelectContent>
                     {persons?.filter(p => p.status === 'active' && !p.currentCandidateId && !p.currentEmployeeId).map(p => (
@@ -892,6 +905,7 @@ export default function CandidatesManagementPage() {
                         {p.displayName} ({p.codiceFiscale})
                       </SelectItem>
                     ))}
+                    {!loadingMasters && persons.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground">Aucune personne disponible</div>}
                   </SelectContent>
                 </Select>
               </div>
@@ -905,12 +919,13 @@ export default function CandidatesManagementPage() {
                   onValueChange={(v) => setFormData(p => ({...p, departmentId: v, recruitmentNeedId: "", positionApplied: ""}))}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder={loadingDepts ? "Chargement..." : "Choisir département"} />
+                    <SelectValue placeholder={loadingMasters ? "Chargement..." : "Choisir département"} />
                   </SelectTrigger>
                   <SelectContent>
                     {departments?.map(d => (
                       <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>
                     ))}
+                    {!loadingMasters && departments.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground">Aucun département disponible</div>}
                   </SelectContent>
                 </Select>
               </div>
@@ -922,10 +937,10 @@ export default function CandidatesManagementPage() {
                     const need = needs?.find(n => n.needId === v);
                     setFormData(p => ({...p, recruitmentNeedId: v, positionApplied: need?.jobTitleName || ""}));
                   }}
-                  disabled={!formData.departmentId || loadingNeeds}
+                  disabled={!formData.departmentId || loadingMasters}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder={!formData.departmentId ? "Sélectionnez d'abord un département" : (loadingNeeds ? "Chargement..." : "Choisir un poste ouvert")} />
+                    <SelectValue placeholder={!formData.departmentId ? "Sélectionnez d'abord un département" : (loadingMasters ? "Chargement..." : "Choisir un poste ouvert")} />
                   </SelectTrigger>
                   <SelectContent>
                     {filteredNeedsForForm.length > 0 ? (
