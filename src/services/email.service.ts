@@ -111,7 +111,7 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
 
 /**
  * Sends the formal employment offer link to the candidate.
- * 7K-D requirement: Return error if no provider is configured.
+ * 7K-D: Returns error if no provider is configured.
  */
 export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
   const host = process.env.SMTP_HOST;
@@ -123,6 +123,11 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
   if (!host || !user || !pass) {
     throw new Error("Configuration du service email requise.");
   }
+
+  // Defensive values to avoid "undefined" in the body
+  const candidateName = params.candidateName || "candidat";
+  const jobTitle = params.jobTitle || "poste proposé";
+  const companyName = params.companyName || "notre entreprise";
 
   const transporter = nodemailer.createTransport({
     host,
@@ -137,8 +142,8 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
         <h1 style="color: white; margin: 0; font-size: 24px;">Proposition d'embauche</h1>
       </div>
       <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; border-radius: 0 0 12px 12px; background-color: white;">
-        <p>Bonjour <strong>${params.candidateName}</strong>,</p>
-        <p>Nous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de <strong>${params.jobTitle}</strong> au sein de l'entreprise <strong>${params.companyName}</strong>.</p>
+        <p>Bonjour <strong>${candidateName}</strong>,</p>
+        <p>Nous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de <strong>${jobTitle}</strong> au sein de l'entreprise <strong>${companyName}</strong>.</p>
         <p>Vous pouvez consulter les détails de cette proposition et nous transmettre votre réponse via notre portail sécurisé :</p>
         
         <div style="margin: 40px 0; text-align: center;">
@@ -166,7 +171,7 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
       to: params.to,
       subject: params.subject,
       html,
-      text: `Bonjour ${params.candidateName},\n\nNous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de ${params.jobTitle} au sein de ${params.companyName}.\n\nVous pouvez consulter les détails de cette proposition via le lien suivant : ${params.offerLink}\n\nCe lien est valable jusqu'au ${params.expiresAt}.`,
+      text: `Bonjour ${candidateName},\n\nNous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de ${jobTitle} au sein de ${companyName}.\n\nVous pouvez consulter les détails de cette proposition via le lien suivant : ${params.offerLink}\n\nCe lien est valable jusqu'au ${params.expiresAt}.`,
     });
     return { success: true };
   } catch (error: any) {

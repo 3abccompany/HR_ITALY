@@ -31,6 +31,11 @@ export async function sendOfferToCandidateAction(params: {
       throw new Error("Le statut actuel de la proposition ne permet pas l'envoi.");
     }
 
+    // Resolve Entity Name for the email
+    const entitySnap = await adminDb.collection("entities").doc(entityId).get();
+    const entityData = entitySnap.data();
+    const resolvedEntityName = entityData?.nomEntreprise || entityData?.raisonSociale || entityData?.name || entityData?.legalName || "l'entreprise";
+
     // 1. Generate Token
     const rawToken = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -45,9 +50,9 @@ export async function sendOfferToCandidateAction(params: {
     // This will throw if the provider is not configured or fails.
     await sendEmploymentOfferEmail({
       to: offer.candidateEmail,
-      subject: `Proposition d'embauche — ${offer.entityName}`,
+      subject: `Proposition d'embauche — ${resolvedEntityName}`,
       candidateName: offer.candidateDisplayName,
-      companyName: offer.entityName,
+      companyName: resolvedEntityName,
       jobTitle: offer.jobTitleName,
       offerLink,
       expiresAt: expiry.toLocaleDateString('fr-FR', { dateStyle: 'long' })
@@ -86,8 +91,8 @@ export async function sendOfferToCandidateAction(params: {
       sentAt: FieldValue.serverTimestamp(),
       sentBy: actorUid,
       resendCount: (offer.resendCount || 0) + (isResend ? 1 : 0),
-      lastResentAt: isResend ? FieldValue.serverTimestamp() : null,
-      lastResentBy: isResend ? actorUid : null,
+      lastResentAt: isResent ? FieldValue.serverTimestamp() : null,
+      lastResentBy: isResent ? actorUid : null,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actorUid
     });
@@ -134,6 +139,11 @@ export async function getPublicOfferAction(rawToken: string) {
 
     if (offer.status === "cancelled") return { success: false, error: "Cette proposition a été annulée par l'entreprise." };
 
+    // Resolve Entity Name for the DTO
+    const entitySnap = await adminDb.collection("entities").doc(tokenData.entityId).get();
+    const entityData = entitySnap.data();
+    const resolvedEntityName = entityData?.nomEntreprise || entityData?.raisonSociale || entityData?.name || entityData?.legalName || "Notre entreprise";
+
     // 3. Mark as Viewed (Transactional)
     if (offer.status === "sent") {
       await offerSnap.ref.update({
@@ -145,7 +155,7 @@ export async function getPublicOfferAction(rawToken: string) {
 
     // 4. Sanitize DTO (Privacy Firewall)
     const dto: PublicOfferDTO = {
-      entityName: offer.entityName,
+      entityName: resolvedEntityName,
       candidateDisplayName: offer.candidateDisplayName,
       jobTitleName: offer.jobTitleName,
       departmentName: offer.departmentName,
