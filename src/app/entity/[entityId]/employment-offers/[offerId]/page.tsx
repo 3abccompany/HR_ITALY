@@ -85,7 +85,7 @@ export default function EditEmploymentOfferPage() {
   }, [db, entityId, hasPermission]);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !formData.defaultCcnlId || !hasPermission("contracts.read")) return null;
+    if (!db || !entityId || !formData.ccnlId || !hasPermission("contracts.read")) return null;
     return query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"));
   }, [db, entityId, formData.ccnlId, hasPermission]);
 
@@ -189,7 +189,7 @@ export default function EditEmploymentOfferPage() {
       const hours = parseFloat(numInputs.weeklyHours.replace(',', '.'));
       const trial = parseInt(numInputs.trialPeriodDays);
 
-      if (isNaN(monthly) || isNaN(payments) || isNaN(hours) || isNaN(trial) || isNaN(hourly)) throw new Error("Veuillez saisir des valeurs numériques valides.");
+      if (isNaN(monthly) || iNaN(payments) || iNaN(hours) || iNaN(trial) || iNaN(hourly)) throw new Error("Veuillez saisir des valeurs numériques valides.");
       const annual = monthly * payments;
 
       await updateEmploymentOffer(entityId, offerId, {
@@ -245,7 +245,7 @@ export default function EditEmploymentOfferPage() {
   const annualTotal = useMemo(() => {
     const monthly = parseFloat(numInputs.proposedGrossMonthly.replace(',', '.'));
     const payments = parseInt(numInputs.monthlyPayments);
-    if (isNaN(monthly) || isNaN(payments) || monthly === 0) return 0;
+    if (isNaN(monthly) || iNaN(payments) || monthly === 0) return 0;
     return monthly * payments;
   }, [numInputs.proposedGrossMonthly, numInputs.monthlyPayments]);
 
@@ -567,7 +567,7 @@ function getStatusBadge(status: EmploymentOfferStatus) {
     case 'sent': return <Badge variant="secondary" className="bg-primary text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Envoyée</Badge>;
     case 'viewed': return <Badge variant="secondary" className="bg-cyan-500 text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Consultée</Badge>;
     case 'accepted': return <Badge variant="secondary" className="bg-green-500 text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Acceptée</Badge>;
-    case 'declined': return <Badge variant="destructive" className="bg-red-500 text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Refusée</Badge>;
+    case 'declined': return <Badge variant="destructive" className="bg-red-50 text-red-500 text-white border-none uppercase text-[9px] font-black px-2 tracking-tighter">Refusée</Badge>;
     case 'expired': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200 uppercase text-[9px] font-black px-2 tracking-tighter">Expirée</Badge>;
     case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase text-[9px] font-black px-2 tracking-tighter">Annulée</Badge>;
     default: return <Badge variant="outline" className="uppercase text-[9px] font-black px-2">Inconnu</Badge>;
