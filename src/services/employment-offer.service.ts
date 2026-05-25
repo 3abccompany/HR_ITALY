@@ -21,13 +21,14 @@ import { sendEmploymentOfferEmail } from "./email.service";
 
 /**
  * Checks if an active offer draft already exists for a candidate.
+ * Includes 'accepted' to prevent duplicate drafting after a successful recruitment cycle.
  */
 export async function getActiveOfferForCandidate(entityId: string, candidateId: string): Promise<EmploymentOffer | null> {
   if (!db) return null;
   const q = query(
     collection(db, `entities/${entityId}/employmentOffers`),
     where("candidateId", "==", candidateId),
-    where("status", "in", ["draft", "internal_review", "ready_to_send", "sent", "viewed"]),
+    where("status", "in", ["draft", "internal_review", "ready_to_send", "sent", "viewed", "accepted"]),
     limit(1)
   );
   const snap = await getDocs(q);

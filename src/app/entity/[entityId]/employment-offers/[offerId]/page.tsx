@@ -7,7 +7,7 @@ import {
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
   Clock, Hash, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
   FileSignature, ChevronRight, Building2, UserCircle, Send, Eye, MousePointer2,
-  FileText
+  FileText, ExternalLink, Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -84,7 +85,7 @@ export default function EditEmploymentOfferPage() {
   }, [db, entityId, hasPermission]);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !formData.ccnlId || !hasPermission("contracts.read")) return null;
+    if (!db || !entityId || !formData.defaultCcnlId || !hasPermission("contracts.read")) return null;
     return query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"));
   }, [db, entityId, formData.ccnlId, hasPermission]);
 
@@ -359,7 +360,7 @@ export default function EditEmploymentOfferPage() {
 
       <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-8", (isCancelled || isAccepted || isDeclined) && "opacity-60")}>
         <div className="lg:col-span-2 space-y-8">
-          {/* Tracking Card (7K-D) */}
+          {/* Tracking Card */}
           {isSentOrViewed && (
             <Card className="border-accent/20 bg-accent/5 rounded-3xl overflow-hidden shadow-sm">
                <CardContent className="p-6 flex flex-wrap items-center justify-between gap-6">
@@ -392,8 +393,20 @@ export default function EditEmploymentOfferPage() {
 
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
             <CardHeader className="bg-primary/5 border-b py-4">
-              <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
-                <User className="w-4 h-4" /> Candidat & Poste
+              <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center justify-between gap-2 text-primary/70">
+                <div className="flex items-center gap-2">
+                   <User className="w-4 h-4" /> Candidat & Poste
+                </div>
+                <div className="flex items-center gap-2">
+                   <Button variant="ghost" size="sm" asChild className="h-7 text-[9px] font-black uppercase gap-1 hover:bg-white">
+                      <Link href={`/entity/${entityId}/candidates`}><Search className="w-3 h-3" /> Voir candidat</Link>
+                   </Button>
+                   {offer.interviewId && (
+                     <Button variant="ghost" size="sm" asChild className="h-7 text-[9px] font-black uppercase gap-1 hover:bg-white">
+                        <Link href={`/entity/${entityId}/interviews`}><Calendar className="w-3 h-3" /> Voir entretien</Link>
+                     </Button>
+                   )}
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6 space-y-6">
@@ -417,7 +430,14 @@ export default function EditEmploymentOfferPage() {
                    </div>
                 </div>
                 <div className="space-y-1">
-                   <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Besoin RH source</Label>
+                   <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider flex items-center justify-between">
+                     Besoin RH source
+                     {offer.recruitmentNeedId && (
+                        <Link href={`/entity/${entityId}/recruitment-needs/${offer.recruitmentNeedId}/preview`} className="text-accent text-[8px] hover:underline flex items-center gap-0.5">
+                           Consulter <ExternalLink className="w-2 h-2" />
+                        </Link>
+                     )}
+                   </Label>
                    <div className="flex items-center gap-2 h-10 px-3 bg-slate-50 border rounded-xl text-[11px] font-bold text-primary truncate">
                       <Briefcase className="w-4 h-4 text-primary/40" />{offer.recruitmentNeedTitle || offer.recruitmentNeedId || "Saisie directe"}
                    </div>
