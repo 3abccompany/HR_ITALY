@@ -189,7 +189,7 @@ export default function EditEmploymentOfferPage() {
       const hours = parseFloat(numInputs.weeklyHours.replace(',', '.'));
       const trial = parseInt(numInputs.trialPeriodDays);
 
-      if (isNaN(monthly) || iNaN(payments) || iNaN(hours) || iNaN(trial) || iNaN(hourly)) throw new Error("Veuillez saisir des valeurs numériques valides.");
+      if (isNaN(monthly) || isNaN(payments) || isNaN(hours) || isNaN(trial) || isNaN(hourly)) throw new Error("Veuillez saisir des valeurs numériques valides.");
       const annual = monthly * payments;
 
       await updateEmploymentOffer(entityId, offerId, {
@@ -245,7 +245,7 @@ export default function EditEmploymentOfferPage() {
   const annualTotal = useMemo(() => {
     const monthly = parseFloat(numInputs.proposedGrossMonthly.replace(',', '.'));
     const payments = parseInt(numInputs.monthlyPayments);
-    if (isNaN(monthly) || iNaN(payments) || monthly === 0) return 0;
+    if (isNaN(monthly) || isNaN(payments) || monthly === 0) return 0;
     return monthly * payments;
   }, [numInputs.proposedGrossMonthly, numInputs.monthlyPayments]);
 
