@@ -38,6 +38,8 @@ export interface Candidate {
   source: string;
   positionApplied: string;
   department: string;
+  departmentId?: string;
+  recruitmentNeedId?: string;
   applicationDate: string;
   availabilityDate: string;
   expectedSalary: string;

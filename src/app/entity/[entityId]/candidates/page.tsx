@@ -16,7 +16,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy, Query } from "firebase/firestore";
+import { collection, query, orderBy, Query, where } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   createCandidate, 
@@ -26,6 +26,8 @@ import {
 } from "@/services/candidate.service";
 import { Candidate, CandidateStatus, CANDIDATE_STATUS_LABELS } from "@/types/candidate";
 import { Person } from "@/types/person";
+import { Department } from "@/types/organization";
+import { RecruitmentNeed } from "@/types/recruitment-need";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
@@ -61,8 +63,10 @@ import { fr } from "date-fns/locale";
 
 const initialForm = {
   personId: "",
-  positionApplied: "",
-  department: "",
+  departmentId: "",
+  recruitmentNeedId: "",
+  positionApplied: "", // Label snapshot
+  department: "", // Label snapshot
   source: "manual",
   applicationDate: new Date().toISOString().split('T')[0],
   availabilityDate: "",
@@ -166,6 +170,8 @@ export default function CandidatesManagementPage() {
   const canCreate = hasPermission("candidates.create");
   const canUpdate = hasPermission("candidates.update");
   const canReadPersons = hasPermission("persons.read");
+  const canReadDepts = hasPermission("departments.read");
+  const canReadNeeds = hasPermission("recruitmentNeeds.read");
 
   // Queries
   const candidatesQuery = useMemo(() => {
@@ -178,8 +184,28 @@ export default function CandidatesManagementPage() {
     return query(collection(db, `entities/${entityId}/persons`), orderBy("lastName", "asc")) as Query<Person>;
   }, [db, entityId, canReadPersons]);
 
+  const deptsQuery = useMemo(() => {
+    if (!db || !entityId || !canReadDepts) return null;
+    return query(collection(db, `entities/${entityId}/departments`), where("status", "==", "active"), orderBy("name", "asc")) as Query<Department>;
+  }, [db, entityId, canReadDepts]);
+
+  const needsQuery = useMemo(() => {
+    if (!db || !entityId || !canReadNeeds) return null;
+    return query(collection(db, `entities/${entityId}/recruitmentNeeds`), 
+                 where("status", "in", ["open", "partially_fulfilled"]),
+                 orderBy("createdAt", "desc")) as Query<RecruitmentNeed>;
+  }, [db, entityId, canReadNeeds]);
+
   const { data: candidates, loading: loadingCandidates } = useCollection<Candidate>(candidatesQuery);
   const { data: persons, loading: loadingPersons } = useCollection<Person>(personsQuery);
+  const { data: departments, loading: loadingDepts } = useCollection<Department>(deptsQuery);
+  const { data: needs, loading: loadingNeeds } = useCollection<RecruitmentNeed>(needsQuery);
+
+  // Filtered Needs based on selected department in form
+  const filteredNeedsForForm = useMemo(() => {
+    if (!formData.departmentId || !needs) return [];
+    return needs.filter(n => n.departmentId === formData.departmentId);
+  }, [needs, formData.departmentId]);
 
   // --- Logic Chains ---
 
@@ -393,6 +419,8 @@ export default function CandidatesManagementPage() {
   const handleEdit = (c: Candidate) => {
     setFormData({
       personId: c.personId,
+      departmentId: c.departmentId || "",
+      recruitmentNeedId: c.recruitmentNeedId || "",
       positionApplied: c.positionApplied,
       department: c.department || "",
       source: c.source || "manual",
@@ -410,13 +438,34 @@ export default function CandidatesManagementPage() {
     e.preventDefault();
     if (!user || !entityId) return;
 
+    if (!formData.personId && !editingId) {
+       toast({ variant: "destructive", title: "Erreur", description: "Veuillez sélectionner une personne." });
+       return;
+    }
+    if (!formData.departmentId) {
+       toast({ variant: "destructive", title: "Erreur", description: "Veuillez sélectionner un département." });
+       return;
+    }
+    if (!formData.recruitmentNeedId && !editingId) {
+       toast({ variant: "destructive", title: "Erreur", description: "Veuillez sélectionner un poste ouvert." });
+       return;
+    }
+
     setLoading(true);
     try {
       if (editingId) {
         await updateCandidate(entityId, editingId, formData, user.uid);
         toast({ title: "Mis à jour", description: "La candidature a été modifiée." });
       } else {
-        await createCandidate(entityId, formData.personId, formData, user.uid);
+        // Enforce labels from masters
+        const dept = departments?.find(d => d.departmentId === formData.departmentId);
+        const need = needs?.find(n => n.needId === formData.recruitmentNeedId);
+        
+        await createCandidate(entityId, formData.personId, {
+          ...formData,
+          department: dept?.name || "",
+          positionApplied: need?.jobTitleName || ""
+        }, user.uid);
         toast({ title: "Créée", description: "La candidature a été enregistrée." });
       }
       handleResetForm();
@@ -850,12 +899,44 @@ export default function CandidatesManagementPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="positionApplied">Poste visé</Label>
-                <Input id="positionApplied" value={formData.positionApplied} onChange={handleInputChange} required />
+                <Label htmlFor="departmentId">Département</Label>
+                <Select 
+                  value={formData.departmentId} 
+                  onValueChange={(v) => setFormData(p => ({...p, departmentId: v, recruitmentNeedId: "", positionApplied: ""}))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={loadingDepts ? "Chargement..." : "Choisir département"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {departments?.map(d => (
+                      <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="department">Département</Label>
-                <Input id="department" value={formData.department} onChange={handleInputChange} />
+                <Label htmlFor="recruitmentNeedId">Poste visé</Label>
+                <Select 
+                  value={formData.recruitmentNeedId} 
+                  onValueChange={(v) => {
+                    const need = needs?.find(n => n.needId === v);
+                    setFormData(p => ({...p, recruitmentNeedId: v, positionApplied: need?.jobTitleName || ""}));
+                  }}
+                  disabled={!formData.departmentId || loadingNeeds}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={!formData.departmentId ? "Sélectionnez d'abord un département" : (loadingNeeds ? "Chargement..." : "Choisir un poste ouvert")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredNeedsForForm.length > 0 ? (
+                      filteredNeedsForForm.map(n => (
+                        <SelectItem key={n.needId} value={n.needId}>{n.jobTitleName} ({n.remainingHeadcount} restants)</SelectItem>
+                      ))
+                    ) : (
+                      <div className="p-4 text-center text-xs text-muted-foreground">Aucun poste ouvert pour ce département</div>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
