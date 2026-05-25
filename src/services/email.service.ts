@@ -6,6 +6,7 @@
 
 import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
+import nodemailer from 'nodemailer';
 
 export interface SendInterviewEmailParams {
   entityId: string;
@@ -58,11 +59,30 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
   const renderedBody = renderTemplate(message, templateData);
 
   try {
-    // --- PROVIDER INTEGRATION POINT ---
-    // In a real environment, use Resend, SendGrid, etc.
-    console.log(`[Email Service] Mock sending email to: ${to}`);
-    
-    await new Promise(resolve => setTimeout(resolve, 500));
+    const host = process.env.SMTP_HOST;
+    const port = parseInt(process.env.SMTP_PORT || '587');
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const from = process.env.SMTP_FROM || user;
+
+    if (host && user && pass) {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      await transporter.sendMail({
+        from,
+        to,
+        subject: renderedSubject,
+        html: renderedBody.replace(/\n/g, '<br>'),
+        text: renderedBody,
+      });
+    } else {
+      console.log(`[Email Service] SMTP not configured. Log only: to=${to}, subject=${renderedSubject}`);
+    }
 
     const interviewRef = adminDb.collection("entities").doc(entityId).collection("interviews").doc(interviewId);
     await interviewRef.update({
@@ -94,16 +114,63 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
  * 7K-D requirement: Return error if no provider is configured.
  */
 export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
-  // CONFIGURATION CHECK: Throw if no real SMTP/API key is present to avoid silent fakes.
-  // Replace 'MOCK' with your real env variable check if available.
-  const hasProvider = false; // Set to true when Resend/SendGrid is integrated.
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || '587');
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || user;
 
-  if (!hasProvider) {
+  if (!host || !user || !pass) {
     throw new Error("Configuration du service email requise.");
   }
 
-  console.log(`[Email Service] Sending Offer to ${params.to} for ${params.jobTitle}`);
-  
-  // Real implementation would go here...
-  return { success: true };
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.6;">
+      <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">Proposition d'embauche</h1>
+      </div>
+      <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; border-radius: 0 0 12px 12px; background-color: white;">
+        <p>Bonjour <strong>${params.candidateName}</strong>,</p>
+        <p>Nous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de <strong>${params.jobTitle}</strong> au sein de l'entreprise <strong>${params.companyName}</strong>.</p>
+        <p>Vous pouvez consulter les détails de cette proposition et nous transmettre votre réponse via notre portail sécurisé :</p>
+        
+        <div style="margin: 40px 0; text-align: center;">
+          <a href="${params.offerLink}" style="background-color: #4DB3E6; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 12px rgba(77, 179, 230, 0.3);">
+            Consulter ma proposition
+          </a>
+        </div>
+        
+        <p style="font-size: 12px; color: #71717A; text-align: center; margin-top: 20px;">
+          Ce lien sécurisé est personnel et valable jusqu'au <strong>${params.expiresAt}</strong>.
+        </p>
+        
+        <hr style="border: 0; border-top: 1px solid #EEEFF7; margin: 30px 0;">
+        
+        <p style="font-size: 11px; color: #A1A1AA; font-style: italic;">
+          Ceci est un message automatique généré par HR Nexus Studio. Merci de ne pas répondre directement à cet email.
+        </p>
+      </div>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from,
+      to: params.to,
+      subject: params.subject,
+      html,
+      text: `Bonjour ${params.candidateName},\n\nNous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de ${params.jobTitle} au sein de ${params.companyName}.\n\nVous pouvez consulter les détails de cette proposition via le lien suivant : ${params.offerLink}\n\nCe lien est valable jusqu'au ${params.expiresAt}.`,
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Email Service] SMTP Send Error:", error);
+    throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
+  }
 }

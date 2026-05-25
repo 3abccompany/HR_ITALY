@@ -38,7 +38,7 @@ export async function sendOfferToCandidateAction(params: {
     expiry.setDate(expiry.getDate() + 7); // Default 7 days
 
     // 2. Prepare Link
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
+    const baseUrl = process.env.APP_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
     const offerLink = `${baseUrl}/offer/${rawToken}`;
 
     // 3. Attempt to Send Email (CRITICAL STEP)
