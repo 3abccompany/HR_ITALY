@@ -9,7 +9,7 @@ import { sendEmploymentOfferEmail } from "@/services/email.service";
 /**
  * 7K-D Server Action: Sends the offer to the candidate.
  * Generates token, creates global lookup, and updates offer status.
- * Reordered to ensure status only updates on successful email send.
+ * Reordered to ensure status only updates on successful email send (Atomic).
  */
 export async function sendOfferToCandidateAction(params: {
   entityId: string;
@@ -36,18 +36,18 @@ export async function sendOfferToCandidateAction(params: {
     const entityData = entitySnap.data();
     const resolvedEntityName = entityData?.nomEntreprise || entityData?.raisonSociale || entityData?.name || entityData?.legalName || "l'entreprise";
 
-    // 1. Generate Token
+    // 1. Generate Token (Crypto random)
     const rawToken = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + 7); // Default 7 days
 
-    // 2. Prepare Link
+    // 2. Prepare Link (Uses APP_PUBLIC_URL env)
     const baseUrl = process.env.APP_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
     const offerLink = `${baseUrl}/offer/${rawToken}`;
 
     // 3. Attempt to Send Email (CRITICAL STEP)
-    // This will throw if the provider is not configured or fails.
+    // Atomic check: database updates only happen if SMTP provider accepts the request.
     await sendEmploymentOfferEmail({
       to: offer.candidateEmail,
       subject: `Proposition d'embauche — ${resolvedEntityName}`,
@@ -58,7 +58,7 @@ export async function sendOfferToCandidateAction(params: {
       expiresAt: expiry.toLocaleDateString('fr-FR', { dateStyle: 'long' })
     });
 
-    // 4. Update Database (Only if email was accepted by provider)
+    // 4. Update Database (Atomic batch)
     const batch = adminDb.batch();
 
     // Revoke old token if exists
@@ -70,7 +70,7 @@ export async function sendOfferToCandidateAction(params: {
       });
     }
 
-    // Create Global Lookup
+    // Create Global Lookup (Stripped of sensitive data)
     const lookupRef = adminDb.collection("publicOfferTokens").doc(tokenHash);
     batch.set(lookupRef, {
       tokenHash,
@@ -82,7 +82,7 @@ export async function sendOfferToCandidateAction(params: {
       createdBy: actorUid
     });
 
-    // Update Offer
+    // Update Offer with tracking and counter
     const isResend = offer.status === "sent" || offer.status === "viewed";
     batch.update(offerRef, {
       status: "sent",
@@ -102,14 +102,14 @@ export async function sendOfferToCandidateAction(params: {
     return { success: true };
   } catch (err: any) {
     console.error("[Send Offer Action] Error:", err);
-    // If we catch an error here, no DB updates (batch) will have been committed.
+    // If SMTP fails, no DB updates are committed, ensuring status remains ready_to_send.
     return { success: false, error: err.message };
   }
 }
 
 /**
  * 7K-D Server Action: Fetches sanitized data for the public portal.
- * Implements the Privacy Firewall.
+ * Implements the Privacy Firewall to prevent internal data leaks.
  */
 export async function getPublicOfferAction(rawToken: string) {
   if (!rawToken) return { success: false, error: "Token manquant." };
@@ -117,7 +117,7 @@ export async function getPublicOfferAction(rawToken: string) {
   const tokenHash = createHash('sha256').update(rawToken).digest('hex');
 
   try {
-    // 1. Find Token Lookup
+    // 1. Find Token Lookup (Secure Global Index)
     const tokenSnap = await adminDb.collection("publicOfferTokens").doc(tokenHash).get();
     if (!tokenSnap.exists) return { success: false, error: "Lien invalide ou expiré." };
 
@@ -139,12 +139,12 @@ export async function getPublicOfferAction(rawToken: string) {
 
     if (offer.status === "cancelled") return { success: false, error: "Cette proposition a été annulée par l'entreprise." };
 
-    // Resolve Entity Name for the DTO
+    // Resolve Entity Name
     const entitySnap = await adminDb.collection("entities").doc(tokenData.entityId).get();
     const entityData = entitySnap.data();
     const resolvedEntityName = entityData?.nomEntreprise || entityData?.raisonSociale || entityData?.name || entityData?.legalName || "Notre entreprise";
 
-    // 3. Mark as Viewed (Transactional)
+    // 3. Mark as Viewed (Atomic update)
     if (offer.status === "sent") {
       await offerSnap.ref.update({
         status: "viewed",
@@ -154,6 +154,7 @@ export async function getPublicOfferAction(rawToken: string) {
     }
 
     // 4. Sanitize DTO (Privacy Firewall)
+    // Return only candidate-facing fields. Exclude internal notes, IDs, and metadata.
     const dto: PublicOfferDTO = {
       entityName: resolvedEntityName,
       candidateDisplayName: offer.candidateDisplayName,
@@ -185,6 +186,7 @@ export async function getPublicOfferAction(rawToken: string) {
 
 /**
  * 7K-D Server Action: Handles candidate response (Accept/Decline).
+ * Uses Transaction to ensure token invalidation and offer status update are atomic.
  */
 export async function respondToOfferAction(rawToken: string, response: "accepted" | "declined", reason?: string) {
   if (!rawToken) throw new Error("Token manquant.");
@@ -192,7 +194,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
   const tokenHash = createHash('sha256').update(rawToken).digest('hex');
 
   return await adminDb.runTransaction(async (transaction) => {
-    // 1. Validate Token
+    // 1. Validate Token Integrity
     const tokenRef = adminDb.collection("publicOfferTokens").doc(tokenHash);
     const tokenSnap = await transaction.get(tokenRef);
     if (!tokenSnap.exists || tokenSnap.data()?.status !== "active") {
@@ -202,7 +204,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
     const tokenData = tokenSnap.data()!;
     if (tokenData.expiresAt.toDate() < new Date()) throw new Error("Lien expiré.");
 
-    // 2. Validate Offer
+    // 2. Validate Offer State
     const offerRef = adminDb.collection("entities").doc(tokenData.entityId).collection("employmentOffers").doc(tokenData.offerId);
     const offerSnap = await transaction.get(offerRef);
     if (!offerSnap.exists) throw new Error("Proposition introuvable.");
@@ -212,7 +214,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
       throw new Error("Une réponse a déjà été enregistrée pour ce dossier.");
     }
 
-    // 3. Update Everything
+    // 3. Update State (Terminal status)
     transaction.update(offerRef, {
       status: response,
       candidateResponse: response,
@@ -222,13 +224,14 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
       updatedBy: "candidate_public_portal"
     });
 
+    // 4. Invalidate Token
     transaction.update(tokenRef, {
       status: "used",
       lastUsedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     });
 
-    // 4. Timeline Event
+    // 5. Log History (Timeline Event)
     const timelineRef = adminDb.collection("entities").doc(tokenData.entityId).collection("personTimeline").doc();
     transaction.set(timelineRef, {
       eventId: timelineRef.id,
