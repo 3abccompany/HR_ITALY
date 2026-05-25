@@ -91,8 +91,8 @@ export async function sendOfferToCandidateAction(params: {
       sentAt: FieldValue.serverTimestamp(),
       sentBy: actorUid,
       resendCount: (offer.resendCount || 0) + (isResend ? 1 : 0),
-      lastResentAt: isResent ? FieldValue.serverTimestamp() : null,
-      lastResentBy: isResent ? actorUid : null,
+      lastResentAt: isResend ? FieldValue.serverTimestamp() : null,
+      lastResentBy: isResend ? actorUid : null,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actorUid
     });
