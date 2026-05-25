@@ -20,7 +20,6 @@ import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, where } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
-import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { cancelEmploymentOffer } from "@/services/employment-offer.service";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -129,23 +128,35 @@ export default function EmploymentOffersListPage() {
 
   const offersQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    // We fetch all for client-side filtering/sorting/pagination as per usual pattern
     return query(collection(db, `entities/${entityId}/employmentOffers`), orderBy("updatedAt", "desc"));
   }, [db, entityId, canRead]);
 
-  const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active"), orderBy("name", "asc"));
-  }, [db, entityId, canRead]);
-
-  const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead || filters.ccnlId === 'all') return null;
-    return query(collection(db, `entities/${entityId}/ccnls/${filters.ccnlId}/levels`), where("status", "==", "active"), orderBy("levelCode", "asc"));
-  }, [db, entityId, canRead, filters.ccnlId]);
-
   const { data: offers, loading: loadingOffers } = useCollection<EmploymentOffer>(offersQuery);
-  const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
-  const { data: activeLevels } = useCollection<CCNLLevel>(levelsQuery);
+
+  // --- Derived Filter Options (Resolves Permission Errors on ccnls collection) ---
+  
+  const uniqueCcnls = useMemo(() => {
+    const map = new Map<string, string>();
+    offers?.forEach(o => {
+      if (o.ccnlId && o.ccnlName) {
+        map.set(o.ccnlId, o.ccnlName);
+      }
+    });
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [offers]);
+
+  const uniqueLevels = useMemo(() => {
+    const map = new Map<string, string>();
+    offers?.forEach(o => {
+      // If a CCNL filter is active, only show levels belonging to that CCNL
+      if (filters.ccnlId !== 'all' && o.ccnlId !== filters.ccnlId) return;
+      
+      if (o.levelId && o.levelCode) {
+        map.set(o.levelId, o.levelCode);
+      }
+    });
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [offers, filters.ccnlId]);
 
   // --- Filtering & Sorting Logic ---
 
@@ -285,21 +296,20 @@ export default function EmploymentOffersListPage() {
                 options={Object.entries(STATUS_LABELS).map(([val, label]) => ({ label, value: val }))}
               />
 
-              {/* CCNL Filter */}
+              {/* CCNL Filter - Using derived options */}
               <FilterDropdown 
                 label="CCNL" 
                 value={filters.ccnlId} 
                 onValueChange={(v) => updateFilter('ccnlId', v)}
-                options={activeCcnls?.map(c => ({ label: c.name, value: c.ccnlId })) || []}
+                options={uniqueCcnls.map(([id, name]) => ({ label: name, value: id }))}
               />
 
-              {/* Level Filter */}
+              {/* Level Filter - Using derived options */}
               <FilterDropdown 
                 label="Niveau" 
                 value={filters.levelId} 
                 onValueChange={(v) => updateFilter('levelId', v)}
-                options={activeLevels?.map(l => ({ label: `${l.levelCode} - ${l.label}`, value: l.levelId })) || []}
-                disabled={filters.ccnlId === 'all'}
+                options={uniqueLevels.map(([id, code]) => ({ label: code, value: id }))}
               />
 
               {/* Date Filter (on Update) */}
@@ -345,8 +355,8 @@ export default function EmploymentOffersListPage() {
               
               let label = value;
               if (key === 'status') label = STATUS_LABELS[value] || value;
-              if (key === 'ccnlId') label = activeCcnls?.find(c => c.ccnlId === value)?.name || value;
-              if (key === 'levelId') label = activeLevels?.find(l => l.levelId === value)?.levelCode || value;
+              if (key === 'ccnlId') label = uniqueCcnls.find(c => c[0] === value)?.[1] || value;
+              if (key === 'levelId') label = uniqueLevels.find(l => l[0] === value)?.[1] || value;
 
               return (
                 <Badge key={key} variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
@@ -376,8 +386,8 @@ export default function EmploymentOffersListPage() {
 
         <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
           <Table>
-            <TableHeader className="bg-secondary/20">
-              <TableRow>
+            <TableHeader>
+              <TableRow className="bg-secondary/20">
                 <TableHead>
                   <SortHeader label="Candidat & Poste" field="candidateDisplayName" currentSort={sort} onSort={handleToggleSort} />
                 </TableHead>
@@ -443,21 +453,26 @@ export default function EmploymentOffersListPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/employment-offers/${o.offerId}`)} className="gap-2">
-                             <Edit className="w-4 h-4" /> Modifier / Consulter
-                          </DropdownMenuItem>
-                          {canUpdate && !["cancelled", "accepted", "declined"].includes(o.status) && (
-                            <DropdownMenuItem onClick={() => setCancellingId(o.offerId)} className="gap-2 text-destructive">
-                               <Ban className="w-4 h-4" /> Annuler la proposition
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => router.push(`/entity/${entityId}/employment-offers/${o.offerId}`)}>
+                           <Eye className="w-4 h-4" />
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/employment-offers/${o.offerId}`)} className="gap-2">
+                               <Edit className="w-4 h-4" /> Modifier / Consulter
                             </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            {canUpdate && !["cancelled", "accepted", "declined"].includes(o.status) && (
+                              <DropdownMenuItem onClick={() => setCancellingId(o.offerId)} className="gap-2 text-destructive">
+                                 <Ban className="w-4 h-4" /> Annuler la proposition
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
