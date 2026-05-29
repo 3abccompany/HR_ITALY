@@ -39,8 +39,11 @@ export async function sendOfferToCandidateAction(params: {
     // 1. Generate Token (Crypto random)
     const rawToken = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    
+    // Calculate expiration based on Link Validity configuration (Default 7 days)
+    const validityDays = offer.linkValidityDays || 7;
     const expiry = new Date();
-    expiry.setDate(expiry.getDate() + 7); // Default 7 days
+    expiry.setDate(expiry.getDate() + validityDays);
 
     // 2. Prepare Link (Uses APP_PUBLIC_URL env)
     const baseUrl = process.env.APP_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
@@ -55,7 +58,7 @@ export async function sendOfferToCandidateAction(params: {
       companyName: resolvedEntityName,
       jobTitle: offer.jobTitleName,
       offerLink,
-      expiresAt: expiry.toLocaleDateString('fr-FR', { dateStyle: 'long' })
+      expiresAt: expiry.toLocaleString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     });
 
     // 4. Update Database (Atomic batch)
@@ -83,16 +86,16 @@ export async function sendOfferToCandidateAction(params: {
     });
 
     // Update Offer with tracking and counter
-    const isResend = offer.status === "sent" || offer.status === "viewed";
+    const isResent = offer.status === "sent" || offer.status === "viewed";
     batch.update(offerRef, {
       status: "sent",
       publicAccessTokenHash: tokenHash,
       publicAccessTokenExpiresAt: Timestamp.fromDate(expiry),
       sentAt: FieldValue.serverTimestamp(),
       sentBy: actorUid,
-      resendCount: (offer.resendCount || 0) + (isResend ? 1 : 0),
-      lastResentAt: isResend ? FieldValue.serverTimestamp() : null,
-      lastResentBy: isResend ? actorUid : null,
+      resendCount: (offer.resendCount || 0) + (isResent ? 1 : 0),
+      lastResentAt: isResent ? FieldValue.serverTimestamp() : null,
+      lastResentBy: isResent ? actorUid : null,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actorUid
     });

@@ -492,6 +492,19 @@ export default function EditEmploymentOfferPage() {
                     <Input type="text" value={numInputs.weeklyHours} onChange={(e) => setNumericInputs(p => ({...p, weeklyHours: e.target.value}))} className="h-11 pl-10 rounded-xl border-primary/20 bg-white font-bold" />
                   </div>
                 </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Validité du lien public</Label>
+                  <Select value={String(formData.linkValidityDays || 7)} onValueChange={(v) => setFormData(p => ({...p, linkValidityDays: parseInt(v)}))}>
+                    <SelectTrigger className="h-11 rounded-xl border-primary/20 bg-white"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">24 heures</SelectItem>
+                      <SelectItem value="3">3 jours</SelectItem>
+                      <SelectItem value="7">7 jours</SelectItem>
+                      <SelectItem value="14">14 jours</SelectItem>
+                      <SelectItem value="30">30 jours</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </CardContent>
           </Card>

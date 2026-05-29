@@ -65,6 +65,7 @@ export interface EmploymentOffer {
   notes?: string;
 
   // 7K-D Communication & Token Tracking
+  linkValidityDays?: number;
   publicAccessTokenHash?: string;
   publicAccessTokenExpiresAt?: any; // Firestore Timestamp
   sentAt?: any;
