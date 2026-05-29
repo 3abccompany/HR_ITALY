@@ -49,6 +49,26 @@ export default function EmployeeDetailPage() {
 
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
+  const formatDate = (val: any) => {
+    if (!val) return null;
+    try {
+      // If it's a string like YYYY-MM-DD
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+        const [y, m, d] = val.split('-');
+        return `${d}/${m}/${y}`;
+      }
+      const d = val.toDate ? val.toDate() : new Date(val);
+      if (isNaN(d.getTime())) return null;
+      return d.toLocaleDateString('fr-FR', { 
+        day: '2-digit', 
+        month: '2-digit', 
+        year: 'numeric'
+      });
+    } catch (e) {
+      return null;
+    }
+  };
+
   if (membershipLoading || loadingEmployee) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!employee) {
@@ -101,7 +121,7 @@ export default function EmployeeDetailPage() {
                    <DetailRow label="Email" value={employee.email} />
                    <DetailRow label="Téléphone" value={employee.phone} />
                    <DetailRow label="Identifiant National" value={employee.taxCode} className="font-mono uppercase" />
-                   <DetailRow label="Date de naissance" value={employee.birthDate} />
+                   <DetailRow label="Date de naissance" value={formatDate(employee.birthDate)} />
                    <DetailRow label="ID Interne" value={employee.personId} className="font-mono text-[10px] col-span-full" />
                 </div>
              </CardContent>
@@ -118,7 +138,7 @@ export default function EmployeeDetailPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                    <DetailRow label="Département" value={employee.departmentName || offer?.departmentName} icon={Building2} />
                    <DetailRow label="Site Principal" value={employee.worksiteName || offer?.worksiteName} icon={MapPin} />
-                   <DetailRow label="Date d'embauche" value={employee.hireDate} icon={Calendar} />
+                   <DetailRow label="Date d'embauche" value={formatDate(employee.hireDate)} icon={Calendar} />
                    <DetailRow label="Poste Officiel" value={employee.jobTitle || offer?.jobTitleName} icon={Briefcase} />
                 </div>
              </CardContent>
@@ -169,8 +189,8 @@ export default function EmployeeDetailPage() {
                 ) : (
                    <>
                       <SummaryRow label="Type" value={contract.contractType} />
-                      <SummaryRow label="Début" value={contract.startDate} />
-                      {contract.endDate && <SummaryRow label="Fin (CDD)" value={contract.endDate} />}
+                      <SummaryRow label="Début" value={formatDate(contract.startDate)} />
+                      {contract.endDate && <SummaryRow label="Fin (CDD)" value={formatDate(contract.endDate)} />}
                       <SummaryRow label="Hebdo" value={`${contract.weeklyHours}h`} />
                       <Separator className="bg-white/10" />
                       <SummaryRow label="CCNL" value={contract.ccnlName} />

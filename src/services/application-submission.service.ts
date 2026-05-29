@@ -73,6 +73,7 @@ export async function executeSubmissionTransaction(
   const lastName = (answers.lastName || "").toString().trim();
   const email = (answers.email || "").toString().trim();
   const phone = (answers.phone || "").toString().trim();
+  const birthDate = (answers.birthDate || "").toString().trim();
 
   // Extract location fields
   const address = (answers.address || "").toString().trim();
@@ -223,6 +224,7 @@ export async function executeSubmissionTransaction(
         city: city || null,
         province: province || null,
         country: country || null,
+        dateOfBirth: birthDate || null,
         currentLifecycleStatus: "candidate",
         currentCandidateId: candidateId,
         status: "active",
@@ -242,6 +244,11 @@ export async function executeSubmissionTransaction(
       if (city) personUpdate.city = city;
       if (province) personUpdate.province = province;
       if (country) personUpdate.country = country;
+      
+      const existingPersonData = personSnap.docs[0].data();
+      if (birthDate && !existingPersonData.dateOfBirth && !existingPersonData.birthDate) {
+        personUpdate.dateOfBirth = birthDate;
+      }
 
       transaction.update(adminDb.collection("entities").doc(entityId).collection("persons").doc(personId), personUpdate);
     }

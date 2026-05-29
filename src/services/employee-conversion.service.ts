@@ -133,7 +133,7 @@ export async function convertOfferToEmployeeAction(params: {
         taxCode: person.codiceFiscale || "",
         email: person.email,
         phone: person.phone || "",
-        birthDate: person.birthDate || "",
+        birthDate: person.dateOfBirth || (person as any).birthDate || "",
         hireDate: offer.proposedStartDate,
         departmentId: offer.departmentId || "",
         departmentName: offer.departmentName || "",
