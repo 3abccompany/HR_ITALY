@@ -11,6 +11,8 @@ export type EmploymentOfferStatus =
   | "expired" 
   | "cancelled";
 
+export type ConversionStatus = "pending" | "converted";
+
 export interface EmploymentOffer {
   offerId: string;
   entityId: string;
@@ -63,6 +65,13 @@ export interface EmploymentOffer {
 
   status: EmploymentOfferStatus;
   notes?: string;
+
+  // Conversion Tracking (7K-E)
+  conversionStatus?: ConversionStatus;
+  employeeId?: string | null;
+  contractId?: string | null;
+  convertedAt?: any;
+  convertedBy?: string;
 
   // 7K-D Communication & Token Tracking
   linkValidityDays?: number;

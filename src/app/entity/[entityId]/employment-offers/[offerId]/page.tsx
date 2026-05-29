@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -7,7 +8,7 @@ import {
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
   Clock, Hash, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
   FileSignature, ChevronRight, Building2, UserCircle, Send, Eye, MousePointer2,
-  FileText, ExternalLink, Search, History
+  FileText, ExternalLink, Search, History, UserCheck, CheckSquare
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
+import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -68,7 +70,9 @@ export default function EditEmploymentOfferPage() {
   const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+  const [converting, setConverting] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
+  const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
 
   // Numeric Input string states
   const [numInputs, setNumericInputs] = useState({
@@ -242,6 +246,24 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const handleConvert = async () => {
+    if (!user || !entityId || !offerId) return;
+    setConverting(true);
+    try {
+      const result = await convertOfferToEmployeeAction({ entityId, offerId, actorUid: user.uid });
+      if (result.success) {
+        toast({ title: "Conversion réussie", description: "Employé et contrat créés avec succès." });
+        setIsConvertDialogOpen(false);
+      } else {
+        toast({ variant: "destructive", title: "Erreur de conversion", description: result.error });
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur technique", description: err.message });
+    } finally {
+      setConverting(false);
+    }
+  };
+
   const annualTotal = useMemo(() => {
     const monthly = parseFloat(numInputs.proposedGrossMonthly.replace(',', '.'));
     const payments = parseInt(numInputs.monthlyPayments);
@@ -256,18 +278,82 @@ export default function EditEmploymentOfferPage() {
   const isAccepted = offer.status === 'accepted';
   const isDeclined = offer.status === 'declined';
   const isSentOrViewed = ["sent", "viewed"].includes(offer.status);
+  const isConverted = offer.conversionStatus === 'converted';
+
+  const canConvert = isAccepted && !isConverted && hasPermission("employees.create") && hasPermission("contracts.create");
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
-      {isAccepted && (
+      {isConverted && (
+        <div className="mb-8 p-6 bg-primary/5 border-2 border-primary/20 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-xl shadow-primary/5 animate-in fade-in slide-in-from-top-4">
+           <div className="flex items-center gap-4 text-primary font-black">
+              <div className="bg-primary text-white p-3 rounded-2xl"><UserCheck className="w-6 h-6" /></div>
+              <div>
+                <p className="text-lg">Recrutement Finalisé</p>
+                <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Ce candidat est désormais un employé actif.</p>
+              </div>
+           </div>
+           <div className="flex items-center gap-3">
+              <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
+                 <Link href={`/entity/${entityId}/employees`}>Consulter la fiche employé</Link>
+              </Button>
+              <Button variant="outline" className="rounded-xl font-bold border-primary/20">
+                 Voir le contrat initial
+              </Button>
+           </div>
+        </div>
+      )}
+
+      {isAccepted && !isConverted && (
         <div className="mb-8 p-4 bg-green-50 border-2 border-green-200 rounded-3xl flex items-center justify-between shadow-lg shadow-green-100 animate-in fade-in slide-in-from-top-2">
            <div className="flex items-center gap-3 text-green-800 font-bold">
               <CheckCircle2 className="w-6 h-6 text-green-600" />
               <div>
                 <p>Proposition acceptée par le candidat !</p>
-                <p className="text-[10px] uppercase font-black tracking-widest text-green-600">Prochaine étape : création employé et contrat.</p>
+                <p className="text-[10px] uppercase font-black tracking-widest text-green-600">Prochaine étape : conversion en employé et contrat.</p>
               </div>
            </div>
+           {canConvert && (
+             <AlertDialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
+               <AlertDialogTrigger asChild>
+                 <Button className="bg-green-600 hover:bg-green-700 text-white font-black rounded-xl gap-2 shadow-lg shadow-green-200">
+                    <UserPlus className="w-4 h-4" /> Créer employé et contrat
+                 </Button>
+               </AlertDialogTrigger>
+               <AlertDialogContent className="rounded-[2.5rem] sm:max-w-lg">
+                 <AlertDialogHeader>
+                   <AlertDialogTitle className="text-2xl font-black text-primary">Finaliser l'embauche</AlertDialogTitle>
+                   <AlertDialogDescription className="text-slate-600 pt-2">
+                     Vous allez créer officiellement le dossier employé et le contrat initial sur la base des conditions acceptées.
+                   </AlertDialogDescription>
+                 </AlertDialogHeader>
+                 
+                 <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 my-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-y-4 text-xs">
+                       <SummaryDetail label="Employé" value={offer.candidateDisplayName} />
+                       <SummaryDetail label="Début" value={offer.proposedStartDate} />
+                       <SummaryDetail label="Poste" value={offer.jobTitleName} />
+                       <SummaryDetail label="Contrat" value={offer.contractType} />
+                       <SummaryDetail label="CCNL" value={offer.ccnlName} />
+                       <SummaryDetail label="Niveau" value={offer.levelCode} />
+                    </div>
+                    <Separator className="bg-slate-200" />
+                    <div className="flex justify-between items-center pt-2">
+                       <p className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">Salaire Brut Annuel</p>
+                       <p className="text-lg font-black text-primary">€ {offer.proposedGrossAnnual?.toLocaleString('fr-FR')}</p>
+                    </div>
+                 </div>
+
+                 <AlertDialogFooter>
+                   <AlertDialogCancel disabled={converting}>Retour</AlertDialogCancel>
+                   <AlertDialogAction onClick={handleConvert} disabled={converting} className="bg-primary text-white font-black rounded-xl">
+                      {converting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckSquare className="w-4 h-4 mr-2" />}
+                      Confirmer la création
+                   </AlertDialogAction>
+                 </AlertDialogFooter>
+               </AlertDialogContent>
+             </AlertDialog>
+           )}
         </div>
       )}
 
@@ -365,7 +451,7 @@ export default function EditEmploymentOfferPage() {
         </div>
       </header>
 
-      <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-8", (isCancelled || isAccepted || isDeclined) && "opacity-60")}>
+      <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-8", (isCancelled || isAccepted || isDeclined) && !isConverted && "opacity-60")}>
         <div className="lg:col-span-2 space-y-8">
           {/* Tracking Card */}
           {isSentOrViewed && (
@@ -434,7 +520,7 @@ export default function EditEmploymentOfferPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground tracking-wider">Intitulé du poste</Label>
-                  <Input value={formData.jobTitleName || ""} onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))} className="h-10 font-bold text-primary border-primary/20 rounded-xl" />
+                  <Input value={formData.jobTitleName || ""} onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))} disabled={isAccepted || isConverted} className="h-10 font-bold text-primary border-primary/20 rounded-xl" />
                   <p className="text-[10px] text-muted-foreground uppercase font-bold pl-2 pt-1">{offer.departmentName}</p>
                 </div>
               </div>
@@ -472,29 +558,29 @@ export default function EditEmploymentOfferPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Type de contrat</Label>
-                  <Select value={formData.contractType} onValueChange={(v) => setFormData(p => ({...p, contractType: v}))}>
+                  <Select value={formData.contractType} onValueChange={(v) => setFormData(p => ({...p, contractType: v}))} disabled={isAccepted || isConverted}>
                     <SelectTrigger className="h-11 rounded-xl border-primary/20 bg-white"><SelectValue /></SelectTrigger>
                     <SelectContent>{CONTRACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de début</Label>
-                  <Input type="date" value={formData.proposedStartDate || ""} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} className="h-11 rounded-xl border-primary/20 bg-white" />
+                  <Input type="date" value={formData.proposedStartDate || ""} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} disabled={isAccepted || isConverted} className="h-11 rounded-xl border-primary/20 bg-white" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Date de fin (CDD)</Label>
-                  <Input type="date" value={formData.proposedEndDate || ""} onChange={(e) => setFormData(p => ({...p, proposedEndDate: e.target.value}))} className="h-11 rounded-xl border-primary/20 bg-white" />
+                  <Input type="date" value={formData.proposedEndDate || ""} onChange={(e) => setFormData(p => ({...p, proposedEndDate: e.target.value}))} disabled={isAccepted || isConverted} className="h-11 rounded-xl border-primary/20 bg-white" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Temps de travail (H/Sem)</Label>
                   <div className="relative">
                     <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type="text" value={numInputs.weeklyHours} onChange={(e) => setNumericInputs(p => ({...p, weeklyHours: e.target.value}))} className="h-11 pl-10 rounded-xl border-primary/20 bg-white font-bold" />
+                    <Input type="text" value={numInputs.weeklyHours} onChange={(e) => setNumericInputs(p => ({...p, weeklyHours: e.target.value}))} disabled={isAccepted || isConverted} className="h-11 pl-10 rounded-xl border-primary/20 bg-white font-bold" />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider">Validité du lien public</Label>
-                  <Select value={String(formData.linkValidityDays || 7)} onValueChange={(v) => setFormData(p => ({...p, linkValidityDays: parseInt(v)}))}>
+                  <Select value={String(formData.linkValidityDays || 7)} onValueChange={(v) => setFormData(p => ({...p, linkValidityDays: parseInt(v)}))} disabled={isAccepted || isConverted}>
                     <SelectTrigger className="h-11 rounded-xl border-primary/20 bg-white"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="1">24 heures</SelectItem>
@@ -521,12 +607,12 @@ export default function EditEmploymentOfferPage() {
                     <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Salaire Brut Mensuel (€)</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-primary/40 font-bold">€</span>
-                      <Input type="text" className="bg-white text-xl font-black text-primary h-14 pl-8 rounded-xl border-accent/20 shadow-sm" value={numInputs.proposedGrossMonthly} onChange={(e) => setNumericInputs(p => ({...p, proposedGrossMonthly: e.target.value}))} />
+                      <Input type="text" className="bg-white text-xl font-black text-primary h-14 pl-8 rounded-xl border-accent/20 shadow-sm" value={numInputs.proposedGrossMonthly} onChange={(e) => setNumericInputs(p => ({...p, proposedGrossMonthly: e.target.value}))} disabled={isAccepted || isConverted} />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label className="text-[10px] font-black uppercase text-accent-foreground/70">Mensualités</Label>
-                    <Input type="text" className="bg-accent/10 border-accent/20 h-14 text-lg font-black text-primary rounded-xl text-center" value={numInputs.monthlyPayments} onChange={(e) => setNumericInputs(p => ({...p, monthlyPayments: e.target.value}))} />
+                    <Input type="text" className="bg-accent/10 border-accent/20 h-14 text-lg font-black text-primary rounded-xl text-center" value={numInputs.monthlyPayments} onChange={(e) => setNumericInputs(p => ({...p, monthlyPayments: e.target.value}))} disabled={isAccepted || isConverted} />
                   </div>
                   <div className="bg-white p-5 rounded-2xl border border-accent/30 flex flex-col justify-center shadow-lg shadow-accent/10">
                      <p className="text-[9px] font-black uppercase text-accent/60 mb-1 tracking-widest">Total Brut Annuel (Est.)</p>
@@ -557,7 +643,7 @@ export default function EditEmploymentOfferPage() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-[9px] uppercase font-black text-muted-foreground tracking-widest">CCNL</Label>
-                  <Select value={formData.ccnlId || "none_clear"} onValueChange={handleCcnlChange}>
+                  <Select value={formData.ccnlId || "none_clear"} onValueChange={handleCcnlChange} disabled={isAccepted || isConverted}>
                     <SelectTrigger className="h-12 rounded-xl border-primary/20 bg-white"><SelectValue placeholder="Choisir un CCNL..." /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none_clear">--- Aucun ---</SelectItem>
@@ -567,7 +653,7 @@ export default function EditEmploymentOfferPage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[9px] uppercase font-black text-muted-foreground tracking-widest">Niveau</Label>
-                  <Select value={formData.levelId || "none_clear"} onValueChange={handleLevelChange} disabled={!formData.ccnlId || formData.ccnlId === "none_clear"}>
+                  <Select value={formData.levelId || "none_clear"} onValueChange={handleLevelChange} disabled={!formData.ccnlId || formData.ccnlId === "none_clear" || isAccepted || isConverted}>
                     <SelectTrigger className="h-12 rounded-xl border-primary/20 bg-white"><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none_clear">--- Aucun ---</SelectItem>
@@ -593,6 +679,15 @@ export default function EditEmploymentOfferPage() {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SummaryDetail({ label, value }: { label: string, value: any }) {
+  return (
+    <div className="space-y-0.5">
+       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{label}</p>
+       <p className="text-xs font-bold text-slate-700 truncate pr-2">{value || "N/A"}</p>
     </div>
   );
 }
