@@ -9,6 +9,19 @@ import { Contract } from "@/types/contract";
 import { Employee } from "@/types/employee";
 
 /**
+ * Normalizes a name for strict comparison (lowercase, no accents, collapsed spaces).
+ */
+function normalizeName(name: string): string {
+  if (!name) return "";
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // remove accents
+    .replace(/\s+/g, " ") // collapse multiple spaces
+    .trim();
+}
+
+/**
  * 7K-E Server Action: Converts an accepted offer into Employee + Contract.
  * Atomic transaction to ensure recruitment lifecycle terminal consistency.
  * Reinforced with server-side membership and permission checks.
@@ -61,6 +74,16 @@ export async function convertOfferToEmployeeAction(params: {
       const personSnap = await transaction.get(personRef);
       if (!personSnap.exists) throw new Error("Fiche identité introuvable.");
       const person = personSnap.data() as Person;
+
+      // 1b. Identity Consistency Validation (CRITICAL FIX)
+      // Ensure the recruited identity (Offer/Candidate) matches the linked Person record truth.
+      const normOfferName = normalizeName(offer.candidateDisplayName);
+      const normPersonName = normalizeName(person.displayName);
+      const normCandidateName = normalizeName(candidate.displayName);
+
+      if (normOfferName !== normPersonName || normCandidateName !== normPersonName) {
+        throw new Error(`IDENTITY_MISMATCH: Incohérence d'identité détectée. La proposition acceptée (${offer.candidateDisplayName}) ne correspond pas à la fiche personne liée (${person.displayName}). Veuillez corriger la fiche personne avant de finaliser l'embauche.`);
+      }
 
       // 2. Business Validation
       const isFixedTerm = ["tempo determinato", "cdd", "fixed term", "fixed_term"].includes((offer.contractType || "").toLowerCase());

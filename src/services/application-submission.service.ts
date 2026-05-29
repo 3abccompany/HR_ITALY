@@ -18,7 +18,6 @@ function sanitizePayload(obj: any): any {
   }
 
   // Handle specialized Admin SDK objects like FieldValue or Timestamp
-  // We check constructor names and types to avoid deep-serializing sentinels
   if (obj instanceof FieldValue || obj instanceof Timestamp) {
     return obj;
   }
@@ -46,6 +45,7 @@ function sanitizePayload(obj: any): any {
  */
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
 export const normalizePhone = (phone: string) => phone.toString().replace(/\D/g, "");
+export const normalizeName = (name: string) => (name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
 
 /**
  * SHA-256 Hashing for privacy-safe deduplication keys.
@@ -57,7 +57,6 @@ export function computeDedupeKey(entityId: string, needId: string, email: string
 
 /**
  * Transactional Submission Logic using Admin SDK.
- * Now includes support for attachments and stable submissionId.
  */
 export async function executeSubmissionTransaction(
   entityId: string, 
@@ -91,6 +90,26 @@ export async function executeSubmissionTransaction(
   const personsRef = adminDb.collection("entities").doc(entityId).collection("persons");
   const personSnap = await personsRef.where("email", "==", normEmail).limit(1).get();
   const existingPersonId = personSnap.empty ? null : personSnap.docs[0].id;
+
+  // 1b. Identity Conflict Guard (CRITICAL FIX)
+  // If email already exists, verify that the name matches. 
+  // Prevents linking a new candidate to a wrong person record due to testing/email reuse.
+  if (!personSnap.empty) {
+    const existingPerson = personSnap.docs[0].data();
+    const submittedNormName = normalizeName(`${firstName} ${lastName}`);
+    const existingNormName = normalizeName(existingPerson.displayName || "");
+
+    if (submittedNormName !== existingNormName) {
+      throw new Error(`IDENTITY_CONFLICT: Cette adresse email est déjà associée à un profil différent (${existingPerson.displayName}). Veuillez utiliser une adresse email unique ou corriger votre saisie.`);
+    }
+
+    // Optional: Check tax code if provided
+    const submittedTaxCode = (answers.nationalId || answers.codiceFiscale || "").toString().trim().toUpperCase();
+    const existingTaxCode = (existingPerson.codiceFiscale || "").toString().trim().toUpperCase();
+    if (submittedTaxCode && existingTaxCode && submittedTaxCode !== existingTaxCode) {
+      throw new Error("IDENTITY_CONFLICT: Conflit de Code Fiscal. Cette adresse email appartient à un profil existant avec un identifiant national différent.");
+    }
+  }
 
   return await adminDb.runTransaction(async (transaction) => {
     // 2. Verify Need
@@ -150,7 +169,7 @@ export async function executeSubmissionTransaction(
       consentAccepted: true,
       consentAcceptedAt: FieldValue.serverTimestamp(),
       dedupeKey,
-      possibleDuplicate: false, // Initially false for new logic
+      possibleDuplicate: false, 
       personId,
       candidateId,
       status: "submitted",
@@ -219,7 +238,6 @@ export async function executeSubmissionTransaction(
         updatedAt: FieldValue.serverTimestamp(),
       };
       
-      // Update location fields only if they were provided (non-empty protection)
       if (address) personUpdate.address = address;
       if (city) personUpdate.city = city;
       if (province) personUpdate.province = province;
