@@ -7,6 +7,7 @@ import { Candidate } from "@/types/candidate";
 import { Person } from "@/types/person";
 import { Contract } from "@/types/contract";
 import { Employee } from "@/types/employee";
+import { RecruitmentNeed } from "@/types/recruitment-need";
 
 /**
  * Normalizes a name for strict comparison (lowercase, no accents, collapsed spaces).
@@ -25,6 +26,7 @@ function normalizeName(name: string): string {
  * 7K-E Server Action: Converts an accepted offer into Employee + Contract.
  * Atomic transaction to ensure recruitment lifecycle terminal consistency.
  * Reinforced with server-side membership and permission checks.
+ * Updated to synchronize source Recruitment Need progress.
  */
 export async function convertOfferToEmployeeAction(params: {
   entityId: string;
@@ -75,8 +77,7 @@ export async function convertOfferToEmployeeAction(params: {
       if (!personSnap.exists) throw new Error("Fiche identité introuvable.");
       const person = personSnap.data() as Person;
 
-      // 1b. Identity Consistency Validation (CRITICAL FIX)
-      // Ensure the recruited identity (Offer/Candidate) matches the linked Person record truth.
+      // 1b. Identity Consistency Validation (7K-E Identity Guard)
       const normOfferName = normalizeName(offer.candidateDisplayName);
       const normPersonName = normalizeName(person.displayName);
       const normCandidateName = normalizeName(candidate.displayName);
@@ -213,7 +214,48 @@ export async function convertOfferToEmployeeAction(params: {
         });
       }
 
-      // 11. Timeline Events
+      // 11. Update Recruitment Need Progress (Besoin RH)
+      if (offer.recruitmentNeedId) {
+        const needRef = adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId);
+        const needSnap = await transaction.get(needRef);
+        if (needSnap.exists) {
+          const need = needSnap.data() as RecruitmentNeed;
+          const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
+          const newRemaining = Math.max(0, (need.requestedHeadcount || 1) - newFulfilled);
+          
+          let newStatus = need.status;
+          // Status auto-transition logic based on progress
+          if (!["cancelled", "archived"].includes(need.status)) {
+            if (newRemaining <= 0) {
+              newStatus = "fulfilled";
+            } else if (newFulfilled > 0) {
+              newStatus = "partially_fulfilled";
+            }
+          }
+
+          transaction.update(needRef, {
+            fulfilledHeadcount: newFulfilled,
+            remainingHeadcount: newRemaining,
+            status: newStatus,
+            updatedAt: FieldValue.serverTimestamp(),
+            updatedBy: actorUid
+          });
+
+          // Audit for the specific need update
+          const needAuditRef = adminDb.collection("auditLogs").doc();
+          transaction.set(needAuditRef, {
+            userId: actorUid,
+            entityId,
+            action: "recruitmentNeed.fulfillment_increment",
+            resourceType: "recruitmentNeed",
+            resourceId: offer.recruitmentNeedId,
+            details: { employeeId, offerId, previousFulfilled: need.fulfilledHeadcount, newFulfilled },
+            timestamp: FieldValue.serverTimestamp()
+          });
+        }
+      }
+
+      // 12. Timeline Events
       const timelineColl = adminDb.collection("entities").doc(entityId).collection("personTimeline");
       
       const t1 = timelineColl.doc();
@@ -244,7 +286,7 @@ export async function convertOfferToEmployeeAction(params: {
         createdBy: actorUid,
       });
 
-      // 12. Audit Logs
+      // 13. Main Audit Log
       const auditRef = adminDb.collection("auditLogs").doc();
       transaction.set(auditRef, {
         userId: actorUid,
