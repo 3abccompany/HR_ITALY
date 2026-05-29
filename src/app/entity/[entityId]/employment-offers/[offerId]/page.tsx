@@ -8,7 +8,7 @@ import {
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
   Clock, Hash, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
   FileSignature, ChevronRight, Building2, UserCircle, Send, Eye, MousePointer2,
-  FileText, ExternalLink, Search, History, UserCheck, CheckSquare
+  FileText, ExternalLink, Search, History, UserCheck, CheckSquare, UserPlus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -255,7 +255,7 @@ export default function EditEmploymentOfferPage() {
         toast({ title: "Conversion réussie", description: "Employé et contrat créés avec succès." });
         setIsConvertDialogOpen(false);
       } else {
-        toast({ variant: "destructive", title: "Erreur de conversion", description: result.error });
+        toast({ variant: "destructive", title: "Erreur de conversion", description: (result as any).error });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur technique", description: err.message });
