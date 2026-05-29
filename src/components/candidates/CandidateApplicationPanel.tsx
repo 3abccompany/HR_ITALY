@@ -6,7 +6,7 @@ import {
   AlertTriangle, Briefcase, Building2, MapPin, 
   ArrowRight, XCircle, UserCheck, Clock, MessageSquare, AlertCircle,
   Calendar, Phone, Fingerprint, Info, ChevronDown, Globe, Home, FileText, Download, Eye,
-  GraduationCap, ListTodo, FileSignature, History
+  GraduationCap, ListTodo, FileSignature, History, Plus
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
