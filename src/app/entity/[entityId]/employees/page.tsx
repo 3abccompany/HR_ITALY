@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Users, Search, UserCheck, Loader2, 
   ChevronRight, ListFilter, Filter, X,
-  Building2, MapPin, Calendar, Briefcase
+  Building2, MapPin, Calendar, Briefcase, Eye
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,8 +19,6 @@ import { Employee } from "@/types/employee";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
 
 interface Filters {
   search: string;
@@ -204,12 +202,12 @@ export default function EmployeesManagementPage() {
                       <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{e.employeeCode}</div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-xs font-bold text-slate-700">{e.jobTitle}</div>
-                      <div className="text-[10px] text-muted-foreground uppercase">{e.departmentName || "N/A"}</div>
+                      <div className="text-xs font-bold text-slate-700">{e.jobTitle || "Non renseigné"}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase">{e.departmentName || "Non renseigné"}</div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5 text-xs">
-                        <MapPin className="w-3 h-3 text-muted-foreground" /> {e.worksiteName || "N/A"}
+                        <MapPin className="w-3 h-3 text-muted-foreground" /> {e.worksiteName || "Non renseigné"}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -221,9 +219,17 @@ export default function EmployeesManagementPage() {
                       {getStatusBadge(e.status)}
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/employees/${e.employeeId}`)}>
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
+                      <div className="flex justify-end">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-8 gap-2 rounded-lg font-bold shadow-sm"
+                          onClick={() => router.push(`/entity/${entityId}/employees/${e.employeeId}`)}
+                        >
+                          <Eye className="w-3.5 h-3.5 text-primary" />
+                          <span className="hidden sm:inline">Voir fiche</span>
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))

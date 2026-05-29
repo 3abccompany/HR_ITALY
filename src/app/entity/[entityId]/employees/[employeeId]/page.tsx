@@ -7,7 +7,8 @@ import {
   Mail, Phone, Fingerprint, Calendar,
   Briefcase, Building2, MapPin, FileSignature,
   Info, Euro, Clock, History, ExternalLink,
-  ShieldCheck, GraduationCap, CheckCircle2
+  ShieldCheck, GraduationCap, CheckCircle2,
+  FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -17,6 +18,7 @@ import { useFirebase, useDoc } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
+import { EmploymentOffer } from "@/types/employment-offer";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import Link from "next/link";
 
@@ -39,6 +41,13 @@ export default function EmployeeDetailPage() {
   [db, entityId, employee?.activeContractId]);
 
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
+
+  // Fallback data from source offer if professional labels are missing on employee record
+  const offerRef = useMemo(() => 
+    db && employee?.sourceOfferId ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
+  [db, entityId, employee?.sourceOfferId]);
+
+  const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
   if (membershipLoading || loadingEmployee) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
@@ -69,7 +78,7 @@ export default function EmployeeDetailPage() {
             </div>
             <div className="flex items-center gap-4 text-xs font-bold text-muted-foreground uppercase tracking-widest mt-1">
               <span className="flex items-center gap-1.5"><Fingerprint className="w-3.5 h-3.5" /> {employee.employeeCode}</span>
-              <span className="flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> {employee.jobTitle}</span>
+              <span className="flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> {employee.jobTitle || offer?.jobTitleName || "Non renseigné"}</span>
             </div>
           </div>
         </div>
@@ -107,10 +116,10 @@ export default function EmployeeDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Département" value={employee.departmentName} icon={Building2} />
-                   <DetailRow label="Site Principal" value={employee.worksiteName} icon={MapPin} />
+                   <DetailRow label="Département" value={employee.departmentName || offer?.departmentName} icon={Building2} />
+                   <DetailRow label="Site Principal" value={employee.worksiteName || offer?.worksiteName} icon={MapPin} />
                    <DetailRow label="Date d'embauche" value={employee.hireDate} icon={Calendar} />
-                   <DetailRow label="Poste Officiel" value={employee.jobTitle} icon={Briefcase} />
+                   <DetailRow label="Poste Officiel" value={employee.jobTitle || offer?.jobTitleName} icon={Briefcase} />
                 </div>
              </CardContent>
           </Card>
@@ -131,10 +140,12 @@ export default function EmployeeDetailPage() {
                      </Link>
                    )}
                    {employee.sourceCandidateId && (
-                      <div className="p-3 bg-white rounded-xl border border-accent/10 flex flex-col justify-center">
-                         <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">Candidature Source</p>
-                         <p className="text-xs font-bold text-primary truncate">{employee.sourceCandidateId}</p>
-                      </div>
+                     <Link href={`/entity/${entityId}/candidates`}>
+                        <Button variant="outline" className="w-full justify-between h-12 rounded-xl bg-white border-accent/20 text-accent font-bold">
+                           Voir Dossier Candidat
+                           <ExternalLink className="w-4 h-4" />
+                        </Button>
+                     </Link>
                    )}
                 </div>
              </CardContent>
@@ -147,7 +158,7 @@ export default function EmployeeDetailPage() {
           <Card className="border-primary/20 bg-primary/90 text-white shadow-2xl shadow-primary/20 rounded-[2.5rem] overflow-hidden">
              <CardHeader className="bg-white/10 py-6 px-8 border-b border-white/10">
                 <CardTitle className="text-xs font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                   <FileSignature className="w-4 h-4" /> Contrat Initial
+                   <FileSignature className="w-4 h-4" /> Contrat Actif
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 space-y-6">
@@ -169,6 +180,15 @@ export default function EmployeeDetailPage() {
                          <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Salaire Brut Annuel</p>
                          <p className="text-2xl font-black">€ {contract.grossAnnual?.toLocaleString('fr-FR')}</p>
                       </div>
+                      
+                      {hasPermission("contracts.read") && (
+                        <div className="pt-4">
+                           <Button variant="outline" className="w-full bg-white/10 border-white/20 text-white hover:bg-white/20 rounded-xl gap-2 font-bold" disabled>
+                              <FileText className="w-4 h-4" />
+                              Détails contrat (Bientôt)
+                           </Button>
+                        </div>
+                      )}
                    </>
                 )}
              </CardContent>
