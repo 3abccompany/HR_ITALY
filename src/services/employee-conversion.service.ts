@@ -27,6 +27,7 @@ function normalizeName(name: string): string {
  * Atomic transaction to ensure recruitment lifecycle terminal consistency.
  * Reinforced with server-side membership and permission checks.
  * Updated to synchronize source Recruitment Need progress.
+ * FIXED: Ensures all reads happen before any write in the transaction.
  */
 export async function convertOfferToEmployeeAction(params: {
   entityId: string;
@@ -37,27 +38,52 @@ export async function convertOfferToEmployeeAction(params: {
 
   try {
     return await adminDb.runTransaction(async (transaction) => {
-      // 0. Server-side Security & Permission Check
+      // --- PHASE 1: COLLECT REFERENCES & READ DATA ---
+      // Firestore transactions REQUIRE all reads to be executed BEFORE all writes.
+
       const membershipId = `${actorUid}_${entityId}`;
       const mRef = adminDb.collection("memberships").doc(membershipId);
-      const mSnap = await transaction.get(mRef);
       
+      const offerRef = adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId);
+      
+      // Initial reads to identify dependencies
+      const mSnap = await transaction.get(mRef);
+      const offerSnap = await transaction.get(offerRef);
+
       if (!mSnap.exists || mSnap.data()?.status !== 'active') {
         throw new Error("Accès refusé: Aucun membership actif trouvé.");
       }
+      if (!offerSnap.exists) throw new Error("Proposition introuvable.");
+
+      const offer = offerSnap.data() as EmploymentOffer;
+
+      // Identify remaining dependencies
+      const candidateRef = adminDb.collection("entities").doc(entityId).collection("candidates").doc(offer.candidateId);
+      const personRef = adminDb.collection("entities").doc(entityId).collection("persons").doc(offer.personId);
+      
+      const needRef = offer.recruitmentNeedId 
+        ? adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId)
+        : null;
+      
+      const interviewRef = offer.interviewId
+        ? adminDb.collection("entities").doc(entityId).collection("interviews").doc(offer.interviewId)
+        : null;
+
+      // Perform all remaining reads before starting any write
+      const [candidateSnap, personSnap, needSnap, interviewSnap] = await Promise.all([
+        transaction.get(candidateRef),
+        transaction.get(personRef),
+        needRef ? transaction.get(needRef) : Promise.resolve(null),
+        interviewRef ? transaction.get(interviewRef) : Promise.resolve(null)
+      ]);
+
+      // --- PHASE 2: VALIDATIONS ---
 
       const permissions = mSnap.data()?.permissions || [];
       if (!permissions.includes("employees.create") || !permissions.includes("contracts.create")) {
         throw new Error("Accès refusé: Permissions insuffisantes pour créer un employé ou un contrat.");
       }
 
-      // 1. Fetch Context
-      const offerRef = adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId);
-      const offerSnap = await transaction.get(offerRef);
-      if (!offerSnap.exists) throw new Error("Proposition introuvable.");
-      const offer = offerSnap.data() as EmploymentOffer;
-
-      // Cross-tenant protection
       if (offer.entityId !== entityId) {
         throw new Error("Incohérence d'entité : tentative de conversion inter-tenant bloquée.");
       }
@@ -65,19 +91,14 @@ export async function convertOfferToEmployeeAction(params: {
       if (offer.status !== "accepted") throw new Error("La proposition doit être acceptée pour être convertie.");
       if (offer.conversionStatus === "converted" || offer.employeeId) throw new Error("Cette proposition a déjà été convertie.");
 
-      const candidateRef = adminDb.collection("entities").doc(entityId).collection("candidates").doc(offer.candidateId);
-      const candidateSnap = await transaction.get(candidateRef);
       if (!candidateSnap.exists) throw new Error("Candidat introuvable.");
       const candidate = candidateSnap.data() as Candidate;
-
       if (candidate.status === "hired") throw new Error("Le candidat est déjà marqué comme embauché.");
 
-      const personRef = adminDb.collection("entities").doc(entityId).collection("persons").doc(offer.personId);
-      const personSnap = await transaction.get(personRef);
       if (!personSnap.exists) throw new Error("Fiche identité introuvable.");
       const person = personSnap.data() as Person;
 
-      // 1b. Identity Consistency Validation (7K-E Identity Guard)
+      // Identity Consistency Validation (7K-E Identity Guard)
       const normOfferName = normalizeName(offer.candidateDisplayName);
       const normPersonName = normalizeName(person.displayName);
       const normCandidateName = normalizeName(candidate.displayName);
@@ -86,18 +107,18 @@ export async function convertOfferToEmployeeAction(params: {
         throw new Error(`IDENTITY_MISMATCH: Incohérence d'identité détectée. La proposition acceptée (${offer.candidateDisplayName}) ne correspond pas à la fiche personne liée (${person.displayName}). Veuillez corriger la fiche personne avant de finaliser l'embauche.`);
       }
 
-      // 2. Business Validation
+      // Business Validation
       const isFixedTerm = ["tempo determinato", "cdd", "fixed term", "fixed_term"].includes((offer.contractType || "").toLowerCase());
       if (isFixedTerm && !offer.proposedEndDate) {
         throw new Error("La date de fin est obligatoire pour un contrat à durée déterminée.");
       }
 
-      // 3. Prepare IDs and Codes
+      // --- PHASE 3: DATA PREPARATION (NO READS HERE) ---
+
       const employeeId = adminDb.collection("entities").doc(entityId).collection("employees").doc().id;
       const contractId = adminDb.collection("entities").doc(entityId).collection("contracts").doc().id;
       const employeeCode = `E-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      // 4. Create Employee
       const employeeData: Employee = {
         employeeId,
         personId: person.personId,
@@ -112,7 +133,7 @@ export async function convertOfferToEmployeeAction(params: {
         taxCode: person.codiceFiscale || "",
         email: person.email,
         phone: person.phone || "",
-        birthDate: person.dateOfBirth || "",
+        birthDate: person.birthDate || "",
         hireDate: offer.proposedStartDate,
         departmentId: offer.departmentId || "",
         departmentName: offer.departmentName || "",
@@ -127,9 +148,6 @@ export async function convertOfferToEmployeeAction(params: {
         updatedAt: FieldValue.serverTimestamp(),
       } as any;
 
-      transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), employeeData);
-
-      // 5. Create Initial Contract
       const contractData: Contract = {
         contractId,
         entityId,
@@ -156,11 +174,11 @@ export async function convertOfferToEmployeeAction(params: {
         updatedBy: actorUid,
       } as any;
 
-      transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), contractData);
+      // --- PHASE 4: EXECUTE ALL WRITES ---
 
-      // 6. Create EmployeeView (Read Model for optimized lists)
-      const viewRef = adminDb.collection("entities").doc(entityId).collection("employeeViews").doc(employeeId);
-      transaction.set(viewRef, {
+      // 1. Create Employee & View
+      transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), employeeData);
+      transaction.set(adminDb.collection("entities").doc(entityId).collection("employeeViews").doc(employeeId), {
         employeeId,
         employeeCode,
         displayName: person.displayName,
@@ -172,7 +190,10 @@ export async function convertOfferToEmployeeAction(params: {
         updatedAt: FieldValue.serverTimestamp()
       });
 
-      // 7. Update Offer
+      // 2. Create Initial Contract
+      transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), contractData);
+
+      // 3. Update Offer
       transaction.update(offerRef, {
         conversionStatus: "converted",
         employeeId,
@@ -183,7 +204,7 @@ export async function convertOfferToEmployeeAction(params: {
         updatedBy: actorUid
       });
 
-      // 8. Update Candidate (Terminal status)
+      // 4. Update Candidate
       transaction.update(candidateRef, {
         status: "hired",
         employeeId,
@@ -194,7 +215,7 @@ export async function convertOfferToEmployeeAction(params: {
         updatedBy: actorUid
       });
 
-      // 9. Update Person Lifecycle
+      // 5. Update Person
       transaction.update(personRef, {
         currentLifecycleStatus: "employee",
         currentEmployeeId: employeeId,
@@ -203,10 +224,9 @@ export async function convertOfferToEmployeeAction(params: {
         updatedBy: actorUid
       });
 
-      // 10. Update Interview if exists
-      if (offer.interviewId) {
-        const intRef = adminDb.collection("entities").doc(entityId).collection("interviews").doc(offer.interviewId);
-        transaction.update(intRef, {
+      // 6. Update Interview if exists
+      if (interviewRef && interviewSnap?.exists) {
+        transaction.update(interviewRef, {
           hiredEmployeeId: employeeId,
           sourceOfferId: offerId,
           updatedAt: FieldValue.serverTimestamp(),
@@ -214,48 +234,43 @@ export async function convertOfferToEmployeeAction(params: {
         });
       }
 
-      // 11. Update Recruitment Need Progress (Besoin RH)
-      if (offer.recruitmentNeedId) {
-        const needRef = adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId);
-        const needSnap = await transaction.get(needRef);
-        if (needSnap.exists) {
-          const need = needSnap.data() as RecruitmentNeed;
-          const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
-          const newRemaining = Math.max(0, (need.requestedHeadcount || 1) - newFulfilled);
-          
-          let newStatus = need.status;
-          // Status auto-transition logic based on progress
-          if (!["cancelled", "archived"].includes(need.status)) {
-            if (newRemaining <= 0) {
-              newStatus = "fulfilled";
-            } else if (newFulfilled > 0) {
-              newStatus = "partially_fulfilled";
-            }
+      // 7. Update Recruitment Need Progress
+      if (needRef && needSnap?.exists) {
+        const need = needSnap.data() as RecruitmentNeed;
+        const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
+        const newRemaining = Math.max(0, (need.requestedHeadcount || 1) - newFulfilled);
+        
+        let newStatus = need.status;
+        if (!["cancelled", "archived"].includes(need.status)) {
+          if (newRemaining <= 0) {
+            newStatus = "fulfilled";
+          } else if (newFulfilled > 0) {
+            newStatus = "partially_fulfilled";
           }
-
-          transaction.update(needRef, {
-            fulfilledHeadcount: newFulfilled,
-            remainingHeadcount: newRemaining,
-            status: newStatus,
-            updatedAt: FieldValue.serverTimestamp(),
-            updatedBy: actorUid
-          });
-
-          // Audit for the specific need update
-          const needAuditRef = adminDb.collection("auditLogs").doc();
-          transaction.set(needAuditRef, {
-            userId: actorUid,
-            entityId,
-            action: "recruitmentNeed.fulfillment_increment",
-            resourceType: "recruitmentNeed",
-            resourceId: offer.recruitmentNeedId,
-            details: { employeeId, offerId, previousFulfilled: need.fulfilledHeadcount, newFulfilled },
-            timestamp: FieldValue.serverTimestamp()
-          });
         }
+
+        transaction.update(needRef, {
+          fulfilledHeadcount: newFulfilled,
+          remainingHeadcount: newRemaining,
+          status: newStatus,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid
+        });
+
+        // Audit for the specific need update
+        const needAuditRef = adminDb.collection("auditLogs").doc();
+        transaction.set(needAuditRef, {
+          userId: actorUid,
+          entityId,
+          action: "recruitmentNeed.fulfillment_increment",
+          resourceType: "recruitmentNeed",
+          resourceId: offer.recruitmentNeedId,
+          details: { employeeId, offerId, previousFulfilled: need.fulfilledHeadcount, newFulfilled },
+          timestamp: FieldValue.serverTimestamp()
+        });
       }
 
-      // 12. Timeline Events
+      // 8. Timeline Events
       const timelineColl = adminDb.collection("entities").doc(entityId).collection("personTimeline");
       
       const t1 = timelineColl.doc();
@@ -286,7 +301,7 @@ export async function convertOfferToEmployeeAction(params: {
         createdBy: actorUid,
       });
 
-      // 13. Main Audit Log
+      // 9. Main Audit Log
       const auditRef = adminDb.collection("auditLogs").doc();
       transaction.set(auditRef, {
         userId: actorUid,
