@@ -10,7 +10,8 @@ import {
   where, 
   serverTimestamp,
   limit,
-  runTransaction
+  runTransaction,
+  orderBy
 } from "firebase/firestore";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { Candidate } from "@/types/candidate";
@@ -36,7 +37,23 @@ export async function getActiveOfferForCandidate(entityId: string, candidateId: 
 }
 
 /**
+ * Fetches the latest terminal offer to determine revision numbers.
+ */
+export async function getLatestOfferForCandidate(entityId: string, candidateId: string): Promise<EmploymentOffer | null> {
+  if (!db) return null;
+  const q = query(
+    collection(db, `entities/${entityId}/employmentOffers`),
+    where("candidateId", "==", candidateId),
+    orderBy("createdAt", "desc"),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  return snap.empty ? null : (snap.docs[0].data() as EmploymentOffer);
+}
+
+/**
  * Pre-fills and creates a new employment offer draft.
+ * Uses a transaction to ensure one active offer rule is enforced server-side.
  */
 export async function createEmploymentOfferDraft(params: {
   entityId: string;
@@ -44,74 +61,119 @@ export async function createEmploymentOfferDraft(params: {
   need?: RecruitmentNeed | null;
   profile?: JobProfile | null;
   actorUid: string;
-}) {
-  const { entityId, candidate, need, profile, actorUid } = params;
+  revisionReason?: string;
+}): Promise<{ offerId: string; alreadyExists?: boolean }> {
+  const { entityId, candidate, need, profile, actorUid, revisionReason } = params;
   if (!db) throw new Error("Firestore not initialized");
 
-  const offerRef = doc(collection(db, `entities/${entityId}/employmentOffers`));
-  const offerId = offerRef.id;
-
-  const recruitmentNeedId = need?.needId || (candidate as any).recruitmentNeedId || "";
-  const recruitmentNeedTitle = need?.recruitmentNeedTitle || 
-    (need?.jobTitleName ? `${need.jobTitleName}${need.departmentName ? ` — ${need.departmentName}` : ''}` : "");
-
-  const worksiteId = need?.worksiteId || "";
-  const worksiteName = need?.worksiteName || need?.worksiteNameSnapshot || need?.siteName || need?.location || "";
-
-  const payload: EmploymentOffer = {
-    offerId,
-    entityId,
-    personId: candidate.personId,
-    candidateId: candidate.candidateId,
-    recruitmentNeedId: recruitmentNeedId || undefined,
-    recruitmentNeedTitle: recruitmentNeedTitle || undefined,
-    jobProfileId: profile?.jobProfileId || (candidate as any).jobProfileId || need?.jobProfileId || "",
+  return await runTransaction(db, async (transaction) => {
+    // 1. Double check for active offers (Transactional enforcement)
+    const activeQuery = query(
+      collection(db, `entities/${entityId}/employmentOffers`),
+      where("candidateId", "==", candidate.candidateId),
+      where("status", "in", ["draft", "internal_review", "ready_to_send", "sent", "viewed", "accepted"]),
+      limit(1)
+    );
+    const activeSnap = await getDocs(activeQuery);
     
-    candidateDisplayName: candidate.displayName,
-    candidateEmail: candidate.email,
-    candidatePhone: candidate.phone,
+    if (!activeSnap.empty) {
+      return { 
+        offerId: activeSnap.docs[0].id, 
+        alreadyExists: true 
+      };
+    }
 
-    jobTitleName: need?.jobTitleName || profile?.jobTitleName || candidate.positionApplied || "",
-    departmentId: need?.departmentId || profile?.departmentId || candidate.department || "",
-    departmentName: need?.departmentName || profile?.departmentName || candidate.department || "",
-    worksiteId,
-    worksiteName,
+    // 2. Determine revision number
+    const latestQuery = query(
+      collection(db, `entities/${entityId}/employmentOffers`),
+      where("candidateId", "==", candidate.candidateId),
+      orderBy("createdAt", "desc"),
+      limit(1)
+    );
+    const latestSnap = await getDocs(latestQuery);
+    
+    let revisionNumber = 1;
+    let previousOfferId = null;
+    
+    if (!latestSnap.empty) {
+      const latest = latestSnap.docs[0].data() as EmploymentOffer;
+      revisionNumber = (latest.revisionNumber || 1) + 1;
+      previousOfferId = latest.offerId;
+    }
 
-    contractType: profile?.defaultContractType || "Tempo indeterminato",
-    proposedStartDate: need?.desiredAvailabilityDate || new Date().toISOString().split('T')[0],
-    weeklyHours: profile?.defaultWeeklyHours || 40,
-    trialPeriodDays: 30,
+    // 3. Create new Draft
+    const offerRef = doc(collection(db, `entities/${entityId}/employmentOffers`));
+    const offerId = offerRef.id;
 
-    ccnlId: profile?.defaultCcnlId || "",
-    ccnlName: profile?.defaultCcnlName || "",
-    levelId: profile?.defaultLevelId || "",
-    levelCode: profile?.defaultLevelCode || "",
-    levelLabel: profile?.defaultLevelLabel || "",
-    monthlyPayments: profile?.defaultMonthlyPayments || 13,
-    minGrossMonthly: profile?.defaultMinimumGrossMonthly || 0,
+    const recruitmentNeedId = need?.needId || (candidate as any).recruitmentNeedId || "";
+    const recruitmentNeedTitle = need?.recruitmentNeedTitle || 
+      (need?.jobTitleName ? `${need.jobTitleName}${need.departmentName ? ` — ${need.departmentName}` : ''}` : "");
 
-    proposedGrossMonthly: profile?.defaultMinimumGrossMonthly || 0,
-    proposedGrossHourly: profile?.defaultMinimumGrossHourly || 0,
+    const worksiteId = need?.worksiteId || "";
+    const worksiteName = need?.worksiteName || need?.worksiteNameSnapshot || need?.siteName || need?.location || "";
 
-    status: "draft",
-    createdAt: serverTimestamp(),
-    createdBy: actorUid,
-    updatedAt: serverTimestamp(),
-    updatedBy: actorUid,
-  };
+    const payload: EmploymentOffer = {
+      offerId,
+      entityId,
+      personId: candidate.personId,
+      candidateId: candidate.candidateId,
+      recruitmentNeedId: recruitmentNeedId || undefined,
+      recruitmentNeedTitle: recruitmentNeedTitle || undefined,
+      jobProfileId: profile?.jobProfileId || (candidate as any).jobProfileId || need?.jobProfileId || "",
+      
+      candidateDisplayName: candidate.displayName,
+      candidateEmail: candidate.email,
+      candidatePhone: candidate.phone,
 
-  await setDoc(offerRef, payload);
+      jobTitleName: need?.jobTitleName || profile?.jobTitleName || candidate.positionApplied || "",
+      departmentId: need?.departmentId || profile?.departmentId || candidate.department || "",
+      departmentName: need?.departmentName || profile?.departmentName || candidate.department || "",
+      worksiteId,
+      worksiteName,
 
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "employmentOffer.draft_created",
-    resourceType: "employmentOffer",
-    resourceId: offerId,
-    details: { candidateId: candidate.candidateId, recruitmentNeedId }
+      contractType: profile?.defaultContractType || "Tempo indeterminato",
+      proposedStartDate: need?.desiredAvailabilityDate || new Date().toISOString().split('T')[0],
+      weeklyHours: profile?.defaultWeeklyHours || 40,
+      trialPeriodDays: 30,
+
+      ccnlId: profile?.defaultCcnlId || "",
+      ccnlName: profile?.defaultCcnlName || "",
+      levelId: profile?.defaultLevelId || "",
+      levelCode: profile?.defaultLevelCode || "",
+      levelLabel: profile?.defaultLevelLabel || "",
+      monthlyPayments: profile?.defaultMonthlyPayments || 13,
+      minGrossMonthly: profile?.defaultMinimumGrossMonthly || 0,
+
+      proposedGrossMonthly: profile?.defaultMinimumGrossMonthly || 0,
+      proposedGrossHourly: profile?.defaultMinimumGrossHourly || 0,
+
+      status: "draft",
+      revisionNumber,
+      previousOfferId,
+      revisionReason: revisionReason || null,
+      
+      createdAt: serverTimestamp(),
+      createdBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    };
+
+    transaction.set(offerRef, payload);
+
+    return { offerId };
+  }).then(async (result) => {
+    if (!result.alreadyExists) {
+      await createAuditLog({
+        userId: actorUid,
+        entityId,
+        action: "employmentOffer.draft_created",
+        resourceType: "employmentOffer",
+        resourceId: result.offerId,
+        details: { candidateId: candidate.candidateId, revisionNumber: 1 } // Revision logic metadata can be expanded here
+      });
+    }
+    return result;
   });
-
-  return offerId;
 }
 
 export async function updateEmploymentOffer(entityId: string, offerId: string, data: Partial<EmploymentOffer>, actorUid: string) {

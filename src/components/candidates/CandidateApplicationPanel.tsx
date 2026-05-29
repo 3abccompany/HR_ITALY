@@ -6,7 +6,7 @@ import {
   AlertTriangle, Briefcase, Building2, MapPin, 
   ArrowRight, XCircle, UserCheck, Clock, MessageSquare, AlertCircle,
   Calendar, Phone, Fingerprint, Info, ChevronDown, Globe, Home, FileText, Download, Eye,
-  GraduationCap, ListTodo, FileSignature
+  GraduationCap, ListTodo, FileSignature, History
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { updateCandidateStatus } from "@/services/candidate.service";
-import { createEmploymentOfferDraft, getActiveOfferForCandidate } from "@/services/employment-offer.service";
+import { createEmploymentOfferDraft, getActiveOfferForCandidate, getLatestOfferForCandidate } from "@/services/employment-offer.service";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from "next/navigation";
 import { 
@@ -33,6 +33,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface CandidateApplicationPanelProps {
   entityId: string;
@@ -62,6 +63,16 @@ const FIELD_LABELS: Record<string, string> = {
   expectedSalary: "Prétentions salariales",
 };
 
+const REVISION_REASONS = [
+  "Nouvelle négociation",
+  "Salaire modifié",
+  "Niveau CCNL modifié",
+  "Date de début modifiée",
+  "Autre poste",
+  "Correction / erreur dans la proposition précédente",
+  "Autre"
+];
+
 export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate }: CandidateApplicationPanelProps) {
   const db = useFirestore();
   const auth = useAuth();
@@ -73,6 +84,10 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
+
+  // Revision UI State
+  const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
+  const [selectedRevisionReason, setSelectedRevisionReason] = useState("");
 
   const submissionRef = useMemo(() => {
     if (!db || !entityId || !candidate?.applicationSubmissionId) return null;
@@ -108,23 +123,32 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
     }
   };
 
-  const handlePrepareOffer = async () => {
+  const handlePrepareOffer = async (forceNew = false) => {
     if (!user || !candidate || !entityId) return;
     setLoadingAction(true);
     try {
-      // 1. Check if an active offer already exists
-      const existingOffer = await getActiveOfferForCandidate(entityId, candidate.candidateId);
-      if (existingOffer) {
-        toast({ title: "Proposition déjà existante", description: "Ouverture de la proposition existante." });
-        router.push(`/entity/${entityId}/employment-offers/${existingOffer.offerId}`);
+      // 1. Check for active offer
+      const activeOffer = await getActiveOfferForCandidate(entityId, candidate.candidateId);
+      if (activeOffer) {
+        toast({ title: "Proposition active", description: "Une proposition est déjà en cours pour ce candidat." });
+        router.push(`/entity/${entityId}/employment-offers/${activeOffer.offerId}`);
         return;
       }
 
-      // 2. Fetch context for pre-filling (Need & Profile)
+      // 2. Check for terminal offer history (if not forced by dialog)
+      if (!forceNew) {
+        const latestOffer = await getLatestOfferForCandidate(entityId, candidate.candidateId);
+        if (latestOffer) {
+          // Latest offer exists but is terminal (declined/expired/cancelled)
+          setRevisionDialogOpen(true);
+          setLoadingAction(false);
+          return;
+        }
+      }
+
+      // 3. Normal Creation or Revision
       let need = null;
       let profile = null;
-
-      // Candidate might have recruitmentNeedId directly, or it might be in the submission
       const effectiveNeedId = (candidate as any).recruitmentNeedId || submission?.recruitmentNeedId;
 
       if (effectiveNeedId) {
@@ -136,7 +160,6 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
       }
 
       const effectiveProfileId = (candidate as any).jobProfileId || need?.jobProfileId;
-
       if (effectiveProfileId) {
          const profileRef = doc(db!, `entities/${entityId}/jobProfiles`, effectiveProfileId);
          const p = await getDoc(profileRef);
@@ -145,16 +168,17 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
          }
       }
 
-      // 3. Create Draft
-      const offerId = await createEmploymentOfferDraft({
+      const { offerId } = await createEmploymentOfferDraft({
         entityId,
         candidate,
         need,
         profile,
-        actorUid: user.uid
+        actorUid: user.uid,
+        revisionReason: selectedRevisionReason
       });
 
-      toast({ title: "Brouillon initialisé", description: "La proposition d'embauche est prête à être éditée." });
+      toast({ title: "Proposition initialisée", description: "Brouillon prêt pour édition." });
+      setRevisionDialogOpen(false);
       router.push(`/entity/${entityId}/employment-offers/${offerId}`);
     } catch (err: any) {
       console.error("Prepare offer error:", err);
@@ -198,7 +222,6 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
   // Prioritized fallback for submission date
   const bestReceivedDate = submission?.submittedAt || submission?.createdAt || candidate.createdAt || candidate.updatedAt || submission?.attachments?.[0]?.uploadedAt;
 
-  // Define keys that are rendered in dedicated sections to avoid duplicates in "Autres réponses"
   const mappedKeys = [
     'firstName', 'lastName', 'email', 'phone', 'nationalId', 'birthDate', 
     'address', 'city', 'province', 'country', 'availability', 'availableFrom', 
@@ -251,7 +274,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
                <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Actions de décision RH</p>
              </div>
              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-               {renderDecisionActions(candidate, loadingAction, handleStatusChange, () => setRejectDialogOpen(true), handlePrepareOffer)}
+               {renderDecisionActions(candidate, loadingAction, handleStatusChange, () => setRejectDialogOpen(true), () => handlePrepareOffer())}
              </div>
           </div>
 
@@ -352,6 +375,40 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
              <Button variant="outline" onClick={() => setRejectDialogOpen(false)} disabled={loadingAction}>Annuler</Button>
              <Button variant="destructive" onClick={() => handleStatusChange("rejected", rejectionReason)} disabled={loadingAction || !rejectionReason.trim()}>
                 Confirmer le rejet
+             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revision Confirmation Dialog */}
+      <Dialog open={revisionDialogOpen} onOpenChange={setRevisionDialogOpen}>
+        <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+              <History className="w-5 h-5 text-accent" /> Nouvelle proposition
+            </DialogTitle>
+            <DialogDescription>
+              Ce candidat possède déjà une proposition clôturée. Voulez-vous créer une nouvelle proposition liée à l'historique ?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+             <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase">Motif de la révision</Label>
+                <Select value={selectedRevisionReason} onValueChange={setSelectedRevisionReason}>
+                  <SelectTrigger className="rounded-xl h-11">
+                    <SelectValue placeholder="Choisir un motif..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REVISION_REASONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+             </div>
+          </div>
+          <DialogFooter className="sm:justify-between">
+             <Button variant="ghost" onClick={() => setRevisionDialogOpen(false)} disabled={loadingAction}>Annuler</Button>
+             <Button onClick={() => handlePrepareOffer(true)} disabled={loadingAction || !selectedRevisionReason} className="rounded-xl px-6 font-bold">
+                {loadingAction ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                Créer révision
              </Button>
           </DialogFooter>
         </DialogContent>

@@ -7,7 +7,7 @@ import {
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
   Clock, Hash, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
   FileSignature, ChevronRight, Building2, UserCircle, Send, Eye, MousePointer2,
-  FileText, ExternalLink, Search
+  FileText, ExternalLink, Search, History
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -295,10 +295,17 @@ export default function EditEmploymentOfferPage() {
               </h1>
               {getStatusBadge(offer.status)}
             </div>
-            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em] flex items-center gap-2">
-               <FileSignature className="w-3 h-3" />
-               Gestion du projet de contrat
-            </p>
+            <div className="flex items-center gap-2">
+               <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em] flex items-center gap-2">
+                  <FileSignature className="w-3 h-3" />
+                  Gestion du projet de contrat
+               </p>
+               {offer.revisionNumber > 1 && (
+                 <Badge variant="secondary" className="h-5 px-2 bg-accent/10 text-accent border-accent/20 uppercase text-[9px] font-black tracking-widest">
+                   Révision {offer.revisionNumber}
+                 </Badge>
+               )}
+            </div>
           </div>
         </div>
 
@@ -389,6 +396,15 @@ export default function EditEmploymentOfferPage() {
                   )}
                </CardContent>
             </Card>
+          )}
+
+          {offer.revisionReason && (
+             <Card className="border-primary/10 bg-secondary/10 rounded-3xl overflow-hidden">
+                <CardContent className="p-4 flex items-center gap-3 text-sm font-medium text-slate-600 italic">
+                   <History className="w-4 h-4 text-primary opacity-50" />
+                   Motif de révision : {offer.revisionReason}
+                </CardContent>
+             </Card>
           )}
 
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
@@ -509,6 +525,15 @@ export default function EditEmploymentOfferPage() {
         </div>
 
         <div className="space-y-8">
+          {offer.previousOfferId && (
+             <Button variant="outline" className="w-full h-12 rounded-2xl gap-2 font-bold text-accent" asChild>
+                <Link href={`/entity/${entityId}/employment-offers/${offer.previousOfferId}`}>
+                   <Undo2 className="w-4 h-4" />
+                   Voir proposition précédente
+                </Link>
+             </Button>
+          )}
+
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
             <CardHeader className="bg-secondary/40 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">

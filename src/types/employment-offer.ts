@@ -77,6 +77,11 @@ export interface EmploymentOffer {
   lastResentAt?: any;
   lastResentBy?: string;
 
+  // Revision Tracking
+  previousOfferId?: string | null;
+  revisionNumber: number;
+  revisionReason?: string | null;
+
   // Audit
   createdAt: Date | FieldValue;
   createdBy: string;
