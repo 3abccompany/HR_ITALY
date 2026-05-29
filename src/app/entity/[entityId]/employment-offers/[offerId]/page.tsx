@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -295,10 +294,10 @@ export default function EditEmploymentOfferPage() {
            </div>
            <div className="flex items-center gap-3">
               <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
-                 <Link href={`/entity/${entityId}/employees`}>Consulter la fiche employé</Link>
+                 <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Consulter la fiche employé</Link>
               </Button>
-              <Button variant="outline" className="rounded-xl font-bold border-primary/20">
-                 Voir le contrat initial
+              <Button variant="outline" className="rounded-xl font-bold border-primary/20" asChild>
+                 <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir les détails du contrat</Link>
               </Button>
            </div>
         </div>
@@ -314,10 +313,10 @@ export default function EditEmploymentOfferPage() {
               </div>
            </div>
            {canConvert && (
-             <AlertDialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
+             <AlertDialog open={isConvertDialogOpen} onOpenChange={(open) => !converting && setIsConvertDialogOpen(open)}>
                <AlertDialogTrigger asChild>
-                 <Button className="bg-green-600 hover:bg-green-700 text-white font-black rounded-xl gap-2 shadow-lg shadow-green-200">
-                    <UserPlus className="w-4 h-4" /> Créer employé et contrat
+                 <Button className="bg-green-600 hover:bg-green-700 text-white font-black rounded-xl gap-2 shadow-lg shadow-green-200 px-6">
+                    <UserPlus className="w-4 h-4" /> Convertir en employé
                  </Button>
                </AlertDialogTrigger>
                <AlertDialogContent className="rounded-[2.5rem] sm:max-w-lg">
@@ -330,12 +329,13 @@ export default function EditEmploymentOfferPage() {
                  
                  <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 my-4 space-y-4">
                     <div className="grid grid-cols-2 gap-y-4 text-xs">
-                       <SummaryDetail label="Employé" value={offer.candidateDisplayName} />
+                       <SummaryDetail label="Candidat" value={offer.candidateDisplayName} />
                        <SummaryDetail label="Début" value={offer.proposedStartDate} />
                        <SummaryDetail label="Poste" value={offer.jobTitleName} />
                        <SummaryDetail label="Contrat" value={offer.contractType} />
                        <SummaryDetail label="CCNL" value={offer.ccnlName} />
                        <SummaryDetail label="Niveau" value={offer.levelCode} />
+                       <SummaryDetail label="Hebdo" value={`${offer.weeklyHours}h`} />
                     </div>
                     <Separator className="bg-slate-200" />
                     <div className="flex justify-between items-center pt-2">
@@ -345,7 +345,7 @@ export default function EditEmploymentOfferPage() {
                  </div>
 
                  <AlertDialogFooter>
-                   <AlertDialogCancel disabled={converting}>Retour</AlertDialogCancel>
+                   <AlertDialogCancel disabled={converting}>Annuler</AlertDialogCancel>
                    <AlertDialogAction onClick={handleConvert} disabled={converting} className="bg-primary text-white font-black rounded-xl">
                       {converting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckSquare className="w-4 h-4 mr-2" />}
                       Confirmer la création
