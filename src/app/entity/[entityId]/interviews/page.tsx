@@ -8,7 +8,8 @@ import {
   AlertCircle, MoreVertical, 
   Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
   Clock, MapPinned, UserCircle, HandMetal,
-  X, ListFilter, Download, ChevronUp, ChevronDown
+  X, ListFilter, Download, ChevronUp, ChevronDown,
+  Mail
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

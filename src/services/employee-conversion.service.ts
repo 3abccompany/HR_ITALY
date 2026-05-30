@@ -1,4 +1,3 @@
-
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
@@ -23,7 +22,7 @@ export async function convertOfferToEmployeeAction(params: {
   entityId: string;
   offerId: string;
   actorUid: string;
-}) {
+}): Promise<{ success: true; employeeId: string } | { success: false; error: string }> {
   const { entityId, offerId, actorUid } = params;
 
   try {

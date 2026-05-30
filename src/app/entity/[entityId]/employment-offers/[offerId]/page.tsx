@@ -7,7 +7,8 @@ import {
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
   Clock, ArrowRight, CheckCircle2, XCircle,
   FileSignature, Send, History, UserPlus,
-  ClipboardList, CheckCircle, AlertTriangle, Plus, RefreshCcw, FileText
+  ClipboardList, CheckCircle, AlertTriangle, Plus, RefreshCcw, FileText,
+  Building2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -233,7 +234,7 @@ export default function EditEmploymentOfferPage() {
       if (result && result.success) {
         toast({ title: "Envoyée" });
       } else {
-        toast({ variant: "destructive", title: "Erreur", description: result?.error || "Impossible d'envoyer l'offre." });
+        toast({ variant: "destructive", title: "Erreur", description: (result as any)?.error || "Impossible d'envoyer l'offre." });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });

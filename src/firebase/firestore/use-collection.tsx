@@ -6,11 +6,12 @@ import {
   onSnapshot,
   QuerySnapshot,
   DocumentData,
+  CollectionReference,
 } from 'firebase/firestore';
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '../errors';
 
-export function useCollection<T = DocumentData>(query: Query<T> | null) {
+export function useCollection<T = DocumentData>(query: Query<any> | CollectionReference<any> | null) {
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -27,7 +28,7 @@ export function useCollection<T = DocumentData>(query: Query<T> | null) {
 
     const unsubscribe = onSnapshot(
       query,
-      (snapshot: QuerySnapshot<T>) => {
+      (snapshot: QuerySnapshot<any>) => {
         if (!isMounted) return;
         setData(snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id } as T)));
         setLoading(false);

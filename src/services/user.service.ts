@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -21,7 +20,7 @@ export async function getUserProfile(uid: string): Promise<AppUser | null> {
   return snap.exists() ? (snap.data() as AppUser) : null;
 }
 
-export async function createUserProfile(data: Omit<AppUser, 'createdAt' | 'updatedAt' | 'status'>, adminUid: string) {
+export async function createUserProfile(data: Omit<AppUser, 'createdAt' | 'updatedAt' | 'status' | 'createdBy' | 'updatedBy'>, adminUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   
   const userRef = doc(db, "users", data.uid);
