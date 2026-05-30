@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -17,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useFirebase, useDoc, useCollection, useUser } from "@/firebase";
+import { useFirebase, useDoc, useCollection, useUser, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, getDocs, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
@@ -26,6 +25,7 @@ import { convertOfferToEmployeeAction } from "@/services/employee-conversion.ser
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
 import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
+import { RecruitmentNeed } from "@/types/recruitment-need";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -72,8 +72,9 @@ export default function EditEmploymentOfferPage() {
   
   const { db } = useFirebase();
   const { user } = useUser();
+  const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
 
   const offerRef = useMemo(() => db ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null, [db, entityId, offerId]);
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
@@ -91,40 +92,50 @@ export default function EditEmploymentOfferPage() {
   const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) : null, [db, entityId]);
   const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
 
+  // Source Besoin RH for fallbacks
+  const needRef = useMemo(() => db && offer?.recruitmentNeedId ? doc(db, `entities/${entityId}/recruitmentNeeds`, offer.recruitmentNeedId) : null, [db, entityId, offer?.recruitmentNeedId]);
+  const { data: need } = useDoc<RecruitmentNeed>(needRef as any);
+
   const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [converting, setConverting] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
+  const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
-  // Levels for the currently selected CCNL
-  const [activeLevels, setActiveLevels] = useState<CCNLLevel[]>([]);
-  const [loadingLevels, setLoadingLevels] = useState(false);
+  // Reactive Levels fetching based on formData.ccnlId
+  const levelsQuery = useMemo(() => 
+    db && entityId && formData.ccnlId 
+      ? query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"), orderBy("levelCode", "asc")) 
+      : null, 
+  [db, entityId, formData.ccnlId]);
+
+  const { data: activeLevels, loading: loadingLevels } = useCollection<CCNLLevel>(levelsQuery);
 
   useEffect(() => {
     if (offer) {
       setFormData(offer);
-      if (offer.ccnlId) fetchLevels(offer.ccnlId);
     }
   }, [offer]);
 
-  const fetchLevels = async (ccnlId: string) => {
-    if (!db || !entityId || !ccnlId) return;
-    setLoadingLevels(true);
-    try {
-      const q = query(collection(db, `entities/${entityId}/ccnls/${ccnlId}/levels`), where("status", "==", "active"), orderBy("levelCode", "asc"));
-      const snap = await getDocs(q);
-      setActiveLevels(snap.docs.map(d => ({ ...d.data(), levelId: d.id } as CCNLLevel)));
-    } catch (e) {
-      console.warn("Failed to fetch levels", e);
-    } finally {
-      setLoadingLevels(false);
-    }
-  };
-
   const handleCcnlChange = (ccnlId: string) => {
-    const ccnl = activeCcnls?.find(c => c.ccnlId === ccnlId);
+    if (ccnlId === "none_clear") {
+      setFormData(p => ({
+        ...p,
+        ccnlId: "",
+        ccnlName: "",
+        cnelCode: "",
+        levelId: "",
+        levelCode: "",
+        levelLabel: "",
+        minGrossMonthly: 0,
+        minGrossHourly: 0
+      }));
+      return;
+    }
+
+    const ccnl = activeCcnls?.find(c => (c as any).id === ccnlId || c.ccnlId === ccnlId);
     setFormData(p => ({
       ...p,
       ccnlId,
@@ -137,13 +148,25 @@ export default function EditEmploymentOfferPage() {
       levelLabel: "",
       minGrossMonthly: 0,
       minGrossHourly: 0,
-      proposedGrossMonthly: ccnl?.standardWeeklyHours ? 0 : p.proposedGrossMonthly // reset if new scale
+      proposedGrossMonthly: ccnl?.standardWeeklyHours ? 0 : p.proposedGrossMonthly
     }));
-    fetchLevels(ccnlId);
   };
 
   const handleLevelChange = (levelId: string) => {
-    const level = activeLevels.find(l => l.levelId === levelId);
+    if (levelId === "none_clear") {
+       setFormData(p => ({
+         ...p,
+         levelId: "",
+         levelCode: "",
+         levelLabel: "",
+         qualificationLabel: "",
+         minGrossMonthly: 0,
+         minGrossHourly: 0
+       }));
+       return;
+    }
+
+    const level = activeLevels?.find(l => (l as any).id === levelId || l.levelId === levelId);
     setFormData(p => {
       const monthly = level?.minimumGrossMonthly || 0;
       const payments = p.monthlyPayments || 13;
@@ -155,7 +178,7 @@ export default function EditEmploymentOfferPage() {
         qualificationLabel: level?.qualificationLabel || "",
         minGrossMonthly: monthly,
         minGrossHourly: level?.minimumGrossHourly || 0,
-        proposedGrossMonthly: monthly, // default to minimum
+        proposedGrossMonthly: monthly,
         proposedGrossAnnual: monthly * payments
       };
     });
@@ -246,12 +269,32 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
-  if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
-  if (!offer) return <div className="p-8 text-center">Proposition introuvable.</div>;
+  const handleViewAttachment = async (attachmentId: string) => {
+    if (!offer?.applicationSubmissionId) return;
+    setLoadingFileId(attachmentId);
 
-  const isAccepted = offer.status === 'accepted';
-  const isConverted = offer.conversionStatus === 'converted';
-  const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer.status) || isConverted;
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch(`/api/entities/${entityId}/submissions/${offer.applicationSubmissionId}/attachments/${attachmentId}/url`, {
+        headers: { 'Authorization': `Bearer ${idToken}` }
+      });
+
+      if (!response.ok) throw new Error("Impossible de générer le lien d'accès.");
+      
+      const { url } = await response.json();
+      window.open(url, '_blank');
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setLoadingFileId(null);
+    }
+  };
+
+  if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+
+  const isAccepted = offer?.status === 'accepted';
+  const isConverted = offer?.conversionStatus === 'converted';
+  const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer?.status || "") || isConverted;
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
@@ -260,8 +303,8 @@ export default function EditEmploymentOfferPage() {
           <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full"><ArrowLeft className="w-5 h-5" /></Button>
           <div className="space-y-0.5">
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black text-primary tracking-tight">Proposition : {offer.candidateDisplayName}</h1>
-              {getStatusBadge(offer.status)}
+              <h1 className="text-2xl font-black text-primary tracking-tight">Proposition : {offer?.candidateDisplayName}</h1>
+              {offer?.status && getStatusBadge(offer.status)}
             </div>
           </div>
         </div>
@@ -270,19 +313,19 @@ export default function EditEmploymentOfferPage() {
           {!isReadOnly && (
             <>
               <Button variant="outline" onClick={() => handleSave()} disabled={saving} className="gap-2 bg-white font-bold"><Save className="w-4 h-4" /> Enregistrer brouillon</Button>
-              {offer.status === 'draft' && <Button onClick={() => handleSave('internal_review')} disabled={saving} className="gap-2">Passer en validation <ArrowRight className="w-4 h-4" /></Button>}
-              {offer.status === 'internal_review' && <Button onClick={() => handleSave('ready_to_send')} disabled={saving} className="gap-2 bg-accent text-white">Marquer comme prête <CheckCircle2 className="w-4 h-4" /></Button>}
-              {offer.status === 'ready_to_send' && <Button onClick={handleSend} disabled={sending} className="gap-2 bg-primary text-white font-black"><Send className="w-4 h-4" /> Envoyer au candidat</Button>}
+              {offer?.status === 'draft' && <Button onClick={() => handleSave('internal_review')} disabled={saving} className="gap-2">Passer en validation <ArrowRight className="w-4 h-4" /></Button>}
+              {offer?.status === 'internal_review' && <Button onClick={() => handleSave('ready_to_send')} disabled={saving} className="gap-2 bg-accent text-white">Marquer comme prête <CheckCircle2 className="w-4 h-4" /></Button>}
+              {offer?.status === 'ready_to_send' && <Button onClick={handleSend} disabled={sending} className="gap-2 bg-primary text-white font-black"><Send className="w-4 h-4" /> Envoyer au candidat</Button>}
             </>
           )}
-          {offer.status === 'sent' && <Button variant="outline" onClick={handleSend} disabled={sending} className="gap-2 bg-white"><RefreshCcw className="w-4 h-4" /> Renvoyer le lien</Button>}
+          {offer?.status === 'sent' && <Button variant="outline" onClick={handleSend} disabled={sending} className="gap-2 bg-white"><RefreshCcw className="w-4 h-4" /> Renvoyer le lien</Button>}
         </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           
-          {/* 7K-F-A Compliance Dossier Card */}
+          {/* Dossier Card (Accepted State) */}
           {isAccepted && (
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", dossier?.readyForConversion ? "border-green-100 bg-green-50/10" : "border-primary/10")}>
                <CardHeader className="bg-primary/5 border-b py-4 flex flex-row items-center justify-between">
@@ -379,7 +422,7 @@ export default function EditEmploymentOfferPage() {
                   <div><p className="text-lg">Recrutement Finalisé</p><p className="text-[10px] uppercase font-black opacity-60">Dossier converti en employé.</p></div>
                </div>
                <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
-                  <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir fiche employé</Link>
+                  <Link href={`/entity/${entityId}/employees/${offer?.employeeId}`}>Voir fiche employé</Link>
                </Button>
             </div>
           )}
@@ -395,12 +438,27 @@ export default function EditEmploymentOfferPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-1 p-3 bg-secondary/20 rounded-2xl border">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Candidat</Label>
-                  <p className="font-black text-primary">{offer.candidateDisplayName}</p>
-                  <p className="text-xs text-muted-foreground">{offer.candidateEmail}</p>
+                  <p className="font-black text-primary">{offer?.candidateDisplayName}</p>
+                  <p className="text-xs text-muted-foreground">{offer?.candidateEmail}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Poste proposé</Label>
                   <Input value={formData.jobTitleName || ""} onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))} disabled={isReadOnly} className="h-10 font-bold text-primary border-primary/20 rounded-xl" />
+                </div>
+                {/* Restore Department and Worksite display */}
+                <div className="space-y-1">
+                  <Label className="text-[9px] font-black uppercase text-muted-foreground">Département</Label>
+                  <div className="h-10 px-4 rounded-xl border border-primary/10 bg-secondary/10 flex items-center text-sm font-bold text-slate-700">
+                    <Building2 className="w-3.5 h-3.5 mr-2 text-primary/40" />
+                    {formData.departmentName || need?.departmentName || "Non renseigné"}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[9px] font-black uppercase text-muted-foreground">Site d'affectation</Label>
+                  <div className="h-10 px-4 rounded-xl border border-primary/10 bg-secondary/10 flex items-center text-sm font-bold text-slate-700">
+                    <MapPin className="w-3.5 h-3.5 mr-2 text-primary/40" />
+                    {formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné"}
+                  </div>
                 </div>
               </div>
             </CardContent>
@@ -457,7 +515,7 @@ export default function EditEmploymentOfferPage() {
                     <Select value={formData.ccnlId} onValueChange={handleCcnlChange} disabled={isReadOnly}>
                       <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Choisir CCNL..." /></SelectTrigger>
                       <SelectContent>
-                        {activeCcnls?.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
+                        {activeCcnls?.map(c => <SelectItem key={(c as any).id} value={(c as any).id}>{c.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                  </div>
@@ -468,7 +526,8 @@ export default function EditEmploymentOfferPage() {
                         <SelectValue placeholder={loadingLevels ? "Chargement..." : "Choisir niveau..."} />
                       </SelectTrigger>
                       <SelectContent>
-                        {activeLevels.map(l => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>)}
+                        <SelectItem value="none_clear">--- Aucun ---</SelectItem>
+                        {activeLevels?.map(l => <SelectItem key={(l as any).id} value={(l as any).id}>{l.levelCode} • {l.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
                  </div>
@@ -511,8 +570,8 @@ export default function EditEmploymentOfferPage() {
           <Card className="border-primary/20 bg-primary/90 text-white shadow-2xl rounded-3xl overflow-hidden">
              <CardHeader className="bg-white/10 py-4 border-b border-white/10"><CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2"><FileText className="w-4 h-4" /> Résumé de l'offre</CardTitle></CardHeader>
              <CardContent className="p-6 space-y-4">
-                <SummaryRow label="Statut" value={getStatusBadge(offer.status)} />
-                <SummaryRow label="Compliance" value={isConverted ? "Legalisation OK" : dossier?.readyForConversion ? "Dossier validé" : "En attente docs"} />
+                <SummaryRow label="Statut" value={offer?.status ? getStatusBadge(offer.status) : "..."} />
+                <SummaryRow label="Compliance" value={isConverted ? "Légalisation OK" : dossier?.readyForConversion ? "Dossier validé" : isAccepted ? "En attente docs" : "N/A"} />
                 <Separator className="bg-white/10" />
                 <SummaryRow label="RAL" value={`€ ${formData.proposedGrossAnnual?.toLocaleString('fr-FR')}`} />
                 <SummaryRow label="Début" value={formData.proposedStartDate} />
@@ -528,7 +587,7 @@ export default function EditEmploymentOfferPage() {
                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Validité du lien (jours)</Label>
                    <Input type="number" min="1" max="30" value={formData.linkValidityDays || 7} onChange={(e) => setFormData(p => ({...p, linkValidityDays: parseInt(e.target.value)}))} disabled={isReadOnly} className="rounded-xl" />
                 </div>
-                {offer.publicAccessTokenExpiresAt && (
+                {offer?.publicAccessTokenExpiresAt && (
                   <div className="p-3 bg-secondary/30 rounded-xl space-y-1">
                      <p className="text-[9px] font-black text-muted-foreground uppercase">Expire le</p>
                      <p className="text-xs font-bold text-primary">{new Date(offer.publicAccessTokenExpiresAt.seconds * 1000).toLocaleString()}</p>
@@ -579,6 +638,9 @@ function getStatusBadge(status: EmploymentOfferStatus) {
     case 'accepted': return <Badge variant="secondary" className="bg-green-500 text-white font-black px-2 uppercase text-[9px]">Acceptée</Badge>;
     case 'sent': return <Badge className="bg-primary text-white px-2 uppercase text-[9px]">Envoyée</Badge>;
     case 'draft': return <Badge variant="outline" className="px-2 uppercase text-[9px]">Brouillon</Badge>;
+    case 'internal_review': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 px-2 uppercase text-[9px]">En revue</Badge>;
+    case 'ready_to_send': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 px-2 uppercase text-[9px]">Prête</Badge>;
+    case 'viewed': return <Badge variant="secondary" className="bg-cyan-500 text-white border-none px-2 uppercase text-[9px]">Consultée</Badge>;
     default: return <Badge variant="outline" className="px-2 uppercase text-[9px]">{status}</Badge>;
   }
 }
@@ -591,4 +653,3 @@ function SummaryRow({ label, value }: { label: string, value: any }) {
     </div>
   );
 }
-
