@@ -24,7 +24,6 @@ import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
 import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
-import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +48,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -104,19 +104,35 @@ export default function EditEmploymentOfferPage() {
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
-  // Reactive Levels fetching based on formData.ccnlId
-  const levelsQuery = useMemo(() => {
-    const ccnlDocId = formData.ccnlId;
-    if (!db || !entityId || !ccnlDocId || typeof ccnlDocId !== 'string' || ccnlDocId === "none_clear" || ccnlDocId.includes(' ')) return null;
-    
-    return query(
-      collection(db, `entities/${entityId}/ccnls/${ccnlDocId}/levels`), 
-      where("status", "==", "active"), 
-      orderBy("levelCode", "asc")
-    );
-  }, [db, entityId, formData.ccnlId]);
+  // Server-side fetching for levels to bypass rule limits
+  const [activeLevels, setActiveLevels] = useState<any[]>([]);
+  const [loadingLevels, setLoadingLevels] = useState(false);
 
-  const { data: activeLevels, loading: loadingLevels } = useCollection<any>(levelsQuery);
+  useEffect(() => {
+    async function fetchLevels() {
+      const ccnlId = formData.ccnlId;
+      if (!ccnlId || ccnlId === "none_clear") {
+        setActiveLevels([]);
+        return;
+      }
+
+      setLoadingLevels(true);
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        if (!idToken) throw new Error("Auth token missing");
+        
+        const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
+        setActiveLevels(levels);
+      } catch (err: any) {
+        console.error("Error fetching levels:", err);
+        toast({ variant: "destructive", title: "Erreur", description: "Impossible de charger les niveaux CCNL." });
+      } finally {
+        setLoadingLevels(false);
+      }
+    }
+
+    if (auth.currentUser) fetchLevels();
+  }, [formData.ccnlId, entityId, auth.currentUser, toast]);
 
   useEffect(() => {
     if (offer) {
@@ -124,8 +140,8 @@ export default function EditEmploymentOfferPage() {
     }
   }, [offer]);
 
-  const handleCcnlChange = (ccnlDocId: string) => {
-    if (ccnlDocId === "none_clear") {
+  const handleCcnlChange = (ccnlId: string) => {
+    if (ccnlId === "none_clear") {
       setFormData(p => ({
         ...p,
         ccnlId: "",
@@ -140,10 +156,10 @@ export default function EditEmploymentOfferPage() {
       return;
     }
 
-    const ccnl = activeCcnls?.find(c => c.id === ccnlDocId);
+    const ccnl = activeCcnls?.find((c: any) => c.id === ccnlId);
     setFormData(p => ({
       ...p,
-      ccnlId: ccnlDocId,
+      ccnlId: ccnlId,
       ccnlName: ccnl?.name || "",
       cnelCode: ccnl?.cnelCode || "",
       monthlyPayments: ccnl?.monthlyPayments || 13,
@@ -157,8 +173,8 @@ export default function EditEmploymentOfferPage() {
     }));
   };
 
-  const handleLevelChange = (levelDocId: string) => {
-    if (levelDocId === "none_clear") {
+  const handleLevelChange = (levelId: string) => {
+    if (levelId === "none_clear") {
        setFormData(p => ({
          ...p,
          levelId: "",
@@ -171,13 +187,13 @@ export default function EditEmploymentOfferPage() {
        return;
     }
 
-    const level = activeLevels?.find(l => l.id === levelDocId);
+    const level = activeLevels?.find(l => l.id === levelId);
     setFormData(p => {
       const monthly = level?.minimumGrossMonthly || 0;
       const payments = p.monthlyPayments || 13;
       return {
         ...p,
-        levelId: levelDocId,
+        levelId: levelId,
         levelCode: level?.levelCode || "",
         levelLabel: level?.label || "",
         qualificationLabel: level?.qualificationLabel || "",
@@ -522,7 +538,8 @@ export default function EditEmploymentOfferPage() {
                     <Select value={formData.ccnlId} onValueChange={handleCcnlChange} disabled={isReadOnly}>
                       <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Choisir CCNL..." /></SelectTrigger>
                       <SelectContent>
-                        {activeCcnls?.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                        <SelectItem value="none_clear">--- Aucun ---</SelectItem>
+                        {activeCcnls?.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                  </div>

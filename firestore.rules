@@ -184,13 +184,12 @@ service cloud.firestore {
       }
 
       match /ccnls/{ccnlId} {
-        // Optimized reference data rule to avoid 10-call get() limit
+        // Optimized reference data rule using recursive match to bypass deep get() limits
         allow read: if isEntityMember(entityId) || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
 
-        match /levels/{levelId} {
-          allow read: if isEntityMember(entityId) || isPlatformAdmin();
-          allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+        match /{allPaths=**} {
+           allow read: if isEntityMember(entityId) || isPlatformAdmin();
         }
       }
     }
