@@ -9,7 +9,7 @@ import {
   Clock, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
   FileSignature, Building2, UserCircle, Send, Eye,
   FileText, ExternalLink, Search, History, UserPlus,
-  ClipboardList, CheckCircle, AlertTriangle
+  ClipboardList, CheckCircle, AlertTriangle, Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +21,6 @@ import { useFirebase, useDoc, useCollection, useUser } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, getDocs } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
-import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
@@ -29,6 +28,14 @@ import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,12 +45,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
-
-const CONTRACT_TYPES = ["Tempo indeterminato", "Tempo determinato", "Apprendistato", "Stage / Tirocinio", "Altro"];
 
 export default function EditEmploymentOfferPage() {
   const params = useParams();
@@ -72,22 +76,12 @@ export default function EditEmploymentOfferPage() {
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [converting, setConverting] = useState(false);
-  const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
-
-  const [numInputs, setNumericInputs] = useState({ proposedGrossMonthly: "0", proposedGrossHourly: "0", monthlyPayments: "13", weeklyHours: "40", trialPeriodDays: "30" });
 
   useEffect(() => {
     if (offer) {
       setFormData(offer);
-      setNumericInputs({
-        proposedGrossMonthly: (offer.proposedGrossMonthly ?? 0).toString(),
-        proposedGrossHourly: (offer.proposedGrossHourly ?? 0).toString(),
-        monthlyPayments: (offer.monthlyPayments ?? 13).toString(),
-        weeklyHours: (offer.weeklyHours ?? 40).toString(),
-        trialPeriodDays: (offer.trialPeriodDays ?? 30).toString()
-      });
     }
   }, [offer]);
 
@@ -137,7 +131,9 @@ export default function EditEmploymentOfferPage() {
       toast({ title: "Dossier initialisé" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSendDocRequest = async () => {
