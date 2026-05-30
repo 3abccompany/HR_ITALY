@@ -2,134 +2,105 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPublicFormBySlug } from "@/services/application-form.service";
 import { executeSubmissionTransaction } from "@/services/application-submission.service";
 import { adminBucket } from "@/lib/firebase/admin";
-import { AttachmentMetadata } from "@/types/application-submission";
 import { randomUUID } from "crypto";
 
-/**
- * @fileOverview Public API route for candidate application submissions.
- * Handles form validation, file uploads to Storage, and atomic database creation.
- */
+export const dynamic = 'force-dynamic';
 
+/**
+ * Handles the public submission of candidate application forms.
+ * Performs validation, file uploads to storage, and transactional Firestore writes.
+ */
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const publicSlug = formData.get("publicSlug") as string;
     const answersStr = formData.get("answers") as string;
-    
+
     if (!publicSlug || !answersStr) {
-      return NextResponse.json({ error: "Paramètres manquants." }, { status: 400 });
+      return NextResponse.json({ error: { message: "Paramètres de soumission manquants." } }, { status: 400 });
     }
 
     const answers = JSON.parse(answersStr);
     const form = await getPublicFormBySlug(publicSlug);
 
-    if (!form || form.status !== "published") {
-      return NextResponse.json({ error: "Ce formulaire n'est plus disponible." }, { status: 404 });
+    if (!form) {
+      return NextResponse.json({ error: { message: "Formulaire non trouvé ou fermé." } }, { status: 404 });
     }
 
     const entityId = form.entityId;
+    const attachments: any[] = [];
 
-    // 1. Validation des champs requis
+    // 1. Validation and File Processing
     for (const field of form.fields) {
+      const val = answers[field.key];
+      
+      // TS2367 Fix: Normalize boolean-like values from form data before comparison
+      const isAccepted = val === true || val === "true" || val === "on" || val === "1";
+
       if (field.required) {
-        const val = answers[field.key];
-        
-        // TS2367 FIX: Normalize string/boolean/null to a safe boolean check
-        // Checkboxes from FormData can be "on", "true", or "1". 
-        // We use (val as any) to safely compare against boolean true if present.
-        const isAccepted = val === "true" || val === "on" || val === "1" || (val as any) === true;
-        
-        if (field.type === "checkbox" || field.type === "checkboxGroup" || field.type === "file") {
-          if (field.type === "checkbox" && !isAccepted) {
-             return NextResponse.json({ error: `Le champ "${field.label}" est obligatoire.` }, { status: 400 });
+        if (field.type === 'checkbox') {
+          if (!isAccepted) {
+            return NextResponse.json({ error: { message: `Le champ "${field.label}" est obligatoire.` } }, { status: 400 });
           }
-          if (field.type === "file" && !formData.get(field.key)) {
-             return NextResponse.json({ error: `Le fichier "${field.label}" est obligatoire.` }, { status: 400 });
+        } else if (field.type === 'file') {
+          const file = formData.get(field.key);
+          if (!file || !(file instanceof File) || file.size === 0) {
+            return NextResponse.json({ error: { message: `Le fichier "${field.label}" est obligatoire.` } }, { status: 400 });
           }
-          if (field.type === "checkboxGroup" && (!Array.isArray(val) || val.length === 0)) {
-             return NextResponse.json({ error: `Le champ "${field.label}" est obligatoire.` }, { status: 400 });
-          }
-        } else {
-           if (val === undefined || val === null || val === "") {
-             return NextResponse.json({ error: `Le champ "${field.label}" est obligatoire.` }, { status: 400 });
-           }
+        } else if (val === undefined || val === null || (typeof val === 'string' && val.trim() === "")) {
+          return NextResponse.json({ error: { message: `Le champ "${field.label}" est obligatoire.` } }, { status: 400 });
+        }
+      }
+
+      // Process and upload files if present
+      if (field.type === 'file') {
+        const file = formData.get(field.key);
+        if (file && file instanceof File && file.size > 0) {
+          const fileId = randomUUID();
+          const filePath = `entities/${entityId}/submissions/attachments/${fileId}_${file.name}`;
+          
+          const buffer = Buffer.from(await file.arrayBuffer());
+          await adminBucket.file(filePath).save(buffer, {
+            metadata: { contentType: file.type }
+          });
+
+          attachments.push({
+            id: fileId,
+            type: field.key,
+            fileName: file.name,
+            filePath,
+            mimeType: file.type,
+            size: file.size,
+            uploadedAt: new Date().toISOString()
+          });
         }
       }
     }
 
-    // 2. Traitement des fichiers (Upload vers Firebase Storage via Admin SDK)
-    const attachments: AttachmentMetadata[] = [];
-    const fileFields = form.fields.filter(f => f.type === 'file');
+    // 2. Transactional execution of business logic (Dedupe, Person creation, Candidate link)
+    const result = await executeSubmissionTransaction(entityId, form, answers, attachments);
 
-    for (const field of fileFields) {
-      const file = formData.get(field.key) as File | null;
-      if (file && file.size > 0) {
-        const fileId = randomUUID();
-        const extension = file.name.split('.').pop() || 'dat';
-        const filePath = `entities/${entityId}/submissions/attachments/${fileId}.${extension}`;
-        
-        const buffer = Buffer.from(await file.arrayBuffer());
-        const bucketFile = adminBucket.file(filePath);
-        
-        await bucketFile.save(buffer, {
-          metadata: { 
-            contentType: file.type,
-            metadata: {
-              originalName: file.name,
-              formId: form.formId,
-              entityId: entityId
-            }
-          }
-        });
+    return NextResponse.json({ success: true, ...result });
 
-        attachments.push({
-          id: fileId,
-          type: field.key as any,
-          fileName: file.name,
-          filePath,
-          mimeType: file.type,
-          size: file.size,
-          uploadedAt: new Date().toISOString()
-        });
-      }
-    }
-
-    // 3. Transaction de soumission (Person/Candidate/Submission creation)
-    const result = await executeSubmissionTransaction(
-      entityId, 
-      form, 
-      answers, 
-      attachments
-    );
-
-    return NextResponse.json({ 
-      success: true, 
-      submissionId: result.submissionId,
-      candidateId: result.candidateId 
-    });
-
-  } catch (err: any) {
-    console.error("[Public Submission API Error]", err);
+  } catch (error: any) {
+    console.error("[Public Submission Route Error]", error);
     
-    // Identity Conflict Handling (Email exists but name/tax-code mismatch)
-    if (err.message?.includes("IDENTITY_CONFLICT")) {
-      return NextResponse.json({ 
-        error: {
-          message: "Une incohérence d'identité a été détectée. Si vous avez déjà un compte, veuillez utiliser les mêmes informations ou contacter le support.",
-          debugMessage: err.message 
-        }
-      }, { status: 409 });
-    }
+    let userMessage = "Une erreur est survenue lors de l'envoi.";
+    let statusCode = 500;
 
-    // Deduplication Handling
-    if (err.message === "ALREADY_APPLIED_TO_THIS_JOB") {
-      return NextResponse.json({ 
-        error: "Vous avez déjà postulé à cette offre d'emploi." 
-      }, { status: 400 });
+    if (error.message === "ALREADY_APPLIED_TO_THIS_JOB") {
+      userMessage = "Vous avez déjà envoyé une candidature pour ce poste.";
+      statusCode = 409;
+    } else if (error.message.startsWith("IDENTITY_CONFLICT")) {
+      userMessage = "Cette adresse email est déjà associée à un profil différent. Veuillez vérifier vos informations.";
+      statusCode = 409;
     }
 
     return NextResponse.json({ 
-      error: "Une erreur est survenue lors de l'enregistrement de votre candidature. Veuillez réessayer." 
-    }, { status: 500 });
+      error: { 
+        message: userMessage,
+        debugMessage: process.env.NODE_ENV === 'development' ? error.message : undefined
+      } 
+    }, { status: statusCode });
   }
 }
