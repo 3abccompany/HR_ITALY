@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -92,6 +91,7 @@ export default function EditEmploymentOfferPage() {
       await updateEmploymentOffer(entityId, offerId, { ...formData, status: nextStatus || offer?.status || 'draft' }, user.uid);
       toast({ title: "Enregistré" });
     } catch (err: any) {
+      console.error("Save error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally { setSaving(false); }
   };
@@ -120,7 +120,7 @@ export default function EditEmploymentOfferPage() {
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { setConverting(false); }
+    } finally { athletics: setConverting(false); }
   };
 
   const handleInitDossier = async () => {
@@ -144,7 +144,9 @@ export default function EditEmploymentOfferPage() {
       toast({ title: "Demande envoyée au candidat" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleUpdateDoc = async (itemId: string, status: any, reason?: string) => {
@@ -158,7 +160,8 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
-  if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+
   if (!offer) return <div className="p-8 text-center">Proposition introuvable.</div>;
 
   const isAccepted = offer.status === 'accepted';
@@ -200,12 +203,26 @@ export default function EditEmploymentOfferPage() {
                   {dossier && <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black">{dossier.status.replace(/_/g, ' ')}</Badge>}
                </CardHeader>
                <CardContent className="p-8 space-y-6">
-                  {!dossier ? (
-                    <div className="flex flex-col items-center py-6 text-center space-y-4">
-                       <AlertTriangle className="w-10 h-10 text-orange-400" />
-                       <p className="text-sm font-medium text-slate-600">Le dossier de collecte n'est pas encore initialisé.</p>
-                       <Button onClick={handleInitDossier} disabled={saving} className="gap-2"><Plus className="w-4 h-4" /> Initialiser le dossier</Button>
+                  {loadingDossiers ? (
+                    <div className="flex items-center justify-center py-12">
+                       <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
                     </div>
+                  ) : !dossier ? (
+                    isConverted ? (
+                      <div className="flex flex-col items-center py-8 text-center space-y-3 opacity-60">
+                        <Info className="w-8 h-8 text-slate-400" />
+                        <div className="space-y-1">
+                          <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Dossier non disponible</p>
+                          <p className="text-[10px] text-slate-400 max-w-[280px]">Dossier d’embauche non disponible pour cette conversion existante.</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center py-6 text-center space-y-4">
+                         <AlertTriangle className="w-10 h-10 text-orange-400" />
+                         <p className="text-sm font-medium text-slate-600">Le dossier de collecte n'est pas encore initialisé.</p>
+                         <Button onClick={handleInitDossier} disabled={saving} className="gap-2"><Plus className="w-4 h-4" /> Initialiser le dossier</Button>
+                      </div>
+                    )
                   ) : (
                     <>
                       <div className="flex items-center justify-between">
