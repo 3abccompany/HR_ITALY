@@ -90,7 +90,7 @@ export default function EditEmploymentOfferPage() {
 
   // Master Data
   const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) : null, [db, entityId]);
-  const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
+  const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
 
   // Source Besoin RH for fallbacks
   const needRef = useMemo(() => db && offer?.recruitmentNeedId ? doc(db, `entities/${entityId}/recruitmentNeeds`, offer.recruitmentNeedId) : null, [db, entityId, offer?.recruitmentNeedId]);
@@ -105,13 +105,20 @@ export default function EditEmploymentOfferPage() {
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
   // Reactive Levels fetching based on formData.ccnlId
-  const levelsQuery = useMemo(() => 
-    db && entityId && formData.ccnlId && formData.ccnlId !== "none_clear"
-      ? query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"), orderBy("levelCode", "asc")) 
-      : null, 
-  [db, entityId, formData.ccnlId]);
+  const levelsQuery = useMemo(() => {
+    // Crucial: Use doc ID (formData.ccnlId) for the path. 
+    // Also guard against empty strings and non-ID values.
+    const ccnlId = formData.ccnlId;
+    if (!db || !entityId || !ccnlId || ccnlId === "none_clear" || ccnlId.includes(' ')) return null;
+    
+    return query(
+      collection(db, `entities/${entityId}/ccnls/${ccnlId}/levels`), 
+      where("status", "==", "active"), 
+      orderBy("levelCode", "asc")
+    );
+  }, [db, entityId, formData.ccnlId]);
 
-  const { data: activeLevels, loading: loadingLevels } = useCollection<CCNLLevel>(levelsQuery);
+  const { data: activeLevels, loading: loadingLevels } = useCollection<any>(levelsQuery);
 
   useEffect(() => {
     if (offer) {
@@ -135,7 +142,8 @@ export default function EditEmploymentOfferPage() {
       return;
     }
 
-    const ccnl = activeCcnls?.find(c => c.ccnlId === ccnlId);
+    // Always find by doc id (id or ccnlId)
+    const ccnl = activeCcnls?.find(c => (c.id === ccnlId || c.ccnlId === ccnlId));
     setFormData(p => ({
       ...p,
       ccnlId,
@@ -166,7 +174,7 @@ export default function EditEmploymentOfferPage() {
        return;
     }
 
-    const level = activeLevels?.find(l => l.levelId === levelId);
+    const level = activeLevels?.find(l => (l.id === levelId || l.levelId === levelId));
     setFormData(p => {
       const monthly = level?.minimumGrossMonthly || 0;
       const payments = p.monthlyPayments || 13;
@@ -295,6 +303,9 @@ export default function EditEmploymentOfferPage() {
   const isAccepted = offer?.status === 'accepted';
   const isConverted = offer?.conversionStatus === 'converted';
   const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer?.status || "") || isConverted;
+
+  const resolvedDepartment = formData.departmentName || need?.departmentName || "Non renseigné";
+  const resolvedWorksite = formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné";
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
@@ -449,14 +460,14 @@ export default function EditEmploymentOfferPage() {
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Département</Label>
                   <div className="h-10 px-4 rounded-xl border border-primary/10 bg-secondary/10 flex items-center text-sm font-bold text-slate-700">
                     <Building2 className="w-3.5 h-3.5 mr-2 text-primary/40" />
-                    {formData.departmentName || need?.departmentName || "Non renseigné"}
+                    {resolvedDepartment}
                   </div>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Site d'affectation</Label>
                   <div className="h-10 px-4 rounded-xl border border-primary/10 bg-secondary/10 flex items-center text-sm font-bold text-slate-700">
                     <MapPin className="w-3.5 h-3.5 mr-2 text-primary/40" />
-                    {formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné"}
+                    {resolvedWorksite}
                   </div>
                 </div>
               </div>
@@ -514,7 +525,7 @@ export default function EditEmploymentOfferPage() {
                     <Select value={formData.ccnlId} onValueChange={handleCcnlChange} disabled={isReadOnly}>
                       <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Choisir CCNL..." /></SelectTrigger>
                       <SelectContent>
-                        {activeCcnls?.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
+                        {activeCcnls?.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                  </div>
@@ -526,7 +537,7 @@ export default function EditEmploymentOfferPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none_clear">--- Aucun ---</SelectItem>
-                        {activeLevels?.map(l => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>)}
+                        {activeLevels?.map(l => <SelectItem key={l.id} value={l.id}>{l.levelCode} • {l.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
                  </div>
