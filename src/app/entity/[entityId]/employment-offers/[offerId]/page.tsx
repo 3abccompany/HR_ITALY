@@ -106,13 +106,11 @@ export default function EditEmploymentOfferPage() {
 
   // Reactive Levels fetching based on formData.ccnlId
   const levelsQuery = useMemo(() => {
-    // Crucial: Use doc ID (formData.ccnlId) for the path. 
-    // Also guard against empty strings and non-ID values.
-    const ccnlId = formData.ccnlId;
-    if (!db || !entityId || !ccnlId || ccnlId === "none_clear" || ccnlId.includes(' ')) return null;
+    const ccnlDocId = formData.ccnlId;
+    if (!db || !entityId || !ccnlDocId || typeof ccnlDocId !== 'string' || ccnlDocId === "none_clear" || ccnlDocId.includes(' ')) return null;
     
     return query(
-      collection(db, `entities/${entityId}/ccnls/${ccnlId}/levels`), 
+      collection(db, `entities/${entityId}/ccnls/${ccnlDocId}/levels`), 
       where("status", "==", "active"), 
       orderBy("levelCode", "asc")
     );
@@ -126,8 +124,8 @@ export default function EditEmploymentOfferPage() {
     }
   }, [offer]);
 
-  const handleCcnlChange = (ccnlId: string) => {
-    if (ccnlId === "none_clear") {
+  const handleCcnlChange = (ccnlDocId: string) => {
+    if (ccnlDocId === "none_clear") {
       setFormData(p => ({
         ...p,
         ccnlId: "",
@@ -142,11 +140,10 @@ export default function EditEmploymentOfferPage() {
       return;
     }
 
-    // Always find by doc id (id or ccnlId)
-    const ccnl = activeCcnls?.find(c => (c.id === ccnlId || c.ccnlId === ccnlId));
+    const ccnl = activeCcnls?.find(c => c.id === ccnlDocId);
     setFormData(p => ({
       ...p,
-      ccnlId,
+      ccnlId: ccnlDocId,
       ccnlName: ccnl?.name || "",
       cnelCode: ccnl?.cnelCode || "",
       monthlyPayments: ccnl?.monthlyPayments || 13,
@@ -160,8 +157,8 @@ export default function EditEmploymentOfferPage() {
     }));
   };
 
-  const handleLevelChange = (levelId: string) => {
-    if (levelId === "none_clear") {
+  const handleLevelChange = (levelDocId: string) => {
+    if (levelDocId === "none_clear") {
        setFormData(p => ({
          ...p,
          levelId: "",
@@ -174,13 +171,13 @@ export default function EditEmploymentOfferPage() {
        return;
     }
 
-    const level = activeLevels?.find(l => (l.id === levelId || l.levelId === levelId));
+    const level = activeLevels?.find(l => l.id === levelDocId);
     setFormData(p => {
       const monthly = level?.minimumGrossMonthly || 0;
       const payments = p.monthlyPayments || 13;
       return {
         ...p,
-        levelId,
+        levelId: levelDocId,
         levelCode: level?.levelCode || "",
         levelLabel: level?.label || "",
         qualificationLabel: level?.qualificationLabel || "",
@@ -262,7 +259,7 @@ export default function EditEmploymentOfferPage() {
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   };
 

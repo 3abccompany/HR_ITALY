@@ -22,6 +22,13 @@ service cloud.firestore {
         permission in get(/databases/$(database)/documents/memberships/$(membershipId)).data.permissions;
     }
 
+    function isEntityMember(entityId) {
+      let membershipId = request.auth.uid + "_" + entityId;
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/memberships/$(membershipId)) &&
+        get(/databases/$(database)/documents/memberships/$(membershipId)).data.status == 'active';
+    }
+
     // --- Public Collection Group Rules ---
     
     match /{path=**}/applicationForms/{formId} {
@@ -177,29 +184,12 @@ service cloud.firestore {
       }
 
       match /ccnls/{ccnlId} {
-        allow read: if hasPermission(entityId, 'settings.read') || 
-                     hasPermission(entityId, 'settings.manage') ||
-                     hasPermission(entityId, 'jobProfiles.read') || 
-                     hasPermission(entityId, 'jobProfiles.create') || 
-                     hasPermission(entityId, 'jobProfiles.update') ||
-                     hasPermission(entityId, 'contracts.read') ||
-                     hasPermission(entityId, 'contracts.create') ||
-                     hasPermission(entityId, 'candidates.read') ||
-                     hasPermission(entityId, 'candidates.update') ||
-                     isPlatformAdmin();
+        // Optimized reference data rule to avoid 10-call get() limit
+        allow read: if isEntityMember(entityId) || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
 
         match /levels/{levelId} {
-          allow read: if hasPermission(entityId, 'settings.read') || 
-                       hasPermission(entityId, 'settings.manage') ||
-                       hasPermission(entityId, 'jobProfiles.read') || 
-                       hasPermission(entityId, 'jobProfiles.create') || 
-                       hasPermission(entityId, 'jobProfiles.update') ||
-                       hasPermission(entityId, 'contracts.read') ||
-                       hasPermission(entityId, 'contracts.create') ||
-                       hasPermission(entityId, 'candidates.read') ||
-                       hasPermission(entityId, 'candidates.update') ||
-                       isPlatformAdmin();
+          allow read: if isEntityMember(entityId) || isPlatformAdmin();
           allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
         }
       }
