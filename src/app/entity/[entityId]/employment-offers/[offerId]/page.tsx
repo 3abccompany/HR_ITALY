@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -8,7 +9,7 @@ import {
   Clock, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
   FileSignature, Building2, UserCircle, Send, Eye,
   FileText, ExternalLink, Search, History, UserPlus,
-  ClipboardList, CheckCircle, AlertTriangle, Plus
+  ClipboardList, CheckCircle, AlertTriangle, Plus, RefreshCcw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,13 +18,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFirebase, useDoc, useCollection, useUser } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, getDocs, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
 import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
+import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -48,6 +50,20 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
+const CONTRACT_TYPES = [
+  "Tempo indeterminato",
+  "Tempo determinato",
+  "Apprendistato",
+  "Stage / Tirocinio",
+  "Altro"
+];
+
+const WORKING_TIME_OPTIONS = [
+  "Tempo pieno (Full-time)",
+  "Tempo parziale (Part-time)",
+  "Intermittente / Chiamata"
+];
+
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
@@ -71,6 +87,10 @@ export default function EditEmploymentOfferPage() {
   const checklistQuery = useMemo(() => dossier ? collection(db!, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`) : null, [db, entityId, dossier]);
   const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
 
+  // Master Data
+  const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) : null, [db, entityId]);
+  const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
+
   const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -78,11 +98,77 @@ export default function EditEmploymentOfferPage() {
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
 
+  // Levels for the currently selected CCNL
+  const [activeLevels, setActiveLevels] = useState<CCNLLevel[]>([]);
+  const [loadingLevels, setLoadingLevels] = useState(false);
+
   useEffect(() => {
     if (offer) {
       setFormData(offer);
+      if (offer.ccnlId) fetchLevels(offer.ccnlId);
     }
   }, [offer]);
+
+  const fetchLevels = async (ccnlId: string) => {
+    if (!db || !entityId || !ccnlId) return;
+    setLoadingLevels(true);
+    try {
+      const q = query(collection(db, `entities/${entityId}/ccnls/${ccnlId}/levels`), where("status", "==", "active"), orderBy("levelCode", "asc"));
+      const snap = await getDocs(q);
+      setActiveLevels(snap.docs.map(d => ({ ...d.data(), levelId: d.id } as CCNLLevel)));
+    } catch (e) {
+      console.warn("Failed to fetch levels", e);
+    } finally {
+      setLoadingLevels(false);
+    }
+  };
+
+  const handleCcnlChange = (ccnlId: string) => {
+    const ccnl = activeCcnls?.find(c => c.ccnlId === ccnlId);
+    setFormData(p => ({
+      ...p,
+      ccnlId,
+      ccnlName: ccnl?.name || "",
+      cnelCode: ccnl?.cnelCode || "",
+      monthlyPayments: ccnl?.monthlyPayments || 13,
+      hourlyDivisor: ccnl?.hourlyDivisor || 173,
+      levelId: "",
+      levelCode: "",
+      levelLabel: "",
+      minGrossMonthly: 0,
+      minGrossHourly: 0,
+      proposedGrossMonthly: ccnl?.standardWeeklyHours ? 0 : p.proposedGrossMonthly // reset if new scale
+    }));
+    fetchLevels(ccnlId);
+  };
+
+  const handleLevelChange = (levelId: string) => {
+    const level = activeLevels.find(l => l.levelId === levelId);
+    setFormData(p => {
+      const monthly = level?.minimumGrossMonthly || 0;
+      const payments = p.monthlyPayments || 13;
+      return {
+        ...p,
+        levelId,
+        levelCode: level?.levelCode || "",
+        levelLabel: level?.label || "",
+        qualificationLabel: level?.qualificationLabel || "",
+        minGrossMonthly: monthly,
+        minGrossHourly: level?.minimumGrossHourly || 0,
+        proposedGrossMonthly: monthly, // default to minimum
+        proposedGrossAnnual: monthly * payments
+      };
+    });
+  };
+
+  const handleMonthlySalaryChange = (val: string) => {
+    const amount = parseFloat(val) || 0;
+    setFormData(p => ({
+      ...p,
+      proposedGrossMonthly: amount,
+      proposedGrossAnnual: amount * (p.monthlyPayments || 13)
+    }));
+  };
 
   const handleSave = async (nextStatus?: EmploymentOfferStatus) => {
     if (!user || !entityId || !offerId) return;
@@ -120,7 +206,7 @@ export default function EditEmploymentOfferPage() {
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { athletics: setConverting(false); }
+    } finally { setConverting(false); }
   };
 
   const handleInitDossier = async () => {
@@ -161,11 +247,11 @@ export default function EditEmploymentOfferPage() {
   };
 
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
-
   if (!offer) return <div className="p-8 text-center">Proposition introuvable.</div>;
 
   const isAccepted = offer.status === 'accepted';
   const isConverted = offer.conversionStatus === 'converted';
+  const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer.status) || isConverted;
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
@@ -181,12 +267,15 @@ export default function EditEmploymentOfferPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {!isConverted && (
+          {!isReadOnly && (
             <>
-              <Button variant="outline" onClick={() => handleSave()} disabled={saving} className="gap-2 bg-white"><Save className="w-4 h-4" /> Enregistrer</Button>
-              {offer.status === 'ready_to_send' && <Button onClick={handleSend} disabled={sending} className="gap-2 bg-primary text-white font-black"><Send className="w-4 h-4" /> Envoyer</Button>}
+              <Button variant="outline" onClick={() => handleSave()} disabled={saving} className="gap-2 bg-white font-bold"><Save className="w-4 h-4" /> Enregistrer brouillon</Button>
+              {offer.status === 'draft' && <Button onClick={() => handleSave('internal_review')} disabled={saving} className="gap-2">Passer en validation <ArrowRight className="w-4 h-4" /></Button>}
+              {offer.status === 'internal_review' && <Button onClick={() => handleSave('ready_to_send')} disabled={saving} className="gap-2 bg-accent text-white">Marquer comme prête <CheckCircle2 className="w-4 h-4" /></Button>}
+              {offer.status === 'ready_to_send' && <Button onClick={handleSend} disabled={sending} className="gap-2 bg-primary text-white font-black"><Send className="w-4 h-4" /> Envoyer au candidat</Button>}
             </>
           )}
+          {offer.status === 'sent' && <Button variant="outline" onClick={handleSend} disabled={sending} className="gap-2 bg-white"><RefreshCcw className="w-4 h-4" /> Renvoyer le lien</Button>}
         </div>
       </header>
 
@@ -233,9 +322,11 @@ export default function EditEmploymentOfferPage() {
                                <span className="font-bold text-slate-800">{dossier.readyForConversion ? "Prêt pour l'embauche" : "Documents en attente"}</span>
                             </div>
                          </div>
-                         <Button variant="outline" size="sm" onClick={handleSendDocRequest} disabled={saving} className="gap-2">
-                            <Send className="w-3.5 h-3.5" /> Envoyer demande docs
-                         </Button>
+                         {!isConverted && (
+                           <Button variant="outline" size="sm" onClick={handleSendDocRequest} disabled={saving} className="gap-2">
+                              <Send className="w-3.5 h-3.5" /> Envoyer demande docs
+                           </Button>
+                         )}
                       </div>
 
                       <div className="space-y-3">
@@ -254,10 +345,12 @@ export default function EditEmploymentOfferPage() {
                                        <p className="text-[10px] text-muted-foreground uppercase">{item.status}</p>
                                     </div>
                                  </div>
-                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle className="w-4 h-4" /></Button>
-                                    <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
-                                 </div>
+                                 {!isConverted && (
+                                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle className="w-4 h-4" /></Button>
+                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
+                                   </div>
+                                 )}
                               </div>
                             ))}
                          </div>
@@ -269,7 +362,7 @@ export default function EditEmploymentOfferPage() {
                               <ShieldCheck className="w-6 h-6 text-green-600" /> Compliance validée. Vous pouvez finaliser le recrutement.
                            </div>
                            <Button onClick={() => setIsConvertDialogOpen(true)} className="bg-green-600 hover:bg-green-700 text-white font-black rounded-xl">
-                              <UserPlus className="w-4 h-4 mr-2" /> Convertir maintenant
+                              <UserPlus className="w-4 h-4 mr-2" /> Convertir en employé
                            </Button>
                         </div>
                       )}
@@ -291,6 +384,7 @@ export default function EditEmploymentOfferPage() {
             </div>
           )}
 
+          {/* Offer Editor Sections */}
           <Card className="border-primary/10 shadow-xl rounded-3xl overflow-hidden">
             <CardHeader className="bg-primary/5 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
@@ -305,20 +399,141 @@ export default function EditEmploymentOfferPage() {
                   <p className="text-xs text-muted-foreground">{offer.candidateEmail}</p>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[9px] font-black uppercase text-muted-foreground">Poste</Label>
-                  <Input value={formData.jobTitleName || ""} onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))} disabled={isConverted} className="h-10 font-bold text-primary border-primary/20 rounded-xl" />
+                  <Label className="text-[9px] font-black uppercase text-muted-foreground">Poste proposé</Label>
+                  <Input value={formData.jobTitleName || ""} onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))} disabled={isReadOnly} className="h-10 font-bold text-primary border-primary/20 rounded-xl" />
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-primary/10 shadow-xl rounded-3xl overflow-hidden">
+            <CardHeader className="bg-primary/5 border-b py-4">
+              <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
+                <FileSignature className="w-4 h-4" /> Conditions Contractuelles
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de contrat</Label>
+                    <Select value={formData.contractType} onValueChange={(v) => setFormData(p => ({...p, contractType: v}))} disabled={isReadOnly}>
+                      <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Sél. contrat..." /></SelectTrigger>
+                      <SelectContent>
+                        {CONTRACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                 </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Temps de travail</Label>
+                    <Select value={formData.workingTime} onValueChange={(v) => setFormData(p => ({...p, workingTime: v as any}))} disabled={isReadOnly}>
+                      <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Sél. temps..." /></SelectTrigger>
+                      <SelectContent>
+                        {WORKING_TIME_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                 </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de début proposée</Label>
+                    <Input type="date" value={formData.proposedStartDate || ""} onChange={(e) => setFormData(p => ({...p, proposedStartDate: e.target.value}))} disabled={isReadOnly} className="rounded-xl h-10" />
+                 </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Heures par semaine</Label>
+                    <Input type="number" step="0.5" value={formData.weeklyHours || ""} onChange={(e) => setFormData(p => ({...p, weeklyHours: parseFloat(e.target.value)}))} disabled={isReadOnly} className="rounded-xl h-10" />
+                 </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-primary/10 shadow-xl rounded-3xl overflow-hidden">
+            <CardHeader className="bg-primary/5 border-b py-4">
+               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
+                 <Scale className="w-4 h-4" /> Classification CCNL
+               </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Contrat Collectif (CCNL)</Label>
+                    <Select value={formData.ccnlId} onValueChange={handleCcnlChange} disabled={isReadOnly}>
+                      <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Choisir CCNL..." /></SelectTrigger>
+                      <SelectContent>
+                        {activeCcnls?.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                 </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Niveau de classification</Label>
+                    <Select value={formData.levelId} onValueChange={handleLevelChange} disabled={isReadOnly || !formData.ccnlId}>
+                      <SelectTrigger className="rounded-xl h-10">
+                        <SelectValue placeholder={loadingLevels ? "Chargement..." : "Choisir niveau..."} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeLevels.map(l => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                 </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-primary/10 shadow-xl rounded-3xl overflow-hidden">
+            <CardHeader className="bg-primary/5 border-b py-4">
+               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
+                 <Euro className="w-4 h-4" /> Rémunération & Avantages
+               </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-6">
+               <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Brut Mensuel Proposé</Label>
+                    <Input type="number" step="0.01" value={formData.proposedGrossMonthly || ""} onChange={(e) => handleMonthlySalaryChange(e.target.value)} disabled={isReadOnly} className="rounded-xl h-10 font-bold" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Mensualités</Label>
+                    <Input type="number" value={formData.monthlyPayments || 13} readOnly className="bg-secondary/20 rounded-xl h-10" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Estimation RAL (Annuel)</Label>
+                    <div className="h-10 bg-primary/5 border border-primary/20 rounded-xl flex items-center px-4 font-black text-primary">
+                       € {formData.proposedGrossAnnual?.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+               </div>
+               <div className="space-y-2">
+                 <Label className="text-[10px] font-black uppercase text-muted-foreground">Notes sur la rémunération (Variables, primes...)</Label>
+                 <Textarea value={formData.salaryNotes || ""} onChange={(e) => setFormData(p => ({...p, salaryNotes: e.target.value}))} disabled={isReadOnly} className="rounded-xl min-h-[80px]" />
+               </div>
             </CardContent>
           </Card>
         </div>
 
         <div className="space-y-8">
           <Card className="border-primary/20 bg-primary/90 text-white shadow-2xl rounded-3xl overflow-hidden">
-             <CardHeader className="bg-white/10 py-4 border-b border-white/10"><CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2"><FileText className="w-4 h-4" /> Résumé</CardTitle></CardHeader>
+             <CardHeader className="bg-white/10 py-4 border-b border-white/10"><CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2"><FileText className="w-4 h-4" /> Résumé de l'offre</CardTitle></CardHeader>
              <CardContent className="p-6 space-y-4">
                 <SummaryRow label="Statut" value={getStatusBadge(offer.status)} />
-                <SummaryRow label="Compliance" value={isConverted ? "Converti" : dossier?.readyForConversion ? "Validé" : "En attente"} />
+                <SummaryRow label="Compliance" value={isConverted ? "Legalisation OK" : dossier?.readyForConversion ? "Dossier validé" : "En attente docs"} />
+                <Separator className="bg-white/10" />
+                <SummaryRow label="RAL" value={`€ ${formData.proposedGrossAnnual?.toLocaleString('fr-FR')}`} />
+                <SummaryRow label="Début" value={formData.proposedStartDate} />
+             </CardContent>
+          </Card>
+
+          <Card className="border-primary/10 rounded-3xl shadow-lg">
+             <CardHeader className="py-4 border-b bg-secondary/10">
+               <CardTitle className="text-[10px] font-black uppercase tracking-widest">Lien & Validité</CardTitle>
+             </CardHeader>
+             <CardContent className="pt-6 space-y-4">
+                <div className="space-y-2">
+                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Validité du lien (jours)</Label>
+                   <Input type="number" min="1" max="30" value={formData.linkValidityDays || 7} onChange={(e) => setFormData(p => ({...p, linkValidityDays: parseInt(e.target.value)}))} disabled={isReadOnly} className="rounded-xl" />
+                </div>
+                {offer.publicAccessTokenExpiresAt && (
+                  <div className="p-3 bg-secondary/30 rounded-xl space-y-1">
+                     <p className="text-[9px] font-black text-muted-foreground uppercase">Expire le</p>
+                     <p className="text-xs font-bold text-primary">{new Date(offer.publicAccessTokenExpiresAt.seconds * 1000).toLocaleString()}</p>
+                  </div>
+                )}
              </CardContent>
           </Card>
         </div>
@@ -363,6 +578,7 @@ function getStatusBadge(status: EmploymentOfferStatus) {
   switch (status) {
     case 'accepted': return <Badge variant="secondary" className="bg-green-500 text-white font-black px-2 uppercase text-[9px]">Acceptée</Badge>;
     case 'sent': return <Badge className="bg-primary text-white px-2 uppercase text-[9px]">Envoyée</Badge>;
+    case 'draft': return <Badge variant="outline" className="px-2 uppercase text-[9px]">Brouillon</Badge>;
     default: return <Badge variant="outline" className="px-2 uppercase text-[9px]">{status}</Badge>;
   }
 }
@@ -375,3 +591,4 @@ function SummaryRow({ label, value }: { label: string, value: any }) {
     </div>
   );
 }
+
