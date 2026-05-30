@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFirebase, useDoc, useCollection, useUser, useAuth } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, getDocs, orderBy } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, getDoc, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
@@ -80,7 +80,7 @@ export default function EditEmploymentOfferPage() {
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
 
   // Pre-Hire Dossier Query
-  const dossierQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/preHireDossiers`), where("employmentOfferId", "==", offerId)) : null, [db, entityId, offerId]);
+  const dossierQuery = useMemo(() => db && entityId && offerId ? query(collection(db, `entities/${entityId}/preHireDossiers`), where("employmentOfferId", "==", offerId)) : null, [db, entityId, offerId]);
   const { data: dossiers, loading: loadingDossiers } = useCollection<PreHireDossier>(dossierQuery);
   const dossier = dossiers?.[0];
 
@@ -106,7 +106,7 @@ export default function EditEmploymentOfferPage() {
 
   // Reactive Levels fetching based on formData.ccnlId
   const levelsQuery = useMemo(() => 
-    db && entityId && formData.ccnlId 
+    db && entityId && formData.ccnlId && formData.ccnlId !== "none_clear"
       ? query(collection(db, `entities/${entityId}/ccnls/${formData.ccnlId}/levels`), where("status", "==", "active"), orderBy("levelCode", "asc")) 
       : null, 
   [db, entityId, formData.ccnlId]);
@@ -135,7 +135,7 @@ export default function EditEmploymentOfferPage() {
       return;
     }
 
-    const ccnl = activeCcnls?.find(c => (c as any).id === ccnlId || c.ccnlId === ccnlId);
+    const ccnl = activeCcnls?.find(c => c.ccnlId === ccnlId);
     setFormData(p => ({
       ...p,
       ccnlId,
@@ -166,7 +166,7 @@ export default function EditEmploymentOfferPage() {
        return;
     }
 
-    const level = activeLevels?.find(l => (l as any).id === levelId || l.levelId === levelId);
+    const level = activeLevels?.find(l => l.levelId === levelId);
     setFormData(p => {
       const monthly = level?.minimumGrossMonthly || 0;
       const payments = p.monthlyPayments || 13;
@@ -326,7 +326,7 @@ export default function EditEmploymentOfferPage() {
         <div className="lg:col-span-2 space-y-8">
           
           {/* Dossier Card (Accepted State) */}
-          {isAccepted && (
+          {(isAccepted || isConverted) && (
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", dossier?.readyForConversion ? "border-green-100 bg-green-50/10" : "border-primary/10")}>
                <CardHeader className="bg-primary/5 border-b py-4 flex flex-row items-center justify-between">
                   <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
@@ -445,7 +445,6 @@ export default function EditEmploymentOfferPage() {
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Poste proposé</Label>
                   <Input value={formData.jobTitleName || ""} onChange={(e) => setFormData(p => ({...p, jobTitleName: e.target.value}))} disabled={isReadOnly} className="h-10 font-bold text-primary border-primary/20 rounded-xl" />
                 </div>
-                {/* Restore Department and Worksite display */}
                 <div className="space-y-1">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Département</Label>
                   <div className="h-10 px-4 rounded-xl border border-primary/10 bg-secondary/10 flex items-center text-sm font-bold text-slate-700">
@@ -515,19 +514,19 @@ export default function EditEmploymentOfferPage() {
                     <Select value={formData.ccnlId} onValueChange={handleCcnlChange} disabled={isReadOnly}>
                       <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Choisir CCNL..." /></SelectTrigger>
                       <SelectContent>
-                        {activeCcnls?.map(c => <SelectItem key={(c as any).id} value={(c as any).id}>{c.name}</SelectItem>)}
+                        {activeCcnls?.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                  </div>
                  <div className="space-y-2">
                     <Label className="text-[10px] font-black uppercase text-muted-foreground">Niveau de classification</Label>
-                    <Select value={formData.levelId} onValueChange={handleLevelChange} disabled={isReadOnly || !formData.ccnlId}>
+                    <Select value={formData.levelId} onValueChange={handleLevelChange} disabled={isReadOnly || !formData.ccnlId || formData.ccnlId === "none_clear"}>
                       <SelectTrigger className="rounded-xl h-10">
                         <SelectValue placeholder={loadingLevels ? "Chargement..." : "Choisir niveau..."} />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none_clear">--- Aucun ---</SelectItem>
-                        {activeLevels?.map(l => <SelectItem key={(l as any).id} value={(l as any).id}>{l.levelCode} • {l.label}</SelectItem>)}
+                        {activeLevels?.map(l => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
                  </div>

@@ -156,13 +156,13 @@ service cloud.firestore {
       }
 
       match /preHireDossiers/{dossierId} {
-        allow read: if hasPermission(entityId, 'candidates.read') || isPlatformAdmin();
-        allow create: if hasPermission(entityId, 'candidates.update') || isPlatformAdmin();
-        allow update: if hasPermission(entityId, 'candidates.update') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'candidates.read') || hasPermission(entityId, 'contracts.read') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'contracts.create') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'contracts.create') || isPlatformAdmin();
 
         match /checklist/{itemId} {
-          allow read: if hasPermission(entityId, 'candidates.read') || isPlatformAdmin();
-          allow write: if hasPermission(entityId, 'candidates.update') || isPlatformAdmin();
+          allow read: if hasPermission(entityId, 'candidates.read') || hasPermission(entityId, 'contracts.read') || isPlatformAdmin();
+          allow write: if hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'contracts.create') || isPlatformAdmin();
         }
       }
 
@@ -184,6 +184,8 @@ service cloud.firestore {
                      hasPermission(entityId, 'jobProfiles.update') ||
                      hasPermission(entityId, 'contracts.read') ||
                      hasPermission(entityId, 'contracts.create') ||
+                     hasPermission(entityId, 'candidates.read') ||
+                     hasPermission(entityId, 'candidates.update') ||
                      isPlatformAdmin();
         allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
 
@@ -195,6 +197,8 @@ service cloud.firestore {
                        hasPermission(entityId, 'jobProfiles.update') ||
                        hasPermission(entityId, 'contracts.read') ||
                        hasPermission(entityId, 'contracts.create') ||
+                       hasPermission(entityId, 'candidates.read') ||
+                       hasPermission(entityId, 'candidates.update') ||
                        isPlatformAdmin();
           allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
         }
