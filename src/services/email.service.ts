@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview Server-only email service for HR communications.
@@ -33,6 +34,15 @@ export interface SendOfferEmailParams {
   jobTitle: string;
   offerLink: string;
   expiresAt: string;
+}
+
+export interface SendDocumentRequestParams {
+  to: string;
+  candidateName: string;
+  companyName: string;
+  jobTitle: string;
+  requiredDocuments: string[];
+  contactEmail: string;
 }
 
 /**
@@ -124,7 +134,6 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
     throw new Error("Configuration du service email requise.");
   }
 
-  // Defensive values to avoid "undefined" in the body
   const candidateName = params.candidateName || "candidat";
   const jobTitle = params.jobTitle || "poste proposé";
   const companyName = params.companyName || "notre entreprise";
@@ -142,24 +151,18 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
         <h1 style="color: white; margin: 0; font-size: 24px;">Proposition d'embauche</h1>
       </div>
       <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; border-radius: 0 0 12px 12px; background-color: white;">
-        <p>Bonjour <strong>${candidateName}</strong>,</p>
-        <p>Nous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de <strong>${jobTitle}</strong> au sein de l'entreprise <strong>${companyName}</strong>.</p>
-        <p>Vous pouvez consulter les détails de cette proposition et nous transmettre votre réponse via notre portail sécurisé :</p>
+        <p>Buongiorno <strong>${candidateName}</strong>,</p>
+        <p>Abbiamo il piacere di trasmetterti una proposta di assunzione per la posizione di <strong>${jobTitle}</strong> presso l'azienda <strong>${companyName}</strong>.</p>
+        <p>Puoi consultare i dettagli di questa proposta e trasmetterci la tua risposta tramite il nostro portale sicuro:</p>
         
         <div style="margin: 40px 0; text-align: center;">
           <a href="${params.offerLink}" style="background-color: #4DB3E6; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 12px rgba(77, 179, 230, 0.3);">
-            Consulter ma proposition
+            Visualizza la mia proposta
           </a>
         </div>
         
         <p style="font-size: 12px; color: #71717A; text-align: center; margin-top: 20px;">
-          Ce lien sécurisé est personnel et valable jusqu'au <strong>${params.expiresAt}</strong>.
-        </p>
-        
-        <hr style="border: 0; border-top: 1px solid #EEEFF7; margin: 30px 0;">
-        
-        <p style="font-size: 11px; color: #A1A1AA; font-style: italic;">
-          Ceci est un message automatique généré par HR Nexus Studio. Merci de ne pas répondre directement à cet email.
+          Questo link sicuro è personale e valido fino al <strong>${params.expiresAt}</strong>.
         </p>
       </div>
     </div>
@@ -171,11 +174,63 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
       to: params.to,
       subject: params.subject,
       html,
-      text: `Bonjour ${candidateName},\n\nNous avons le plaisir de vous transmettre une proposition d'embauche pour le poste de ${jobTitle} au sein de ${companyName}.\n\nVous pouvez consulter les détails de cette proposition via le lien suivant : ${params.offerLink}\n\nCe lien est valable jusqu'au ${params.expiresAt}.`,
     });
     return { success: true };
   } catch (error: any) {
     console.error("[Email Service] SMTP Send Error:", error);
     throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
+  }
+}
+
+/**
+ * Sends a request for hiring documents to the candidate in Italian.
+ */
+export async function sendDocumentRequestEmailAction(params: SendDocumentRequestParams) {
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || '587');
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || user;
+
+  if (!host || !user || !pass) {
+    console.warn("[Email Service] SMTP not configured. Simulating success for document request.");
+    return { success: true };
+  }
+
+  const transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
+
+  const docList = params.requiredDocuments.map(d => `<li>${d}</li>`).join('');
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66;">
+      <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 22px;">Documenti necessari per l'assunzione</h1>
+      </div>
+      <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white;">
+        <p>Buongiorno <strong>${params.candidateName}</strong>,</p>
+        <p>Siamo lieti di procedere con la tua assunzione per la posizione di <strong>${params.jobTitle}</strong> presso <strong>${params.companyName}</strong>.</p>
+        <p>Per poter predisporre il contratto e le comunicazioni obbligatorie, ti chiediamo gentilmente di inviarci i seguenti documenti:</p>
+        <ul style="background: #F8FAFC; padding: 20px 40px; border-radius: 12px; list-style-type: square; color: #334155;">
+          ${docList}
+        </ul>
+        <p>Ti preghiamo di trasmettere i documenti rispondendo a questa email o contattando il nostro ufficio RU all'indirizzo: <strong>${params.contactEmail}</strong>.</p>
+        <p style="font-size: 13px; color: #64748B; margin-top: 30px;">
+          <em>Nota sulla privacy: I dati forniti saranno trattati esclusivamente per le finalità legate alla gestione del rapporto di lavoro, nel rispetto del GDPR.</em>
+        </p>
+      </div>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from,
+      to: params.to,
+      subject: `Documenti necessari per la tua assunzione — ${params.companyName}`,
+      html,
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Email Service] SMTP Send Error:", error);
+    return { success: false, error: error.message };
   }
 }
