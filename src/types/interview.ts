@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type InterviewStatus =
@@ -13,7 +12,8 @@ export type InterviewDecision =
   | "pending"
   | "accepted"
   | "rejected"
-  | "on_hold";
+  | "on_hold"
+  | "stand_by";
 
 export type InterviewType =
   | "phone"

@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -61,8 +60,9 @@ export async function createApplicationForm(entityId: string, need: RecruitmentN
   const formData: ApplicationForm = {
     formId,
     entityId,
+    entityName: need.entityName || "Non renseigné",
     recruitmentNeedId: need.needId,
-    recruitmentNeedTitle: need.jobOfferText?.substring(0, 100) || need.jobTitleName,
+    recruitmentNeedTitle: need.recruitmentNeedTitle || need.jobTitleName || "Besoin sans titre",
     jobProfileId: need.jobProfileId,
     jobProfileTitle: need.jobProfileTitle,
     departmentId: need.departmentId,
@@ -70,7 +70,7 @@ export async function createApplicationForm(entityId: string, need: RecruitmentN
     jobTitleId: need.jobTitleId,
     jobTitleName: need.jobTitleName,
     worksiteId: need.worksiteId,
-    worksiteName: need.worksiteName,
+    worksiteName: need.worksiteName || need.worksiteNameSnapshot || "Non renseigné",
     title: need.jobTitleName,
     description: need.jobOfferText || "",
     publicSlug: "", 

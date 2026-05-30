@@ -5,10 +5,10 @@ import { useParams } from "next/navigation";
 import { 
   Calendar, Search, Plus, Edit, PowerOff, RefreshCcw, 
   Loader2, User, Briefcase, MapPin, CheckCircle2, 
-  AlertCircle, MoreVertical, Mail, 
+  AlertCircle, MoreVertical, 
   Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
   Clock, MapPinned, UserCircle, HandMetal,
-  X, Filter, ListFilter, Download, ChevronUp, ChevronDown
+  X, ListFilter, Download, ChevronUp, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1046,7 +1046,7 @@ export default function InterviewsManagementPage() {
           
           <ScrollArea className="h-[calc(100vh-140px)] pr-4">
              <div className="py-8 space-y-6">
-                {selectedDay && interviewsByDate[format(selectedDay, 'yyyy-MM-dd')]?.sort((a,b) => {
+                {selectedDay && (interviewsByDate[format(selectedDay, 'yyyy-MM-dd')] || [])?.sort((a,b) => {
                    const da = parseSafeDate(a.scheduledAt)?.getTime() || 0;
                    const db = parseSafeDate(b.scheduledAt)?.getTime() || 0;
                    return da - db;

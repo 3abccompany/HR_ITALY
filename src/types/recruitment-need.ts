@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type RecruitmentNeedStatus = 
@@ -13,6 +12,7 @@ export interface RecruitmentNeed {
   needId: string;
   entityId: string;
   entityName: string;
+  recruitmentNeedTitle?: string;
 
   // Requester
   requesterUid: string;

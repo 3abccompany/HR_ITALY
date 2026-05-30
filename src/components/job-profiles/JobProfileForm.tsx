@@ -1,11 +1,10 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Plus, Loader2, X, ShieldCheck, ArrowLeft, Building2, Briefcase, 
-  Settings2, Scale, Clock, Euro, AlertCircle
+  Scale, Clock, Euro
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,14 +15,13 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFirebase, useCollection } from "@/firebase";
-import { collection, query, orderBy, where } from "firebase/firestore";
+import { collection, query, orderBy, where, Query } from "firebase/firestore";
 import { createJobProfile, updateJobProfile } from "@/services/job-profile.service";
 import { JobProfile, CatalogItemType, JobProfileCatalogItem } from "@/types/job-profile";
 import { Department, JobTitle } from "@/types/organization";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { Separator } from "@/components/ui/separator";
 import Link from "next/link";
 
 interface JobProfileFormProps {
@@ -87,28 +85,28 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   // Masters
   const deptsQuery = useMemo(() => {
     if (!db || !entityId || !canReadProfiles) return null;
-    return query(collection(db, `entities/${entityId}/departments`), orderBy("name", "asc"));
+    return query(collection(db, `entities/${entityId}/departments`), orderBy("name", "asc")) as Query<Department>;
   }, [db, entityId, canReadProfiles]);
 
   const jobsQuery = useMemo(() => {
     if (!db || !entityId || !canReadProfiles) return null;
-    return query(collection(db, `entities/${entityId}/jobTitles`), orderBy("title", "asc"));
+    return query(collection(db, `entities/${entityId}/jobTitles`), orderBy("title", "asc")) as Query<JobTitle>;
   }, [db, entityId, canReadProfiles]);
 
   const catalogQuery = useMemo(() => {
     if (!db || !entityId || !canReadProfiles) return null;
-    return query(collection(db, `entities/${entityId}/jobProfileCatalogItems`), orderBy("label", "asc"));
+    return query(collection(db, `entities/${entityId}/jobProfileCatalogItems`), orderBy("label", "asc")) as Query<JobProfileCatalogItem>;
   }, [db, entityId, canReadProfiles]);
 
   // CCNL / Levels
   const ccnlsQuery = useMemo(() => {
     if (!db || !entityId || (!canReadProfiles && !canModifyProfiles)) return null;
-    return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active"));
+    return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<CCNL>;
   }, [db, entityId, canReadProfiles, canModifyProfiles]);
 
   const levelsQuery = useMemo(() => {
     if (!db || !entityId || !formData.defaultCcnlId || (!canReadProfiles && !canModifyProfiles)) return null;
-    return query(collection(db, `entities/${entityId}/ccnls/${formData.defaultCcnlId}/levels`), where("status", "==", "active"));
+    return query(collection(db, `entities/${entityId}/ccnls/${formData.defaultCcnlId}/levels`), where("status", "==", "active")) as Query<CCNLLevel>;
   }, [db, entityId, formData.defaultCcnlId, canReadProfiles, canModifyProfiles]);
 
   const { data: departments } = useCollection<Department>(deptsQuery);
@@ -296,7 +294,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Département</Label>
                 <Select 
                   value={formData.departmentId} 
-                  onValueChange={(v) => {
+                  onValueChange={(v: string) => {
                     setFormData(p => ({...p, departmentId: v, jobTitleId: ""}));
                   }}
                 >
@@ -317,7 +315,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                 </Label>
                 <Select 
                   value={formData.jobTitleId} 
-                  onValueChange={(v) => setFormData(p => ({...p, jobTitleId: v}))}
+                  onValueChange={(v: string) => setFormData(p => ({...p, jobTitleId: v}))}
                   disabled={!formData.departmentId}
                 >
                   <SelectTrigger>
@@ -353,7 +351,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                       <Badge variant="destructive" className="h-4 px-1.5 text-[8px] uppercase">CCNL archivé</Badge>
                     )}
                   </div>
-                  <Select value={formData.defaultCcnlId} onValueChange={handleCcnlChange}>
+                  <Select value={formData.defaultCcnlId} onValueChange={(v: string) => handleCcnlChange(v)}>
                     <SelectTrigger className="bg-white">
                       <SelectValue placeholder="Sél. CCNL..." />
                     </SelectTrigger>
@@ -378,7 +376,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                   </div>
                   <Select 
                     value={formData.defaultLevelId} 
-                    onValueChange={handleLevelChange}
+                    onValueChange={(v: string) => handleLevelChange(v)}
                     disabled={!formData.defaultCcnlId || formData.defaultCcnlId === "none_clear"}
                   >
                     <SelectTrigger className="bg-white">
@@ -400,7 +398,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                   <Label className="text-[10px] uppercase font-bold text-muted-foreground">Type de contrat</Label>
                   <Select 
                     value={formData.defaultContractType} 
-                    onValueChange={(v) => setFormData(p => ({...p, defaultContractType: v}))}
+                    onValueChange={(v: string) => setFormData(p => ({...p, defaultContractType: v}))}
                   >
                     <SelectTrigger className="bg-white"><SelectValue placeholder="Indifférent" /></SelectTrigger>
                     <SelectContent>
@@ -456,7 +454,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Supérieur hiérarchique direct (N+1)</Label>
-                <Select value={formData.directSupervisorJobTitleId} onValueChange={(v) => setFormData(p => ({...p, directSupervisorJobTitleId: v}))}>
+                <Select value={formData.directSupervisorJobTitleId} onValueChange={(v: string) => setFormData(p => ({...p, directSupervisorJobTitleId: v}))}>
                   <SelectTrigger><SelectValue placeholder="Choisir le poste du N+1" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Aucun</SelectItem>
@@ -490,8 +488,8 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             formData={formData}
             catalogItems={catalogItems || []}
             newLabel={newCatalogLabels.missionResponsibility}
-            setNewLabel={(v) => setNewCatalogLabels(p => ({...p, missionResponsibility: v}))}
-            onToggle={(v) => toggleArrayItem('missionsAndResponsibilities', v)}
+            setNewLabel={(v: string) => setNewCatalogLabels(p => ({...p, missionResponsibility: v}))}
+            onToggle={(v: string) => toggleArrayItem('missionsAndResponsibilities', v)}
             onAdd={() => addCatalogItem('missionResponsibility', 'missionsAndResponsibilities')}
           />
 
@@ -502,8 +500,8 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             formData={formData}
             catalogItems={catalogItems || []}
             newLabel={newCatalogLabels.objective}
-            setNewLabel={(v) => setNewCatalogLabels(p => ({...p, objective: v}))}
-            onToggle={(v) => toggleArrayItem('objectives', v)}
+            setNewLabel={(v: string) => setNewCatalogLabels(p => ({...p, objective: v}))}
+            onToggle={(v: string) => toggleArrayItem('objectives', v)}
             onAdd={() => addCatalogItem('objective', 'objectives')}
           />
 
@@ -514,8 +512,8 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             formData={formData}
             catalogItems={catalogItems || []}
             newLabel={newCatalogLabels.trainingRequirement}
-            setNewLabel={(v) => setNewCatalogLabels(p => ({...p, trainingRequirement: v}))}
-            onToggle={(v) => toggleArrayItem('initialAndProfessionalTraining', v)}
+            setNewLabel={(v: string) => setNewCatalogLabels(p => ({...p, trainingRequirement: v}))}
+            onToggle={(v: string) => toggleArrayItem('initialAndProfessionalTraining', v)}
             onAdd={() => addCatalogItem('trainingRequirement', 'initialAndProfessionalTraining')}
           />
 
@@ -526,8 +524,8 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             formData={formData}
             catalogItems={catalogItems || []}
             newLabel={newCatalogLabels.professionalExperience}
-            setNewLabel={(v) => setNewCatalogLabels(p => ({...p, professionalExperience: v}))}
-            onToggle={(v) => toggleArrayItem('professionalExperience', v)}
+            setNewLabel={(v: string) => setNewCatalogLabels(p => ({...p, professionalExperience: v}))}
+            onToggle={(v: string) => toggleArrayItem('professionalExperience', v)}
             onAdd={() => addCatalogItem('professionalExperience', 'professionalExperience')}
           />
 
@@ -538,8 +536,8 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             formData={formData}
             catalogItems={catalogItems || []}
             newLabel={newCatalogLabels.softSkill}
-            setNewLabel={(v) => setNewCatalogLabels(p => ({...p, softSkill: v}))}
-            onToggle={(v) => toggleArrayItem('softSkills', v)}
+            setNewLabel={(v: string) => setNewCatalogLabels(p => ({...p, softSkill: v}))}
+            onToggle={(v: string) => toggleArrayItem('softSkills', v)}
             onAdd={() => addCatalogItem('softSkill', 'softSkills')}
           />
 

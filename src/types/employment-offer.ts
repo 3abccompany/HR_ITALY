@@ -16,12 +16,14 @@ export type ConversionStatus = "pending" | "converted";
 export interface EmploymentOffer {
   offerId: string;
   entityId: string;
+  entityName?: string;
   personId: string;
   candidateId: string;
   recruitmentNeedId?: string;
   recruitmentNeedTitle?: string;
   jobProfileId?: string;
   interviewId?: string;
+  applicationSubmissionId?: string;
 
   // Candidate Snapshot
   candidateDisplayName: string;
@@ -40,6 +42,7 @@ export interface EmploymentOffer {
   proposedEndDate?: string;  // YYYY-MM-DD
   contractType: string;
   weeklyHours: number;
+  workingTime?: string;
   trialPeriodDays?: number;
   workingScheduleNotes?: string;
   workplaceNotes?: string;

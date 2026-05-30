@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type PreHireDossierStatus = 
@@ -35,6 +34,7 @@ export interface PreHireDocument {
 export interface PreHireDossier {
   dossierId: string;
   entityId: string;
+  entityName?: string;
   personId: string;
   candidateId: string;
   employmentOfferId: string;

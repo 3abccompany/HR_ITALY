@@ -5,10 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, ShieldCheck, User, Briefcase, 
   MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
-  Clock, Undo2, ArrowRight, Ban, CheckCircle2, XCircle,
-  FileSignature, Building2, UserCircle, Send, Eye,
-  FileText, ExternalLink, Search, History, UserPlus,
-  ClipboardList, CheckCircle, AlertTriangle, Plus, RefreshCcw
+  Clock, ArrowRight, CheckCircle2, XCircle,
+  FileSignature, Send, History, UserPlus,
+  ClipboardList, CheckCircle, AlertTriangle, Plus, RefreshCcw, FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFirebase, useDoc, useCollection, useUser, useAuth } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, getDoc, orderBy } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
@@ -80,21 +79,21 @@ export default function EditEmploymentOfferPage() {
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
 
   // Pre-Hire Dossier Query
-  const dossierQuery = useMemo(() => db && entityId && offerId ? query(collection(db, `entities/${entityId}/preHireDossiers`), where("employmentOfferId", "==", offerId)) : null, [db, entityId, offerId]);
+  const dossierQuery = useMemo(() => db && entityId && offerId ? query(collection(db, `entities/${entityId}/preHireDossiers`), where("employmentOfferId", "==", offerId)) as Query<PreHireDossier> : null, [db, entityId, offerId]);
   const { data: dossiers, loading: loadingDossiers } = useCollection<PreHireDossier>(dossierQuery);
   const dossier = dossiers?.[0];
 
   // Dossier Checklist Query
-  const checklistQuery = useMemo(() => dossier ? collection(db!, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`) : null, [db, entityId, dossier]);
+  const checklistQuery = useMemo(() => dossier ? query(collection(db!, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`)) as Query<PreHireDocument> : null, [db, entityId, dossier]);
   const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
 
   // Master Data
-  const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) : null, [db, entityId]);
+  const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any> : null, [db, entityId]);
   const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
 
   // Source Besoin RH for fallbacks
-  const needRef = useMemo(() => db && offer?.recruitmentNeedId ? doc(db, `entities/${entityId}/recruitmentNeeds`, offer.recruitmentNeedId) : null, [db, entityId, offer?.recruitmentNeedId]);
-  const { data: need } = useDoc<RecruitmentNeed>(needRef as any);
+  const needRef = useMemo(() => db && offer?.recruitmentNeedId ? doc(db, `entities/${entityId}/recruitmentNeeds`, offer.recruitmentNeedId) as DocumentReference<RecruitmentNeed> : null, [db, entityId, offer?.recruitmentNeedId]);
+  const { data: need } = useDoc<RecruitmentNeed>(needRef);
 
   const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
   const [saving, setSaving] = useState(false);
@@ -230,8 +229,12 @@ export default function EditEmploymentOfferPage() {
     if (!user || !entityId || !offerId) return;
     setSending(true);
     try {
-      await initiateOfferSend(entityId, offerId, user.uid);
-      toast({ title: "Envoyée" });
+      const result = await initiateOfferSend(entityId, offerId, user.uid);
+      if (result && result.success) {
+        toast({ title: "Envoyée" });
+      } else {
+        toast({ variant: "destructive", title: "Erreur", description: result?.error || "Impossible d'envoyer l'offre." });
+      }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally { setSending(false); }
@@ -275,7 +278,7 @@ export default function EditEmploymentOfferPage() {
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -506,7 +509,7 @@ export default function EditEmploymentOfferPage() {
                  </div>
                  <div className="space-y-2">
                     <Label className="text-[10px] font-black uppercase text-muted-foreground">Temps de travail</Label>
-                    <Select value={formData.workingTime} onValueChange={(v) => setFormData(p => ({...p, workingTime: v as any}))} disabled={isReadOnly}>
+                    <Select value={formData.workingTime} onValueChange={(v) => setFormData(p => ({...p, workingTime: v}))} disabled={isReadOnly}>
                       <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Sél. temps..." /></SelectTrigger>
                       <SelectContent>
                         {WORKING_TIME_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}

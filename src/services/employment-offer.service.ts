@@ -2,23 +2,21 @@ import { db } from "@/lib/firebase/client";
 import { 
   collection, 
   doc, 
-  setDoc, 
   updateDoc, 
-  getDoc, 
   getDocs, 
   query, 
   where, 
   serverTimestamp,
   limit,
   runTransaction,
-  orderBy
+  orderBy,
+  Query
 } from "firebase/firestore";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { Candidate } from "@/types/candidate";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { JobProfile } from "@/types/job-profile";
 import { createAuditLog } from "./audit.service";
-import { sendEmploymentOfferEmail } from "./email.service";
 
 /**
  * Checks if an active offer draft already exists for a candidate.
@@ -31,9 +29,9 @@ export async function getActiveOfferForCandidate(entityId: string, candidateId: 
     where("candidateId", "==", candidateId),
     where("status", "in", ["draft", "internal_review", "ready_to_send", "sent", "viewed", "accepted"]),
     limit(1)
-  );
+  ) as Query<EmploymentOffer>;
   const snap = await getDocs(q);
-  return snap.empty ? null : (snap.docs[0].data() as EmploymentOffer);
+  return snap.empty ? null : snap.docs[0].data();
 }
 
 /**
@@ -46,9 +44,9 @@ export async function getLatestOfferForCandidate(entityId: string, candidateId: 
     where("candidateId", "==", candidateId),
     orderBy("createdAt", "desc"),
     limit(1)
-  );
+  ) as Query<EmploymentOffer>;
   const snap = await getDocs(q);
-  return snap.empty ? null : (snap.docs[0].data() as EmploymentOffer);
+  return snap.empty ? null : snap.docs[0].data();
 }
 
 /**
@@ -73,7 +71,7 @@ export async function createEmploymentOfferDraft(params: {
       where("candidateId", "==", candidate.candidateId),
       where("status", "in", ["draft", "internal_review", "ready_to_send", "sent", "viewed", "accepted"]),
       limit(1)
-    );
+    ) as Query<EmploymentOffer>;
     const activeSnap = await getDocs(activeQuery);
     
     if (!activeSnap.empty) {
@@ -89,14 +87,14 @@ export async function createEmploymentOfferDraft(params: {
       where("candidateId", "==", candidate.candidateId),
       orderBy("createdAt", "desc"),
       limit(1)
-    );
+    ) as Query<EmploymentOffer>;
     const latestSnap = await getDocs(latestQuery);
     
     let revisionNumber = 1;
     let previousOfferId = null;
     
     if (!latestSnap.empty) {
-      const latest = latestSnap.docs[0].data() as EmploymentOffer;
+      const latest = latestSnap.docs[0].data();
       revisionNumber = (latest.revisionNumber || 1) + 1;
       previousOfferId = latest.offerId;
     }
@@ -107,19 +105,21 @@ export async function createEmploymentOfferDraft(params: {
 
     const recruitmentNeedId = need?.needId || (candidate as any).recruitmentNeedId || "";
     const recruitmentNeedTitle = need?.recruitmentNeedTitle || 
-      (need?.jobTitleName ? `${need.jobTitleName}${need.departmentName ? ` — ${need.departmentName}` : ''}` : "");
+      (need?.jobTitleName ? `${need.jobTitleName}${need.departmentName ? ` — ${need.departmentName}` : ''}` : "Besoin sans titre");
 
     const worksiteId = need?.worksiteId || "";
-    const worksiteName = need?.worksiteName || need?.worksiteNameSnapshot || need?.siteName || need?.location || "";
+    const worksiteName = need?.worksiteName || need?.worksiteNameSnapshot || need?.siteName || need?.location || "Non renseigné";
 
     const payload: EmploymentOffer = {
       offerId,
       entityId,
+      entityName: need?.entityName || "Non renseigné",
       personId: candidate.personId,
       candidateId: candidate.candidateId,
       recruitmentNeedId: recruitmentNeedId || undefined,
       recruitmentNeedTitle: recruitmentNeedTitle || undefined,
       jobProfileId: profile?.jobProfileId || (candidate as any).jobProfileId || need?.jobProfileId || "",
+      applicationSubmissionId: candidate.applicationSubmissionId,
       
       candidateDisplayName: candidate.displayName,
       candidateEmail: candidate.email,
@@ -134,6 +134,7 @@ export async function createEmploymentOfferDraft(params: {
       contractType: profile?.defaultContractType || "Tempo indeterminato",
       proposedStartDate: need?.desiredAvailabilityDate || new Date().toISOString().split('T')[0],
       weeklyHours: profile?.defaultWeeklyHours || 40,
+      workingTime: "Tempo pieno (Full-time)",
       trialPeriodDays: 30,
 
       ccnlId: profile?.defaultCcnlId || "",
@@ -169,7 +170,7 @@ export async function createEmploymentOfferDraft(params: {
         action: "employmentOffer.draft_created",
         resourceType: "employmentOffer",
         resourceId: result.offerId,
-        details: { candidateId: candidate.candidateId, revisionNumber: 1 } // Revision logic metadata can be expanded here
+        details: { candidateId: candidate.candidateId, revisionNumber: 1 } 
       });
     }
     return result;

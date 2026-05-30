@@ -4,8 +4,8 @@ import { Person } from "@/types/person";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { 
-  User, Mail, Phone, Fingerprint, MapPin, 
-  Calendar, Briefcase, UserCheck, Search, Link as LinkIcon 
+  Mail, Phone, Fingerprint, MapPin, 
+  Calendar, UserCheck, Search
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PersonTimeline } from "./PersonTimeline";

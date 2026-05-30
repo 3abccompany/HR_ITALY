@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type ApplicationFormStatus = "draft" | "published" | "closed" | "archived";
@@ -30,6 +29,7 @@ export interface ApplicationFormField {
 export interface ApplicationForm {
   formId: string;
   entityId: string;
+  entityName?: string;
   
   // Source links
   recruitmentNeedId: string;

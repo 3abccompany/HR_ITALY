@@ -32,6 +32,7 @@ export interface Person {
   city?: string;
   province?: string;
   postalCode?: string;
+  country?: string;
 
   // Lifecycle
   currentLifecycleStatus: PersonLifecycleStatus;

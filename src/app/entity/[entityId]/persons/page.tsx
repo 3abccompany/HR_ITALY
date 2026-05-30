@@ -3,11 +3,11 @@
 import { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
-  Users, UserPlus, Search, Edit, PowerOff, RefreshCcw, 
-  Loader2, Mail, Phone, Fingerprint, MapPin, MoreVertical,
+  UserPlus, Search, Edit, PowerOff, RefreshCcw, 
+  Loader2, Mail, Phone, Fingerprint, MoreVertical,
   AlertCircle, ShieldCheck, X, LayoutDashboard, Download,
-  ChevronUp, ChevronDown, ListFilter, Calendar as CalendarIcon,
-  ChevronLeft, ChevronRight, Filter
+  ChevronUp, ChevronDown, Calendar as CalendarIcon,
+  ChevronLeft, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy } from "firebase/firestore";
+import { collection, query, orderBy, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   createPerson, 
@@ -27,7 +27,7 @@ import {
 import { Person } from "@/types/person";
 import { useToast } from "@/hooks/use-toast";
 import { 
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter 
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -44,7 +44,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { 
   Select, 
@@ -58,7 +57,6 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { PersonDetailPanel } from "@/components/persons/PersonDetailPanel";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { format, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -133,7 +131,6 @@ function formatLocation(p: Person) {
 export default function PersonsManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
-  const isMobile = useIsMobile();
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
@@ -165,7 +162,7 @@ export default function PersonsManagementPage() {
   // Query
   const personsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/persons`), orderBy("lastName", "asc"));
+    return query(collection(db, `entities/${entityId}/persons`), orderBy("lastName", "asc")) as Query<Person>;
   }, [db, entityId, canRead]);
 
   const { data: persons, loading: loadingPersons } = useCollection<Person>(personsQuery);

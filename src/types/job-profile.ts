@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type JobProfileStatus = "active" | "inactive" | "archived";
@@ -39,6 +38,9 @@ export interface JobProfile {
   defaultLevelLabel?: string;
   defaultContractType?: string;
   defaultWeeklyHours?: number;
+  defaultMonthlyPayments?: number;
+  defaultMinimumGrossMonthly?: number;
+  defaultMinimumGrossHourly?: number;
   
   // Versioning
   version: number;
