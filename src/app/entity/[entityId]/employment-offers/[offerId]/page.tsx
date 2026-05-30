@@ -111,14 +111,14 @@ export default function EditEmploymentOfferPage() {
   useEffect(() => {
     async function fetchLevels() {
       const ccnlId = formData.ccnlId;
-      if (!ccnlId || ccnlId === "none_clear") {
+      if (!ccnlId || ccnlId === "none_clear" || !entityId || !user) {
         setActiveLevels([]);
         return;
       }
 
       setLoadingLevels(true);
       try {
-        const idToken = await auth.currentUser?.getIdToken();
+        const idToken = await user.getIdToken();
         if (!idToken) throw new Error("Auth token missing");
         
         const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
@@ -131,8 +131,10 @@ export default function EditEmploymentOfferPage() {
       }
     }
 
-    if (auth.currentUser) fetchLevels();
-  }, [formData.ccnlId, entityId, auth.currentUser, toast]);
+    if (user) {
+      fetchLevels();
+    }
+  }, [formData.ccnlId, entityId, user, toast]);
 
   useEffect(() => {
     if (offer) {
@@ -299,7 +301,7 @@ export default function EditEmploymentOfferPage() {
     setLoadingFileId(attachmentId);
 
     try {
-      const idToken = await auth.currentUser?.getIdToken();
+      const idToken = await user?.getIdToken();
       const response = await fetch(`/api/entities/${entityId}/submissions/${offer.applicationSubmissionId}/attachments/${attachmentId}/url`, {
         headers: { 'Authorization': `Bearer ${idToken}` }
       });

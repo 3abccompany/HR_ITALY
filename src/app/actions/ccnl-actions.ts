@@ -6,7 +6,6 @@
 
 import { adminDb } from "@/lib/firebase/admin";
 import { getAuth } from "firebase-admin/auth";
-import { cookies } from "next/headers";
 
 /**
  * Fetches classification levels for a specific CCNL securely.
@@ -14,20 +13,26 @@ import { cookies } from "next/headers";
  */
 export async function getLevelsForCcnlAction(entityId: string, ccnlId: string, idToken: string) {
   if (!entityId || !ccnlId || !idToken) {
-    throw new Error("Paramètres manquants pour la récupération des niveaux.");
+    throw new Error("PARAM_MISSING: Paramètres manquants pour la récupération des niveaux.");
   }
 
   try {
     // 1. Verify Authentication
-    const decodedToken = await getAuth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    let uid: string;
+    try {
+      const decodedToken = await getAuth().verifyIdToken(idToken);
+      uid = decodedToken.uid;
+    } catch (authErr) {
+      console.error("[CCNL Action] Auth Verification Failed", authErr);
+      throw new Error("AUTH_INVALID: Session invalide ou expirée.");
+    }
 
     // 2. Verify Membership (Security Gate)
     const membershipId = `${uid}_${entityId}`;
     const mSnap = await adminDb.collection("memberships").doc(membershipId).get();
     
     if (!mSnap.exists || mSnap.data()?.status !== 'active') {
-      throw new Error("Accès refusé : Membership non trouvé ou inactif.");
+      throw new Error("ACCESS_DENIED: Vous n'avez pas accès à cette entreprise.");
     }
 
     // 3. Fetch Levels
@@ -38,12 +43,23 @@ export async function getLevelsForCcnlAction(entityId: string, ccnlId: string, i
       .doc(ccnlId)
       .collection("levels");
     
-    const snap = await levelsRef.where("status", "==", "active").orderBy("levelCode", "asc").get();
-    
-    return snap.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    try {
+      const snap = await levelsRef
+        .where("status", "==", "active")
+        .orderBy("levelCode", "asc")
+        .get();
+      
+      return snap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    } catch (dbErr: any) {
+      if (dbErr.code === 9) { // FAILED_PRECONDITION (usually missing index)
+        console.error("[CCNL Action] Index missing. Please check firestore.indexes.json", dbErr);
+        throw new Error("DB_INDEX_MISSING: Le système nécessite une mise à jour d'indexation.");
+      }
+      throw dbErr;
+    }
 
   } catch (err: any) {
     console.error("[CCNL Action Error]", err);

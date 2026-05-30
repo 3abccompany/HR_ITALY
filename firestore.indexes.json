@@ -1,4 +1,3 @@
-
 {
   "indexes": [
     {
@@ -31,6 +30,14 @@
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "name", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "levels",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "levelCode", "order": "ASCENDING" }
       ]
     }
   ],
