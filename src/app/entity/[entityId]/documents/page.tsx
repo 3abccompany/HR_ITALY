@@ -6,7 +6,8 @@ import {
   FolderOpen, Plus, Search, FileText, Loader2, 
   Download, Archive, Eye, User, FileBadge, 
   Calendar, AlertCircle, Filter, X, ChevronRight,
-  ShieldAlert, Clock, Building2, ListFilter
+  ShieldAlert, Clock, Building2, ListFilter,
+  FileCheck, ShieldCheck, AlertTriangle, Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,11 +39,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from "@/components/ui/select";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { format, isBefore, addDays, startOfDay } from "date-fns";
+import { format, isBefore, addDays, startOfDay, differenceInDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Employee } from "@/types/employee";
+import { Separator } from "@/components/ui/separator";
 
 interface Filters {
   search: string;
@@ -58,6 +60,9 @@ const initialFilters: Filters = {
   employee: "all"
 };
 
+const ALLOWED_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 export default function DocumentsRegistryPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -70,12 +75,13 @@ export default function DocumentsRegistryPage() {
   const [viewMode, setViewMode] = useState("all");
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [selectedDocForDetails, setSelectedDocForDetails] = useState<HRDocument | null>(null);
 
   // Upload State
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [uploadForm, setUploadForm] = useState({
     title: "",
-    documentType: "other" as HRDocumentType,
+    documentType: "" as HRDocumentType | "",
     employeeId: "none",
     expiresAt: "",
     isSensitive: false,
@@ -121,6 +127,26 @@ export default function DocumentsRegistryPage() {
       return true;
     });
   }, [documents, filters]);
+
+  // --- Summary Statistics ---
+  const stats = useMemo(() => {
+    if (!documents) return { total: 0, sensitive: 0, expired: 0, due30: 0 };
+    const today = startOfDay(new Date());
+    
+    return documents.reduce((acc, d) => {
+      acc.total++;
+      if (d.isSensitive) acc.sensitive++;
+      if (d.expiresAt) {
+        const expiry = new Date(d.expiresAt);
+        if (isBefore(expiry, today)) {
+          acc.expired++;
+        } else if (differenceInDays(expiry, today) <= 30) {
+          acc.due30++;
+        }
+      }
+      return acc;
+    }, { total: 0, sensitive: 0, expired: 0, due30: 0 });
+  }, [documents]);
 
   // --- Grouping Logic ---
 
@@ -170,13 +196,15 @@ export default function DocumentsRegistryPage() {
         return;
       }
       const expiry = new Date(d.expiresAt);
+      const daysLeft = differenceInDays(expiry, today);
+
       if (isBefore(expiry, today)) {
         groups.expired.push(d);
-      } else if (isBefore(expiry, addDays(today, 30))) {
+      } else if (daysLeft <= 30) {
         groups.due_30.push(d);
-      } else if (isBefore(expiry, addDays(today, 60))) {
+      } else if (daysLeft <= 60) {
         groups.due_60.push(d);
-      } else if (isBefore(expiry, addDays(today, 90))) {
+      } else if (daysLeft <= 90) {
         groups.due_90.push(d);
       } else {
         groups.no_expiry.push(d);
@@ -215,7 +243,7 @@ export default function DocumentsRegistryPage() {
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedFile) return;
+    if (!user || !selectedFile || !uploadForm.documentType) return;
 
     setUploading(true);
     try {
@@ -237,13 +265,23 @@ export default function DocumentsRegistryPage() {
       
       toast({ title: "Document téléversé", description: "Le fichier a été enregistré dans le registre." });
       setIsUploadOpen(false);
-      setUploadForm({ title: "", documentType: "other", employeeId: "none", expiresAt: "", isSensitive: false, description: "" });
+      setUploadForm({ title: "", documentType: "", employeeId: "none", expiresAt: "", isSensitive: false, description: "" });
       setSelectedFile(null);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
     } finally {
       setUploading(false);
     }
+  };
+
+  const validateFile = (file: File) => {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      return "Format non supporté. PDF, PNG ou JPEG uniquement.";
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return "Fichier trop volumineux. Max 10Mo.";
+    }
+    return null;
   };
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
@@ -262,6 +300,8 @@ export default function DocumentsRegistryPage() {
     );
   }
 
+  const isFormValid = uploadForm.title.trim() !== "" && uploadForm.documentType !== "" && selectedFile !== null;
+
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
@@ -275,6 +315,14 @@ export default function DocumentsRegistryPage() {
           </Button>
         )}
       </header>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <StatCard title="Total documents" value={stats.total} icon={FileText} color="blue" />
+        <StatCard title="Sensibles" value={stats.sensitive} icon={ShieldCheck} color="orange" />
+        <StatCard title="Expirés" value={stats.expired} icon={AlertTriangle} color="red" />
+        <StatCard title="Renouveler (30j)" value={stats.due30} icon={Clock} color="indigo" />
+      </div>
 
       <div className="space-y-6">
         {/* Filter Bar */}
@@ -316,90 +364,165 @@ export default function DocumentsRegistryPage() {
           </div>
         </div>
 
-        <Tabs value={viewMode} onValueChange={setViewMode} className="space-y-6">
-          <TabsList className="bg-white border p-1 h-11 rounded-xl">
-            <TabsTrigger value="all" className="rounded-lg font-bold px-6">Tous les documents</TabsTrigger>
-            <TabsTrigger value="employee" className="rounded-lg font-bold px-6">Par employé</TabsTrigger>
-            <TabsTrigger value="type" className="rounded-lg font-bold px-6">Par type</TabsTrigger>
-            <TabsTrigger value="expiry" className="rounded-lg font-bold px-6">Échéances</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="all" className="mt-0">
-             <Card className="rounded-[2rem] border-primary/10 overflow-hidden shadow-xl shadow-primary/5">
-                <DocumentsTable 
-                  docs={filteredDocs} 
-                  loadingId={loadingAction} 
-                  onOpen={handleOpenDoc} 
-                  onArchive={handleArchive}
-                  canArchive={canArchive}
-                />
-             </Card>
-          </TabsContent>
-
-          <TabsContent value="employee" className="mt-0 space-y-6">
-            {docsByEmployee.length === 0 ? (
-               <div className="py-20 text-center text-muted-foreground italic">Aucun document trouvé.</div>
-            ) : docsByEmployee.map(([key, group]) => (
-              <div key={key} className="space-y-3">
-                 <div className="flex items-center gap-3 px-2">
-                    <h3 className="font-black text-sm uppercase tracking-wider text-primary">{group.name}</h3>
-                    <Badge variant="secondary" className="bg-primary/5 text-primary text-[10px]">{group.docs.length}</Badge>
-                 </div>
-                 <Card className="rounded-3xl border-primary/5 overflow-hidden shadow-sm">
-                    <DocumentsTable 
-                      docs={group.docs} 
-                      loadingId={loadingAction} 
-                      onOpen={handleOpenDoc} 
-                      onArchive={handleArchive}
-                      canArchive={canArchive}
-                      compact
-                    />
-                 </Card>
-              </div>
-            ))}
-          </TabsContent>
-
-          <TabsContent value="type" className="mt-0 space-y-6">
-            {docsByType.map(([type, docs]) => (
-              <div key={type} className="space-y-3">
-                 <div className="flex items-center gap-3 px-2">
-                    <h3 className="font-black text-sm uppercase tracking-wider text-primary">
-                      {DOCUMENT_TYPE_LABELS[type as HRDocumentType]}
-                    </h3>
-                    <Badge variant="secondary" className="bg-accent/10 text-accent text-[10px]">{docs.length}</Badge>
-                 </div>
-                 <Card className="rounded-3xl border-primary/5 overflow-hidden shadow-sm">
-                    <DocumentsTable 
-                      docs={docs} 
-                      loadingId={loadingAction} 
-                      onOpen={handleOpenDoc} 
-                      onArchive={handleArchive}
-                      canArchive={canArchive}
-                      compact
-                    />
-                 </Card>
-              </div>
-            ))}
-          </TabsContent>
-
-          <TabsContent value="expiry" className="mt-0 space-y-8">
-             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <ExpirySection title="Expirés" docs={docsByExpiry.expired} variant="danger" onOpen={handleOpenDoc} onArchive={handleArchive} loadingId={loadingAction} />
-                <ExpirySection title="Sous 30 jours" docs={docsByExpiry.due_30} variant="warning" onOpen={handleOpenDoc} onArchive={handleArchive} loadingId={loadingAction} />
-                <ExpirySection title="Sous 60 jours" docs={docsByExpiry.due_60} variant="info" onOpen={handleOpenDoc} onArchive={handleArchive} loadingId={loadingAction} />
-                <ExpirySection title="Sous 90 jours" docs={docsByExpiry.due_90} variant="secondary" onOpen={handleOpenDoc} onArchive={handleArchive} loadingId={loadingAction} />
+        {loadingDocs ? (
+          <div className="py-20 text-center"><Loader2 className="w-10 h-10 animate-spin mx-auto text-primary" /></div>
+        ) : documents?.length === 0 ? (
+          <Card className="border-dashed border-2 rounded-[2rem] py-20 bg-secondary/5">
+             <div className="text-center max-w-sm mx-auto space-y-4">
+                <div className="bg-white p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto shadow-sm">
+                   <FolderOpen className="w-10 h-10 text-muted-foreground/30" />
+                </div>
+                <div className="space-y-1">
+                   <h3 className="font-bold text-primary">Aucun document</h3>
+                   <p className="text-sm text-muted-foreground leading-relaxed">
+                     Commencez par ajouter un document RH : pièce d’identité, contrat signé, reçu UniLav ou document administratif.
+                   </p>
+                </div>
+                {canUpload && (
+                  <Button onClick={() => setIsUploadOpen(true)} size="sm" className="rounded-xl font-bold">
+                    Ajouter le premier document
+                  </Button>
+                )}
              </div>
-             {docsByExpiry.no_expiry.length > 0 && (
-               <div className="pt-8">
-                  <h3 className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1 mb-4">Autres documents (Sans échéance)</h3>
-                  <Card className="rounded-3xl overflow-hidden opacity-80">
-                     <DocumentsTable docs={docsByExpiry.no_expiry} onOpen={handleOpenDoc} onArchive={handleArchive} loadingId={loadingAction} canArchive={canArchive} compact />
-                  </Card>
+          </Card>
+        ) : (
+          <Tabs value={viewMode} onValueChange={setViewMode} className="space-y-6">
+            <TabsList className="bg-white border p-1 h-11 rounded-xl shadow-sm">
+              <TabsTrigger value="all" className="rounded-lg font-bold px-6">Tous</TabsTrigger>
+              <TabsTrigger value="employee" className="rounded-lg font-bold px-6">Par employé</TabsTrigger>
+              <TabsTrigger value="type" className="rounded-lg font-bold px-6">Par type</TabsTrigger>
+              <TabsTrigger value="expiry" className="rounded-lg font-bold px-6">Échéances</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="all" className="mt-0">
+               <Card className="rounded-[2rem] border-primary/10 overflow-hidden shadow-xl shadow-primary/5 bg-white">
+                  <DocumentsTable 
+                    docs={filteredDocs} 
+                    loadingId={loadingAction} 
+                    onOpen={handleOpenDoc} 
+                    onArchive={handleArchive}
+                    onViewDetails={setSelectedDocForDetails}
+                    canArchive={canArchive}
+                  />
+               </Card>
+            </TabsContent>
+
+            <TabsContent value="employee" className="mt-0 space-y-6">
+              {docsByEmployee.map(([key, group]) => (
+                <div key={key} className="space-y-3">
+                   <div className="flex items-center gap-3 px-2">
+                      <h3 className="font-black text-xs uppercase tracking-wider text-primary">{group.name}</h3>
+                      <Badge variant="secondary" className="bg-primary/5 text-primary text-[10px] font-black h-5">{group.docs.length}</Badge>
+                   </div>
+                   <Card className="rounded-3xl border-primary/5 overflow-hidden shadow-sm bg-white">
+                      <DocumentsTable 
+                        docs={group.docs} 
+                        loadingId={loadingAction} 
+                        onOpen={handleOpenDoc} 
+                        onArchive={handleArchive}
+                        onViewDetails={setSelectedDocForDetails}
+                        canArchive={canArchive}
+                        compact
+                      />
+                   </Card>
+                </div>
+              ))}
+            </TabsContent>
+
+            <TabsContent value="type" className="mt-0 space-y-6">
+              {docsByType.map(([type, docs]) => (
+                <div key={type} className="space-y-3">
+                   <div className="flex items-center gap-3 px-2">
+                      <h3 className="font-black text-xs uppercase tracking-wider text-primary">
+                        {DOCUMENT_TYPE_LABELS[type as HRDocumentType]}
+                      </h3>
+                      <Badge variant="secondary" className="bg-accent/10 text-accent text-[10px] font-black h-5">{docs.length}</Badge>
+                   </div>
+                   <Card className="rounded-3xl border-primary/5 overflow-hidden shadow-sm bg-white">
+                      <DocumentsTable 
+                        docs={docs} 
+                        loadingId={loadingAction} 
+                        onOpen={handleOpenDoc} 
+                        onArchive={handleArchive}
+                        onViewDetails={setSelectedDocForDetails}
+                        canArchive={canArchive}
+                        compact
+                      />
+                   </Card>
+                </div>
+              ))}
+            </TabsContent>
+
+            <TabsContent value="expiry" className="mt-0 space-y-8">
+               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  <ExpirySection title="Expirés" docs={docsByExpiry.expired} variant="danger" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
+                  <ExpirySection title="Sous 30 jours" docs={docsByExpiry.due_30} variant="warning" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
+                  <ExpirySection title="Sous 60 jours" docs={docsByExpiry.due_60} variant="info" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
+                  <ExpirySection title="Sous 90 jours" docs={docsByExpiry.due_90} variant="secondary" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
                </div>
-             )}
-          </TabsContent>
-        </Tabs>
+               {docsByExpiry.no_expiry.length > 0 && (
+                 <div className="pt-8">
+                    <h3 className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1 mb-4">Autres documents (Sans échéance)</h3>
+                    <Card className="rounded-3xl overflow-hidden opacity-80 border-primary/5 bg-white">
+                       <DocumentsTable docs={docsByExpiry.no_expiry} onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} canArchive={canArchive} compact />
+                    </Card>
+                 </div>
+               )}
+            </TabsContent>
+          </Tabs>
+        )}
       </div>
+
+      {/* Details Dialog */}
+      <Dialog open={!!selectedDocForDetails} onOpenChange={() => setSelectedDocForDetails(null)}>
+        <DialogContent className="sm:max-w-[500px] rounded-[2.5rem]">
+           <DialogHeader>
+              <DialogTitle className="text-xl font-black text-primary">Détails du document</DialogTitle>
+              <DialogDescription>Consultez les métadonnées enregistrées pour ce fichier.</DialogDescription>
+           </DialogHeader>
+           
+           {selectedDocForDetails && (
+             <div className="py-6 space-y-6">
+                <div className="flex items-center gap-4">
+                   <div className="bg-primary/5 p-4 rounded-[1.5rem] text-primary">
+                      <FileText className="w-8 h-8" />
+                   </div>
+                   <div className="min-w-0">
+                      <h3 className="font-black text-lg text-slate-900 truncate">{selectedDocForDetails.title}</h3>
+                      <p className="text-xs font-bold text-accent uppercase tracking-widest">{DOCUMENT_TYPE_LABELS[selectedDocForDetails.documentType]}</p>
+                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                   <DetailItem label="Statut" value={<Badge variant="outline" className="h-5 uppercase text-[9px] font-black bg-slate-50">{STATUS_LABELS[selectedDocForDetails.status]}</Badge>} />
+                   <DetailItem label="Employé" value={selectedDocForDetails.employeeDisplayName || "Non lié"} />
+                   <DetailItem label="Nom du fichier" value={selectedDocForDetails.fileName} code />
+                   <DetailItem label="Taille" value={`${(selectedDocForDetails.sizeBytes / 1024 / 1024).toFixed(2)} MB`} />
+                   <DetailItem label="Téléversé le" value={format(new Date((selectedDocForDetails.uploadedAt as any).seconds * 1000), "dd/MM/yyyy HH:mm")} />
+                   <DetailItem label="Par" value={selectedDocForDetails.uploadedByDisplayName || "Système"} />
+                   {selectedDocForDetails.expiresAt && <DetailItem label="Expiration" value={<span className={cn("font-black", isBefore(new Date(selectedDocForDetails.expiresAt), new Date()) ? "text-red-600" : "text-slate-800")}>{format(new Date(selectedDocForDetails.expiresAt), "dd/MM/yyyy")}</span>} />}
+                   {selectedDocForDetails.isSensitive && <DetailItem label="Confidentialité" value={<Badge variant="destructive" className="h-5 text-[8px] uppercase font-black">Sensible</Badge>} />}
+                </div>
+
+                {selectedDocForDetails.description && (
+                  <div className="space-y-1">
+                     <p className="text-[9px] font-black uppercase text-muted-foreground">Description / Notes</p>
+                     <p className="text-xs text-slate-600 bg-secondary/20 p-3 rounded-xl border border-dashed">{selectedDocForDetails.description}</p>
+                  </div>
+                )}
+             </div>
+           )}
+
+           <DialogFooter className="flex gap-2">
+              <Button variant="ghost" onClick={() => setSelectedDocForDetails(null)} className="rounded-xl font-bold">Fermer</Button>
+              {selectedDocForDetails && (
+                <Button onClick={() => handleOpenDoc(selectedDocForDetails.storagePath, selectedDocForDetails.id)} className="rounded-xl font-black gap-2">
+                   <Eye className="w-4 h-4" /> Ouvrir le document
+                </Button>
+              )}
+           </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Upload Dialog */}
       <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
@@ -412,12 +535,18 @@ export default function DocumentsRegistryPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase font-black text-muted-foreground">Titre du document (Requis)</Label>
-                <Input value={uploadForm.title} onChange={(e) => setUploadForm(p => ({...p, title: e.target.value}))} required placeholder="Ex: CNI Recto-Verso" />
+                <Input 
+                  value={uploadForm.title} 
+                  onChange={(e) => setUploadForm(p => ({...p, title: e.target.value}))} 
+                  required 
+                  placeholder="Ex: CNI Recto-Verso" 
+                  className="rounded-xl h-11"
+                />
               </div>
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase font-black text-muted-foreground">Type de document</Label>
                 <Select value={uploadForm.documentType} onValueChange={(v) => setUploadForm(p => ({...p, documentType: v as HRDocumentType}))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
                   <SelectContent>
                     {Object.entries(DOCUMENT_TYPE_LABELS).map(([val, label]) => (
                       <SelectItem key={val} value={val}>{label}</SelectItem>
@@ -428,7 +557,7 @@ export default function DocumentsRegistryPage() {
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase font-black text-muted-foreground">Lier à un employé (Optionnel)</Label>
                 <Select value={uploadForm.employeeId} onValueChange={(v) => setUploadForm(p => ({...p, employeeId: v}))}>
-                  <SelectTrigger><SelectValue placeholder="Sél. collaborateur" /></SelectTrigger>
+                  <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder="Sél. collaborateur" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">--- Aucun ---</SelectItem>
                     {employees?.map(e => <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>)}
@@ -437,13 +566,13 @@ export default function DocumentsRegistryPage() {
               </div>
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase font-black text-muted-foreground">Date d'expiration</Label>
-                <Input type="date" value={uploadForm.expiresAt} onChange={(e) => setUploadForm(p => ({...p, expiresAt: e.target.value}))} />
+                <Input type="date" value={uploadForm.expiresAt} onChange={(e) => setUploadForm(p => ({...p, expiresAt: e.target.value}))} className="rounded-xl h-11" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label className="text-[10px] uppercase font-black text-muted-foreground">Description / Notes</Label>
-              <Textarea value={uploadForm.description} onChange={(e) => setUploadForm(p => ({...p, description: e.target.value}))} className="min-h-[80px]" />
+              <Textarea value={uploadForm.description} onChange={(e) => setUploadForm(p => ({...p, description: e.target.value}))} className="min-h-[80px] rounded-2xl" />
             </div>
 
             <div className="flex items-center space-x-2 bg-secondary/20 p-4 rounded-2xl border border-dashed border-primary/20">
@@ -455,12 +584,46 @@ export default function DocumentsRegistryPage() {
 
             <div className="space-y-2">
               <Label className="text-[10px] uppercase font-black text-muted-foreground">Fichier (PDF, Images - Max 10Mo)</Label>
-              <Input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} required className="pt-2 h-12" />
+              <div className={cn(
+                "border-2 border-dashed rounded-2xl p-6 transition-all relative flex flex-col items-center justify-center gap-2 text-center",
+                selectedFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+              )}>
+                 <Input 
+                   type="file" 
+                   accept=".pdf,.png,.jpg,.jpeg" 
+                   onChange={(e) => {
+                     const file = e.target.files?.[0] || null;
+                     if (file) {
+                        const error = validateFile(file);
+                        if (error) {
+                          toast({ variant: "destructive", title: "Fichier invalide", description: error });
+                          e.target.value = "";
+                          return;
+                        }
+                     }
+                     setSelectedFile(file);
+                   }} 
+                   className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                 />
+                 {selectedFile ? (
+                   <>
+                      <div className="bg-green-100 p-2 rounded-xl text-green-600 mb-1"><FileCheck className="w-5 h-5" /></div>
+                      <p className="text-xs font-bold text-green-800">{selectedFile.name}</p>
+                      <p className="text-[10px] text-green-600 font-bold uppercase">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB — Cliquez pour changer</p>
+                   </>
+                 ) : (
+                   <>
+                      <Plus className="w-5 h-5 text-muted-foreground/50 mb-1" />
+                      <p className="text-xs font-bold text-slate-600">Cliquez ou glissez un fichier ici</p>
+                      <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">PDF, PNG, JPG (10 Mo max)</p>
+                   </>
+                 )}
+              </div>
             </div>
 
             <DialogFooter className="pt-4 border-t">
               <Button type="button" variant="ghost" onClick={() => setIsUploadOpen(false)} disabled={uploading}>Annuler</Button>
-              <Button type="submit" disabled={uploading || !selectedFile || !uploadForm.title} className="rounded-xl px-8 font-black">
+              <Button type="submit" disabled={uploading || !isFormValid} className="rounded-xl px-8 font-black shadow-lg shadow-primary/10">
                 {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                 Importer le document
               </Button>
@@ -472,11 +635,35 @@ export default function DocumentsRegistryPage() {
   );
 }
 
+function StatCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
+  const colors: Record<string, string> = {
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    red: "bg-red-50 text-red-600 border-red-100",
+    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
+  };
+
+  return (
+    <Card className="border-primary/5 shadow-sm rounded-2xl">
+      <CardContent className="p-4 flex items-center gap-4">
+        <div className={cn("p-3 rounded-2xl border", colors[color] || colors.blue)}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div>
+          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{title}</p>
+          <p className="text-2xl font-black text-primary">{value}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function DocumentsTable({ 
   docs, 
   loadingId, 
   onOpen, 
   onArchive, 
+  onViewDetails,
   canArchive,
   compact = false 
 }: { 
@@ -484,6 +671,7 @@ function DocumentsTable({
   loadingId: string | null, 
   onOpen: any, 
   onArchive: any, 
+  onViewDetails: (doc: HRDocument) => void,
   canArchive?: boolean,
   compact?: boolean 
 }) {
@@ -491,67 +679,71 @@ function DocumentsTable({
     <Table>
       <TableHeader className={cn("bg-secondary/10", compact && "hidden")}>
         <TableRow>
-          <TableHead>Titre & Type</TableHead>
-          <TableHead className="hidden md:table-cell">Fichier</TableHead>
-          <TableHead className="hidden lg:table-cell">Propriétaire</TableHead>
-          <TableHead>Expiration</TableHead>
-          <TableHead>Statut</TableHead>
-          <TableHead className="text-right">Actions</TableHead>
+          <TableHead className="text-[10px] font-black uppercase tracking-widest">Titre & Type</TableHead>
+          <TableHead className="hidden md:table-cell text-[10px] font-black uppercase tracking-widest text-center">Fichier</TableHead>
+          <TableHead className="hidden lg:table-cell text-[10px] font-black uppercase tracking-widest">Propriétaire</TableHead>
+          <TableHead className="text-[10px] font-black uppercase tracking-widest">Expiration</TableHead>
+          <TableHead className="text-[10px] font-black uppercase tracking-widest">Statut</TableHead>
+          <TableHead className="text-right text-[10px] font-black uppercase tracking-widest">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {docs.length === 0 ? (
-          <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground italic">Aucun document trouvé.</TableCell></TableRow>
+          <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document dans cette vue.</TableCell></TableRow>
         ) : docs.map(d => {
           const isLoading = loadingId === d.id;
+          const isExpired = d.expiresAt && isBefore(new Date(d.expiresAt), startOfDay(new Date()));
+          
           return (
-            <TableRow key={d.id} className="hover:bg-muted/50 transition-colors">
+            <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
               <TableCell>
-                <div className="font-bold text-primary">{d.title}</div>
+                <div className="font-bold text-primary truncate max-w-[200px]">{d.title}</div>
                 <div className="flex items-center gap-2 mt-1">
-                   <div className="text-[10px] font-black uppercase text-muted-foreground">{DOCUMENT_TYPE_LABELS[d.documentType]}</div>
+                   <div className="text-[9px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[d.documentType]}</div>
                    {d.isSensitive && <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[8px] h-4 px-1 uppercase font-black border-none">Sensible</Badge>}
                 </div>
               </TableCell>
-              <TableCell className="hidden md:table-cell">
-                <div className="text-[10px] font-mono text-muted-foreground truncate max-w-[150px]">{d.fileName}</div>
-                <div className="text-[9px] uppercase font-bold text-muted-foreground/60">{(d.sizeBytes / 1024 / 1024).toFixed(2)} MB</div>
+              <TableCell className="hidden md:table-cell text-center">
+                <div className="text-[9px] font-mono text-muted-foreground truncate max-w-[120px] mx-auto mb-0.5">{d.fileName}</div>
+                <div className="text-[8px] uppercase font-bold text-muted-foreground/40">{(d.sizeBytes / 1024 / 1024).toFixed(2)} MB</div>
               </TableCell>
               <TableCell className="hidden lg:table-cell">
                 {d.employeeDisplayName ? (
-                  <div className="flex items-center gap-2 text-xs font-medium">
-                    <User className="w-3 h-3 text-primary/50" /> {d.employeeDisplayName}
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <User className="w-3 h-3 text-primary/30" /> {d.employeeDisplayName}
                   </div>
                 ) : (
-                  <span className="text-[10px] text-muted-foreground italic">Général</span>
+                  <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest italic opacity-40">Général</span>
                 )}
               </TableCell>
               <TableCell>
                 {d.expiresAt ? (
-                  <div className={cn("text-xs font-bold", isBefore(new Date(d.expiresAt), new Date()) ? "text-destructive" : "text-slate-600")}>
+                  <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-slate-600")}>
                     {format(new Date(d.expiresAt), "dd/MM/yyyy")}
+                    {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                   </div>
                 ) : (
-                  <span className="text-[10px] text-muted-foreground">—</span>
+                  <span className="text-[10px] text-muted-foreground/30">—</span>
                 )}
               </TableCell>
               <TableCell>
                  <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5", 
                    d.status === 'valid' ? "bg-green-50 text-green-700 border-green-100" : 
-                   d.status === 'archived' ? "bg-slate-50 text-slate-400 border-slate-100" : "bg-red-50 text-red-700 border-red-100")}>
-                   {STATUS_LABELS[d.status]}
+                   d.status === 'archived' ? "bg-slate-50 text-slate-400 border-slate-100" : 
+                   d.status === 'expired' || isExpired ? "bg-red-50 text-red-700 border-red-100" : "bg-orange-50 text-orange-700 border-orange-100")}>
+                   {isExpired ? "Expiré" : STATUS_LABELS[d.status]}
                  </Badge>
               </TableCell>
               <TableCell className="text-right">
-                 <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId}>
-                       {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-4 h-4" />}
+                 <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onViewDetails(d)} title="Détails">
+                       <Eye className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId}>
-                       <Download className="w-4 h-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId} title="Ouvrir">
+                       {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
                     </Button>
                     {canArchive && d.status !== 'archived' && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(d.id)} disabled={!!loadingId}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(d.id)} disabled={!!loadingId} title="Archiver">
                          <Archive className="w-4 h-4" />
                       </Button>
                     )}
@@ -565,7 +757,7 @@ function DocumentsTable({
   );
 }
 
-function ExpirySection({ title, docs, variant, onOpen, onArchive, loadingId }: any) {
+function ExpirySection({ title, docs, variant, onOpen, onArchive, onViewDetails, loadingId }: any) {
   const colorClass = variant === 'danger' ? "text-red-700 bg-red-50 border-red-100" : 
                      variant === 'warning' ? "text-orange-700 bg-orange-50 border-orange-100" :
                      variant === 'info' ? "text-blue-700 bg-blue-50 border-blue-100" : "text-slate-700 bg-slate-50 border-slate-100";
@@ -573,29 +765,35 @@ function ExpirySection({ title, docs, variant, onOpen, onArchive, loadingId }: a
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between px-2">
-         <h3 className="font-black text-xs uppercase tracking-[0.2em] text-muted-foreground">{title}</h3>
-         <Badge className={cn("border font-black", colorClass)}>{docs.length}</Badge>
+         <h3 className="font-black text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{title}</h3>
+         <Badge className={cn("border font-black text-[10px] h-5", colorClass)}>{docs.length}</Badge>
       </div>
-      <Card className="rounded-[2rem] border-primary/5 overflow-hidden shadow-sm min-h-[100px]">
+      <Card className="rounded-[2rem] border-primary/5 overflow-hidden shadow-sm min-h-[100px] bg-white">
         {docs.length === 0 ? (
-          <div className="p-8 text-center text-xs text-muted-foreground italic">Aucun document dans cette période.</div>
+          <div className="p-8 text-center text-[10px] font-bold text-muted-foreground uppercase italic tracking-widest">Vide</div>
         ) : (
-          <div className="divide-y">
+          <div className="divide-y divide-slate-50">
             {docs.map((d: HRDocument) => (
-              <div key={d.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+              <div key={d.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors group">
                  <div className="flex items-center gap-4 min-w-0">
-                    <div className={cn("p-2 rounded-xl border", colorClass)}>
+                    <div className={cn("p-2 rounded-xl border shrink-0", colorClass)}>
                       <Clock className="w-4 h-4" />
                     </div>
                     <div className="min-w-0">
                        <p className="font-bold text-sm text-slate-800 truncate">{d.title}</p>
-                       <p className="text-[10px] text-muted-foreground uppercase font-black truncate">
-                         {d.employeeDisplayName || "Général"} • Exp. {d.expiresAt ? format(new Date(d.expiresAt), "dd MMM yy") : "?"}
-                       </p>
+                       <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-[9px] text-muted-foreground uppercase font-black truncate">
+                            {d.employeeDisplayName || "Général"}
+                          </p>
+                          <span className="text-slate-200 text-[10px]">•</span>
+                          <p className={cn("text-[9px] font-black uppercase tracking-tighter", variant === 'danger' ? "text-red-600" : "text-slate-500")}>
+                             {d.expiresAt ? `Exp: ${format(new Date(d.expiresAt), "dd MMM yy")}` : "Pas d'échéance"}
+                          </p>
+                       </div>
                     </div>
                  </div>
-                 <div className="flex items-center gap-1 shrink-0">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId}><Eye className="w-3.5 h-3.5" /></Button>
+                 <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewDetails(d)}><Eye className="w-3.5 h-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(d.id)} disabled={!!loadingId}><Archive className="w-3.5 h-3.5" /></Button>
                  </div>
               </div>
@@ -603,6 +801,17 @@ function ExpirySection({ title, docs, variant, onOpen, onArchive, loadingId }: a
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+function DetailItem({ label, value, code = false }: { label: string, value: any, code?: boolean }) {
+  return (
+    <div className="space-y-1">
+       <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
+       <div className={cn("text-xs font-bold text-slate-800 truncate", code && "font-mono text-[10px]")}>
+          {value}
+       </div>
     </div>
   );
 }
