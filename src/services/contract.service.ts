@@ -3,10 +3,44 @@ import {
   doc, 
   runTransaction, 
   serverTimestamp,
-  getDoc
+  getDoc,
+  updateDoc
 } from "firebase/firestore";
-import { ContractStatus } from "@/types/contract";
+import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
+
+/**
+ * Updates contract data.
+ * STRICT RULE: Only allowed if contract.status === "draft".
+ */
+export async function updateContract(entityId: string, contractId: string, data: Partial<Contract>, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(contractRef);
+    if (!snap.exists()) throw new Error("Contrat introuvable.");
+    const contract = snap.data() as Contract;
+
+    if (contract.status !== "draft") {
+      throw new Error("Ce contrat n'est plus modifiable (statut: " + contract.status + ")");
+    }
+
+    transaction.update(contractRef, {
+      ...data,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "contract.updated",
+    resourceType: "contract",
+    resourceId: contractId,
+  });
+}
 
 /**
  * Moves a contract from draft to pending_signature.
@@ -16,6 +50,14 @@ export async function sendContractToSignature(entityId: string, contractId: stri
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
 
   await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(contractRef);
+    if (!snap.exists()) throw new Error("Contrat introuvable.");
+    const contract = snap.data() as Contract;
+
+    if (contract.status !== "draft") {
+      throw new Error("Action impossible pour le statut actuel.");
+    }
+
     transaction.update(contractRef, {
       status: "pending_signature",
       sentForSignatureAt: serverTimestamp(),
@@ -158,5 +200,3 @@ export async function archiveContractAction(entityId: string, contractId: string
     resourceId: contractId,
   });
 }
-
-import { updateDoc } from "firebase/firestore";

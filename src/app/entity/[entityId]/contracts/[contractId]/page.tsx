@@ -1,20 +1,23 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
   Briefcase, Building2, FileSignature,
-  Info, Euro, Clock, History, ExternalLink,
+  Info, Euro, Clock, History, 
   Scale, Fingerprint, Calendar, FileText,
-  MapPin, CheckCircle2, XCircle, Ban, Archive, 
-  RefreshCcw, ShieldCheck, UserCircle, Globe,
-  ScrollText, ListTodo
+  MapPin, CheckCircle2, Ban, Archive, 
+  RefreshCcw, ScrollText, Globe,
+  Edit, Save, X, AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useFirebase, useDoc, useUser } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
@@ -28,8 +31,17 @@ import {
   activateContractAction, 
   terminateContractAction, 
   archiveContractAction,
-  rollbackToDraft
+  rollbackToDraft,
+  updateContract
 } from "@/services/contract.service";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 export default function ContractDetailPage() {
   const params = useParams();
@@ -40,9 +52,13 @@ export default function ContractDetailPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const [processing, setProcessing] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState<Partial<Contract>>({});
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [isValidationDialogOpen, setIsValidationDialogOpen] = useState(false);
 
   const contractRef = useMemo(() => 
     db ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
@@ -50,11 +66,9 @@ export default function ContractDetailPage() {
 
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
-  const employeeRef = useMemo(() => 
-    db && contract?.employeeId ? (doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee>) : null,
-  [db, entityId, contract?.employeeId]);
-
-  const { data: employee } = useDoc<Employee>(employeeRef);
+  useEffect(() => {
+    if (contract) setFormData(contract);
+  }, [contract]);
 
   const formatMoney = (value: any, decimals = 2) => {
     if (value === undefined || value === null) return "-";
@@ -75,11 +89,7 @@ export default function ContractDetailPage() {
       }
       const d = val.toDate ? val.toDate() : new Date(val);
       if (isNaN(d.getTime())) return "-";
-      return d.toLocaleDateString('fr-FR', { 
-        day: '2-digit', 
-        month: '2-digit', 
-        year: 'numeric'
-      });
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
     } catch (e) {
       return "-";
     }
@@ -91,11 +101,8 @@ export default function ContractDetailPage() {
       const d = val.toDate ? val.toDate() : new Date(val);
       if (isNaN(d.getTime())) return "-";
       return d.toLocaleString('fr-FR', { 
-        day: '2-digit', 
-        month: '2-digit', 
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
       });
     } catch (e) {
       return "-";
@@ -108,6 +115,38 @@ export default function ContractDetailPage() {
     return "Utilisateur interne";
   };
 
+  const validateContractForSignature = () => {
+    const missing: string[] = [];
+    if (!contract) return [];
+
+    if (!contract.entityLegalName) missing.push("Raison sociale de l'employeur");
+    if (!contract.companyAddressSnapshot) missing.push("Adresse du siège");
+    if (!contract.employeeDisplayName) missing.push("Nom complet du salarié");
+    if (!contract.taxCode) missing.push("Code fiscal / Identifiant national");
+    if (!contract.employeeAddressSnapshot) missing.push("Adresse de résidence du salarié");
+    if (!contract.contractType) missing.push("Type de contrat");
+    if (!contract.startDate) missing.push("Date de début");
+    if (!contract.jobTitleName) missing.push("Intitulé du poste");
+    if (!contract.worksiteName) missing.push("Site d'affectation");
+    if (!contract.ccnlName) missing.push("Convention collective (CCNL)");
+    if (!contract.levelCode && !contract.levelLabel) missing.push("Niveau de classification");
+    if (!contract.weeklyHours) missing.push("Temps de travail (heures)");
+    if (!contract.grossMonthly && !contract.grossAnnual) missing.push("Rémunération (Brut)");
+
+    return missing;
+  };
+
+  const handleTransitionToSignature = async () => {
+    const missing = validateContractForSignature();
+    if (missing.length > 0) {
+      setValidationErrors(missing);
+      setIsValidationDialogOpen(true);
+      return;
+    }
+
+    handleTransition(() => sendContractToSignature(entityId, contractId, user!.uid), "Contrat prêt pour signature.");
+  };
+
   const handleTransition = async (action: () => Promise<any>, successMsg: string) => {
     if (!user || !contract) return;
     setProcessing(true);
@@ -115,7 +154,6 @@ export default function ContractDetailPage() {
       await action();
       toast({ title: "Succès", description: successMsg });
     } catch (err: any) {
-      console.error("Transition error:", err);
       let msg = err.message || "Une erreur est survenue.";
       if (err.message === "ALREADY_HAS_ACTIVE_CONTRACT") {
         msg = "Un autre contrat actif existe déjà pour cet employé.";
@@ -126,14 +164,26 @@ export default function ContractDetailPage() {
     }
   };
 
+  const handleSave = async () => {
+    if (!user || !contract) return;
+    setProcessing(true);
+    try {
+      await updateContract(entityId, contractId, formData, user.uid);
+      setIsEditing(false);
+      toast({ title: "Modifications enregistrées" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
     return (
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
-        <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6">
-          <FileText className="w-10 h-10 text-muted-foreground" />
-        </div>
+        <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Contrat introuvable</h2>
         <Button onClick={() => router.push(`/entity/${entityId}/contracts`)} className="mt-8">Retour au registre</Button>
       </div>
@@ -142,6 +192,7 @@ export default function ContractDetailPage() {
 
   const businessReference = contract.employeeCode || "Brouillon d'intégration";
   const canUpdate = hasPermission("contracts.update");
+  const isDraft = contract.status === 'draft';
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
@@ -155,16 +206,30 @@ export default function ContractDetailPage() {
               <h1 className="text-2xl font-black text-primary tracking-tight">Modèle de Contrat</h1>
               {getStatusBadge(contract.status)}
             </div>
-            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">
-              Référence : {businessReference}
-            </p>
+            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">Référence : {businessReference}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-           {canUpdate && contract.status === 'draft' && (
+           {isDraft && !isEditing && (
+             <Button variant="outline" onClick={() => setIsEditing(true)} className="gap-2 bg-white rounded-xl font-bold">
+                <Edit className="w-4 h-4" /> Éditer les informations
+             </Button>
+           )}
+
+           {isEditing && (
+             <>
+               <Button variant="ghost" onClick={() => { setIsEditing(false); setFormData(contract); }} disabled={processing}>Annuler</Button>
+               <Button onClick={handleSave} disabled={processing} className="gap-2 bg-green-600 text-white font-bold rounded-xl">
+                 {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                 Enregistrer
+               </Button>
+             </>
+           )}
+
+           {!isEditing && canUpdate && isDraft && (
              <Button 
-               onClick={() => handleTransition(() => sendContractToSignature(entityId, contractId, user!.uid), "Contrat marqué comme prêt pour signature.")}
+               onClick={handleTransitionToSignature}
                disabled={processing}
                className="gap-2 bg-accent text-white font-bold rounded-xl"
              >
@@ -173,48 +238,26 @@ export default function ContractDetailPage() {
              </Button>
            )}
 
-           {canUpdate && contract.status === 'pending_signature' && (
+           {!isEditing && canUpdate && contract.status === 'pending_signature' && (
              <>
-               <Button 
-                 variant="outline"
-                 onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")}
-                 disabled={processing}
-                 className="gap-2 bg-white rounded-xl"
-               >
-                 <RefreshCcw className="w-4 h-4" />
-                 Brouillon
+               <Button variant="outline" onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2 bg-white rounded-xl">
+                 <RefreshCcw className="w-4 h-4" /> Brouillon
                </Button>
-               <Button 
-                 onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")}
-                 disabled={processing || !contract.employeeId}
-                 className="gap-2 bg-primary text-white font-black rounded-xl"
-               >
+               <Button onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")} disabled={processing || !contract.employeeId} className="gap-2 bg-primary text-white font-black rounded-xl">
                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                  Confirmer signature et activer
                </Button>
              </>
            )}
 
-           {canUpdate && contract.status === 'active' && (
-             <Button 
-               variant="destructive"
-               onClick={() => handleTransition(() => terminateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat résilié.")}
-               disabled={processing}
-               className="gap-2 font-bold rounded-xl"
-             >
-               <Ban className="w-4 h-4" />
-               Résilier / Terminer
+           {!isEditing && canUpdate && contract.status === 'active' && (
+             <Button variant="destructive" onClick={() => handleTransition(() => terminateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat résilié.")} disabled={processing} className="gap-2 font-bold rounded-xl">
+               <Ban className="w-4 h-4" /> Résilier / Terminer
              </Button>
            )}
 
-           {canUpdate && (contract.status === 'draft' || contract.status === 'terminated') && (
-             <Button 
-               variant="ghost" 
-               size="icon" 
-               className="text-muted-foreground"
-               onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")}
-               disabled={processing}
-             >
+           {!isEditing && canUpdate && (isDraft || contract.status === 'terminated') && (
+             <Button variant="ghost" size="icon" className="text-muted-foreground" onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")} disabled={processing}>
                <Archive className="w-4 h-4" />
              </Button>
            )}
@@ -233,11 +276,11 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Entreprise (Nom commercial)" value={contract.entityName} />
-                   <DetailRow label="Raison Sociale" value={contract.entityLegalName} />
-                   <DetailRow label="Numéro TVA / Code Fiscal" value={contract.entityVatNumber} />
-                   <DetailRow label="Représentant Légal" value={contract.legalRepresentativeName} />
-                   <DetailRow label="Adresse du Siège" value={contract.companyAddressSnapshot} className="col-span-full" />
+                   <DetailEditable label="Raison Sociale" value={formData.entityLegalName} isEditing={isEditing} id="entityLegalName" required onChange={(v) => setFormData(p => ({...p, entityLegalName: v}))} />
+                   <DetailEditable label="Nom commercial" value={formData.entityName} isEditing={isEditing} id="entityName" onChange={(v) => setFormData(p => ({...p, entityName: v}))} />
+                   <DetailEditable label="Numéro TVA / Code Fiscal" value={formData.entityVatNumber} isEditing={isEditing} id="entityVatNumber" onChange={(v) => setFormData(p => ({...p, entityVatNumber: v}))} />
+                   <DetailEditable label="Représentant Légal" value={formData.legalRepresentativeName} isEditing={isEditing} id="legalRepresentativeName" onChange={(v) => setFormData(p => ({...p, legalRepresentativeName: v}))} />
+                   <DetailEditable label="Adresse du Siège" value={formData.companyAddressSnapshot} isEditing={isEditing} id="companyAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, companyAddressSnapshot: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -251,21 +294,21 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Nom Complet" value={contract.employeeDisplayName} />
-                   <DetailRow label="Code Fiscal / ID" value={contract.taxCode} className="font-mono uppercase" />
-                   <DetailRow label="Date de Naissance" value={formatDate(contract.dateOfBirth)} />
-                   <DetailRow label="Lieu de Naissance" value={contract.placeOfBirth} />
-                   <DetailRow label="Adresse de Résidence" value={contract.employeeAddressSnapshot} className="col-span-full" />
+                   <DetailEditable label="Nom Complet" value={formData.employeeDisplayName} isEditing={isEditing} id="employeeDisplayName" required onChange={(v) => setFormData(p => ({...p, employeeDisplayName: v}))} />
+                   <DetailEditable label="Code Fiscal / ID National" value={formData.taxCode} isEditing={isEditing} id="taxCode" required className="font-mono uppercase" onChange={(v) => setFormData(p => ({...p, taxCode: v}))} />
+                   <DetailEditable label="Date de Naissance" value={formData.dateOfBirth} isEditing={isEditing} id="dateOfBirth" type="date" onChange={(v) => setFormData(p => ({...p, dateOfBirth: v}))} />
+                   <DetailEditable label="Lieu de Naissance" value={formData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v) => setFormData(p => ({...p, placeOfBirth: v}))} />
+                   <DetailEditable label="Adresse de Résidence" value={formData.employeeAddressSnapshot} isEditing={isEditing} id="employeeAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, employeeAddressSnapshot: v}))} />
                 </div>
-                <div className="mt-8 pt-6 border-t flex gap-4">
-                   {contract.employeeId && (
+                {!isEditing && contract.employeeId && (
+                  <div className="mt-8 pt-6 border-t flex gap-4">
                      <Link href={`/entity/${entityId}/employees/${contract.employeeId}`}>
                         <Button variant="outline" size="sm" className="h-9 rounded-xl font-bold gap-2 bg-white">
                            <UserCheck className="w-3.5 h-3.5" /> Voir Profil Employé
                         </Button>
                      </Link>
-                   )}
-                </div>
+                  </div>
+                )}
              </CardContent>
           </Card>
 
@@ -278,19 +321,30 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Intitulé du Poste" value={contract.jobTitleName} icon={Briefcase} />
-                   <DetailRow label="Département" value={contract.departmentName} icon={Building2} />
-                   <DetailRow label="Site d'Affectation" value={contract.worksiteName} icon={MapPin} className="col-span-full" />
+                   <DetailEditable label="Intitulé du Poste" value={formData.jobTitleName} isEditing={isEditing} id="jobTitleName" required icon={Briefcase} onChange={(v) => setFormData(p => ({...p, jobTitleName: v}))} />
+                   <DetailEditable label="Département" value={formData.departmentName} isEditing={isEditing} id="departmentName" icon={Building2} onChange={(v) => setFormData(p => ({...p, departmentName: v}))} />
+                   <DetailEditable label="Site d'Affectation" value={formData.worksiteName} isEditing={isEditing} id="worksiteName" required icon={MapPin} className="col-span-full" onChange={(v) => setFormData(p => ({...p, worksiteName: v}))} />
                 </div>
-                {contract.missionsSnapshot && contract.missionsSnapshot.length > 0 && (
-                  <div className="space-y-3 pt-6 border-t">
-                     <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Missions & Responsabilités</p>
-                     <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                        <ul className="list-disc pl-5 space-y-2 text-sm text-slate-700">
-                           {contract.missionsSnapshot.map((m, i) => <li key={i}>{m}</li>)}
-                        </ul>
-                     </div>
+                {isEditing ? (
+                  <div className="space-y-2 pt-4">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Missions Snapshot (Un par ligne)</Label>
+                    <Textarea 
+                      value={formData.missionsSnapshot?.join('\n') || ""} 
+                      onChange={(e) => setFormData(p => ({...p, missionsSnapshot: e.target.value.split('\n').filter(Boolean)}))}
+                      className="min-h-[120px] rounded-xl"
+                    />
                   </div>
+                ) : (
+                  formData.missionsSnapshot && formData.missionsSnapshot.length > 0 && (
+                    <div className="space-y-3 pt-6 border-t">
+                       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Missions & Responsabilités</p>
+                       <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                          <ul className="list-disc pl-5 space-y-2 text-sm text-slate-700">
+                             {formData.missionsSnapshot.map((m, i) => <li key={i}>{m}</li>)}
+                          </ul>
+                       </div>
+                    </div>
+                  )
                 )}
              </CardContent>
           </Card>
@@ -304,26 +358,26 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-12">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailRow label="Type de Contrat" value={contract.contractType} />
-                   <DetailRow label="Date de Début" value={formatDate(contract.startDate)} icon={Calendar} />
-                   {contract.endDate && <DetailRow label="Date de Fin" value={formatDate(contract.endDate)} icon={Calendar} />}
-                   <DetailRow label="Période d'essai" value={contract.trialPeriodDays ? `${contract.trialPeriodDays} jours` : "Non renseignée"} />
+                   <DetailEditable label="Type de Contrat" value={formData.contractType} isEditing={isEditing} id="contractType" required onChange={(v) => setFormData(p => ({...p, contractType: v}))} />
+                   <DetailEditable label="Date de Début" value={formData.startDate} isEditing={isEditing} id="startDate" type="date" required icon={Calendar} onChange={(v) => setFormData(p => ({...p, startDate: v}))} />
+                   <DetailEditable label="Date de Fin (Optionnel)" value={formData.endDate} isEditing={isEditing} id="endDate" type="date" icon={Calendar} onChange={(v) => setFormData(p => ({...p, endDate: v}))} />
+                   <DetailEditable label="Période d'essai (jours)" value={formData.trialPeriodDays} isEditing={isEditing} id="trialPeriodDays" type="number" onChange={(v) => setFormData(p => ({...p, trialPeriodDays: parseInt(v) || 0}))} />
                 </div>
                 
                 <Separator className="bg-slate-100" />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Temps de Travail" value={`${contract.weeklyHours}h / semaine`} icon={Clock} />
-                   <DetailRow label="Format" value={contract.isPartTime ? "Temps Partiel" : "Temps Plein"} />
-                   {contract.workingScheduleNotes && <DetailRow label="Notes Planning" value={contract.workingScheduleNotes} className="col-span-full" />}
+                   <DetailEditable label="Temps de Travail Hebdo (h)" value={formData.weeklyHours} isEditing={isEditing} id="weeklyHours" type="number" required icon={Clock} onChange={(v) => setFormData(p => ({...p, weeklyHours: parseFloat(v) || 0}))} />
+                   <DetailEditable label="Format Part-time ?" value={formData.isPartTime ? "OUI" : "NON"} isEditing={isEditing} id="isPartTime" type="checkbox" onChange={(v) => setFormData(p => ({...p, isPartTime: !!v}))} />
+                   <DetailEditable label="Notes Planning" value={formData.workingScheduleNotes} isEditing={isEditing} id="workingScheduleNotes" className="col-span-full" onChange={(v) => setFormData(p => ({...p, workingScheduleNotes: v}))} />
                 </div>
 
                 <Separator className="bg-slate-100" />
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailRow label="Contrat Collectif (CCNL)" value={contract.ccnlName} />
-                   <DetailRow label="Niveau" value={contract.levelCode} />
-                   <DetailRow label="Qualification" value={contract.qualificationCategory || contract.levelLabel} />
+                   <DetailEditable label="Convention Collective (CCNL)" value={formData.ccnlName} isEditing={isEditing} id="ccnlName" required onChange={(v) => setFormData(p => ({...p, ccnlName: v}))} />
+                   <DetailEditable label="Niveau" value={formData.levelCode} isEditing={isEditing} id="levelCode" required onChange={(v) => setFormData(p => ({...p, levelCode: v}))} />
+                   <DetailEditable label="Qualification" value={formData.qualificationCategory} isEditing={isEditing} id="qualificationCategory" onChange={(v) => setFormData(p => ({...p, qualificationCategory: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -337,52 +391,36 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <div className="space-y-1">
-                      <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight opacity-70">Brut Mensuel</p>
-                      <p className="text-xl font-black text-primary">€ {formatMoney(contract.grossMonthly)}</p>
-                   </div>
-                   <div className="space-y-1">
-                      <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight opacity-70">Brut Annuel (RAL)</p>
-                      <p className="text-xl font-black text-primary">€ {formatMoney(contract.grossAnnual)}</p>
-                   </div>
-                   <div className="space-y-1">
-                      <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight opacity-70">Mensualités</p>
-                      <p className="text-xl font-black text-primary">{contract.monthlyPayments || 13}</p>
-                   </div>
+                   <DetailEditable label="Brut Mensuel (€)" value={formData.grossMonthly} isEditing={isEditing} id="grossMonthly" type="number" required onChange={(v) => setFormData(p => ({...p, grossMonthly: parseFloat(v) || 0}))} />
+                   <DetailEditable label="Brut Annuel / RAL (€)" value={formData.grossAnnual} isEditing={isEditing} id="grossAnnual" type="number" onChange={(v) => setFormData(p => ({...p, grossAnnual: parseFloat(v) || 0}))} />
+                   <DetailEditable label="Mensualités" value={formData.monthlyPayments} isEditing={isEditing} id="monthlyPayments" type="number" onChange={(v) => setFormData(p => ({...p, monthlyPayments: parseInt(v) || 13}))} />
                 </div>
-                {contract.overtimeNote && (
-                   <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-600 italic">
-                      {contract.overtimeNote}
-                   </div>
-                )}
+                <DetailEditable label="Notes Variables / Heures Supp." value={formData.overtimeNote} isEditing={isEditing} id="overtimeNote" className="mt-8" onChange={(v) => setFormData(p => ({...p, overtimeNote: v}))} />
+             </CardContent>
+          </Card>
+
+          {/* Compliance */}
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <Globe className="w-4 h-4" /> Compliance & UniLav
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                   <DetailEditable label="Protocole UniLav" value={formData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, uniLavProtocolNumber: v}))} />
+                   <DetailEditable label="Date Soumission" value={formData.uniLavSubmissionDate} isEditing={isEditing} id="uniLavSubmissionDate" type="date" onChange={(v) => setFormData(p => ({...p, uniLavSubmissionDate: v}))} />
+                </div>
              </CardContent>
           </Card>
         </div>
 
+        {/* Audit Sidebar */}
         <div className="space-y-8">
-          {/* Compliance Card */}
-          <Card className="border-accent/10 bg-accent/5 rounded-[2rem] overflow-hidden shadow-lg shadow-accent/5">
-             <CardHeader className="py-4 border-b bg-accent/10">
-                <CardTitle className="text-[10px] font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
-                   <Globe className="w-4 h-4" /> Compliance Italie
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-6 space-y-6">
-                <AuditRow label="Protocole UniLav" value={contract.uniLavProtocolNumber || "Non renseigné"} />
-                <AuditRow label="Date Soumission" value={contract.uniLavSubmissionDate || "Non renseignée"} />
-                {contract.uniLavReceiptUrl && (
-                  <Button variant="outline" size="sm" className="w-full h-8 rounded-lg text-[9px] font-black bg-white" asChild>
-                    <a href={contract.uniLavReceiptUrl} target="_blank" rel="noopener noreferrer">Voir le reçu (PDF)</a>
-                  </Button>
-                )}
-             </CardContent>
-          </Card>
-
-          {/* Audit Sidebar */}
           <Card className="border-primary/10 rounded-[2rem] shadow-lg bg-secondary/5 overflow-hidden">
              <CardHeader className="py-4 border-b bg-secondary/10">
                 <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                   <History className="w-4 h-4" /> Historique
+                   <History className="w-4 h-4" /> Historique & Audit
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-6 space-y-6">
@@ -398,31 +436,69 @@ export default function ContractDetailPage() {
                 </div>
              </CardContent>
           </Card>
-          
-          <div className="p-4 bg-primary/5 rounded-[2rem] border border-primary/10">
-             <div className="flex items-center gap-2 text-primary font-black uppercase text-[10px] tracking-widest mb-3">
-                <ListTodo className="w-4 h-4" /> Prochaines Étapes
-             </div>
-             <p className="text-[10px] text-slate-600 leading-relaxed font-medium">
-                {contract.status === 'draft' ? "Vérifiez les données de snapshot avant de marquer le contrat comme 'Prêt pour signature'." :
-                 contract.status === 'pending_signature' ? "Une fois la signature obtenue, confirmez-la pour activer le dossier employé." :
-                 "Ce contrat est archivé ou actif."}
-             </p>
-          </div>
         </div>
       </div>
+
+      <Dialog open={isValidationDialogOpen} onOpenChange={setIsValidationDialogOpen}>
+        <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-red-600 flex items-center gap-2">
+              <AlertTriangle className="w-6 h-6" /> Dossier contrat incomplet
+            </DialogTitle>
+            <DialogDescription>Certaines informations obligatoires sont manquantes pour l'envoi en signature.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <ScrollArea className="max-h-[300px] rounded-xl border p-4 bg-slate-50">
+               <ul className="space-y-2">
+                  {validationErrors.map((err, i) => (
+                    <li key={i} className="text-xs font-bold text-slate-700 flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                       {err}
+                    </li>
+                  ))}
+               </ul>
+            </ScrollArea>
+          </div>
+          <DialogFooter>
+             <Button onClick={() => setIsValidationDialogOpen(false)} className="w-full rounded-xl">Corriger les informations</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function DetailRow({ label, value, icon: Icon, className }: { label: string, value: any, icon?: any, className?: string }) {
+function DetailEditable({ label, value, isEditing, id, type = "text", required = false, icon: Icon, className, onChange }: { 
+  label: string, value: any, isEditing: boolean, id: string, type?: string, required?: boolean, icon?: any, className?: string, onChange: (v: any) => void 
+}) {
+  const displayValue = value === undefined || value === null || value === "" ? "Non renseigné" : value;
+  const isMissing = required && (value === undefined || value === null || value === "");
+
   return (
     <div className={cn("space-y-1", className)}>
-      <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight mb-1 opacity-70">{label}</p>
-      <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-         {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />}
-         {value || "Non renseigné"}
-      </div>
+      <Label htmlFor={id} className={cn("text-[10px] font-black uppercase tracking-tight mb-1 opacity-70", isMissing && "text-red-600 opacity-100")}>
+        {label} {required && "*"}
+      </Label>
+      {isEditing ? (
+        type === "checkbox" ? (
+          <div className="flex items-center h-10 px-3 border rounded-xl bg-white">
+            <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 text-primary" />
+          </div>
+        ) : (
+          <Input 
+            id={id} 
+            type={type} 
+            value={value || ""} 
+            onChange={(e) => onChange(e.target.value)} 
+            className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300 ring-red-100")} 
+          />
+        )
+      ) : (
+        <div className={cn("flex items-center gap-2 text-sm font-bold", isMissing ? "text-red-400 italic font-medium" : "text-slate-800")}>
+           {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />}
+           {displayValue}
+        </div>
+      )}
     </div>
   );
 }
