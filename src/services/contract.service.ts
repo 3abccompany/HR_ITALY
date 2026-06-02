@@ -85,8 +85,51 @@ export async function sendContractToSignature(entityId: string, contractId: stri
 }
 
 /**
+ * Records a manual reference to the signed contract document.
+ * Allowed in pending_signature only.
+ */
+export async function recordSignedDocumentReference(
+  entityId: string, 
+  contractId: string, 
+  data: { title: string, url?: string, reference?: string }, 
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(contractRef);
+    if (!snap.exists()) throw new Error("Contrat introuvable.");
+    const contract = snap.data() as Contract;
+
+    if (contract.status !== "pending_signature") {
+      throw new Error("L'enregistrement du document n'est possible qu'en phase de signature.");
+    }
+
+    transaction.update(contractRef, {
+      signedDocumentTitle: data.title,
+      signedDocumentUrl: data.url || null,
+      signedDocumentId: data.reference || null,
+      signedDocumentUploadedAt: serverTimestamp(),
+      signedDocumentUploadedBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "contract.signed_document_recorded",
+    resourceType: "contract",
+    resourceId: contractId,
+    details: { title: data.title }
+  });
+}
+
+/**
  * Activates a contract and updates the linked employee.
- * Strictly prevents overwriting an existing active contract of a different ID.
+ * STRICT GATE: Requires a signed document reference.
  */
 export async function activateContractAction(entityId: string, contractId: string, employeeId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -96,6 +139,14 @@ export async function activateContractAction(entityId: string, contractId: strin
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
   await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(contractRef);
+    if (!snap.exists()) throw new Error("Contrat introuvable.");
+    const contract = snap.data() as Contract;
+
+    if (!contract.signedDocumentId && !contract.signedDocumentUrl && !contract.signedDocumentTitle) {
+      throw new Error("Veuillez enregistrer le contrat signé avant activation.");
+    }
+
     const empSnap = await transaction.get(employeeRef);
     if (!empSnap.exists()) throw new Error("L'employé rattaché n'existe pas.");
     const empData = empSnap.data();

@@ -58,9 +58,16 @@ export interface Contract {
   uniLavSubmissionDate?: string;
   uniLavReceiptUrl?: string;
 
+  // --- Signed Document Reference ---
+  signedDocumentId?: string | null;
+  signedDocumentTitle?: string;
+  signedDocumentUrl?: string;
+  signedDocumentUploadedAt?: Date | FieldValue;
+  signedDocumentUploadedBy?: string;
+
   // --- Lifecycle & Audit ---
   status: ContractStatus;
-  signedDocumentId?: string | null;
+  signedDocumentId_old?: string | null; // Keeping legacy field reference if needed for transition
   notes?: string;
 
   sentForSignatureAt?: Date | FieldValue;

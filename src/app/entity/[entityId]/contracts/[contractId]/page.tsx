@@ -9,7 +9,7 @@ import {
   Scale, Fingerprint, Calendar, FileText,
   MapPin, CheckCircle2, Ban, Archive, 
   RefreshCcw, ScrollText, Globe,
-  Edit, Save, X, AlertTriangle
+  Edit, Save, X, AlertTriangle, ExternalLink
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useFirebase, useDoc, useUser, useCollection } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
@@ -35,7 +36,8 @@ import {
   terminateContractAction, 
   archiveContractAction,
   rollbackToDraft,
-  updateContract
+  updateContract,
+  recordSignedDocumentReference
 } from "@/services/contract.service";
 import {
   Dialog,
@@ -62,6 +64,10 @@ export default function ContractDetailPage() {
   const [formData, setFormData] = useState<Partial<Contract>>({});
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isValidationDialogOpen, setIsValidationDialogOpen] = useState(false);
+
+  // Signed Doc Ref State
+  const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
+  const [signedDocForm, setSignedDocForm] = useState({ title: "", url: "", reference: "" });
 
   // 1. Core Data
   const contractRef = useMemo(() => 
@@ -262,6 +268,9 @@ export default function ContractDetailPage() {
       if (err.message === "ALREADY_HAS_ACTIVE_CONTRACT") {
         msg = "Un autre contrat actif existe déjà pour cet employé.";
       }
+      if (err.message === "MISSING_SIGNED_DOCUMENT") {
+        msg = "Veuillez enregistrer le contrat signé avant activation.";
+      }
       toast({ variant: "destructive", title: "Erreur", description: msg });
     } finally {
       setProcessing(false);
@@ -299,6 +308,21 @@ export default function ContractDetailPage() {
     }
   };
 
+  const handleSaveSignedDocRef = async () => {
+    if (!user || !contract || !signedDocForm.title) return;
+    setProcessing(true);
+    try {
+      await recordSignedDocumentReference(entityId, contractId, signedDocForm, user.uid);
+      setIsSignedDocModalOpen(false);
+      setSignedDocForm({ title: "", url: "", reference: "" });
+      toast({ title: "Référence enregistrée", description: "Le document signé est maintenant lié au dossier." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
@@ -314,6 +338,8 @@ export default function ContractDetailPage() {
   const businessReference = contract.employeeCode || effectiveData.employeeCode || "Brouillon d'intégration";
   const canUpdate = hasPermission("contracts.update");
   const isDraft = contract.status === 'draft';
+  const isPendingSignature = contract.status === 'pending_signature';
+  const hasSignedDoc = !!(contract.signedDocumentId || contract.signedDocumentUrl || contract.signedDocumentTitle);
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
@@ -359,12 +385,16 @@ export default function ContractDetailPage() {
              </Button>
            )}
 
-           {!isEditing && canUpdate && contract.status === 'pending_signature' && (
+           {!isEditing && canUpdate && isPendingSignature && (
              <>
                <Button variant="outline" onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2 bg-white rounded-xl">
                  <RefreshCcw className="w-4 h-4" /> Brouillon
                </Button>
-               <Button onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")} disabled={processing || !contract.employeeId} className="gap-2 bg-primary text-white font-black rounded-xl">
+               <Button 
+                onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")} 
+                disabled={processing || !contract.employeeId} 
+                className={cn("gap-2 text-white font-black rounded-xl", hasSignedDoc ? "bg-primary" : "bg-slate-300 opacity-70")}
+               >
                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                  Confirmer signature et activer
                </Button>
@@ -388,6 +418,58 @@ export default function ContractDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <div className="lg:col-span-3 space-y-8">
           
+          {/* Signed Document Section */}
+          {(isPendingSignature || !isDraft) && (
+            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-orange-100 bg-orange-50/5")}>
+              <CardHeader className="py-4 border-b px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> Document contractuel signé
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-8">
+                {hasSignedDoc ? (
+                  <div className="flex items-center justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                      <div className="bg-green-100 p-3 rounded-2xl text-green-600"><CheckCircle2 className="w-6 h-6" /></div>
+                      <div>
+                         <p className="text-sm font-black text-slate-800">{contract.signedDocumentTitle}</p>
+                         <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">
+                           Enregistré le {formatDate(contract.signedDocumentUploadedAt)} par {getUserLabel(contract.signedDocumentUploadedBy)}
+                         </p>
+                      </div>
+                    </div>
+                    {contract.signedDocumentUrl && (
+                      <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2">
+                        <a href={contract.signedDocumentUrl} target="_blank" rel="noopener noreferrer">
+                           <ExternalLink className="w-4 h-4" /> Ouvrir le document
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
+                      <AlertTriangle className="h-4 w-4 text-orange-600" />
+                      <AlertTitle className="text-sm font-bold text-orange-800">Signature non enregistrée</AlertTitle>
+                      <AlertDescription className="text-xs text-orange-700">
+                        Veuillez enregistrer la référence du contrat signé avant de pouvoir procéder à l'activation.
+                      </AlertDescription>
+                    </Alert>
+                    {isPendingSignature && (
+                       <Button 
+                         variant="outline" 
+                         onClick={() => setIsSignedDocModalOpen(true)}
+                         className="w-full h-12 border-orange-200 text-orange-700 hover:bg-orange-50 font-black rounded-xl border-dashed border-2 gap-2"
+                       >
+                         <FileSignature className="w-4 h-4" /> Enregistrer la référence du contrat signé
+                       </Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Employer Card */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
@@ -580,6 +662,48 @@ export default function ContractDetailPage() {
           </div>
           <DialogFooter>
              <Button onClick={() => setIsValidationDialogOpen(false)} className="w-full rounded-xl">Corriger les informations</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Signed Doc Modal */}
+      <Dialog open={isSignedDocModalOpen} onOpenChange={setIsSignedDocModalOpen}>
+        <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary">Enregistrer le contrat signé</DialogTitle>
+            <DialogDescription>Veuillez renseigner les détails du document physique ou numérique signé par les parties.</DialogDescription>
+          </DialogHeader>
+          <div className="py-6 space-y-6">
+            <div className="space-y-2">
+               <Label className="text-[10px] uppercase font-black text-muted-foreground">Titre du document (Requis)</Label>
+               <Input 
+                 value={signedDocForm.title} 
+                 onChange={(e) => setSignedDocForm(p => ({...p, title: e.target.value}))}
+                 placeholder="Ex: Contrat_CDI_Dumont_Signe.pdf"
+                 className="h-12 rounded-xl"
+               />
+            </div>
+            <div className="space-y-2">
+               <Label className="text-[10px] uppercase font-black text-muted-foreground">Lien ou Référence (Optionnel)</Label>
+               <Input 
+                 value={signedDocForm.url} 
+                 onChange={(e) => setSignedDocForm(p => ({...p, url: e.target.value}))}
+                 placeholder="https://..."
+                 className="h-12 rounded-xl"
+               />
+               <p className="text-[9px] text-muted-foreground italic pl-1">Le chargement réel du fichier sera disponible via le module Documents.</p>
+            </div>
+          </div>
+          <DialogFooter>
+             <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)} disabled={processing}>Annuler</Button>
+             <Button 
+               onClick={handleSaveSignedDocRef} 
+               disabled={processing || !signedDocForm.title}
+               className="bg-primary text-white font-black rounded-xl px-8"
+             >
+               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+               Enregistrer la référence
+             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
