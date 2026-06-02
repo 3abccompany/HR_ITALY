@@ -196,7 +196,7 @@ export default function EmployeeDetailPage() {
                      {employee.pendingContractId && (
                        <div className="p-3 bg-white/10 rounded-xl border border-white/20 flex items-center gap-2 text-[10px] font-bold">
                          <Info className="w-3.5 h-3.5" />
-                         <span>Contrat en cours de préparation (Draft)</span>
+                         <span>Un contrat est en cours de préparation (Onboarding)</span>
                        </div>
                      )}
                    </div>
@@ -219,12 +219,13 @@ export default function EmployeeDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Pending / Onboarding Contract (Visible only if draft exists) */}
+          {/* Pending / Onboarding Contract (Visible only if draft/pending signature exists) */}
           {employee.pendingContractId && !contract && (
             <Card className="border-dashed border-2 border-accent/30 bg-white shadow-lg rounded-[2.5rem] overflow-hidden animate-in fade-in slide-in-from-top-2">
                <CardHeader className="bg-accent/5 py-4 px-8 border-b">
                   <CardTitle className="text-[10px] font-black uppercase tracking-widest text-accent flex items-center gap-2">
-                     <Clock className="w-4 h-4" /> Contrat en préparation
+                     <Clock className="w-4 h-4" /> 
+                     {pendingContract?.status === 'pending_signature' ? "Contrat en attente de signature" : "Contrat en préparation"}
                   </CardTitle>
                </CardHeader>
                <CardContent className="p-8 space-y-4">
@@ -234,6 +235,10 @@ export default function EmployeeDetailPage() {
                     <>
                       <div className="grid grid-cols-1 gap-3">
                          <DetailRow label="Type de contrat" value={pendingContract.contractType} className="opacity-80" />
+                         <div className="flex items-center justify-between">
+                            <DetailRow label="Date début" value={formatDate(pendingContract.startDate)} className="opacity-80" />
+                            {getContractStatusBadge(pendingContract.status)}
+                         </div>
                          <DetailRow label="Classification" value={`${pendingContract.ccnlName} • ${pendingContract.levelCode}`} className="opacity-80" />
                          <div className="flex items-center justify-between pt-2">
                             <span className="text-[10px] font-black uppercase text-muted-foreground">Brut Annuel</span>
@@ -244,17 +249,20 @@ export default function EmployeeDetailPage() {
                       <div className="bg-accent/5 p-3 rounded-xl border border-accent/10 flex items-start gap-3">
                          <AlertTriangle className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                          <p className="text-[10px] font-bold text-accent-foreground leading-relaxed">
-                            Ce document est en attente de signature. Le collaborateur n'est pas encore officiellement rattaché à ce contrat.
+                            {pendingContract.status === 'pending_signature' 
+                              ? "Ce contrat est prêt et en attente de signature. Il n’est pas encore actif."
+                              : "Ce contrat est en cours de préparation et n’est pas encore prêt pour signature."
+                            }
                          </p>
                       </div>
                       <Button variant="outline" className="w-full rounded-xl border-accent/20 text-accent font-bold h-10 gap-2" asChild>
-                         <Link href={`/entity/${entityId}/contracts`}>
+                         <Link href={`/entity/${entityId}/contracts/${pendingContract.contractId}`}>
                             Gérer dans le module contrats
                          </Link>
                       </Button>
                     </>
                   ) : (
-                    <p className="text-[10px] text-muted-foreground italic">Chargement des détails du brouillon...</p>
+                    <p className="text-[10px] text-muted-foreground italic">Chargement des détails du dossier...</p>
                   )}
                </CardContent>
             </Card>
@@ -306,5 +314,14 @@ function getStatusBadge(status: string) {
     case 'suspended': return <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-200">SUSPENDU</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">TERMINE</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+function getContractStatusBadge(status: string) {
+  switch (status) {
+    case 'draft': return <Badge variant="secondary" className="text-[8px] h-4 px-1 bg-slate-100 text-slate-500 uppercase font-black">Brouillon</Badge>;
+    case 'pending_signature': return <Badge variant="secondary" className="text-[8px] h-4 px-1 bg-orange-50 text-orange-600 border-orange-200 uppercase font-black">En signature</Badge>;
+    case 'active': return <Badge className="text-[8px] h-4 px-1 bg-green-500 text-white border-none uppercase font-black">Actif</Badge>;
+    default: return <Badge variant="outline" className="text-[8px] h-4 px-1 uppercase font-black">{status}</Badge>;
   }
 }
