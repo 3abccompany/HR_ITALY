@@ -6,7 +6,8 @@ import {
   Loader2, ArrowLeft, User, UserCheck, 
   Briefcase, Building2, FileSignature,
   Info, Euro, Clock, History, ExternalLink,
-  Scale, Fingerprint, Calendar, FileText
+  Scale, Fingerprint, Calendar, FileText,
+  MapPin
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -35,7 +36,6 @@ export default function ContractDetailPage() {
 
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
-  // Fallback Employee Query if denormalized data is missing
   const employeeRef = useMemo(() => 
     db && contract?.employeeId ? (doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee>) : null,
   [db, entityId, contract?.employeeId]);
@@ -88,6 +88,12 @@ export default function ContractDetailPage() {
     }
   };
 
+  const getUserLabel = (uid: string | undefined) => {
+    if (!uid) return "-";
+    if (uid === "system" || uid === "candidate_portal" || uid === "server") return "Système";
+    return "Utilisateur interne";
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
@@ -104,8 +110,12 @@ export default function ContractDetailPage() {
   }
 
   const displayName = contract.employeeDisplayName || (employee ? `${employee.firstName} ${employee.lastName}` : "Collaborateur inconnu");
-  const employeeCode = contract.employeeCode || (employee ? employee.employeeCode : "Référence non disponible");
-  const businessReference = contract.status === 'draft' ? "Brouillon d'intégration" : employeeCode;
+  const employeeCode = contract.employeeCode || (employee ? employee.employeeCode : "Code non disponible");
+  
+  const businessReference = contract.employeeCode || "Brouillon d'intégration";
+  const resolvedCompanyName = entity?.nomEntreprise || entity?.legalName || "Entreprise non renseignée";
+  const resolvedDepartment = contract.ccnlName ? (employee?.departmentName || "Département non renseigné") : (employee?.departmentName || "Département non renseigné");
+  const resolvedWorksite = employee?.worksiteName || "Site non renseigné";
 
   return (
     <div className="p-8 max-w-5xl mx-auto pb-32">
@@ -133,7 +143,7 @@ export default function ContractDetailPage() {
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <User className="w-4 h-4" /> Collaborateur concerné
+                   <User className="w-4 h-4" /> Collaborateur
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8">
@@ -163,6 +173,22 @@ export default function ContractDetailPage() {
                         </Link>
                       )}
                    </div>
+                </div>
+             </CardContent>
+          </Card>
+
+          {/* Organizational Context Card */}
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <Building2 className="w-4 h-4" /> Contexte organisationnel
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                   <DetailRow label="Entreprise / Société" value={resolvedCompanyName} icon={Building2} />
+                   <DetailRow label="Département" value={resolvedDepartment} icon={Briefcase} />
+                   <DetailRow label="Site / Lieu de travail" value={resolvedWorksite} icon={MapPin} className="col-span-full" />
                 </div>
              </CardContent>
           </Card>
@@ -236,8 +262,10 @@ export default function ContractDetailPage() {
              <CardContent className="p-6 space-y-6">
                 <div className="space-y-4">
                    <AuditRow label="Créé le" value={formatDateTime(contract.createdAt)} />
-                   <AuditRow label="Mis à jour le" value={formatDateTime(contract.updatedAt)} />
-                   <AuditRow label="Auteur" value={contract.createdBy === "system" ? "Système" : (contract.createdBy || "-")} />
+                   <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
+                   <Separator className="opacity-20" />
+                   <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
+                   <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
                 </div>
                 
                 <Separator />
