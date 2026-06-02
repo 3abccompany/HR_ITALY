@@ -33,6 +33,7 @@ function sanitizePayload(obj: any): any {
 
 /**
  * Uploads a file to Firebase Storage and creates an HRDocument record in Firestore.
+ * Path: entities/{entityId}/documents/{documentId}/{fileName}
  */
 export async function uploadHRDocument(
   entityId: string, 
@@ -43,14 +44,27 @@ export async function uploadHRDocument(
 ) {
   if (!db || !storage) throw new Error("Firebase services not initialized");
 
+  // Basic File Validation
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (!extension || extension === file.name.toLowerCase()) {
+    throw new Error("Le fichier doit avoir une extension valide (ex: .pdf).");
+  }
+
+  const allowedMimeTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+  if (!allowedMimeTypes.includes(file.type)) {
+    throw new Error("Format de fichier non supporté. Veuillez utiliser PDF, PNG ou JPEG.");
+  }
+
   const docRef = doc(collection(db, `entities/${entityId}/documents`));
   const docId = docRef.id;
 
-  // 1. Upload to Storage
-  const storagePath = `entities/${entityId}/documents/${docId}/${file.name}`;
+  // 1. Upload to Storage using the required structured path
+  // Path: entities/{entityId}/documents/{documentId}/{fileName}
+  const safeFileName = file.name.replace(/\s+/g, '_');
+  const storagePath = `entities/${entityId}/documents/${docId}/${safeFileName}`;
   const fileRef = ref(storage, storagePath);
   
-  const uploadResult = await uploadBytes(fileRef, file);
+  await uploadBytes(fileRef, file);
   
   // 2. Prepare Firestore Record
   const docData: HRDocument = {
@@ -59,7 +73,7 @@ export async function uploadHRDocument(
     entityId,
     status: metadata.status || "valid",
     storagePath,
-    fileName: file.name,
+    fileName: safeFileName,
     mimeType: file.type,
     sizeBytes: file.size,
     version: metadata.version || 1,

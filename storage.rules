@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // --- Helper Functions ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEntityMember(entityId) {
+      let membershipId = request.auth.uid + "_" + entityId;
+      return isSignedIn() && 
+        firestore.exists(/databases/(default)/documents/memberships/$(membershipId)) &&
+        firestore.get(/databases/(default)/documents/memberships/$(membershipId)).data.status == 'active';
+    }
+
+    function isPlatformAdmin() {
+      return isSignedIn() && 
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.platformRole == 'superAdmin';
+    }
+
+    // --- Entity Scoped Rules ---
+
+    match /entities/{entityId}/{allPaths=**} {
+      // Main tenant isolation rule: only members of the entity or platform admins can access files
+      allow read, write: if isEntityMember(entityId) || isPlatformAdmin();
+      
+      // Strict validation for manual document uploads
+      match /documents/{documentId}/{fileName} {
+        allow write: if (isEntityMember(entityId) || isPlatformAdmin())
+                      && request.resource.size < 10 * 1024 * 1024 // 10MB
+                      && request.resource.contentType.matches('application/pdf|image/png|image/jpeg');
+      }
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
