@@ -1,12 +1,13 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter } from "navigation";
 import { 
   Search, FileText, Loader2, Eye, 
   Filter, X, ListFilter, Briefcase, 
   Calendar as CalendarIcon, Building2,
-  Scale, Euro, Fingerprint
+  Scale, Euro, Fingerprint, AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,7 @@ import { useFirebase, useCollection } from "@/firebase";
 import { collection, query, orderBy, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Contract, ContractStatus } from "@/types/contract";
+import { Employee } from "@/types/employee";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -45,6 +47,7 @@ export default function ContractsRegistryPage() {
   const [pagination, setPagination] = useState({ page: 1, pageSize: 25 });
 
   const canRead = hasPermission("contracts.read");
+  const canReadEmployees = hasPermission("employees.read");
 
   // Main real-time query
   const contractsQuery = useMemo(() => {
@@ -53,6 +56,20 @@ export default function ContractsRegistryPage() {
   }, [db, entityId, canRead]);
 
   const { data: contracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery);
+
+  // Fallback Employee lookup query - Lightweight since it's one fetch per workspace session
+  const employeesQuery = useMemo(() => {
+    if (!db || !entityId || !canReadEmployees) return null;
+    return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
+  }, [db, entityId, canReadEmployees]);
+
+  const { data: employees } = useCollection<Employee>(employeesQuery);
+
+  const employeesMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    employees?.forEach(e => map.set(e.employeeId, e));
+    return map;
+  }, [employees]);
 
   // Derived filter options
   const uniqueTypes = useMemo(() => 
@@ -64,11 +81,16 @@ export default function ContractsRegistryPage() {
     if (!contracts) return [];
     
     return contracts.filter(c => {
+      // Robust name/code resolution for search
+      const emp = employeesMap.get(c.employeeId);
+      const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "Collaborateur inconnu");
+      const code = c.employeeCode || (emp ? emp.employeeCode : "Code non disponible");
+
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const match = 
-          (c.employeeDisplayName || "Collaborateur inconnu").toLowerCase().includes(term) ||
-          (c.employeeCode || "").toLowerCase().includes(term) ||
+          displayName.toLowerCase().includes(term) ||
+          code.toLowerCase().includes(term) ||
           c.contractId.toLowerCase().includes(term);
         if (!match) return false;
       }
@@ -76,7 +98,7 @@ export default function ContractsRegistryPage() {
       if (filters.type !== "all" && c.contractType !== filters.type) return false;
       return true;
     });
-  }, [contracts, filters]);
+  }, [contracts, filters, employeesMap]);
 
   // Pagination
   const totalResults = filteredContracts.length;
@@ -205,52 +227,69 @@ export default function ContractsRegistryPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                paginatedContracts.map((c) => (
-                  <TableRow key={c.contractId} className="hover:bg-muted/50 transition-colors">
-                    <TableCell>
-                      <div className="font-bold text-primary">{c.employeeDisplayName || "Collaborateur inconnu"}</div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase font-mono mt-0.5">
-                         <Fingerprint className="w-2.5 h-2.5" /> {c.employeeCode || "Code non disponible"}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-xs font-bold text-slate-700">{c.contractType || "N/A"}</div>
-                    </TableCell>
-                    <TableCell>
-                      {getStatusBadge(c.status)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground" /> {c.startDate || "N/A"}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="space-y-0.5">
-                         <div className="text-[10px] font-bold text-primary truncate max-w-[120px]">{c.ccnlName || "N/A"}</div>
-                         <Badge variant="outline" className="text-[8px] h-4 px-1">{c.levelCode || "—"}</Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                       <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1 text-[11px] font-black text-accent">
-                             <Euro className="w-2.5 h-2.5" /> {formatMoney(c.grossMonthly)} /mois
-                          </div>
-                          <div className="text-[9px] text-muted-foreground font-bold">RAL: {formatMoney(c.grossAnnual, 0)} €</div>
-                       </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="h-8 gap-2 rounded-lg font-bold shadow-sm opacity-50 cursor-not-allowed"
-                        disabled
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Détails</span>
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
+                paginatedContracts.map((c) => {
+                  const emp = employeesMap.get(c.employeeId);
+                  const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "Collaborateur inconnu");
+                  const code = c.employeeCode || (emp ? emp.employeeCode : "Code non disponible");
+                  const isDeleted = !emp && !!c.employeeId;
+
+                  return (
+                    <TableRow key={c.contractId} className="hover:bg-muted/50 transition-colors">
+                      <TableCell>
+                        <div className="flex flex-col">
+                           <div className="font-bold text-primary">{displayName}</div>
+                           <div className="flex items-center gap-2 mt-0.5">
+                             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase font-mono">
+                                <Fingerprint className="w-2.5 h-2.5" /> {code}
+                             </div>
+                             {isDeleted && (
+                               <Badge variant="outline" className="text-[8px] h-3 px-1 border-orange-200 text-orange-600 bg-orange-50 uppercase font-black">
+                                 <AlertCircle className="w-2 h-2 mr-0.5" />
+                                 Dossier introuvable
+                               </Badge>
+                             )}
+                           </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-xs font-bold text-slate-700">{c.contractType || "N/A"}</div>
+                      </TableCell>
+                      <TableCell>
+                        {getStatusBadge(c.status)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground" /> {c.startDate || "N/A"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-0.5">
+                           <div className="text-[10px] font-bold text-primary truncate max-w-[120px]">{c.ccnlName || "N/A"}</div>
+                           <Badge variant="outline" className="text-[8px] h-4 px-1">{c.levelCode || "—"}</Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                         <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1 text-[11px] font-black text-accent">
+                               <Euro className="w-2.5 h-2.5" /> {formatMoney(c.grossMonthly)} /mois
+                            </div>
+                            <div className="text-[9px] text-muted-foreground font-bold">RAL: {formatMoney(c.grossAnnual, 0)} €</div>
+                         </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-8 gap-2 rounded-lg font-bold shadow-sm opacity-50 cursor-not-allowed"
+                          disabled
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Détails</span>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
