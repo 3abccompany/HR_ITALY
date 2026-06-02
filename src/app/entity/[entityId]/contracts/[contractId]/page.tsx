@@ -27,7 +27,7 @@ export default function ContractDetailPage() {
   const contractId = params.contractId as string;
   
   const { db } = useFirebase();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
 
   const contractRef = useMemo(() => 
     db ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
@@ -104,7 +104,8 @@ export default function ContractDetailPage() {
   }
 
   const displayName = contract.employeeDisplayName || (employee ? `${employee.firstName} ${employee.lastName}` : "Collaborateur inconnu");
-  const employeeCode = contract.employeeCode || (employee ? employee.employeeCode : "Code non disponible");
+  const employeeCode = contract.employeeCode || (employee ? employee.employeeCode : "Référence non disponible");
+  const businessReference = contract.status === 'draft' ? "Brouillon d'intégration" : employeeCode;
 
   return (
     <div className="p-8 max-w-5xl mx-auto pb-32">
@@ -119,7 +120,7 @@ export default function ContractDetailPage() {
               {getStatusBadge(contract.status)}
             </div>
             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">
-              Référence : {contractId}
+              Référence : {businessReference}
             </p>
           </div>
         </div>
@@ -141,7 +142,6 @@ export default function ContractDetailPage() {
                       <p className="text-2xl font-black text-slate-900">{displayName}</p>
                       <div className="flex items-center gap-3 text-xs font-bold text-muted-foreground uppercase tracking-wider">
                          <span className="flex items-center gap-1.5"><Fingerprint className="w-3.5 h-3.5" /> {employeeCode}</span>
-                         {contract.employeeId && <span className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> ID: {contract.employeeId}</span>}
                       </div>
                    </div>
                    
@@ -245,7 +245,9 @@ export default function ContractDetailPage() {
                 <div className="bg-white p-4 rounded-2xl border border-primary/5 shadow-sm space-y-2">
                    <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Informations</p>
                    <div className="flex items-start gap-3">
-                      <Info className="w-4 h-4 text-accent shrink-0 mt-0.5" />
+                      <div className="p-1.5 rounded-lg bg-primary/5">
+                        <Info className="w-4 h-4 text-accent shrink-0" />
+                      </div>
                       <p className="text-[10px] font-medium text-slate-600 leading-relaxed">
                         {contract.status === 'draft' 
                           ? "Ce contrat est en cours de préparation. Les termes peuvent encore être modifiés dans la proposition source." 
