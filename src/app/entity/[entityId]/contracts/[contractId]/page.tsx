@@ -272,8 +272,22 @@ export default function ContractDetailPage() {
     if (!user || !contract) return;
     setProcessing(true);
     try {
-      // Normalization check before save
-      const payload = { ...formData };
+      // Build restricted update payload for legal completion only
+      const allowedKeys = [
+        "entityLegalName", "entityVatNumber", "companyAddressSnapshot", 
+        "legalRepresentativeName", "legalRepresentativeTitle",
+        "employeeAddressSnapshot", "dateOfBirth", "placeOfBirth", "taxCode",
+        "endDate", "trialPeriodDays", "trialPeriodUnit", "workingScheduleNotes",
+        "qualificationCategory", "overtimeNote", "uniLavProtocolNumber", 
+        "uniLavSubmissionDate", "uniLavReceiptUrl"
+      ];
+
+      const payload: any = {};
+      allowedKeys.forEach(key => {
+        if (formData[key as keyof Contract] !== undefined) {
+          payload[key] = formData[key as keyof Contract];
+        }
+      });
       
       await updateContract(entityId, contractId, payload, user.uid);
       setIsEditing(false);
@@ -383,11 +397,11 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Raison Sociale" value={effectiveData.entityLegalName} isEditing={isEditing} id="entityLegalName" required onChange={(v) => setFormData(p => ({...p, entityLegalName: v}))} />
-                   <DetailEditable label="Nom commercial" value={effectiveData.entityName} isEditing={isEditing} id="entityName" onChange={(v) => setFormData(p => ({...p, entityName: v}))} />
-                   <DetailEditable label="Numéro TVA / Code Fiscal" value={effectiveData.entityVatNumber} isEditing={isEditing} id="entityVatNumber" onChange={(v) => setFormData(p => ({...p, entityVatNumber: v}))} />
-                   <DetailEditable label="Représentant Légal" value={effectiveData.legalRepresentativeName} isEditing={isEditing} id="legalRepresentativeName" onChange={(v) => setFormData(p => ({...p, legalRepresentativeName: v}))} />
-                   <DetailEditable label="Adresse du Siège" value={effectiveData.companyAddressSnapshot} isEditing={isEditing} id="companyAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, companyAddressSnapshot: v}))} />
+                   <DetailEditable label="Raison Sociale" value={effectiveData.entityLegalName} editValue={formData.entityLegalName} isEditing={isEditing} id="entityLegalName" required onChange={(v) => setFormData(p => ({...p, entityLegalName: v}))} />
+                   <DetailEditable label="Nom commercial" value={effectiveData.entityName} editValue={formData.entityName} isEditing={isEditing} id="entityName" onChange={(v) => setFormData(p => ({...p, entityName: v}))} />
+                   <DetailEditable label="Numéro TVA / Code Fiscal" value={effectiveData.entityVatNumber} editValue={formData.entityVatNumber} isEditing={isEditing} id="entityVatNumber" onChange={(v) => setFormData(p => ({...p, entityVatNumber: v}))} />
+                   <DetailEditable label="Représentant Légal" value={effectiveData.legalRepresentativeName} editValue={formData.legalRepresentativeName} isEditing={isEditing} id="legalRepresentativeName" onChange={(v) => setFormData(p => ({...p, legalRepresentativeName: v}))} />
+                   <DetailEditable label="Adresse du Siège" value={effectiveData.companyAddressSnapshot} editValue={formData.companyAddressSnapshot} isEditing={isEditing} id="companyAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, companyAddressSnapshot: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -401,11 +415,11 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Nom Complet" value={effectiveData.employeeDisplayName} isEditing={isEditing} id="employeeDisplayName" disabled required onChange={(v) => setFormData(p => ({...p, employeeDisplayName: v}))} />
-                   <DetailEditable label="Code Fiscal / ID National" value={effectiveData.taxCode} isEditing={isEditing} id="taxCode" required disabled={!!effectiveData.taxCode} className="font-mono uppercase" onChange={(v) => setFormData(p => ({...p, taxCode: v}))} />
-                   <DetailEditable label="Date de Naissance" value={effectiveData.dateOfBirth} isEditing={isEditing} id="dateOfBirth" type="date" disabled={!!effectiveData.dateOfBirth} onChange={(v) => setFormData(p => ({...p, dateOfBirth: v}))} />
-                   <DetailEditable label="Lieu de Naissance" value={effectiveData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v) => setFormData(p => ({...p, placeOfBirth: v}))} />
-                   <DetailEditable label="Adresse de Résidence" value={effectiveData.employeeAddressSnapshot} isEditing={isEditing} id="employeeAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, employeeAddressSnapshot: v}))} />
+                   <DetailEditable label="Nom Complet" value={effectiveData.employeeDisplayName} editValue={formData.employeeDisplayName} isEditing={isEditing} id="employeeDisplayName" disabled required onChange={(v) => setFormData(p => ({...p, employeeDisplayName: v}))} />
+                   <DetailEditable label="Code Fiscal / ID National" value={effectiveData.taxCode} editValue={formData.taxCode} isEditing={isEditing} id="taxCode" required disabled={!!effectiveData.taxCode} className="font-mono uppercase" onChange={(v) => setFormData(p => ({...p, taxCode: v}))} />
+                   <DetailEditable label="Date de Naissance" value={effectiveData.dateOfBirth} editValue={formData.dateOfBirth} isEditing={isEditing} id="dateOfBirth" type="date" disabled={!!effectiveData.dateOfBirth} onChange={(v) => setFormData(p => ({...p, dateOfBirth: v}))} />
+                   <DetailEditable label="Lieu de Naissance" value={effectiveData.placeOfBirth} editValue={formData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v) => setFormData(p => ({...p, placeOfBirth: v}))} />
+                   <DetailEditable label="Adresse de Résidence" value={effectiveData.employeeAddressSnapshot} editValue={formData.employeeAddressSnapshot} isEditing={isEditing} id="employeeAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, employeeAddressSnapshot: v}))} />
                 </div>
                 {!isEditing && contract.employeeId && (
                   <div className="mt-8 pt-6 border-t flex gap-4">
@@ -428,9 +442,9 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Intitulé du Poste" value={effectiveData.jobTitleName} isEditing={isEditing} id="jobTitleName" disabled required icon={Briefcase} onChange={(v) => setFormData(p => ({...p, jobTitleName: v}))} />
-                   <DetailEditable label="Département" value={effectiveData.departmentName} isEditing={isEditing} id="departmentName" disabled icon={Building2} onChange={(v) => setFormData(p => ({...p, departmentName: v}))} />
-                   <DetailEditable label="Site d'Affectation" value={effectiveData.worksiteName} isEditing={isEditing} id="worksiteName" disabled required icon={MapPin} className="col-span-full" onChange={(v) => setFormData(p => ({...p, worksiteName: v}))} />
+                   <DetailEditable label="Intitulé du Poste" value={effectiveData.jobTitleName} editValue={formData.jobTitleName} isEditing={isEditing} id="jobTitleName" disabled required icon={Briefcase} onChange={(v) => setFormData(p => ({...p, jobTitleName: v}))} />
+                   <DetailEditable label="Département" value={effectiveData.departmentName} editValue={formData.departmentName} isEditing={isEditing} id="departmentName" disabled icon={Building2} onChange={(v) => setFormData(p => ({...p, departmentName: v}))} />
+                   <DetailEditable label="Site d'Affectation" value={effectiveData.worksiteName} editValue={formData.worksiteName} isEditing={isEditing} id="worksiteName" disabled required icon={MapPin} className="col-span-full" onChange={(v) => setFormData(p => ({...p, worksiteName: v}))} />
                 </div>
                 {isEditing ? (
                   <div className="space-y-2 pt-4">
@@ -465,26 +479,26 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-12">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Type de Contrat" value={effectiveData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v) => setFormData(p => ({...p, contractType: v}))} />
-                   <DetailEditable label="Date de Début" value={effectiveData.startDate} isEditing={isEditing} id="startDate" type="date" disabled required icon={Calendar} onChange={(v) => setFormData(p => ({...p, startDate: v}))} />
-                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v) => setFormData(p => ({...p, endDate: v}))} />
-                   <DetailEditable label="Période d'essai (jours)" value={effectiveData.trialPeriodDays} isEditing={isEditing} id="trialPeriodDays" type="number" onChange={(v) => setFormData(p => ({...p, trialPeriodDays: parseInt(v) || 0}))} />
+                   <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v) => setFormData(p => ({...p, contractType: v}))} />
+                   <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled required icon={Calendar} onChange={(v) => setFormData(p => ({...p, startDate: v}))} />
+                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v) => setFormData(p => ({...p, endDate: v}))} />
+                   <DetailEditable label="Période d'essai (jours)" value={effectiveData.trialPeriodDays} editValue={formData.trialPeriodDays} isEditing={isEditing} id="trialPeriodDays" type="number" onChange={(v) => setFormData(p => ({...p, trialPeriodDays: parseInt(v) || 0}))} />
                 </div>
                 
                 <Separator className="bg-slate-100" />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Temps de Travail Hebdo (h)" value={effectiveData.weeklyHours} isEditing={isEditing} id="weeklyHours" type="number" disabled required icon={Clock} onChange={(v) => setFormData(p => ({...p, weeklyHours: parseFloat(v) || 0}))} />
-                   <DetailEditable label="Format Part-time ?" value={effectiveData.isPartTime ? "OUI" : "NON"} isEditing={isEditing} id="isPartTime" type="checkbox" disabled onChange={(v) => setFormData(p => ({...p, isPartTime: !!v}))} />
-                   <DetailEditable label="Notes Planning" value={formData.workingScheduleNotes} isEditing={isEditing} id="workingScheduleNotes" className="col-span-full" onChange={(v) => setFormData(p => ({...p, workingScheduleNotes: v}))} />
+                   <DetailEditable label="Temps de Travail Hebdo (h)" value={effectiveData.weeklyHours} editValue={formData.weeklyHours} isEditing={isEditing} id="weeklyHours" type="number" disabled required icon={Clock} onChange={(v) => setFormData(p => ({...p, weeklyHours: parseFloat(v) || 0}))} />
+                   <DetailEditable label="Format Part-time ?" value={effectiveData.isPartTime ? "OUI" : "NON"} editValue={formData.isPartTime} isEditing={isEditing} id="isPartTime" type="checkbox" disabled onChange={(v) => setFormData(p => ({...p, isPartTime: !!v}))} />
+                   <DetailEditable label="Notes Planning" value={effectiveData.workingScheduleNotes} editValue={formData.workingScheduleNotes} isEditing={isEditing} id="workingScheduleNotes" className="col-span-full" onChange={(v) => setFormData(p => ({...p, workingScheduleNotes: v}))} />
                 </div>
 
                 <Separator className="bg-slate-100" />
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Convention Collective (CCNL)" value={effectiveData.ccnlName} isEditing={isEditing} id="ccnlName" disabled required onChange={(v) => setFormData(p => ({...p, ccnlName: v}))} />
-                   <DetailEditable label="Niveau" value={effectiveData.levelCode} isEditing={isEditing} id="levelCode" disabled required onChange={(v) => setFormData(p => ({...p, levelCode: v}))} />
-                   <DetailEditable label="Qualification" value={effectiveData.qualificationCategory} isEditing={isEditing} id="qualificationCategory" onChange={(v) => setFormData(p => ({...p, qualificationCategory: v}))} />
+                   <DetailEditable label="Convention Collective (CCNL)" value={effectiveData.ccnlName} editValue={formData.ccnlName} isEditing={isEditing} id="ccnlName" disabled required onChange={(v) => setFormData(p => ({...p, ccnlName: v}))} />
+                   <DetailEditable label="Niveau" value={effectiveData.levelCode} editValue={formData.levelCode} isEditing={isEditing} id="levelCode" disabled required onChange={(v) => setFormData(p => ({...p, levelCode: v}))} />
+                   <DetailEditable label="Qualification" value={effectiveData.qualificationCategory} editValue={formData.qualificationCategory} isEditing={isEditing} id="qualificationCategory" onChange={(v) => setFormData(p => ({...p, qualificationCategory: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -498,11 +512,11 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Brut Mensuel (€)" value={effectiveData.grossMonthly} isEditing={isEditing} id="grossMonthly" type="number" disabled required onChange={(v) => setFormData(p => ({...p, grossMonthly: parseFloat(v) || 0}))} />
-                   <DetailEditable label="Brut Annuel / RAL (€)" value={effectiveData.grossAnnual} isEditing={isEditing} id="grossAnnual" type="number" disabled onChange={(v) => setFormData(p => ({...p, grossAnnual: parseFloat(v) || 0}))} />
-                   <DetailEditable label="Mensualités" value={effectiveData.monthlyPayments} isEditing={isEditing} id="monthlyPayments" type="number" disabled onChange={(v) => setFormData(p => ({...p, monthlyPayments: parseInt(v) || 13}))} />
+                   <DetailEditable label="Brut Mensuel (€)" value={effectiveData.grossMonthly} editValue={formData.grossMonthly} isEditing={isEditing} id="grossMonthly" type="number" disabled required onChange={(v) => setFormData(p => ({...p, grossMonthly: parseFloat(v) || 0}))} />
+                   <DetailEditable label="Brut Annuel / RAL (€)" value={effectiveData.grossAnnual} editValue={formData.grossAnnual} isEditing={isEditing} id="grossAnnual" type="number" disabled onChange={(v) => setFormData(p => ({...p, grossAnnual: parseFloat(v) || 0}))} />
+                   <DetailEditable label="Mensualités" value={effectiveData.monthlyPayments} editValue={formData.monthlyPayments} isEditing={isEditing} id="monthlyPayments" type="number" disabled onChange={(v) => setFormData(p => ({...p, monthlyPayments: parseInt(v) || 13}))} />
                 </div>
-                <DetailEditable label="Notes Variables / Heures Supp." value={formData.overtimeNote} isEditing={isEditing} id="overtimeNote" className="mt-8" onChange={(v) => setFormData(p => ({...p, overtimeNote: v}))} />
+                <DetailEditable label="Notes Variables / Heures Supp." value={effectiveData.overtimeNote} editValue={formData.overtimeNote} isEditing={isEditing} id="overtimeNote" className="mt-8" onChange={(v) => setFormData(p => ({...p, overtimeNote: v}))} />
              </CardContent>
           </Card>
 
@@ -515,8 +529,8 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Protocole UniLav" value={effectiveData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, uniLavProtocolNumber: v}))} />
-                   <DetailEditable label="Date Soumission" value={effectiveData.uniLavSubmissionDate} isEditing={isEditing} id="uniLavSubmissionDate" type="date" onChange={(v) => setFormData(p => ({...p, uniLavSubmissionDate: v}))} />
+                   <DetailEditable label="Protocole UniLav" value={effectiveData.uniLavProtocolNumber} editValue={formData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, uniLavProtocolNumber: v}))} />
+                   <DetailEditable label="Date Soumission" value={effectiveData.uniLavSubmissionDate} editValue={formData.uniLavSubmissionDate} isEditing={isEditing} id="uniLavSubmissionDate" type="date" onChange={(v) => setFormData(p => ({...p, uniLavSubmissionDate: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -530,17 +544,15 @@ export default function ContractDetailPage() {
                    <History className="w-4 h-4" /> Historique & Audit
                 </CardTitle>
              </CardHeader>
-             <CardContent className="p-6 space-y-6">
-                <div className="space-y-4">
-                   <AuditRow label="Créé le" value={formatDateTime(contract.createdAt)} />
-                   <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
-                   <Separator className="opacity-20" />
-                   {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
-                   {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
-                   <Separator className="opacity-20" />
-                   <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
-                   <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
-                </div>
+             <CardContent className="p-6 space-y-4">
+                <AuditRow label="Créé le" value={formatDateTime(contract.createdAt)} />
+                <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
+                <Separator className="opacity-20" />
+                {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
+                {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
+                <Separator className="opacity-20" />
+                <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
+                <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
              </CardContent>
           </Card>
         </div>
@@ -575,8 +587,8 @@ export default function ContractDetailPage() {
   );
 }
 
-function DetailEditable({ label, value, isEditing, id, type = "text", required = false, disabled = false, icon: Icon, className, onChange }: { 
-  label: string, value: any, isEditing: boolean, id: string, type?: string, required?: boolean, disabled?: boolean, icon?: any, className?: string, onChange: (v: any) => void 
+function DetailEditable({ label, value, editValue, isEditing, id, type = "text", required = false, disabled = false, icon: Icon, className, onChange }: { 
+  label: string, value: any, editValue?: any, isEditing: boolean, id: string, type?: string, required?: boolean, disabled?: boolean, icon?: any, className?: string, onChange: (v: any) => void 
 }) {
   const displayValue = value === undefined || value === null || value === "" ? "Non renseigné" : value;
   const isMissing = required && (value === undefined || value === null || value === "");
@@ -599,13 +611,13 @@ function DetailEditable({ label, value, isEditing, id, type = "text", required =
             </div>
           ) : type === "checkbox" ? (
             <div className="flex items-center h-10 px-3 border rounded-xl bg-white">
-              <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 text-primary" />
+              <input type="checkbox" checked={!!editValue} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 text-primary" />
             </div>
           ) : (
             <Input 
               id={id} 
               type={type} 
-              value={value || ""} 
+              value={editValue ?? ""} 
               onChange={(e) => onChange(e.target.value)} 
               className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300 ring-red-100")} 
             />
