@@ -62,12 +62,14 @@ export interface Contract {
   signedDocumentId?: string | null;
   signedDocumentTitle?: string;
   signedDocumentUrl?: string;
+  signedDocumentFileName?: string | null;
+  signedDocumentStoragePath?: string | null;
+  signedDocumentMimeType?: string | null;
   signedDocumentUploadedAt?: Date | FieldValue;
   signedDocumentUploadedBy?: string;
 
   // --- Lifecycle & Audit ---
   status: ContractStatus;
-  signedDocumentId_old?: string | null; // Keeping legacy field reference if needed for transition
   notes?: string;
 
   sentForSignatureAt?: Date | FieldValue;

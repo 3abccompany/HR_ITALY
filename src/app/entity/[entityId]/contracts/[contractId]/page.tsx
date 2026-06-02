@@ -9,7 +9,8 @@ import {
   Scale, Fingerprint, Calendar, FileText,
   MapPin, CheckCircle2, Ban, Archive, 
   RefreshCcw, ScrollText, Globe,
-  Edit, Save, X, AlertTriangle, ExternalLink
+  Edit, Save, X, AlertTriangle, ExternalLink,
+  Upload
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -22,6 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useFirebase, useDoc, useUser, useCollection } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
@@ -54,7 +56,7 @@ export default function ContractDetailPage() {
   const entityId = params.entityId as string;
   const contractId = params.contractId as string;
   
-  const { db } = useFirebase();
+  const { db, storage } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
@@ -68,6 +70,7 @@ export default function ContractDetailPage() {
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
   const [signedDocForm, setSignedDocForm] = useState({ title: "", url: "", reference: "" });
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // 1. Core Data
   const contractRef = useMemo(() => 
@@ -312,9 +315,35 @@ export default function ContractDetailPage() {
     if (!user || !contract || !signedDocForm.title) return;
     setProcessing(true);
     try {
-      await recordSignedDocumentReference(entityId, contractId, signedDocForm, user.uid);
+      let url = signedDocForm.url;
+      let storagePath = null;
+      let fileName = null;
+
+      if (selectedFile && storage) {
+        if (selectedFile.type !== "application/pdf") {
+          throw new Error("Seuls les fichiers PDF sont acceptés.");
+        }
+        
+        const path = `entities/${entityId}/contracts/${contractId}/signed-contract/${selectedFile.name}`;
+        const fileRef = ref(storage, path);
+        
+        await uploadBytes(fileRef, selectedFile);
+        url = await getDownloadURL(fileRef);
+        storagePath = path;
+        fileName = selectedFile.name;
+      }
+
+      await recordSignedDocumentReference(entityId, contractId, {
+        ...signedDocForm,
+        url,
+        fileName,
+        storagePath,
+        mimeType: selectedFile ? "application/pdf" : null
+      }, user.uid);
+      
       setIsSignedDocModalOpen(false);
       setSignedDocForm({ title: "", url: "", reference: "" });
+      setSelectedFile(null);
       toast({ title: "Référence enregistrée", description: "Le document signé est maintenant lié au dossier." });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -339,7 +368,12 @@ export default function ContractDetailPage() {
   const canUpdate = hasPermission("contracts.update");
   const isDraft = contract.status === 'draft';
   const isPendingSignature = contract.status === 'pending_signature';
-  const hasSignedDoc = !!(contract.signedDocumentId || contract.signedDocumentUrl || contract.signedDocumentTitle);
+  const hasSignedDoc = !!(
+    contract.signedDocumentId || 
+    contract.signedDocumentUrl || 
+    contract.signedDocumentTitle || 
+    contract.signedDocumentFileName
+  );
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
@@ -433,7 +467,12 @@ export default function ContractDetailPage() {
                       <div className="bg-green-100 p-3 rounded-2xl text-green-600"><CheckCircle2 className="w-6 h-6" /></div>
                       <div>
                          <p className="text-sm font-black text-slate-800">{contract.signedDocumentTitle}</p>
-                         <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">
+                         {contract.signedDocumentFileName && (
+                           <p className="text-[10px] font-bold text-accent uppercase flex items-center gap-1 mt-0.5">
+                             <Upload className="w-2.5 h-2.5" /> {contract.signedDocumentFileName}
+                           </p>
+                         )}
+                         <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">
                            Enregistré le {formatDate(contract.signedDocumentUploadedAt)} par {getUserLabel(contract.signedDocumentUploadedBy)}
                          </p>
                       </div>
@@ -461,7 +500,7 @@ export default function ContractDetailPage() {
                          onClick={() => setIsSignedDocModalOpen(true)}
                          className="w-full h-12 border-orange-200 text-orange-700 hover:bg-orange-50 font-black rounded-xl border-dashed border-2 gap-2"
                        >
-                         <FileSignature className="w-4 h-4" /> Enregistrer la référence du contrat signé
+                         <FileSignature className="w-4 h-4" /> Enregistrer le contrat signé
                        </Button>
                     )}
                   </div>
@@ -683,6 +722,7 @@ export default function ContractDetailPage() {
                  className="h-12 rounded-xl"
                />
             </div>
+            
             <div className="space-y-2">
                <Label className="text-[10px] uppercase font-black text-muted-foreground">Lien ou Référence (Optionnel)</Label>
                <Input 
@@ -691,7 +731,21 @@ export default function ContractDetailPage() {
                  placeholder="https://..."
                  className="h-12 rounded-xl"
                />
-               <p className="text-[9px] text-muted-foreground italic pl-1">Le chargement réel du fichier sera disponible via le module Documents.</p>
+            </div>
+
+            <div className="space-y-2">
+               <Label className="text-[10px] uppercase font-black text-muted-foreground">Pièce jointe PDF (Optionnel)</Label>
+               <div className="flex flex-col gap-2">
+                  <Input 
+                    type="file" 
+                    accept=".pdf"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    className="h-12 rounded-xl pt-3"
+                  />
+                  <p className="text-[9px] text-muted-foreground italic pl-1 flex items-center gap-1">
+                    <Info className="w-2.5 h-2.5" /> PDF uniquement, max 10 Mo.
+                  </p>
+               </div>
             </div>
           </div>
           <DialogFooter>

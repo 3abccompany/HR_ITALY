@@ -91,11 +91,31 @@ export async function sendContractToSignature(entityId: string, contractId: stri
 export async function recordSignedDocumentReference(
   entityId: string, 
   contractId: string, 
-  data: { title: string, url?: string, reference?: string }, 
+  data: { 
+    title: string, 
+    url?: string, 
+    reference?: string,
+    fileName?: string | null,
+    storagePath?: string | null,
+    mimeType?: string | null
+  }, 
   actorUid: string
 ) {
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
+
+  const payload = sanitizePayload({
+    signedDocumentTitle: data.title,
+    signedDocumentUrl: data.url || null,
+    signedDocumentId: data.reference || null,
+    signedDocumentFileName: data.fileName || null,
+    signedDocumentStoragePath: data.storagePath || null,
+    signedDocumentMimeType: data.mimeType || null,
+    signedDocumentUploadedAt: serverTimestamp(),
+    signedDocumentUploadedBy: actorUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
 
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(contractRef);
@@ -106,15 +126,7 @@ export async function recordSignedDocumentReference(
       throw new Error("L'enregistrement du document n'est possible qu'en phase de signature.");
     }
 
-    transaction.update(contractRef, {
-      signedDocumentTitle: data.title,
-      signedDocumentUrl: data.url || null,
-      signedDocumentId: data.reference || null,
-      signedDocumentUploadedAt: serverTimestamp(),
-      signedDocumentUploadedBy: actorUid,
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid,
-    });
+    transaction.update(contractRef, payload);
   });
 
   await createAuditLog({
@@ -143,7 +155,15 @@ export async function activateContractAction(entityId: string, contractId: strin
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
-    if (!contract.signedDocumentId && !contract.signedDocumentUrl && !contract.signedDocumentTitle) {
+    const hasProof = !!(
+      contract.signedDocumentId || 
+      contract.signedDocumentUrl || 
+      contract.signedDocumentTitle || 
+      contract.signedDocumentFileName || 
+      contract.signedDocumentStoragePath
+    );
+
+    if (!hasProof) {
       throw new Error("Veuillez enregistrer le contrat signé avant activation.");
     }
 
