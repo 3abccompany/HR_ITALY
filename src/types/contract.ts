@@ -9,38 +9,66 @@ export interface Contract {
   employeeId: string;
   sourceOfferId?: string;
 
-  // Identity Snapshots (Denormalized for registry performance)
+  // --- Identity Snapshots (Denormalized) ---
   employeeDisplayName?: string;
   employeeCode?: string;
 
-  // Parameters
+  // --- Legal Employer Snapshot ---
+  entityName?: string;
+  entityLegalName?: string;
+  entityVatNumber?: string;
+  companyAddressSnapshot?: string;
+  legalRepresentativeName?: string;
+  legalRepresentativeTitle?: string;
+
+  // --- Legal Employee Snapshot ---
+  taxCode?: string;
+  employeeAddressSnapshot?: string;
+  dateOfBirth?: string;
+  placeOfBirth?: string;
+
+  // --- Job & Workplace ---
+  jobTitleName?: string;
+  departmentName?: string;
+  worksiteName?: string;
+  missionsSnapshot?: string[];
+
+  // --- Contractual Parameters ---
   contractType: string;
   startDate: string; // YYYY-MM-DD
   endDate?: string;  // YYYY-MM-DD
+  trialPeriodDays?: number;
+  trialPeriodUnit?: string; // "days" | "months"
   weeklyHours: number;
+  workingScheduleNotes?: string;
+  isPartTime?: boolean;
   
-  // Salary Snapshot
-  ccnlId?: string;
+  // --- Classification & Remuneration ---
   ccnlName?: string;
-  levelId?: string;
   levelCode?: string;
   levelLabel?: string;
+  qualificationCategory?: string; // e.g. Impiegato, Operaio
   grossMonthly: number;
   grossAnnual: number;
   monthlyPayments?: number;
+  overtimeNote?: string;
 
+  // --- Compliance ---
+  uniLavProtocolNumber?: string;
+  uniLavSubmissionDate?: string;
+  uniLavReceiptUrl?: string;
+
+  // --- Lifecycle & Audit ---
   status: ContractStatus;
   signedDocumentId?: string | null;
   notes?: string;
 
-  // Milestones
   sentForSignatureAt?: Date | FieldValue;
   signedAt?: Date | FieldValue;
   activatedAt?: Date | FieldValue;
   terminatedAt?: Date | FieldValue;
   archivedAt?: Date | FieldValue;
 
-  // Audit
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;

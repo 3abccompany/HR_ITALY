@@ -13,9 +13,8 @@ function normalizeName(name: string): string {
 }
 
 /**
- * 7K-E Conversion logic reinforced with 7K-F Compliance Check.
- * Corrected: Contracts start as 'draft' and link via 'pendingContractId'.
- * 7K-G: Added denormalized identity fields (name/code) to contract for registry performance.
+ * Converts an employment offer to a formal employee record and a draft contract.
+ * Captures legal snapshots of employer, employee, and compliance data.
  */
 export async function convertOfferToEmployeeAction(params: {
   entityId: string;
@@ -28,6 +27,7 @@ export async function convertOfferToEmployeeAction(params: {
     return await adminDb.runTransaction(async (transaction) => {
       // --- PHASE 1: READS ---
       const membershipId = `${actorUid}_${entityId}`;
+      const entityRef = adminDb.collection("entities").doc(entityId);
       const mSnap = await transaction.get(adminDb.collection("memberships").doc(membershipId));
       const offerSnap = await transaction.get(adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId));
 
@@ -36,7 +36,7 @@ export async function convertOfferToEmployeeAction(params: {
 
       const offer = offerSnap.data() as EmploymentOffer;
 
-      // 7K-F Compliance Guard: Check for Pre-Hire Dossier status
+      // Compliance Guard
       const dossiersSnap = await transaction.get(
         adminDb.collection("entities").doc(entityId).collection("preHireDossiers").where("employmentOfferId", "==", offerId).limit(1)
       );
@@ -47,17 +47,27 @@ export async function convertOfferToEmployeeAction(params: {
       
       const dossier = dossiersSnap.docs[0].data() as PreHireDossier;
       if (!dossier.readyForConversion) {
-        throw new Error("COMPLIANCE_PENDING: Les documents obligatoires ne sont pas encore validés. Finalisez le dossier d’embauche avant de créer l’employé.");
+        throw new Error("COMPLIANCE_PENDING: Les documents obligatoires ne sont pas encore validés.");
       }
+
+      // Mandatory Communication (UniLav) Lookup
+      const commsSnap = await transaction.get(
+        adminDb.collection("entities").doc(entityId).collection("mandatoryCommunications")
+          .where("employmentOfferId", "==", offerId)
+          .where("type", "==", "UNILAV_ASSUNZIONE")
+          .limit(1)
+      );
+      const communication = commsSnap.empty ? null : commsSnap.docs[0].data();
 
       const candidateRef = adminDb.collection("entities").doc(entityId).collection("candidates").doc(offer.candidateId);
       const personRef = adminDb.collection("entities").doc(entityId).collection("persons").doc(offer.personId);
       const needRef = offer.recruitmentNeedId ? adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId) : null;
 
-      const [candidateSnap, personSnap, needSnap] = await Promise.all([
+      const [candidateSnap, personSnap, needSnap, entitySnap] = await Promise.all([
         transaction.get(candidateRef),
         transaction.get(personRef),
-        needRef ? transaction.get(needRef) : Promise.resolve(null)
+        needRef ? transaction.get(needRef) : Promise.resolve(null),
+        transaction.get(entityRef)
       ]);
 
       // --- PHASE 2: VALIDATIONS ---
@@ -67,15 +77,19 @@ export async function convertOfferToEmployeeAction(params: {
       if (offer.conversionStatus === "converted") throw new Error("Déjà converti.");
 
       const person = personSnap.data() as Person;
+      const entity = entitySnap.data();
       if (normalizeName(offer.candidateDisplayName) !== normalizeName(person.displayName)) throw new Error("IDENTITY_MISMATCH");
 
-      // --- PHASE 3: WRITES ---
+      // --- PHASE 3: PREPARE SNAPSHOTS ---
       const employeeId = adminDb.collection("entities").doc(entityId).collection("employees").doc().id;
       const contractId = adminDb.collection("entities").doc(entityId).collection("contracts").doc().id;
       const employeeCode = `E-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
       const birthDateStr = person.dateOfBirth || (person as any).birthDate || "";
+      const companyAddress = entity ? `${entity.adresseSiegeSocial || ""}, ${entity.codePostal || ""} ${entity.ville || ""} (${entity.province || ""})` : "";
+      const employeeAddress = person ? `${person.address || ""}, ${person.postalCode || ""} ${person.city || ""} (${person.province || ""})` : "";
 
+      // --- PHASE 4: WRITES ---
       transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
         employeeId, personId: person.personId, entityId, sourceOfferId: offerId, employeeCode,
         firstName: person.firstName, lastName: person.lastName, displayName: person.displayName,
@@ -88,18 +102,65 @@ export async function convertOfferToEmployeeAction(params: {
 
       transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), {
         contractId, entityId, personId: person.personId, employeeId, sourceOfferId: offerId,
+        
+        // Identity Snapshot
         employeeDisplayName: person.displayName,
         employeeCode: employeeCode,
-        contractType: offer.contractType, startDate: offer.proposedStartDate, weeklyHours: offer.weeklyHours,
-        ccnlName: offer.ccnlName, levelCode: offer.levelCode, levelLabel: offer.levelLabel,
-        grossMonthly: offer.proposedGrossMonthly || 0, grossAnnual: offer.proposedGrossAnnual || 0,
-        status: "draft", createdAt: FieldValue.serverTimestamp(), createdBy: actorUid,
-        updatedAt: FieldValue.serverTimestamp(), updatedBy: actorUid
+        taxCode: person.codiceFiscale || "",
+        employeeAddressSnapshot: employeeAddress,
+        dateOfBirth: birthDateStr,
+        placeOfBirth: person.placeOfBirth || "",
+
+        // Employer Snapshot
+        entityName: entity?.nomEntreprise || "",
+        entityLegalName: entity?.raisonSociale || "",
+        entityVatNumber: entity?.numeroTVA || "",
+        companyAddressSnapshot: companyAddress,
+        legalRepresentativeName: entity?.referentEntreprise || "",
+        legalRepresentativeTitle: "Rappresentante Legale",
+
+        // Job Snapshot
+        jobTitleName: offer.jobTitleName,
+        departmentName: offer.departmentName || "",
+        worksiteName: offer.worksiteName || "",
+        missionsSnapshot: offer.missionsSnapshot || (needSnap?.exists ? needSnap.data()?.jobOfferMissions : []),
+
+        // Terms Snapshot
+        contractType: offer.contractType,
+        startDate: offer.proposedStartDate,
+        endDate: offer.proposedEndDate || null,
+        weeklyHours: offer.weeklyHours,
+        trialPeriodDays: offer.trialPeriodDays || 30,
+        trialPeriodUnit: "days",
+        isPartTime: offer.workingTime?.toLowerCase().includes("part"),
+        workingScheduleNotes: offer.workingScheduleNotes || "",
+
+        // Classification & Remuneration Snapshot
+        ccnlName: offer.ccnlName,
+        levelCode: offer.levelCode,
+        levelLabel: offer.levelLabel,
+        qualificationCategory: offer.qualificationLabel || "",
+        grossMonthly: offer.proposedGrossMonthly || 0,
+        grossAnnual: offer.proposedGrossAnnual || 0,
+        monthlyPayments: offer.monthlyPayments || 13,
+        overtimeNote: "",
+
+        // Compliance Snapshot
+        uniLavProtocolNumber: communication?.protocolNumber || "",
+        uniLavSubmissionDate: communication?.submittedAt ? 
+          (typeof communication.submittedAt.toDate === 'function' ? communication.submittedAt.toDate().toISOString().split('T')[0] : 
+          (communication.submittedAt.seconds ? new Date(communication.submittedAt.seconds * 1000).toISOString().split('T')[0] : "")) : "",
+        uniLavReceiptUrl: communication?.receiptPdfUrl || "",
+
+        status: "draft",
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: actorUid,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid
       });
 
       transaction.update(offerSnap.ref, { conversionStatus: "converted", employeeId, contractId, updatedAt: FieldValue.serverTimestamp() });
       
-      // Update Dossier Status
       transaction.update(dossiersSnap.docs[0].ref, {
         status: "converted_to_employee",
         employeeId,

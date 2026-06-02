@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState } from "react";
@@ -9,7 +8,8 @@ import {
   Info, Euro, Clock, History, ExternalLink,
   Scale, Fingerprint, Calendar, FileText,
   MapPin, CheckCircle2, XCircle, Ban, Archive, 
-  RefreshCcw, ShieldCheck
+  RefreshCcw, ShieldCheck, UserCircle, Globe,
+  ScrollText, ListTodo
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -118,7 +118,7 @@ export default function ContractDetailPage() {
       console.error("Transition error:", err);
       let msg = err.message || "Une erreur est survenue.";
       if (err.message === "ALREADY_HAS_ACTIVE_CONTRACT") {
-        msg = "Un autre contrat actif existe déjà pour cet employé. Veuillez le résilier avant d'en activer un nouveau.";
+        msg = "Un autre contrat actif existe déjà pour cet employé.";
       }
       toast({ variant: "destructive", title: "Erreur", description: msg });
     } finally {
@@ -135,23 +135,16 @@ export default function ContractDetailPage() {
           <FileText className="w-10 h-10 text-muted-foreground" />
         </div>
         <h2 className="text-2xl font-black text-primary">Contrat introuvable</h2>
-        <p className="text-muted-foreground mt-2">Le document demandé n'existe pas ou vous n'avez pas les droits d'accès.</p>
         <Button onClick={() => router.push(`/entity/${entityId}/contracts`)} className="mt-8">Retour au registre</Button>
       </div>
     );
   }
 
-  const displayName = contract.employeeDisplayName || (employee ? `${employee.firstName} ${employee.lastName}` : "Collaborateur inconnu");
-  const employeeCode = contract.employeeCode || (employee ? employee.employeeCode : "Code non disponible");
   const businessReference = contract.employeeCode || "Brouillon d'intégration";
-  const resolvedCompanyName = entity?.nomEntreprise || entity?.legalName || "Entreprise non renseignée";
-  const resolvedDepartment = contract.ccnlName ? (employee?.departmentName || "Département non renseigné") : (employee?.departmentName || "Département non renseigné");
-  const resolvedWorksite = employee?.worksiteName || "Site non renseigné";
-
   const canUpdate = hasPermission("contracts.update");
 
   return (
-    <div className="p-8 max-w-5xl mx-auto pb-32">
+    <div className="p-8 max-w-6xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/contracts`)} className="rounded-full">
@@ -159,7 +152,7 @@ export default function ContractDetailPage() {
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black text-primary tracking-tight">Détails du Contrat</h1>
+              <h1 className="text-2xl font-black text-primary tracking-tight">Modèle de Contrat</h1>
               {getStatusBadge(contract.status)}
             </div>
             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">
@@ -173,7 +166,7 @@ export default function ContractDetailPage() {
              <Button 
                onClick={() => handleTransition(() => sendContractToSignature(entityId, contractId, user!.uid), "Contrat marqué comme prêt pour signature.")}
                disabled={processing}
-               className="gap-2 bg-accent text-white font-bold"
+               className="gap-2 bg-accent text-white font-bold rounded-xl"
              >
                {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSignature className="w-4 h-4" />}
                Prêt pour signature
@@ -186,7 +179,7 @@ export default function ContractDetailPage() {
                  variant="outline"
                  onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")}
                  disabled={processing}
-                 className="gap-2 bg-white"
+                 className="gap-2 bg-white rounded-xl"
                >
                  <RefreshCcw className="w-4 h-4" />
                  Brouillon
@@ -194,7 +187,7 @@ export default function ContractDetailPage() {
                <Button 
                  onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")}
                  disabled={processing || !contract.employeeId}
-                 className="gap-2 bg-primary text-white font-black"
+                 className="gap-2 bg-primary text-white font-black rounded-xl"
                >
                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                  Confirmer signature et activer
@@ -207,7 +200,7 @@ export default function ContractDetailPage() {
                variant="destructive"
                onClick={() => handleTransition(() => terminateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat résilié.")}
                disabled={processing}
-               className="gap-2 font-bold"
+               className="gap-2 font-bold rounded-xl"
              >
                <Ban className="w-4 h-4" />
                Résilier / Terminer
@@ -228,140 +221,168 @@ export default function ContractDetailPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        <div className="lg:col-span-3 space-y-8">
           
-          {/* Status Specific Helper */}
-          {contract.status === 'draft' && (
-            <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl flex items-start gap-4">
-              <div className="bg-white p-2 rounded-xl text-orange-500 shadow-sm"><Clock className="w-5 h-5" /></div>
-              <div className="space-y-1">
-                <p className="text-sm font-bold text-orange-800">Contrat en préparation</p>
-                <p className="text-xs text-orange-700 leading-relaxed">
-                  Vérifiez les conditions contractuelles avant de passer à l'étape de signature. Ce document n'est pas encore visible comme "actif" sur le profil de l'employé.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Identity Card */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4">
+          {/* Employer Card */}
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <User className="w-4 h-4" /> Collaborateur
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-8">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                   <div className="space-y-1">
-                      <p className="text-2xl font-black text-slate-900">{displayName}</p>
-                      <div className="flex items-center gap-3 text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                         <span className="flex items-center gap-1.5"><Fingerprint className="w-3.5 h-3.5" /> {employeeCode}</span>
-                      </div>
-                   </div>
-                   
-                   <div className="flex flex-col gap-2">
-                      {contract.employeeId && (
-                        <Link href={`/entity/${entityId}/employees/${contract.employeeId}`}>
-                           <Button variant="outline" size="sm" className="w-full justify-start h-9 rounded-xl font-bold gap-2">
-                              <UserCheck className="w-3.5 h-3.5" />
-                              Voir fiche employé
-                           </Button>
-                        </Link>
-                      )}
-                      {contract.sourceOfferId && hasPermission("candidates.read") && (
-                        <Link href={`/entity/${entityId}/employment-offers/${contract.sourceOfferId}`}>
-                           <Button variant="outline" size="sm" className="w-full justify-start h-9 rounded-xl font-bold gap-2">
-                              <ExternalLink className="w-3.5 h-3.5" />
-                              Voir proposition source
-                           </Button>
-                        </Link>
-                      )}
-                   </div>
-                </div>
-             </CardContent>
-          </Card>
-
-          {/* Organizational Context Card */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4">
-                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <Building2 className="w-4 h-4" /> Contexte organisationnel
+                   <Building2 className="w-4 h-4" /> Employeur
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Entreprise / Société" value={resolvedCompanyName} icon={Building2} />
-                   <DetailRow label="Département" value={resolvedDepartment} icon={Briefcase} />
-                   <DetailRow label="Site / Lieu de travail" value={resolvedWorksite} icon={MapPin} className="col-span-full" />
+                   <DetailRow label="Entreprise (Nom commercial)" value={contract.entityName} />
+                   <DetailRow label="Raison Sociale" value={contract.entityLegalName} />
+                   <DetailRow label="Numéro TVA / Code Fiscal" value={contract.entityVatNumber} />
+                   <DetailRow label="Représentant Légal" value={contract.legalRepresentativeName} />
+                   <DetailRow label="Adresse du Siège" value={contract.companyAddressSnapshot} className="col-span-full" />
                 </div>
              </CardContent>
           </Card>
 
-          {/* Contract Terms */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4">
+          {/* Employee Card */}
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <FileSignature className="w-4 h-4" /> Conditions Contractuelles
+                   <User className="w-4 h-4" /> Salarié
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Type de contrat" value={contract.contractType} icon={Briefcase} />
-                   <DetailRow label="Temps de travail hebdomadaire" value={contract.weeklyHours ? `${contract.weeklyHours} heures` : "-"} icon={Clock} />
-                   <DetailRow label="Date de début" value={formatDate(contract.startDate)} icon={Calendar} />
-                   {contract.endDate && <DetailRow label="Date de fin (CDD)" value={formatDate(contract.endDate)} icon={Calendar} />}
+                   <DetailRow label="Nom Complet" value={contract.employeeDisplayName} />
+                   <DetailRow label="Code Fiscal / ID" value={contract.taxCode} className="font-mono uppercase" />
+                   <DetailRow label="Date de Naissance" value={formatDate(contract.dateOfBirth)} />
+                   <DetailRow label="Lieu de Naissance" value={contract.placeOfBirth} />
+                   <DetailRow label="Adresse de Résidence" value={contract.employeeAddressSnapshot} className="col-span-full" />
+                </div>
+                <div className="mt-8 pt-6 border-t flex gap-4">
+                   {contract.employeeId && (
+                     <Link href={`/entity/${entityId}/employees/${contract.employeeId}`}>
+                        <Button variant="outline" size="sm" className="h-9 rounded-xl font-bold gap-2 bg-white">
+                           <UserCheck className="w-3.5 h-3.5" /> Voir Profil Employé
+                        </Button>
+                     </Link>
+                   )}
                 </div>
              </CardContent>
           </Card>
 
-          {/* Classification & Remuneration */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4">
+          {/* Job & workplace */}
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <Scale className="w-4 h-4" /> Classification & Rémunération
+                   <Briefcase className="w-4 h-4" /> Poste & Lieu de Travail
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 space-y-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Contrat Collectif (CCNL)" value={contract.ccnlName} />
-                   <DetailRow label="Niveau / Qualification" value={contract.levelCode ? `${contract.levelCode} - ${contract.levelLabel || ""}` : "-"} />
+                   <DetailRow label="Intitulé du Poste" value={contract.jobTitleName} icon={Briefcase} />
+                   <DetailRow label="Département" value={contract.departmentName} icon={Building2} />
+                   <DetailRow label="Site d'Affectation" value={contract.worksiteName} icon={MapPin} className="col-span-full" />
+                </div>
+                {contract.missionsSnapshot && contract.missionsSnapshot.length > 0 && (
+                  <div className="space-y-3 pt-6 border-t">
+                     <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Missions & Responsabilités</p>
+                     <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                        <ul className="list-disc pl-5 space-y-2 text-sm text-slate-700">
+                           {contract.missionsSnapshot.map((m, i) => <li key={i}>{m}</li>)}
+                        </ul>
+                     </div>
+                  </div>
+                )}
+             </CardContent>
+          </Card>
+
+          {/* Terms & Classification */}
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <ScrollText className="w-4 h-4" /> Conditions & Classification
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-12">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+                   <DetailRow label="Type de Contrat" value={contract.contractType} />
+                   <DetailRow label="Date de Début" value={formatDate(contract.startDate)} icon={Calendar} />
+                   {contract.endDate && <DetailRow label="Date de Fin" value={formatDate(contract.endDate)} icon={Calendar} />}
+                   <DetailRow label="Période d'essai" value={contract.trialPeriodDays ? `${contract.trialPeriodDays} jours` : "Non renseignée"} />
                 </div>
                 
                 <Separator className="bg-slate-100" />
-                
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                   <DetailRow label="Temps de Travail" value={`${contract.weeklyHours}h / semaine`} icon={Clock} />
+                   <DetailRow label="Format" value={contract.isPartTime ? "Temps Partiel" : "Temps Plein"} />
+                   {contract.workingScheduleNotes && <DetailRow label="Notes Planning" value={contract.workingScheduleNotes} className="col-span-full" />}
+                </div>
+
+                <Separator className="bg-slate-100" />
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+                   <DetailRow label="Contrat Collectif (CCNL)" value={contract.ccnlName} />
+                   <DetailRow label="Niveau" value={contract.levelCode} />
+                   <DetailRow label="Qualification" value={contract.qualificationCategory || contract.levelLabel} />
+                </div>
+             </CardContent>
+          </Card>
+
+          {/* Remuneration */}
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <Euro className="w-4 h-4" /> Rémunération
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                    <div className="space-y-1">
                       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight opacity-70">Brut Mensuel</p>
-                      <div className="flex items-center gap-2 text-primary font-black text-lg">
-                         <Euro className="w-4 h-4 text-accent" />
-                         <span>{formatMoney(contract.grossMonthly)}</span>
-                      </div>
+                      <p className="text-xl font-black text-primary">€ {formatMoney(contract.grossMonthly)}</p>
                    </div>
                    <div className="space-y-1">
                       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight opacity-70">Brut Annuel (RAL)</p>
-                      <div className="flex items-center gap-2 text-primary font-black text-lg">
-                         <Euro className="w-4 h-4 text-accent" />
-                         <span>{formatMoney(contract.grossAnnual)}</span>
-                      </div>
+                      <p className="text-xl font-black text-primary">€ {formatMoney(contract.grossAnnual)}</p>
                    </div>
                    <div className="space-y-1">
                       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight opacity-70">Mensualités</p>
-                      <div className="flex items-center gap-2 text-primary font-black text-lg">
-                         <span>{contract.monthlyPayments || 13}</span>
-                      </div>
+                      <p className="text-xl font-black text-primary">{contract.monthlyPayments || 13}</p>
                    </div>
                 </div>
+                {contract.overtimeNote && (
+                   <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-600 italic">
+                      {contract.overtimeNote}
+                   </div>
+                )}
              </CardContent>
           </Card>
         </div>
 
         <div className="space-y-8">
+          {/* Compliance Card */}
+          <Card className="border-accent/10 bg-accent/5 rounded-[2rem] overflow-hidden shadow-lg shadow-accent/5">
+             <CardHeader className="py-4 border-b bg-accent/10">
+                <CardTitle className="text-[10px] font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
+                   <Globe className="w-4 h-4" /> Compliance Italie
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-6 space-y-6">
+                <AuditRow label="Protocole UniLav" value={contract.uniLavProtocolNumber || "Non renseigné"} />
+                <AuditRow label="Date Soumission" value={contract.uniLavSubmissionDate || "Non renseignée"} />
+                {contract.uniLavReceiptUrl && (
+                  <Button variant="outline" size="sm" className="w-full h-8 rounded-lg text-[9px] font-black bg-white" asChild>
+                    <a href={contract.uniLavReceiptUrl} target="_blank" rel="noopener noreferrer">Voir le reçu (PDF)</a>
+                  </Button>
+                )}
+             </CardContent>
+          </Card>
+
           {/* Audit Sidebar */}
-          <Card className="border-primary/10 rounded-3xl shadow-lg bg-secondary/5 overflow-hidden">
+          <Card className="border-primary/10 rounded-[2rem] shadow-lg bg-secondary/5 overflow-hidden">
              <CardHeader className="py-4 border-b bg-secondary/10">
                 <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                   <History className="w-4 h-4" /> Audit & Statut
+                   <History className="w-4 h-4" /> Historique
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-6 space-y-6">
@@ -371,33 +392,23 @@ export default function ContractDetailPage() {
                    <Separator className="opacity-20" />
                    {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
                    {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
-                   {contract.terminatedAt && <AuditRow label="Terminé le" value={formatDateTime(contract.terminatedAt)} />}
                    <Separator className="opacity-20" />
                    <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
                    <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
                 </div>
-                
-                <Separator />
-                
-                <div className="bg-white p-4 rounded-2xl border border-primary/5 shadow-sm space-y-2">
-                   <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Informations</p>
-                   <div className="flex items-start gap-3">
-                      <div className="p-1.5 rounded-lg bg-primary/5">
-                        <Info className="w-4 h-4 text-accent shrink-0" />
-                      </div>
-                      <p className="text-[10px] font-medium text-slate-600 leading-relaxed">
-                        {contract.status === 'draft' 
-                          ? "Ce contrat est en cours de préparation. Les termes peuvent encore être modifiés dans la proposition source." 
-                          : contract.status === 'pending_signature'
-                          ? "Le contrat est prêt pour signature. Activez-le une fois le document signé reçu."
-                          : contract.status === 'active'
-                          ? "Ce contrat est légalement actif et rattaché au dossier du collaborateur."
-                          : "Ce contrat est clôturé ou archivé."}
-                      </p>
-                   </div>
-                </div>
              </CardContent>
           </Card>
+          
+          <div className="p-4 bg-primary/5 rounded-[2rem] border border-primary/10">
+             <div className="flex items-center gap-2 text-primary font-black uppercase text-[10px] tracking-widest mb-3">
+                <ListTodo className="w-4 h-4" /> Prochaines Étapes
+             </div>
+             <p className="text-[10px] text-slate-600 leading-relaxed font-medium">
+                {contract.status === 'draft' ? "Vérifiez les données de snapshot avant de marquer le contrat comme 'Prêt pour signature'." :
+                 contract.status === 'pending_signature' ? "Une fois la signature obtenue, confirmez-la pour activer le dossier employé." :
+                 "Ce contrat est archivé ou actif."}
+             </p>
+          </div>
         </div>
       </div>
     </div>
@@ -410,7 +421,7 @@ function DetailRow({ label, value, icon: Icon, className }: { label: string, val
       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight mb-1 opacity-70">{label}</p>
       <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
          {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />}
-         {value || "-"}
+         {value || "Non renseigné"}
       </div>
     </div>
   );
@@ -420,7 +431,7 @@ function AuditRow({ label, value }: { label: string, value: string }) {
   return (
     <div className="flex justify-between items-center text-xs">
        <span className="text-muted-foreground font-medium">{label}</span>
-       <span className="font-bold text-slate-700">{value}</span>
+       <span className="font-bold text-slate-700 text-right ml-2">{value}</span>
     </div>
   );
 }
@@ -431,7 +442,6 @@ function getStatusBadge(status: ContractStatus) {
     case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 uppercase font-black text-[9px] px-2">En signature</Badge>;
     case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white uppercase font-black text-[9px] px-2">Actif</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Terminé</Badge>;
-    case 'suspended': return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 uppercase font-black text-[9px] px-2">Suspendu</Badge>;
     case 'archived': return <Badge variant="outline" className="text-muted-foreground uppercase font-black text-[9px] px-2">Archivé</Badge>;
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
   }
