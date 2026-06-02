@@ -48,7 +48,7 @@ export default function ContractsRegistryPage() {
   const canRead = hasPermission("contracts.read");
   const canReadEmployees = hasPermission("employees.read");
 
-  // Main real-time query
+  // Main real-time query - Order by createdAt desc, fallback to startDate
   const contractsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
     return query(collection(db, `entities/${entityId}/contracts`), orderBy("createdAt", "desc")) as Query<Contract>;
@@ -56,7 +56,7 @@ export default function ContractsRegistryPage() {
 
   const { data: contracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery);
 
-  // Fallback Employee lookup query - Lightweight since it's one fetch per workspace session
+  // Fallback Employee lookup query - Lightweight
   const employeesQuery = useMemo(() => {
     if (!db || !entityId || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
@@ -82,8 +82,8 @@ export default function ContractsRegistryPage() {
     return contracts.filter(c => {
       // Robust name/code resolution for search
       const emp = employeesMap.get(c.employeeId);
-      const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "Collaborateur inconnu");
-      const code = c.employeeCode || (emp ? emp.employeeCode : "Code non disponible");
+      const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "");
+      const code = c.employeeCode || (emp ? emp.employeeCode : "");
 
       if (filters.search) {
         const term = filters.search.toLowerCase();
@@ -244,7 +244,7 @@ export default function ContractsRegistryPage() {
                              {isDeleted && (
                                <Badge variant="outline" className="text-[8px] h-3 px-1 border-orange-200 text-orange-600 bg-orange-50 uppercase font-black">
                                  <AlertCircle className="w-2 h-2 mr-0.5" />
-                                 Dossier introuvable
+                                 Employé introuvable
                                </Badge>
                              )}
                            </div>
@@ -279,10 +279,10 @@ export default function ContractsRegistryPage() {
                         <Button 
                           variant="outline" 
                           size="sm" 
-                          className="h-8 gap-2 rounded-lg font-bold shadow-sm opacity-50 cursor-not-allowed"
-                          disabled
+                          className="h-8 gap-2 rounded-lg font-bold shadow-sm"
+                          onClick={() => router.push(`/entity/${entityId}/contracts/${c.contractId}`)}
                         >
-                          <Eye className="w-3.5 h-3.5" />
+                          <Eye className="w-3.5 h-3.5 text-primary" />
                           <span className="hidden sm:inline">Détails</span>
                         </Button>
                       </TableCell>
