@@ -58,6 +58,15 @@ export interface Contract {
   uniLavSubmissionDate?: string;
   uniLavReceiptUrl?: string;
 
+  // --- Generated Unsigned PDF Metadata ---
+  generatedPdfUrl?: string;
+  generatedPdfStoragePath?: string;
+  generatedPdfFileName?: string;
+  generatedPdfVersion?: number;
+  generatedPdfAt?: Date | FieldValue;
+  generatedPdfBy?: string;
+  generatedPdfStatus?: "generated";
+
   // --- Signed Document Reference ---
   signedDocumentId?: string | null;
   signedDocumentTitle?: string;
