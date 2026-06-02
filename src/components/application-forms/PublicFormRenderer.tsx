@@ -73,46 +73,71 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
     e.preventDefault();
     setLoading(true);
     setError(null);
-
+  
     try {
+      const publicSlug = form.publicSlug;
+      const resolvedEntityId = form.entityId;
+      const resolvedFormId =
+        form.formId || (form as ApplicationForm & { id?: string }).id;
+  
+      if (!publicSlug || !resolvedEntityId || !resolvedFormId) {
+        setError({
+          message:
+            "Contexte formulaire manquant. Veuillez recharger la page et réessayer.",
+          debug: `publicSlug=${publicSlug || "missing"} entityId=${
+            resolvedEntityId || "missing"
+          } formId=${resolvedFormId || "missing"}`,
+        });
+        return;
+      }
+  
       const formData = new FormData();
-      formData.append("publicSlug", form.publicSlug);
-      
+  
+      formData.append("publicSlug", publicSlug);
+      formData.append("entityId", resolvedEntityId);
+      formData.append("formId", resolvedFormId);
+  
       const sanitizedAnswers: Record<string, any> = {};
+  
       Object.entries(answers).forEach(([key, value]) => {
         if (value !== undefined) {
           sanitizedAnswers[key] = value;
         }
       });
+  
       formData.append("answers", JSON.stringify(sanitizedAnswers));
-
-      // Append files
+  
       Object.entries(files).forEach(([key, file]) => {
         formData.append(key, file);
       });
-
-      const response = await fetch('/api/public/applications/submit', {
-        method: 'POST',
+  
+      const response = await fetch("/api/public/applications/submit", {
+        method: "POST",
         body: formData,
       });
-
+  
       const result = await response.json().catch(() => null);
-
+  
       if (!response.ok) {
-        // Advanced error parsing for visibility
         const errObj = result?.error;
-        const message = typeof errObj === 'string' ? errObj : (errObj?.message || "Une erreur est survenue lors de l'envoi.");
+        const message =
+          typeof errObj === "string"
+            ? errObj
+            : errObj?.message || "Une erreur est survenue lors de l'envoi.";
+  
         const debug = errObj?.debugMessage;
-        
+  
         setError({ message, debug });
-        setLoading(false);
         return;
       }
-
-      router.push(`/apply/${form.publicSlug}/success`);
+  
+      router.push(`/apply/${publicSlug}/success`);
     } catch (err: any) {
       console.error("Submission error:", err);
-      setError({ message: "Erreur technique de connexion. Veuillez réessayer." });
+      setError({
+        message: "Erreur technique de connexion. Veuillez réessayer.",
+        debug: err?.message,
+      });
     } finally {
       setLoading(false);
     }

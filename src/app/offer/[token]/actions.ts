@@ -176,43 +176,177 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
 
     // --- 7K-F-A: Auto-initialize Pre-Hire Dossier ---
     if (response === "accepted") {
-      const dossierId = adminDb.collection("entities").doc(tokenData.entityId).collection("preHireDossiers").doc().id;
-      const dossierRef = adminDb.collection("entities").doc(tokenData.entityId).collection("preHireDossiers").doc(dossierId);
-      
+      const offerData = offer as EmploymentOffer & Record<string, any>;
+    
+      const dossierId = adminDb
+        .collection("entities")
+        .doc(tokenData.entityId)
+        .collection("preHireDossiers")
+        .doc().id;
+    
+      const dossierRef = adminDb
+        .collection("entities")
+        .doc(tokenData.entityId)
+        .collection("preHireDossiers")
+        .doc(dossierId);
+    
+      const communicationId = adminDb
+        .collection("entities")
+        .doc(tokenData.entityId)
+        .collection("mandatoryCommunications")
+        .doc().id;
+    
+      const communicationRef = adminDb
+        .collection("entities")
+        .doc(tokenData.entityId)
+        .collection("mandatoryCommunications")
+        .doc(communicationId);
+    
+      const candidateName =
+        offerData.candidateDisplayName || "Candidato non specificato";
+    
+      const startDate =
+        offerData.proposedStartDate || "Data da confermare";
+    
+      const consultantEmailSubject =
+        `Richiesta Comunicazione Obbligatoria / UniLav — ${candidateName} — ${startDate}`;
+    
+      const consultantEmailBody = [
+        "Buongiorno,",
+        "",
+        `il candidato ${candidateName} ha accettato l'offerta di assunzione.`,
+        "",
+        "Si richiede la predisposizione della Comunicazione Obbligatoria / UniLav, salvo verifica documentale finale.",
+        "",
+        "Dati principali:",
+        `- Candidato: ${candidateName}`,
+        `- Email candidato: ${offerData.candidateEmail || "-"}`,
+        `- Mansione / posizione: ${offerData.jobTitleName || "-"}`,
+        `- Reparto: ${offerData.departmentName || "-"}`,
+        `- Sede di lavoro: ${offerData.worksiteName || "-"}`,
+        `- Tipo contratto: ${offerData.contractType || "-"}`,
+        `- Orario: ${offerData.workingTime || "-"}`,
+        `- Data inizio proposta: ${startDate}`,
+        `- CCNL: ${offerData.ccnlName || "-"}`,
+        `- Livello: ${offerData.levelCode || offerData.levelLabel || "-"}`,
+        `- Retribuzione lorda mensile: ${offerData.proposedGrossMonthly || "-"} €`,
+        `- RAL: ${offerData.proposedGrossAnnual || "-"} €`,
+        "",
+        "Documenti da verificare:",
+        "- Documento di identità",
+        "- Codice fiscale / tessera sanitaria",
+        "- IBAN",
+        "- Residenza / domicilio",
+        "- Permesso di soggiorno se applicabile",
+        "",
+        "Si prega di confermare eventuali dati mancanti.",
+        "",
+        "Nota: questa email è una richiesta operativa di preparazione. Non costituisce conferma di invio ufficiale UniLav.",
+        "",
+        "Cordiali saluti.",
+      ].join("\n");
+    
       transaction.set(dossierRef, {
         dossierId,
         entityId: tokenData.entityId,
-        personId: offer.personId,
-        candidateId: offer.candidateId,
-        employmentOfferId: offer.offerId,
-        recruitmentNeedId: offer.recruitmentNeedId,
+    
+        personId: offerData.personId || null,
+        candidateId: offerData.candidateId || null,
+        employmentOfferId: offerData.offerId || tokenData.offerId,
+        recruitmentNeedId: offerData.recruitmentNeedId || null,
+    
         status: "documents_required",
         readyForConversion: false,
+    
+        mandatoryCommunicationId: communicationId,
+        coStatus: "to_prepare",
+    
         createdAt: FieldValue.serverTimestamp(),
         createdBy: "candidate_portal",
         updatedAt: FieldValue.serverTimestamp(),
         updatedBy: "candidate_portal",
       });
-
-      // Default Italian Items
+    
       const defaultDocs = [
-        { label: "Documento d'identità", type: "id" },
-        { label: "Codice Fiscale", type: "tax_code" },
-        { label: "IBAN", type: "iban" },
-        { label: "Residenza / Domicilio", type: "residence" }
+        {
+          label: "Documento d’identità",
+          type: "id",
+        },
+        {
+          label: "Codice Fiscale / Tessera sanitaria",
+          type: "tax_code",
+        },
+        {
+          label: "IBAN",
+          type: "iban",
+        },
+        {
+          label: "Residenza / Domicilio",
+          type: "residence",
+        },
+        {
+          label: "Permesso di soggiorno, se applicabile",
+          type: "residence_permit",
+          isRequired: false,
+        },
       ];
-
-      defaultDocs.forEach(d => {
+    
+      defaultDocs.forEach((d) => {
         const itemRef = dossierRef.collection("checklist").doc();
+    
         transaction.set(itemRef, {
           itemId: itemRef.id,
+          dossierId,
+          entityId: tokenData.entityId,
+          employmentOfferId: offerData.offerId || tokenData.offerId,
+    
           type: d.type,
           label: d.label,
-          status: "missing",
-          isRequired: true,
+          status: d.isRequired === false ? "not_applicable" : "missing",
+          isRequired: d.isRequired ?? true,
+    
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
+      });
+    
+      transaction.set(communicationRef, {
+        communicationId,
+        entityId: tokenData.entityId,
+    
+        employmentOfferId: offerData.offerId || tokenData.offerId,
+        preHireDossierId: dossierId,
+        candidateId: offerData.candidateId || null,
+        personId: offerData.personId || null,
+        employeeId: null,
+        contractId: null,
+    
+        type: "UNILAV_ASSUNZIONE",
+        status: "draft",
+    
+        consultantEmail: "",
+        consultantName: "",
+        emailMode: "draft_only",
+    
+        emailPrepared: true,
+        emailSent: false,
+        sentToConsultantAt: null,
+    
+        emailSubject: consultantEmailSubject,
+        emailBody: consultantEmailBody,
+    
+        protocolNumber: "",
+        receiptPdfUrl: "",
+        submittedAt: null,
+    
+        missingFields: [],
+        notes:
+          "Communication obligatoire préparée en mode brouillon. Aucun email réel envoyé au consultant.",
+    
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: "candidate_portal",
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: "candidate_portal",
       });
     }
 

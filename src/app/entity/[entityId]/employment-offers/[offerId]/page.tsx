@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFirebase, useDoc, useCollection, useUser, useAuth } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, Query } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
@@ -64,6 +64,16 @@ const WORKING_TIME_OPTIONS = [
   "Intermittente / Chiamata"
 ];
 
+const REVISION_REASONS = [
+  "Nouvelle négociation",
+  "Salaire modifié",
+  "Niveau CCNL modifié",
+  "Date de début modifiée",
+  "Autre poste",
+  "Correction / erreur dans la proposition précédente",
+  "Autre"
+];
+
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
@@ -88,6 +98,25 @@ export default function EditEmploymentOfferPage() {
   const checklistQuery = useMemo(() => dossier ? query(collection(db!, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`)) as Query<PreHireDocument> : null, [db, entityId, dossier]);
   const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
 
+  const mandatoryCommunicationQuery = useMemo(
+    () =>
+      db && entityId && offerId
+        ? (query(
+            collection(db, `entities/${entityId}/mandatoryCommunications`),
+            where("employmentOfferId", "==", offerId)
+          ) as Query<any>)
+        : null,
+    [db, entityId, offerId]
+  );
+  
+  const { data: mandatoryCommunications } = useCollection<any>(
+    mandatoryCommunicationQuery
+  );
+  
+  const mandatoryCommunication = mandatoryCommunications?.find(
+    (item: any) => item.type === "UNILAV_ASSUNZIONE"
+  );
+
   // Master Data
   const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any> : null, [db, entityId]);
   const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
@@ -103,6 +132,14 @@ export default function EditEmploymentOfferPage() {
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
+
+  // UniLav Form State
+  const [uniLavData, setUniLavData] = useState({
+    protocolNumber: "",
+    submittedAt: "",
+    receiptPdfUrl: ""
+  });
+  const [savingUniLav, setSavingUniLav] = useState(false);
 
   // Server-side fetching for levels to bypass rule limits
   const [activeLevels, setActiveLevels] = useState<any[]>([]);
@@ -141,6 +178,17 @@ export default function EditEmploymentOfferPage() {
       setFormData(offer);
     }
   }, [offer]);
+
+  // Sync UniLav form state when doc loads
+  useEffect(() => {
+    if (mandatoryCommunication) {
+      setUniLavData({
+        protocolNumber: mandatoryCommunication.protocolNumber || "",
+        submittedAt: mandatoryCommunication.submittedAt ? (mandatoryCommunication.submittedAt.seconds ? new Date(mandatoryCommunication.submittedAt.seconds * 1000).toISOString().split('T')[0] : mandatoryCommunication.submittedAt) : "",
+        receiptPdfUrl: mandatoryCommunication.receiptPdfUrl || ""
+      });
+    }
+  }, [mandatoryCommunication]);
 
   const handleCcnlChange = (ccnlId: string) => {
     if (ccnlId === "none_clear") {
@@ -296,35 +344,79 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
-  const handleViewAttachment = async (attachmentId: string) => {
-    if (!offer?.applicationSubmissionId) return;
-    setLoadingFileId(attachmentId);
-
+  const handleSaveUniLav = async () => {
+    if (!user || !mandatoryCommunication) return;
+    setSavingUniLav(true);
     try {
-      const idToken = await user?.getIdToken();
-      const response = await fetch(`/api/entities/${entityId}/submissions/${offer.applicationSubmissionId}/attachments/${attachmentId}/url`, {
-        headers: { 'Authorization': `Bearer ${idToken}` }
-      });
-
-      if (!response.ok) throw new Error("Impossible de générer le lien d'accès.");
+      const commRef = doc(db!, `entities/${entityId}/mandatoryCommunications`, mandatoryCommunication.id);
+      const isComplete = uniLavData.protocolNumber && uniLavData.submittedAt && uniLavData.receiptPdfUrl;
       
-      const { url } = await response.json();
-      window.open(url, '_blank');
+      await updateDoc(commRef, {
+        ...uniLavData,
+        status: isComplete ? "receipt_received" : "draft",
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid
+      });
+      toast({ title: "Données UniLav enregistrées" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
-      setLoadingFileId(null);
+      setSavingUniLav(false);
+    }
+  };
+
+  const handleTestUniLav = async () => {
+    if (!user || !mandatoryCommunication) return;
+    setSavingUniLav(true);
+    try {
+      const commRef = doc(db!, `entities/${entityId}/mandatoryCommunications`, mandatoryCommunication.id);
+      await updateDoc(commRef, {
+        status: "receipt_received",
+        protocolNumber: `TEST-UNILAV-${offerId}`,
+        submittedAt: serverTimestamp(),
+        receiptPdfUrl: "TEST_RECEIPT_NOT_APPLICABLE",
+        testMode: true,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid
+      });
+      toast({ title: "UniLav validé en mode TEST" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setSavingUniLav(false);
     }
   };
 
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
-  const isAccepted = offer?.status === 'accepted';
-  const isConverted = offer?.conversionStatus === 'converted';
-  const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer?.status || "") || isConverted;
+  if (!offer) {
+    return (
+      <div className="p-8 text-center mt-20 max-w-md mx-auto">
+        <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6">
+          <User className="w-10 h-10 text-muted-foreground" />
+        </div>
+        <h2 className="text-2xl font-black text-primary">Proposition introuvable</h2>
+        <Button onClick={() => router.push(`/entity/${entityId}/employment-offers`)} className="mt-8">Retour au registre</Button>
+      </div>
+    );
+  }
+
+  const isAccepted = offer.status === 'accepted';
+  const isConverted = offer.conversionStatus === 'converted';
+  const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer.status) || isConverted;
+
+  const isUniLavDone = mandatoryCommunication?.status === 'receipt_received' || mandatoryCommunication?.status === 'completed' || mandatoryCommunication?.testMode === true;
+  const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
 
   const resolvedDepartment = formData.departmentName || need?.departmentName || "Non renseigné";
   const resolvedWorksite = formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné";
+  
+  const getTimestampSeconds = (value?: any) => {
+    return value?.seconds ?? value?._seconds ?? null;
+  };
+  
+  const sentAtSeconds = getTimestampSeconds(offer.sentAt);
+  const viewedAtSeconds = getTimestampSeconds(offer.viewedAt);
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
@@ -333,8 +425,8 @@ export default function EditEmploymentOfferPage() {
           <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full"><ArrowLeft className="w-5 h-5" /></Button>
           <div className="space-y-0.5">
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black text-primary tracking-tight">Proposition : {offer?.candidateDisplayName}</h1>
-              {offer?.status && getStatusBadge(offer.status)}
+              <h1 className="text-2xl font-black text-primary tracking-tight">Proposition : {offer.candidateDisplayName}</h1>
+              {getStatusBadge(offer.status)}
             </div>
           </div>
         </div>
@@ -343,14 +435,45 @@ export default function EditEmploymentOfferPage() {
           {!isReadOnly && (
             <>
               <Button variant="outline" onClick={() => handleSave()} disabled={saving} className="gap-2 bg-white font-bold"><Save className="w-4 h-4" /> Enregistrer brouillon</Button>
-              {offer?.status === 'draft' && <Button onClick={() => handleSave('internal_review')} disabled={saving} className="gap-2">Passer en validation <ArrowRight className="w-4 h-4" /></Button>}
-              {offer?.status === 'internal_review' && <Button onClick={() => handleSave('ready_to_send')} disabled={saving} className="gap-2 bg-accent text-white">Marquer comme prête <CheckCircle2 className="w-4 h-4" /></Button>}
-              {offer?.status === 'ready_to_send' && <Button onClick={handleSend} disabled={sending} className="gap-2 bg-primary text-white font-black"><Send className="w-4 h-4" /> Envoyer au candidat</Button>}
+              {offer.status === 'draft' && <Button onClick={() => handleSave('internal_review')} disabled={saving} className="gap-2">Passer en validation <ArrowRight className="w-4 h-4" /></Button>}
+              {offer.status === 'internal_review' && <Button onClick={() => handleSave('ready_to_send')} disabled={saving} className="gap-2 bg-accent text-white">Marquer comme prête <CheckCircle2 className="w-4 h-4" /></Button>}
+              {offer.status === 'ready_to_send' && <Button onClick={handleSend} disabled={sending} className="gap-2 bg-primary text-white font-black"><Send className="w-4 h-4" /> Envoyer au candidat</Button>}
             </>
           )}
-          {offer?.status === 'sent' && <Button variant="outline" onClick={handleSend} disabled={sending} className="gap-2 bg-white"><RefreshCcw className="w-4 h-4" /> Renvoyer le lien</Button>}
+          {offer.status === 'sent' && <Button variant="outline" onClick={handleSend} disabled={sending} className="gap-2 bg-white"><RefreshCcw className="w-4 h-4" /> Renvoyer le lien</Button>}
         </div>
       </header>
+
+      {["sent", "viewed", "accepted"].includes(offer.status) && (
+        <div className="mb-8 rounded-[2rem] border border-blue-100 bg-blue-50/60 p-5 shadow-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+            <div className="flex items-center gap-4">
+              <div className="h-11 w-11 rounded-2xl bg-white flex items-center justify-center text-blue-500 shadow-sm">
+                <Send className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Dernier envoi</p>
+                <p className="text-sm font-black text-primary">{sentAtSeconds ? new Date(sentAtSeconds * 1000).toLocaleString("fr-FR") : "Non envoyé"}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="h-11 w-11 rounded-2xl bg-green-50 flex items-center justify-center text-green-600 shadow-sm">
+                <Info className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-widest text-green-500">Première lecture</p>
+                <p className="text-sm font-black text-primary">{viewedAtSeconds ? new Date(viewedAtSeconds * 1000).toLocaleString("fr-FR") : "Non consultée"}</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end">
+              <div className="text-right">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Nombre de vues</p>
+                <p className="text-lg font-black text-primary">{offer.resendCount || 0}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
@@ -389,10 +512,10 @@ export default function EditEmploymentOfferPage() {
                     <>
                       <div className="flex items-center justify-between">
                          <div className="space-y-1">
-                            <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">État du dossier</p>
+                            <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">État documents</p>
                             <div className="flex items-center gap-2">
                                {dossier.readyForConversion ? <CheckCircle className="w-5 h-5 text-green-500" /> : <Clock className="w-5 h-5 text-orange-500" />}
-                               <span className="font-bold text-slate-800">{dossier.readyForConversion ? "Prêt pour l'embauche" : "Documents en attente"}</span>
+                               <span className="font-bold text-slate-800">{dossier.readyForConversion ? "Documents validés" : "Documents en attente"}</span>
                             </div>
                          </div>
                          {!isConverted && (
@@ -430,18 +553,186 @@ export default function EditEmploymentOfferPage() {
                       </div>
 
                       {dossier.readyForConversion && !isConverted && (
-                        <div className="bg-green-50 p-4 rounded-2xl border border-green-200 flex items-center justify-between animate-in fade-in slide-in-from-bottom-2">
-                           <div className="flex items-center gap-3 text-green-800 text-sm font-bold">
-                              <ShieldCheck className="w-6 h-6 text-green-600" /> Compliance validée. Vous pouvez finaliser le recrutement.
+                        <div className="bg-primary/5 p-5 rounded-2xl border border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-2">
+                           <div className="flex items-center gap-3 text-primary text-sm font-bold">
+                              <CheckCircle2 className="w-6 h-6 text-green-600" />
+                              <div className="space-y-0.5">
+                                 <p>Documents validés.</p>
+                                 <p className="text-[10px] uppercase opacity-70">Étape suivante : communication obligatoire Italie / UniLav.</p>
+                              </div>
                            </div>
-                           <Button onClick={() => setIsConvertDialogOpen(true)} className="bg-green-600 hover:bg-green-700 text-white font-black rounded-xl">
-                              <UserPlus className="w-4 h-4 mr-2" /> Convertir en employé
-                           </Button>
+                           
+                           {canConvert ? (
+                             <Button onClick={() => setIsConvertDialogOpen(true)} className="bg-green-600 hover:bg-green-700 text-white font-black rounded-xl w-full sm:w-auto shadow-lg shadow-green-200">
+                                <UserPlus className="w-4 h-4 mr-2" /> Convertir en employé
+                             </Button>
+                           ) : (
+                             <div className="flex flex-col items-end gap-1">
+                                <Button disabled className="rounded-xl opacity-40 bg-slate-300 w-full sm:w-auto">
+                                  Convertir en employé
+                                </Button>
+                                <span className="text-[9px] font-bold text-orange-600 uppercase tracking-tighter">En attente du protocole UniLav/CPI</span>
+                             </div>
+                           )}
                         </div>
                       )}
                     </>
                   )}
                </CardContent>
+            </Card>
+          )}
+
+          {isAccepted && (
+            <Card className="border-primary/10 rounded-3xl shadow-lg overflow-hidden">
+              <CardHeader className="py-4 border-b bg-secondary/10">
+                <div className="flex items-center justify-between gap-4">
+                  <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-primary">
+                    <FileText className="w-4 h-4" />
+                    Communication obligatoire Italie / UniLav
+                  </CardTitle>
+
+                  {mandatoryCommunication && (
+                    <Badge variant="secondary" className={cn("text-[9px] font-black uppercase", mandatoryCommunication.testMode ? "bg-orange-50 text-orange-700 border-orange-200" : "")}>
+                      {mandatoryCommunication.testMode ? "MODE TEST" : mandatoryCommunication.status || "Brouillon"}
+                    </Badge>
+                  )}
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-6 space-y-6">
+                {!mandatoryCommunication ? (
+                  <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl text-xs font-bold text-orange-700 flex items-center gap-3">
+                     <AlertTriangle className="w-5 h-5" />
+                     Communication UniLav/CPI non initialisée pour cette offre.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-2xl bg-secondary/30 border border-primary/5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-1">Mode email consultant</p>
+                        <p className="text-sm font-black text-primary">{mandatoryCommunication.emailMode || "draft_only"}</p>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-secondary/30 border border-primary/5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-1">Email consultant</p>
+                        <p className="text-sm font-black text-primary">{mandatoryCommunication.consultantEmail || "Non configuré"}</p>
+                      </div>
+                    </div>
+
+                    {/* UniLav Protocol Recording Form */}
+                    {dossier?.readyForConversion && !isConverted && (
+                      <div className="space-y-4 pt-4 border-t border-dashed">
+                        <p className="text-[10px] font-black uppercase text-primary tracking-widest">Enregistrement du protocole UniLav</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-[9px] uppercase font-bold">Numéro de protocole</Label>
+                            <Input 
+                              value={uniLavData.protocolNumber} 
+                              onChange={(e) => setUniLavData(p => ({...p, protocolNumber: e.target.value}))}
+                              placeholder="Ex: 2024-XXXX-XXXX"
+                              className="rounded-xl h-10 font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-[9px] uppercase font-bold">Date de soumission</Label>
+                            <Input 
+                              type="date" 
+                              value={uniLavData.submittedAt} 
+                              onChange={(e) => setUniLavData(p => ({...p, submittedAt: e.target.value}))}
+                              className="rounded-xl h-10"
+                            />
+                          </div>
+                          <div className="space-y-2 col-span-full">
+                            <Label className="text-[9px] uppercase font-bold">Lien vers le reçu (PDF)</Label>
+                            <Input 
+                              value={uniLavData.receiptPdfUrl} 
+                              onChange={(e) => setUniLavData(p => ({...p, receiptPdfUrl: e.target.value}))}
+                              placeholder="https://cloud-storage.com/receipt.pdf"
+                              className="rounded-xl h-10"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                           <Button 
+                             onClick={handleSaveUniLav} 
+                             disabled={savingUniLav} 
+                             className="rounded-xl bg-primary text-white font-bold h-9 px-6"
+                           >
+                             {savingUniLav ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <Save className="w-3 h-3 mr-2" />}
+                             Enregistrer le protocole
+                           </Button>
+                        </div>
+                        
+                        <Separator className="my-4" />
+                        
+                        {/* Test Mode Area */}
+                        <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100 space-y-3">
+                           <div className="flex items-center gap-2 text-orange-800 text-[10px] font-black uppercase tracking-wider">
+                              <AlertTriangle className="w-4 h-4" />
+                              Mode TEST / Démonstration
+                           </div>
+                           <p className="text-[10px] text-orange-600 leading-tight">
+                              Validation UniLav/CPI en mode test — non valable juridiquement. Utilisez ce bouton pour compléter le flux sans protocole réel.
+                           </p>
+                           <Button 
+                             variant="outline" 
+                             onClick={handleTestUniLav} 
+                             disabled={savingUniLav}
+                             className="w-full bg-white border-orange-200 text-orange-700 hover:bg-orange-50 font-bold rounded-xl h-10"
+                           >
+                             Valider UniLav/CPI en mode TEST
+                           </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {isUniLavDone && (
+                      <div className="p-4 bg-green-50 border border-green-100 rounded-2xl space-y-2">
+                        <div className="flex items-center justify-between">
+                           <p className="text-[9px] font-black text-green-700 uppercase tracking-widest">Confirmation UniLav</p>
+                           <Badge className="bg-green-600 text-white border-none text-[8px]">VALIDÉ</Badge>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                           <div>
+                              <p className="text-[8px] uppercase font-bold text-muted-foreground">Protocole</p>
+                              <p className="text-xs font-mono font-bold text-slate-800">{mandatoryCommunication.protocolNumber}</p>
+                           </div>
+                           <div>
+                              <p className="text-[8px] uppercase font-bold text-muted-foreground">Date</p>
+                              <p className="text-xs font-bold text-slate-800">
+                                {mandatoryCommunication.submittedAt && new Date(getTimestampSeconds(mandatoryCommunication.submittedAt) * 1000).toLocaleDateString('fr-FR')}
+                              </p>
+                           </div>
+                        </div>
+                        {mandatoryCommunication.testMode && (
+                          <div className="mt-2 pt-2 border-t border-green-100 flex items-center gap-2 text-[9px] font-black text-orange-600 uppercase">
+                             <AlertCircle className="w-3 h-3" />
+                             Validé en mode hors-ligne / test
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {!isConverted && !isUniLavDone && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full rounded-xl font-bold"
+                        onClick={async () => {
+                          const emailBody = mandatoryCommunication.emailBody || "";
+                          if (!emailBody) {
+                            toast({ title: "Email non disponible", variant: "destructive" });
+                            return;
+                          }
+                          await navigator.clipboard.writeText(emailBody);
+                          toast({ title: "Email copié", description: "Le texte de l’email consultant a été copié." });
+                        }}
+                      >
+                        Copier email consultant
+                      </Button>
+                    )}
+                  </>
+                )}
+              </CardContent>
             </Card>
           )}
 
@@ -452,7 +743,7 @@ export default function EditEmploymentOfferPage() {
                   <div><p className="text-lg">Recrutement Finalisé</p><p className="text-[10px] uppercase font-black opacity-60">Dossier converti en employé.</p></div>
                </div>
                <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
-                  <Link href={`/entity/${entityId}/employees/${offer?.employeeId}`}>Voir fiche employé</Link>
+                  <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir fiche employé</Link>
                </Button>
             </div>
           )}
@@ -468,8 +759,8 @@ export default function EditEmploymentOfferPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-1 p-3 bg-secondary/20 rounded-2xl border">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Candidat</Label>
-                  <p className="font-black text-primary">{offer?.candidateDisplayName}</p>
-                  <p className="text-xs text-muted-foreground">{offer?.candidateEmail}</p>
+                  <p className="font-black text-primary">{offer.candidateDisplayName}</p>
+                  <p className="text-xs text-muted-foreground">{offer.candidateEmail}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[9px] font-black uppercase text-muted-foreground">Poste proposé</Label>
@@ -598,14 +889,21 @@ export default function EditEmploymentOfferPage() {
 
         <div className="space-y-8">
           <Card className="border-primary/20 bg-primary/90 text-white shadow-2xl rounded-3xl overflow-hidden">
-             <CardHeader className="bg-white/10 py-4 border-b border-white/10"><CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2"><FileText className="w-4 h-4" /> Résumé de l'offre</CardTitle></CardHeader>
-             <CardContent className="p-6 space-y-4">
-                <SummaryRow label="Statut" value={offer?.status ? getStatusBadge(offer.status) : "..."} />
-                <SummaryRow label="Compliance" value={isConverted ? "Légalisation OK" : dossier?.readyForConversion ? "Dossier validé" : isAccepted ? "En attente docs" : "N/A"} />
-                <Separator className="bg-white/10" />
-                <SummaryRow label="RAL" value={`€ ${formData.proposedGrossAnnual?.toLocaleString('fr-FR')}`} />
-                <SummaryRow label="Début" value={formData.proposedStartDate} />
-             </CardContent>
+            <CardHeader className="bg-white/10 py-4 border-b border-white/10">
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                Résumé
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6 space-y-4">
+              <SummaryRow label="Candidat" value={offer.candidateDisplayName} />
+              <SummaryRow label="Poste" value={formData.jobTitleName || "-"} />
+              <SummaryRow label="Contrat" value={formData.contractType || "-"} />
+              <SummaryRow label="Brut mensuel" value={`${Number(formData.proposedGrossMonthly || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`} />
+              <SummaryRow label="Brut annuel" value={`${Number(formData.proposedGrossAnnual || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`} />
+              <Separator className="bg-white/10" />
+              <SummaryRow label="Statut" value={getStatusBadge(offer.status)} />
+            </CardContent>
           </Card>
 
           <Card className="border-primary/10 rounded-3xl shadow-lg">
@@ -617,10 +915,10 @@ export default function EditEmploymentOfferPage() {
                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Validité du lien (jours)</Label>
                    <Input type="number" min="1" max="30" value={formData.linkValidityDays || 7} onChange={(e) => setFormData(p => ({...p, linkValidityDays: parseInt(e.target.value)}))} disabled={isReadOnly} className="rounded-xl" />
                 </div>
-                {offer?.publicAccessTokenExpiresAt && (
+                {offer.publicAccessTokenExpiresAt && (
                   <div className="p-3 bg-secondary/30 rounded-xl space-y-1">
                      <p className="text-[9px] font-black text-muted-foreground uppercase">Expire le</p>
-                     <p className="text-xs font-bold text-primary">{new Date(offer.publicAccessTokenExpiresAt.seconds * 1000).toLocaleString()}</p>
+                     <p className="text-xs font-bold text-primary">{new Date(getTimestampSeconds(offer.publicAccessTokenExpiresAt) * 1000).toLocaleString()}</p>
                   </div>
                 )}
              </CardContent>
@@ -648,7 +946,7 @@ export default function EditEmploymentOfferPage() {
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-2xl font-black text-primary">Finaliser l'embauche</AlertDialogTitle>
-            <AlertDialogDescription>Validation des documents terminée. Le dossier est prêt.</AlertDialogDescription>
+            <AlertDialogDescription>Validation des documents et UniLav terminée. Le dossier est prêt.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={converting}>Annuler</AlertDialogCancel>
@@ -675,11 +973,11 @@ function getStatusBadge(status: EmploymentOfferStatus) {
   }
 }
 
-function SummaryRow({ label, value }: { label: string, value: any }) {
+function SummaryRow({ label, value }: { label: string; value: any }) {
   return (
-    <div className="flex justify-between items-start gap-4">
-       <span className="text-[9px] font-black uppercase text-white/50 tracking-widest pt-0.5">{label}</span>
-       <div className="text-xs font-bold text-right truncate">{value || "-"}</div>
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-[9px] font-black uppercase text-white/40 tracking-widest">{label}</span>
+      <div className="text-xs font-black text-right text-white truncate max-w-[190px]">{value || "-"}</div>
     </div>
   );
 }
