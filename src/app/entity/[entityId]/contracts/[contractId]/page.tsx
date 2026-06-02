@@ -49,6 +49,23 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+const TERMINATION_REASONS = [
+  { value: "resignation", label: "Démission" },
+  { value: "dismissal", label: "Licenciement" },
+  { value: "probation_failed", label: "Fin / échec période d’essai" },
+  { value: "mutual_agreement", label: "Rupture conventionnelle" },
+  { value: "fixed_term_end", label: "Fin de contrat à durée déterminée" },
+  { value: "retirement", label: "Retraite" },
+  { value: "other", label: "Autre" }
+];
 
 export default function ContractDetailPage() {
   const params = useParams();
@@ -73,6 +90,14 @@ export default function ContractDetailPage() {
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
   const [signedDocForm, setSignedDocForm] = useState({ title: "", url: "", reference: "" });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  // Termination State
+  const [isTerminationModalOpen, setIsTerminationModalOpen] = useState(false);
+  const [terminationForm, setTerminationForm] = useState({
+    actualEndDate: new Date().toISOString().split('T')[0],
+    terminationReason: "",
+    terminationNotes: ""
+  });
 
   // 1. Core Data
   const contractRef = useMemo(() => 
@@ -393,6 +418,31 @@ export default function ContractDetailPage() {
     }
   };
 
+  const handleTerminateContract = async () => {
+    if (!user || !contract || !contract.employeeId) return;
+    if (!terminationForm.actualEndDate || !terminationForm.terminationReason) {
+      toast({ variant: "destructive", title: "Champs manquants", description: "Veuillez renseigner la date et le motif." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      await terminateContractAction(
+        entityId, 
+        contractId, 
+        contract.employeeId, 
+        user.uid, 
+        terminationForm
+      );
+      setIsTerminationModalOpen(false);
+      toast({ title: "Contrat terminé", description: "Le contrat est maintenant clos." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
@@ -409,6 +459,9 @@ export default function ContractDetailPage() {
   const canUpdate = hasPermission("contracts.update");
   const isDraft = contract.status === 'draft';
   const isPendingSignature = contract.status === 'pending_signature';
+  const isActive = contract.status === 'active';
+  const isTerminated = contract.status === 'terminated';
+  
   const hasSignedDoc = !!(
     contract.signedDocumentId || 
     contract.signedDocumentUrl || 
@@ -480,13 +533,13 @@ export default function ContractDetailPage() {
              </>
            )}
 
-           {!isEditing && canUpdate && contract.status === 'active' && (
-             <Button variant="destructive" onClick={() => handleTransition(() => terminateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat résilié.")} disabled={processing} className="gap-2 font-bold rounded-xl">
+           {!isEditing && canUpdate && isActive && (
+             <Button variant="destructive" onClick={() => setIsTerminationModalOpen(true)} disabled={processing} className="gap-2 font-bold rounded-xl">
                <Ban className="w-4 h-4" /> Résilier / Terminer
              </Button>
            )}
 
-           {!isEditing && canUpdate && (isDraft || contract.status === 'terminated') && (
+           {!isEditing && canUpdate && (isDraft || isTerminated) && (
              <Button variant="ghost" size="icon" className="text-muted-foreground" onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")} disabled={processing}>
                <Archive className="w-4 h-4" />
              </Button>
@@ -497,6 +550,37 @@ export default function ContractDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <div className="lg:col-span-3 space-y-8">
           
+          {/* Termination Info if terminated */}
+          {isTerminated && (
+            <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm">
+               <CardHeader className="bg-red-50 border-b py-4 px-8">
+                  <CardTitle className="text-xs font-black uppercase tracking-widest text-red-700 flex items-center gap-2">
+                     <Ban className="w-4 h-4" /> Détails de la clôture
+                  </CardTitle>
+               </CardHeader>
+               <CardContent className="p-8">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                     <div className="space-y-1">
+                        <p className="text-[10px] font-black uppercase text-red-600/60 tracking-widest">Date de fin réelle</p>
+                        <p className="text-sm font-bold text-slate-800">{formatDate(contract.actualEndDate)}</p>
+                     </div>
+                     <div className="space-y-1">
+                        <p className="text-[10px] font-black uppercase text-red-600/60 tracking-widest">Motif de fin</p>
+                        <p className="text-sm font-bold text-slate-800">
+                          {TERMINATION_REASONS.find(r => r.value === contract.terminationReason)?.label || contract.terminationReason || "Non renseigné"}
+                        </p>
+                     </div>
+                     {contract.terminationNotes && (
+                        <div className="col-span-full space-y-1">
+                           <p className="text-[10px] font-black uppercase text-red-600/60 tracking-widest">Notes de clôture</p>
+                           <p className="text-xs text-slate-600 bg-white p-4 rounded-xl border border-red-100">{contract.terminationNotes}</p>
+                        </div>
+                     )}
+                  </div>
+               </CardContent>
+            </Card>
+          )}
+
           {/* Generated PDF Section */}
           <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", contract.generatedPdfStoragePath ? "border-primary/10" : "border-orange-100 bg-orange-50/5")}>
              <CardHeader className="bg-primary/5 border-b py-4 px-8 flex flex-row items-center justify-between">
@@ -519,7 +603,7 @@ export default function ContractDetailPage() {
                             <p className="text-xs text-orange-700">Vous devez générer la version préparée du contrat avant de pouvoir l'envoyer en signature.</p>
                          </div>
                       </div>
-                      <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="w-full h-12 rounded-xl font-black gap-2">
+                      <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing || isTerminated} className="w-full h-12 rounded-xl font-black gap-2">
                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCode className="w-4 h-4" />}
                          Générer le PDF du contratto
                       </Button>
@@ -545,7 +629,7 @@ export default function ContractDetailPage() {
                          )}
                       </div>
 
-                      {isPdfOutdated && (
+                      {isPdfOutdated && !isTerminated && (
                         <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
                            <AlertTriangle className="h-4 w-4 text-orange-600" />
                            <AlertTitle className="text-sm font-bold text-orange-800">PDF obsolète</AlertTitle>
@@ -785,6 +869,7 @@ export default function ContractDetailPage() {
                 <Separator className="opacity-20" />
                 {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
                 {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
+                {contract.terminatedAt && <AuditRow label="Clôturé le" value={formatDateTime(contract.terminatedAt)} />}
                 <Separator className="opacity-20" />
                 <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
                 <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
@@ -857,7 +942,10 @@ export default function ContractDetailPage() {
                     className="h-12 rounded-xl pt-3"
                   />
                   <div className="text-[9px] text-muted-foreground italic pl-1 flex items-center gap-1">
-                    <span className="bg-secondary p-0.5 rounded-full inline-flex"><Info className="w-2.5 h-2.5" /></span> <span>PDF uniquement, max 10 Mo.</span>
+                    <span className="bg-secondary p-0.5 rounded-full inline-flex">
+                      <Info className="w-2.5 h-2.5" />
+                    </span>
+                    <span>PDF uniquement, max 10 Mo.</span>
                   </div>
                </div>
             </div>
@@ -871,6 +959,76 @@ export default function ContractDetailPage() {
              >
                {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                Enregistrer la référence
+             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Termination Modal */}
+      <Dialog open={isTerminationModalOpen} onOpenChange={setIsTerminationModalOpen}>
+        <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-red-600 flex items-center gap-2">
+              <Ban className="w-6 h-6" /> Terminer le contrat
+            </DialogTitle>
+            <DialogDescription>
+              Cette action clôture le contrat actif. Le contrat restera disponible dans l’historique.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-6 space-y-6">
+             <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black text-muted-foreground">Date de fin réelle (Requis)</Label>
+                <Input 
+                  type="date"
+                  value={terminationForm.actualEndDate} 
+                  onChange={(e) => setTerminationForm(p => ({...p, actualEndDate: e.target.value}))}
+                  className="h-12 rounded-xl"
+                />
+             </div>
+             
+             <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black text-muted-foreground">Motif de fin (Requis)</Label>
+                <Select 
+                  value={terminationForm.terminationReason} 
+                  onValueChange={(v) => setTerminationForm(p => ({...p, terminationReason: v}))}
+                >
+                  <SelectTrigger className="h-12 rounded-xl">
+                    <SelectValue placeholder="Choisir un motif..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TERMINATION_REASONS.map(r => (
+                      <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+             </div>
+
+             <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black text-muted-foreground">Notes internes (Optionnel)</Label>
+                <Textarea 
+                  value={terminationForm.terminationNotes}
+                  onChange={(e) => setTerminationForm(p => ({...p, terminationNotes: e.target.value}))}
+                  placeholder="Observations sur la fin du contrat..."
+                  className="min-h-[100px] rounded-xl"
+                />
+             </div>
+
+             <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] font-bold text-red-800 leading-tight">
+                  Attention : L'employé sera marqué comme n'ayant plus de contrat actif. Cette action est archivée et impactera les futurs pointages.
+                </p>
+             </div>
+          </div>
+          <DialogFooter>
+             <Button variant="ghost" onClick={() => setIsTerminationModalOpen(false)} disabled={processing}>Annuler</Button>
+             <Button 
+               onClick={handleTerminateContract} 
+               disabled={processing || !terminationForm.actualEndDate || !terminationForm.terminationReason}
+               className="bg-red-600 hover:bg-red-700 text-white font-black rounded-xl px-8"
+             >
+               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+               Confirmer la clôture
              </Button>
           </DialogFooter>
         </DialogContent>

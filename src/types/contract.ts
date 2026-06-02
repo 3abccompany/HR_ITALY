@@ -77,6 +77,15 @@ export interface Contract {
   signedDocumentUploadedAt?: Date | FieldValue;
   signedDocumentUploadedBy?: string;
 
+  // --- Termination Metadata ---
+  actualEndDate?: string;
+  terminationReason?: string;
+  terminationNotes?: string;
+  terminatedAt?: Date | FieldValue;
+  terminatedBy?: string;
+  terminationDocumentId?: string;
+  terminationDocumentUrl?: string;
+
   // --- Lifecycle & Audit ---
   status: ContractStatus;
   notes?: string;
@@ -84,7 +93,7 @@ export interface Contract {
   sentForSignatureAt?: Date | FieldValue;
   signedAt?: Date | FieldValue;
   activatedAt?: Date | FieldValue;
-  terminatedAt?: Date | FieldValue;
+  terminatedAt_old?: Date | FieldValue; // Keeping for compatibility if needed
   archivedAt?: Date | FieldValue;
 
   createdAt: Date | FieldValue;

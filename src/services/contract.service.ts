@@ -224,28 +224,56 @@ export async function rollbackToDraft(entityId: string, contractId: string, acto
 
 /**
  * Terminates an active contract.
+ * Updates both the contract document and the linked employee.
  */
-export async function terminateContractAction(entityId: string, contractId: string, employeeId: string, actorUid: string) {
+export async function terminateContractAction(
+  entityId: string, 
+  contractId: string, 
+  employeeId: string, 
+  actorUid: string,
+  terminationData: {
+    actualEndDate: string;
+    terminationReason: string;
+    terminationNotes?: string;
+  }
+) {
   if (!db) throw new Error("Firestore not initialized");
+  if (!employeeId) throw new Error("ID Employé manquant.");
+
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
-  const employeeRef = employeeId ? doc(db, `entities/${entityId}/employees`, employeeId) : null;
+  const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
   await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(contractRef);
+    if (!snap.exists()) throw new Error("Contrat introuvable.");
+    const contract = snap.data() as Contract;
+
+    if (contract.status !== "active") {
+      throw new Error("Seul un contrat actif peut être terminé.");
+    }
+
+    // Basic date validation: end date cannot be before start date
+    if (new Date(terminationData.actualEndDate) < new Date(contract.startDate)) {
+      throw new Error("La date de fin ne peut pas être antérieure à la date de début.");
+    }
+
     transaction.update(contractRef, {
       status: "terminated",
+      actualEndDate: terminationData.actualEndDate,
+      terminationReason: terminationData.terminationReason,
+      terminationNotes: terminationData.terminationNotes || null,
       terminatedAt: serverTimestamp(),
+      terminatedBy: actorUid,
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
     });
 
-    if (employeeRef) {
-      const empSnap = await transaction.get(employeeRef);
-      if (empSnap.exists() && empSnap.data().activeContractId === contractId) {
-        transaction.update(employeeRef, {
-          activeContractId: null,
-          updatedAt: serverTimestamp(),
-        });
-      }
+    const empSnap = await transaction.get(employeeRef);
+    if (empSnap.exists() && empSnap.data().activeContractId === contractId) {
+      transaction.update(employeeRef, {
+        activeContractId: null,
+        updatedAt: serverTimestamp(),
+      });
     }
   });
 
@@ -255,6 +283,7 @@ export async function terminateContractAction(entityId: string, contractId: stri
     action: "contract.terminated",
     resourceType: "contract",
     resourceId: contractId,
+    details: { employeeId, ...terminationData }
   });
 }
 
