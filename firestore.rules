@@ -162,6 +162,21 @@ service cloud.firestore {
         allow write: if isPlatformAdmin();
       }
 
+      match /documents/{docId} {
+        allow read: if hasPermission(entityId, 'documents.read') || isPlatformAdmin();
+        allow create: if (hasPermission(entityId, 'documents.upload') || isPlatformAdmin())
+                      && request.resource.data.entityId == entityId
+                      && request.resource.data.title != null
+                      && request.resource.data.documentType != null
+                      && request.resource.data.status != null
+                      && request.resource.data.storagePath != null
+                      && request.resource.data.fileName != null
+                      && request.resource.data.mimeType != null
+                      && request.resource.data.sizeBytes != null;
+        allow update: if hasPermission(entityId, 'documents.archive') || isPlatformAdmin();
+        allow delete: if false;
+      }
+
       match /preHireDossiers/{dossierId} {
         allow read: if hasPermission(entityId, 'candidates.read') || hasPermission(entityId, 'contracts.read') || isPlatformAdmin();
         allow create: if hasPermission(entityId, 'candidates.update') || hasPermission(entityId, 'contracts.create') || isPlatformAdmin();
