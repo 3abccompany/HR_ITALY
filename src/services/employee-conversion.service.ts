@@ -15,6 +15,7 @@ function normalizeName(name: string): string {
 /**
  * 7K-E Conversion logic reinforced with 7K-F Compliance Check.
  * Corrected: Contracts start as 'draft' and link via 'pendingContractId'.
+ * 7K-G: Added denormalized identity fields (name/code) to contract for registry performance.
  */
 export async function convertOfferToEmployeeAction(params: {
   entityId: string;
@@ -87,10 +88,13 @@ export async function convertOfferToEmployeeAction(params: {
 
       transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), {
         contractId, entityId, personId: person.personId, employeeId, sourceOfferId: offerId,
+        employeeDisplayName: person.displayName,
+        employeeCode: employeeCode,
         contractType: offer.contractType, startDate: offer.proposedStartDate, weeklyHours: offer.weeklyHours,
         ccnlName: offer.ccnlName, levelCode: offer.levelCode, levelLabel: offer.levelLabel,
         grossMonthly: offer.proposedGrossMonthly || 0, grossAnnual: offer.proposedGrossAnnual || 0,
-        status: "draft", createdAt: FieldValue.serverTimestamp(), createdBy: actorUid
+        status: "draft", createdAt: FieldValue.serverTimestamp(), createdBy: actorUid,
+        updatedAt: FieldValue.serverTimestamp(), updatedBy: actorUid
       });
 
       transaction.update(offerSnap.ref, { conversionStatus: "converted", employeeId, contractId, updatedAt: FieldValue.serverTimestamp() });
