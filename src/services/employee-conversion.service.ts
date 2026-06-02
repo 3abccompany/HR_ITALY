@@ -1,12 +1,9 @@
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 import { EmploymentOffer } from "@/types/employment-offer";
-import { Candidate } from "@/types/candidate";
 import { Person } from "@/types/person";
-import { Contract } from "@/types/contract";
-import { Employee } from "@/types/employee";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
 
@@ -17,6 +14,7 @@ function normalizeName(name: string): string {
 
 /**
  * 7K-E Conversion logic reinforced with 7K-F Compliance Check.
+ * Corrected: Contracts start as 'draft' and link via 'pendingContractId'.
  */
 export async function convertOfferToEmployeeAction(params: {
   entityId: string;
@@ -83,14 +81,16 @@ export async function convertOfferToEmployeeAction(params: {
         email: person.email, phone: person.phone || "", birthDate: birthDateStr, taxCode: person.codiceFiscale || "",
         hireDate: offer.proposedStartDate, departmentId: offer.departmentId || "", departmentName: offer.departmentName || "",
         jobTitle: offer.jobTitleName, worksiteName: offer.worksiteName || "", status: "active",
+        pendingContractId: contractId,
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
       });
 
       transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), {
         contractId, entityId, personId: person.personId, employeeId, sourceOfferId: offerId,
         contractType: offer.contractType, startDate: offer.proposedStartDate, weeklyHours: offer.weeklyHours,
-        ccnlName: offer.ccnlName, levelCode: offer.levelCode, grossMonthly: offer.proposedGrossMonthly || 0,
-        status: "active", createdAt: FieldValue.serverTimestamp(), createdBy: actorUid
+        ccnlName: offer.ccnlName, levelCode: offer.levelCode, levelLabel: offer.levelLabel,
+        grossMonthly: offer.proposedGrossMonthly || 0, grossAnnual: offer.proposedGrossAnnual || 0,
+        status: "draft", createdAt: FieldValue.serverTimestamp(), createdBy: actorUid
       });
 
       transaction.update(offerSnap.ref, { conversionStatus: "converted", employeeId, contractId, updatedAt: FieldValue.serverTimestamp() });

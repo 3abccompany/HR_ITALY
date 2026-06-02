@@ -27,6 +27,7 @@ export interface Employee {
   operationalWorksiteIds: string[];
   managerUserId?: string;
   activeContractId?: string;
+  pendingContractId?: string;
   status: EmployeeStatus;
   createdAt: Date | FieldValue;
   updatedAt: Date | FieldValue;

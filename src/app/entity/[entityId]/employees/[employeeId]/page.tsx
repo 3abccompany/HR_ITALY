@@ -8,7 +8,7 @@ import {
   Briefcase, Building2, MapPin, FileSignature,
   Info, Euro, Clock, History, ExternalLink,
   ShieldCheck, GraduationCap, CheckCircle2,
-  FileText
+  FileText, AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -21,6 +21,7 @@ import { Contract } from "@/types/contract";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 export default function EmployeeDetailPage() {
   const params = useParams();
@@ -36,11 +37,19 @@ export default function EmployeeDetailPage() {
 
   const { data: employee, loading: loadingEmployee } = useDoc<Employee>(employeeRef);
 
+  // Active Contract Query
   const contractRef = useMemo(() => 
     db && employee?.activeContractId ? (doc(db, `entities/${entityId}/contracts`, employee.activeContractId) as DocumentReference<Contract>) : null,
   [db, entityId, employee?.activeContractId]);
 
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
+
+  // Pending Contract Query (Draft from Onboarding)
+  const pendingContractRef = useMemo(() => 
+    db && employee?.pendingContractId ? (doc(db, `entities/${entityId}/contracts`, employee.pendingContractId) as DocumentReference<Contract>) : null,
+  [db, entityId, employee?.pendingContractId]);
+
+  const { data: pendingContract, loading: loadingPendingContract } = useDoc<Contract>(pendingContractRef);
 
   // Fallback data from source offer if professional labels are missing on employee record
   const offerRef = useMemo(() => 
@@ -52,7 +61,6 @@ export default function EmployeeDetailPage() {
   const formatDate = (val: any) => {
     if (!val) return null;
     try {
-      // If it's a string like YYYY-MM-DD
       if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
         const [y, m, d] = val.split('-');
         return `${d}/${m}/${y}`;
@@ -88,7 +96,7 @@ export default function EmployeeDetailPage() {
     <div className="p-8 max-w-7xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/employees`)}>
+          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/employees`)} className="rounded-full">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
@@ -122,7 +130,6 @@ export default function EmployeeDetailPage() {
                    <DetailRow label="Téléphone" value={employee.phone} />
                    <DetailRow label="Identifiant National" value={employee.taxCode} className="font-mono uppercase" />
                    <DetailRow label="Date de naissance" value={formatDate(employee.birthDate)} />
-                   <DetailRow label="ID Interne" value={employee.personId} className="font-mono text-[10px] col-span-full" />
                 </div>
              </CardContent>
           </Card>
@@ -144,7 +151,7 @@ export default function EmployeeDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Recruitment Origin */}
+          {/* History / Origin */}
           <Card className="border-accent/10 bg-accent/5 rounded-[2rem] overflow-hidden">
              <CardContent className="p-8">
                 <div className="flex items-center gap-2 text-accent font-black uppercase text-[10px] tracking-widest mb-6">
@@ -170,7 +177,6 @@ export default function EmployeeDetailPage() {
                 </div>
              </CardContent>
           </Card>
-
         </div>
 
         <div className="space-y-8">
@@ -185,7 +191,15 @@ export default function EmployeeDetailPage() {
                 {loadingContract ? (
                    <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin" /></div>
                 ) : !contract ? (
-                   <p className="text-xs italic opacity-60">Aucun détail contractuel chargé.</p>
+                   <div className="space-y-2">
+                     <p className="text-xs italic opacity-60">Aucun contrat signé et actif pour le moment.</p>
+                     {employee.pendingContractId && (
+                       <div className="p-3 bg-white/10 rounded-xl border border-white/20 flex items-center gap-2 text-[10px] font-bold">
+                         <Info className="w-3.5 h-3.5" />
+                         <span>Contrat en cours de préparation (Draft)</span>
+                       </div>
+                     )}
+                   </div>
                 ) : (
                    <>
                       <SummaryRow label="Type" value={contract.contractType} />
@@ -200,19 +214,51 @@ export default function EmployeeDetailPage() {
                          <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Salaire Brut Annuel</p>
                          <p className="text-2xl font-black">€ {contract.grossAnnual?.toLocaleString('fr-FR')}</p>
                       </div>
-                      
-                      {hasPermission("contracts.read") && (
-                        <div className="pt-4">
-                           <Button variant="outline" className="w-full bg-white/10 border-white/20 text-white hover:bg-white/20 rounded-xl gap-2 font-bold" disabled>
-                              <FileText className="w-4 h-4" />
-                              Détails contrat (Bientôt)
-                           </Button>
-                        </div>
-                      )}
                    </>
                 )}
              </CardContent>
           </Card>
+
+          {/* Pending / Onboarding Contract (Visible only if draft exists) */}
+          {employee.pendingContractId && !contract && (
+            <Card className="border-dashed border-2 border-accent/30 bg-white shadow-lg rounded-[2.5rem] overflow-hidden animate-in fade-in slide-in-from-top-2">
+               <CardHeader className="bg-accent/5 py-4 px-8 border-b">
+                  <CardTitle className="text-[10px] font-black uppercase tracking-widest text-accent flex items-center gap-2">
+                     <Clock className="w-4 h-4" /> Contrat en préparation
+                  </CardTitle>
+               </CardHeader>
+               <CardContent className="p-8 space-y-4">
+                  {loadingPendingContract ? (
+                    <div className="flex justify-center py-2"><Loader2 className="w-5 h-5 animate-spin text-accent/30" /></div>
+                  ) : pendingContract ? (
+                    <>
+                      <div className="grid grid-cols-1 gap-3">
+                         <DetailRow label="Type de contrat" value={pendingContract.contractType} className="opacity-80" />
+                         <DetailRow label="Classification" value={`${pendingContract.ccnlName} • ${pendingContract.levelCode}`} className="opacity-80" />
+                         <div className="flex items-center justify-between pt-2">
+                            <span className="text-[10px] font-black uppercase text-muted-foreground">Brut Annuel</span>
+                            <span className="text-sm font-black text-primary">€ {pendingContract.grossAnnual?.toLocaleString('fr-FR')}</span>
+                         </div>
+                      </div>
+                      <Separator className="border-dashed" />
+                      <div className="bg-accent/5 p-3 rounded-xl border border-accent/10 flex items-start gap-3">
+                         <AlertTriangle className="w-4 h-4 text-accent shrink-0 mt-0.5" />
+                         <p className="text-[10px] font-bold text-accent-foreground leading-relaxed">
+                            Ce document est en attente de signature. Le collaborateur n'est pas encore officiellement rattaché à ce contrat.
+                         </p>
+                      </div>
+                      <Button variant="outline" className="w-full rounded-xl border-accent/20 text-accent font-bold h-10 gap-2" asChild>
+                         <Link href={`/entity/${entityId}/contracts`}>
+                            Gérer dans le module contrats
+                         </Link>
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground italic">Chargement des détails du brouillon...</p>
+                  )}
+               </CardContent>
+            </Card>
+          )}
 
           {/* Quick Shortcuts */}
           <div className="space-y-3">
@@ -235,7 +281,7 @@ export default function EmployeeDetailPage() {
 
 function DetailRow({ label, value, className, icon: Icon }: { label: string, value: any, className?: string, icon?: any }) {
   return (
-    <div className={className}>
+    <div className={cn("space-y-1", className)}>
       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tight mb-1 opacity-70">{label}</p>
       <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
          {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />}
