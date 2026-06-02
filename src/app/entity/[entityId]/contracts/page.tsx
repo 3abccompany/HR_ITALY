@@ -90,6 +90,16 @@ export default function ContractsRegistryPage() {
     setPagination(p => ({ ...p, page: 1 }));
   };
 
+  const formatMoney = (value: any, decimals = 2) => {
+    if (value === undefined || value === null) return "-";
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    return num.toLocaleString("fr-FR", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  };
+
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return (
@@ -204,14 +214,14 @@ export default function ContractsRegistryPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-xs font-bold text-slate-700">{c.contractType}</div>
+                      <div className="text-xs font-bold text-slate-700">{c.contractType || "N/A"}</div>
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(c.status)}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5 text-xs">
-                        <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground" /> {c.startDate}
+                        <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground" /> {c.startDate || "N/A"}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -223,9 +233,9 @@ export default function ContractsRegistryPage() {
                     <TableCell>
                        <div className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-1 text-[11px] font-black text-accent">
-                             <Euro className="w-2.5 h-2.5" /> {c.grossMonthly.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} /mois
+                             <Euro className="w-2.5 h-2.5" /> {formatMoney(c.grossMonthly)} /mois
                           </div>
-                          <div className="text-[9px] text-muted-foreground font-bold">RAL: {c.grossAnnual.toLocaleString('fr-FR', { minimumFractionDigits: 0 })} €</div>
+                          <div className="text-[9px] text-muted-foreground font-bold">RAL: {formatMoney(c.grossAnnual, 0)} €</div>
                        </div>
                     </TableCell>
                     <TableCell className="text-right">
