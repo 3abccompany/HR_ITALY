@@ -101,11 +101,11 @@ export async function POST(
       }
     });
 
-    // 7. Get Signed URL (1 year expiration for preparational usage)
+    // 7. Get Signed URL (6 days expiration - V4 signed URLs have a 7-day maximum limit)
     const [signedUrl] = await file.getSignedUrl({
       version: 'v4',
       action: 'read',
-      expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
+      expires: Date.now() + 6 * 24 * 60 * 60 * 1000,
     });
 
     // 8. Update Contract Document

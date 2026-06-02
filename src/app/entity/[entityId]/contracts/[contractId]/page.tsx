@@ -269,8 +269,8 @@ export default function ContractDetailPage() {
       return;
     }
 
-    // PDF Check
-    if (!contract?.generatedPdfUrl) {
+    // PDF Check - Rely on Storage Path as the URL is temporary and can expire
+    if (!contract?.generatedPdfStoragePath) {
       setValidationErrors(["Veuillez générer le PDF du contrat avant de l’envoyer en signature."]);
       setIsValidationDialogOpen(true);
       return;
@@ -498,19 +498,19 @@ export default function ContractDetailPage() {
         <div className="lg:col-span-3 space-y-8">
           
           {/* Generated PDF Section */}
-          <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", contract.generatedPdfUrl ? "border-primary/10" : "border-orange-100 bg-orange-50/5")}>
+          <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", contract.generatedPdfStoragePath ? "border-primary/10" : "border-orange-100 bg-orange-50/5")}>
              <CardHeader className="bg-primary/5 border-b py-4 px-8 flex flex-row items-center justify-between">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                    <FileCode className="w-4 h-4" /> Document de travail (PDF)
                 </CardTitle>
-                {contract.generatedPdfUrl && (
+                {contract.generatedPdfStoragePath && (
                   <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black text-primary border-primary/20">
                     PDF Généré V{contract.generatedPdfVersion}
                   </Badge>
                 )}
              </CardHeader>
              <CardContent className="p-8">
-                {!contract.generatedPdfUrl ? (
+                {!contract.generatedPdfStoragePath ? (
                    <div className="space-y-4">
                       <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl flex items-start gap-3">
                          <AlertTriangle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
@@ -536,11 +536,13 @@ export default function ContractDetailPage() {
                                </p>
                             </div>
                          </div>
-                         <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2 shadow-sm">
-                            <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer">
-                               <ExternalLink className="w-4 h-4" /> Consulter le PDF
-                            </a>
-                         </Button>
+                         {contract.generatedPdfUrl && (
+                           <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2 shadow-sm">
+                              <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer">
+                                 <ExternalLink className="w-4 h-4" /> Consulter le PDF
+                              </a>
+                           </Button>
+                         )}
                       </div>
 
                       {isPdfOutdated && (
@@ -855,7 +857,7 @@ export default function ContractDetailPage() {
                     className="h-12 rounded-xl pt-3"
                   />
                   <p className="text-[9px] text-muted-foreground italic pl-1 flex items-center gap-1">
-                    <Info className="w-2.5 h-2.5" /> PDF uniquement, max 10 Mo.
+                    <div className="bg-secondary p-0.5 rounded-full"><Info className="w-2.5 h-2.5" /></div> PDF uniquement, max 10 Mo.
                   </p>
                </div>
             </div>
