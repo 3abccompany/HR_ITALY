@@ -10,12 +10,21 @@ import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
 
 /**
+ * Normalizes an object by removing undefined properties to satisfy Firestore.
+ */
+function sanitizePayload<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj, (key, value) => (value === undefined ? null : value)));
+}
+
+/**
  * Updates contract data.
  * STRICT RULE: Only allowed if contract.status === "draft".
  */
 export async function updateContract(entityId: string, contractId: string, data: Partial<Contract>, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
+
+  const cleanData = sanitizePayload(data);
 
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(contractRef);
@@ -27,7 +36,7 @@ export async function updateContract(entityId: string, contractId: string, data:
     }
 
     transaction.update(contractRef, {
-      ...data,
+      ...cleanData,
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
     });
