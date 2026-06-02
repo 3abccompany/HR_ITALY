@@ -1,25 +1,35 @@
+
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
   Briefcase, Building2, FileSignature,
   Info, Euro, Clock, History, ExternalLink,
   Scale, Fingerprint, Calendar, FileText,
-  MapPin
+  MapPin, CheckCircle2, XCircle, Ban, Archive, 
+  RefreshCcw, ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { useFirebase, useDoc } from "@/firebase";
+import { useFirebase, useDoc, useUser } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { useActiveMembership } from "@/hooks/use-active-membership";
+import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { 
+  sendContractToSignature, 
+  activateContractAction, 
+  terminateContractAction, 
+  archiveContractAction,
+  rollbackToDraft
+} from "@/services/contract.service";
 
 export default function ContractDetailPage() {
   const params = useParams();
@@ -28,7 +38,11 @@ export default function ContractDetailPage() {
   const contractId = params.contractId as string;
   
   const { db } = useFirebase();
+  const { user } = useUser();
+  const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
+
+  const [processing, setProcessing] = useState(false);
 
   const contractRef = useMemo(() => 
     db ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
@@ -94,6 +108,24 @@ export default function ContractDetailPage() {
     return "Utilisateur interne";
   };
 
+  const handleTransition = async (action: () => Promise<any>, successMsg: string) => {
+    if (!user || !contract) return;
+    setProcessing(true);
+    try {
+      await action();
+      toast({ title: "Succès", description: successMsg });
+    } catch (err: any) {
+      console.error("Transition error:", err);
+      let msg = err.message || "Une erreur est survenue.";
+      if (err.message === "ALREADY_HAS_ACTIVE_CONTRACT") {
+        msg = "Un autre contrat actif existe déjà pour cet employé. Veuillez le résilier avant d'en activer un nouveau.";
+      }
+      toast({ variant: "destructive", title: "Erreur", description: msg });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
@@ -111,15 +143,16 @@ export default function ContractDetailPage() {
 
   const displayName = contract.employeeDisplayName || (employee ? `${employee.firstName} ${employee.lastName}` : "Collaborateur inconnu");
   const employeeCode = contract.employeeCode || (employee ? employee.employeeCode : "Code non disponible");
-  
   const businessReference = contract.employeeCode || "Brouillon d'intégration";
   const resolvedCompanyName = entity?.nomEntreprise || entity?.legalName || "Entreprise non renseignée";
   const resolvedDepartment = contract.ccnlName ? (employee?.departmentName || "Département non renseigné") : (employee?.departmentName || "Département non renseigné");
   const resolvedWorksite = employee?.worksiteName || "Site non renseigné";
 
+  const canUpdate = hasPermission("contracts.update");
+
   return (
     <div className="p-8 max-w-5xl mx-auto pb-32">
-      <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+      <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/contracts`)} className="rounded-full">
             <ArrowLeft className="w-5 h-5" />
@@ -134,11 +167,83 @@ export default function ContractDetailPage() {
             </p>
           </div>
         </div>
+
+        <div className="flex items-center gap-3">
+           {canUpdate && contract.status === 'draft' && (
+             <Button 
+               onClick={() => handleTransition(() => sendContractToSignature(entityId, contractId, user!.uid), "Contrat marqué comme prêt pour signature.")}
+               disabled={processing}
+               className="gap-2 bg-accent text-white font-bold"
+             >
+               {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSignature className="w-4 h-4" />}
+               Prêt pour signature
+             </Button>
+           )}
+
+           {canUpdate && contract.status === 'pending_signature' && (
+             <>
+               <Button 
+                 variant="outline"
+                 onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")}
+                 disabled={processing}
+                 className="gap-2 bg-white"
+               >
+                 <RefreshCcw className="w-4 h-4" />
+                 Brouillon
+               </Button>
+               <Button 
+                 onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")}
+                 disabled={processing || !contract.employeeId}
+                 className="gap-2 bg-primary text-white font-black"
+               >
+                 {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                 Confirmer signature et activer
+               </Button>
+             </>
+           )}
+
+           {canUpdate && contract.status === 'active' && (
+             <Button 
+               variant="destructive"
+               onClick={() => handleTransition(() => terminateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat résilié.")}
+               disabled={processing}
+               className="gap-2 font-bold"
+             >
+               <Ban className="w-4 h-4" />
+               Résilier / Terminer
+             </Button>
+           )}
+
+           {canUpdate && (contract.status === 'draft' || contract.status === 'terminated') && (
+             <Button 
+               variant="ghost" 
+               size="icon" 
+               className="text-muted-foreground"
+               onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")}
+               disabled={processing}
+             >
+               <Archive className="w-4 h-4" />
+             </Button>
+           )}
+        </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           
+          {/* Status Specific Helper */}
+          {contract.status === 'draft' && (
+            <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl flex items-start gap-4">
+              <div className="bg-white p-2 rounded-xl text-orange-500 shadow-sm"><Clock className="w-5 h-5" /></div>
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-orange-800">Contrat en préparation</p>
+                <p className="text-xs text-orange-700 leading-relaxed">
+                  Vérifiez les conditions contractuelles avant de passer à l'étape de signature. Ce document n'est pas encore visible comme "actif" sur le profil de l'employé.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Identity Card */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-3xl overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4">
@@ -264,6 +369,10 @@ export default function ContractDetailPage() {
                    <AuditRow label="Créé le" value={formatDateTime(contract.createdAt)} />
                    <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
                    <Separator className="opacity-20" />
+                   {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
+                   {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
+                   {contract.terminatedAt && <AuditRow label="Terminé le" value={formatDateTime(contract.terminatedAt)} />}
+                   <Separator className="opacity-20" />
                    <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
                    <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
                 </div>
@@ -279,7 +388,11 @@ export default function ContractDetailPage() {
                       <p className="text-[10px] font-medium text-slate-600 leading-relaxed">
                         {contract.status === 'draft' 
                           ? "Ce contrat est en cours de préparation. Les termes peuvent encore être modifiés dans la proposition source." 
-                          : "Ce contrat est finalisé et archivé dans le dossier du collaborateur."}
+                          : contract.status === 'pending_signature'
+                          ? "Le contrat est prêt pour signature. Activez-le une fois le document signé reçu."
+                          : contract.status === 'active'
+                          ? "Ce contrat est légalement actif et rattaché au dossier du collaborateur."
+                          : "Ce contrat est clôturé ou archivé."}
                       </p>
                    </div>
                 </div>

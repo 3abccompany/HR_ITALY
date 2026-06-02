@@ -33,6 +33,13 @@ export interface Contract {
   signedDocumentId?: string | null;
   notes?: string;
 
+  // Milestones
+  sentForSignatureAt?: Date | FieldValue;
+  signedAt?: Date | FieldValue;
+  activatedAt?: Date | FieldValue;
+  terminatedAt?: Date | FieldValue;
+  archivedAt?: Date | FieldValue;
+
   // Audit
   createdAt: Date | FieldValue;
   createdBy: string;
