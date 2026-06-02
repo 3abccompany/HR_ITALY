@@ -856,9 +856,9 @@ export default function ContractDetailPage() {
                     onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
                     className="h-12 rounded-xl pt-3"
                   />
-                  <p className="text-[9px] text-muted-foreground italic pl-1 flex items-center gap-1">
-                    <div className="bg-secondary p-0.5 rounded-full"><Info className="w-2.5 h-2.5" /></div> PDF uniquement, max 10 Mo.
-                  </p>
+                  <div className="text-[9px] text-muted-foreground italic pl-1 flex items-center gap-1">
+                    <span className="bg-secondary p-0.5 rounded-full inline-flex"><Info className="w-2.5 h-2.5" /></span> <span>PDF uniquement, max 10 Mo.</span>
+                  </div>
                </div>
             </div>
           </div>
