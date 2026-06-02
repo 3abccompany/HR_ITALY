@@ -63,6 +63,34 @@ const initialFilters: Filters = {
 const ALLOWED_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
+/**
+ * Robust date parser for mixed Firestore/Admin/Corrupted formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  
+  return null;
+}
+
+function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
+  const date = parseSafeDate(val);
+  if (!date) return "-";
+  return format(date, formatStr, { locale: fr });
+}
+
 export default function DocumentsRegistryPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -136,8 +164,9 @@ export default function DocumentsRegistryPage() {
     return documents.reduce((acc, d) => {
       acc.total++;
       if (d.isSensitive) acc.sensitive++;
-      if (d.expiresAt) {
-        const expiry = new Date(d.expiresAt);
+      
+      const expiry = parseSafeDate(d.expiresAt);
+      if (expiry) {
         if (isBefore(expiry, today)) {
           acc.expired++;
         } else if (differenceInDays(expiry, today) <= 30) {
@@ -191,11 +220,11 @@ export default function DocumentsRegistryPage() {
     };
 
     filteredDocs.forEach(d => {
-      if (!d.expiresAt) {
+      const expiry = parseSafeDate(d.expiresAt);
+      if (!expiry) {
         groups.no_expiry.push(d);
         return;
       }
-      const expiry = new Date(d.expiresAt);
       const daysLeft = differenceInDays(expiry, today);
 
       if (isBefore(expiry, today)) {
@@ -497,10 +526,10 @@ export default function DocumentsRegistryPage() {
                    <DetailItem label="Statut" value={<Badge variant="outline" className="h-5 uppercase text-[9px] font-black bg-slate-50">{STATUS_LABELS[selectedDocForDetails.status]}</Badge>} />
                    <DetailItem label="Employé" value={selectedDocForDetails.employeeDisplayName || "Non lié"} />
                    <DetailItem label="Nom du fichier" value={selectedDocForDetails.fileName} code />
-                   <DetailItem label="Taille" value={`${(selectedDocForDetails.sizeBytes / 1024 / 1024).toFixed(2)} MB`} />
-                   <DetailItem label="Téléversé le" value={format(new Date((selectedDocForDetails.uploadedAt as any).seconds * 1000), "dd/MM/yyyy HH:mm")} />
+                   <DetailItem label="Taille" value={selectedDocForDetails.sizeBytes ? `${(selectedDocForDetails.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "-"} />
+                   <DetailItem label="Téléversé le" value={formatDateSafe(selectedDocForDetails.uploadedAt, "dd/MM/yyyy HH:mm")} />
                    <DetailItem label="Par" value={selectedDocForDetails.uploadedByDisplayName || "Système"} />
-                   {selectedDocForDetails.expiresAt && <DetailItem label="Expiration" value={<span className={cn("font-black", isBefore(new Date(selectedDocForDetails.expiresAt), new Date()) ? "text-red-600" : "text-slate-800")}>{format(new Date(selectedDocForDetails.expiresAt), "dd/MM/yyyy")}</span>} />}
+                   {selectedDocForDetails.expiresAt && <DetailItem label="Expiration" value={<span className={cn("font-black", isBefore(parseSafeDate(selectedDocForDetails.expiresAt) || new Date(), startOfDay(new Date())) ? "text-red-600" : "text-slate-800")}>{formatDateSafe(selectedDocForDetails.expiresAt)}</span>} />}
                    {selectedDocForDetails.isSensitive && <DetailItem label="Confidentialité" value={<Badge variant="destructive" className="h-5 text-[8px] uppercase font-black">Sensible</Badge>} />}
                 </div>
 
@@ -692,7 +721,8 @@ function DocumentsTable({
           <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document dans cette vue.</TableCell></TableRow>
         ) : docs.map(d => {
           const isLoading = loadingId === d.id;
-          const isExpired = d.expiresAt && isBefore(new Date(d.expiresAt), startOfDay(new Date()));
+          const expiry = parseSafeDate(d.expiresAt);
+          const isExpired = expiry && isBefore(expiry, startOfDay(new Date()));
           
           return (
             <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
@@ -705,7 +735,7 @@ function DocumentsTable({
               </TableCell>
               <TableCell className="hidden md:table-cell text-center">
                 <div className="text-[9px] font-mono text-muted-foreground truncate max-w-[120px] mx-auto mb-0.5">{d.fileName}</div>
-                <div className="text-[8px] uppercase font-bold text-muted-foreground/40">{(d.sizeBytes / 1024 / 1024).toFixed(2)} MB</div>
+                <div className="text-[8px] uppercase font-bold text-muted-foreground/40">{d.sizeBytes ? `${(d.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "-"}</div>
               </TableCell>
               <TableCell className="hidden lg:table-cell">
                 {d.employeeDisplayName ? (
@@ -717,9 +747,9 @@ function DocumentsTable({
                 )}
               </TableCell>
               <TableCell>
-                {d.expiresAt ? (
+                {expiry ? (
                   <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-slate-600")}>
-                    {format(new Date(d.expiresAt), "dd/MM/yyyy")}
+                    {format(expiry, "dd/MM/yyyy")}
                     {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                   </div>
                 ) : (
@@ -787,7 +817,7 @@ function ExpirySection({ title, docs, variant, onOpen, onArchive, onViewDetails,
                           </p>
                           <span className="text-slate-200 text-[10px]">•</span>
                           <p className={cn("text-[9px] font-black uppercase tracking-tighter", variant === 'danger' ? "text-red-600" : "text-slate-500")}>
-                             {d.expiresAt ? `Exp: ${format(new Date(d.expiresAt), "dd MMM yy")}` : "Pas d'échéance"}
+                             {d.expiresAt ? `Exp: ${formatDateSafe(d.expiresAt)}` : "Pas d'échéance"}
                           </p>
                        </div>
                     </div>
