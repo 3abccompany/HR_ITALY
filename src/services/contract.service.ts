@@ -151,7 +151,11 @@ export async function activateContractAction(entityId: string, contractId: strin
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
   await runTransaction(db, async (transaction) => {
+    // ALL READS FIRST
     const snap = await transaction.get(contractRef);
+    const empSnap = await transaction.get(employeeRef);
+
+    // VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
@@ -167,7 +171,6 @@ export async function activateContractAction(entityId: string, contractId: strin
       throw new Error("Veuillez enregistrer le contrat signé avant activation.");
     }
 
-    const empSnap = await transaction.get(employeeRef);
     if (!empSnap.exists()) throw new Error("L'employé rattaché n'existe pas.");
     const empData = empSnap.data();
 
@@ -175,6 +178,7 @@ export async function activateContractAction(entityId: string, contractId: strin
       throw new Error("ALREADY_HAS_ACTIVE_CONTRACT");
     }
 
+    // ALL WRITES AFTER
     transaction.update(contractRef, {
       status: "active",
       activatedAt: serverTimestamp(),
@@ -244,7 +248,11 @@ export async function terminateContractAction(
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
   await runTransaction(db, async (transaction) => {
+    // ALL READS FIRST
     const snap = await transaction.get(contractRef);
+    const empSnap = await transaction.get(employeeRef);
+
+    // VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
@@ -257,6 +265,7 @@ export async function terminateContractAction(
       throw new Error("La date de fin ne peut pas être antérieure à la date de début.");
     }
 
+    // ALL WRITES AFTER
     transaction.update(contractRef, {
       status: "terminated",
       actualEndDate: terminationData.actualEndDate,
@@ -268,7 +277,6 @@ export async function terminateContractAction(
       updatedBy: actorUid,
     });
 
-    const empSnap = await transaction.get(employeeRef);
     if (empSnap.exists() && empSnap.data().activeContractId === contractId) {
       transaction.update(employeeRef, {
         activeContractId: null,
