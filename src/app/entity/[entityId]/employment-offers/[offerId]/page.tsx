@@ -1,53 +1,38 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  Loader2, ArrowLeft, ShieldCheck, User, Briefcase, 
-  MapPin, Calendar, Info, Scale, Euro, Save, AlertCircle,
-  Clock, ArrowRight, CheckCircle2, XCircle,
-  FileSignature, Send, History, UserPlus,
-  ClipboardList, CheckCircle, AlertTriangle, Plus, RefreshCcw, FileText,
-  Building2
+  Loader2, ArrowLeft, User, UserCheck, 
+  Briefcase, Building2, FileSignature,
+  Info, Euro, Clock, History, 
+  Scale, Fingerprint, Calendar, FileText,
+  MapPin, CheckCircle2, Ban, Archive, 
+  RefreshCcw, ScrollText, Globe,
+  Edit, Save, X, AlertTriangle, ExternalLink,
+  Upload, FileCode, Send, XCircle, MessageSquare
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useFirebase, useDoc, useCollection, useUser, useAuth } from "@/firebase";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp } from "firebase/firestore";
-import { useActiveMembership } from "@/hooks/use-active-membership";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
+import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
+import { RecruitmentNeed } from "@/types/recruitment-need";
+import { useActiveMembership } from "@/hooks/use-active-membership";
+import { useToast } from "@/hooks/use-toast";
+import Link from "next/link";
+import { cn } from "@/lib/utils";
 import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
-import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
-import { RecruitmentNeed } from "@/types/recruitment-need";
-import { useToast } from "@/hooks/use-toast";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogFooter,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { cn } from "@/lib/utils";
-import Link from "next/link";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 
 const CONTRACT_TYPES = [
@@ -131,7 +116,6 @@ export default function EditEmploymentOfferPage() {
   const [converting, setConverting] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
-  const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
   // UniLav Form State
   const [uniLavData, setUniLavData] = useState({
@@ -415,6 +399,24 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const formatDateTime = (val: any) => {
+    if (!val) return "-";
+    try {
+      const d = val.toDate ? val.toDate() : new Date(val);
+      if (isNaN(d.getTime())) return "-";
+      return d.toLocaleString('fr-FR', { 
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+    } catch (e) {
+      return "-";
+    }
+  };
+
+  const getTimestampSeconds = (value?: any) => {
+    return value?.seconds ?? value?._seconds ?? null;
+  };
+
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!offer) {
@@ -430,6 +432,7 @@ export default function EditEmploymentOfferPage() {
   }
 
   const isAccepted = offer.status === 'accepted';
+  const isDeclined = offer.status === 'declined' || (offer.status as string).toLowerCase() === 'declined';
   const isConverted = offer.conversionStatus === 'converted';
   const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer.status) || isConverted;
 
@@ -438,10 +441,6 @@ export default function EditEmploymentOfferPage() {
 
   const resolvedDepartment = formData.departmentName || need?.departmentName || "Non renseigné";
   const resolvedWorksite = formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné";
-  
-  const getTimestampSeconds = (value?: any) => {
-    return value?.seconds ?? value?._seconds ?? null;
-  };
   
   const sentAtSeconds = getTimestampSeconds(offer.sentAt);
   const viewedAtSeconds = getTimestampSeconds(offer.viewedAt);
@@ -471,6 +470,42 @@ export default function EditEmploymentOfferPage() {
           {offer.status === 'sent' && <Button variant="outline" onClick={handleSend} disabled={sending} className="gap-2 bg-white"><RefreshCcw className="w-4 h-4" /> Renvoyer le lien</Button>}
         </div>
       </header>
+
+      {isDeclined && (
+        <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm mb-8">
+           <CardHeader className="bg-red-50 border-b py-4 px-8">
+              <CardTitle className="text-xs font-black uppercase tracking-widest text-red-700 flex items-center gap-2">
+                 <XCircle className="w-4 h-4" /> Réponse du candidat : Proposition déclinée
+              </CardTitle>
+           </CardHeader>
+           <CardContent className="p-8 space-y-6">
+              <div className="space-y-2">
+                 <div className="flex items-center gap-2">
+                    <MessageSquare className="w-3.5 h-3.5 text-red-600/40" />
+                    <p className="text-[10px] font-black uppercase text-red-600/60 tracking-widest">Motif du refus</p>
+                 </div>
+                 <div className="text-sm font-bold text-slate-800 bg-white p-5 rounded-2xl border border-red-100 italic leading-relaxed">
+                   "{offer.declinedReason || "Aucun motif renseigné."}"
+                 </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2">
+                 <div className="space-y-1">
+                    <p className="text-[9px] font-black uppercase text-red-600/40 tracking-widest">Date de réponse</p>
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                       <Clock className="w-3.5 h-3.5 opacity-40" />
+                       {formatDateTime(offer.respondedAt)}
+                    </div>
+                 </div>
+                 <div className="space-y-1">
+                    <p className="text-[9px] font-black uppercase text-red-600/40 tracking-widest">Coordonnées du candidat</p>
+                    <div className="text-xs font-bold text-slate-700">
+                       {offer.candidateDisplayName} • {offer.candidateEmail}
+                    </div>
+                 </div>
+              </div>
+           </CardContent>
+        </Card>
+      )}
 
       {["sent", "viewed", "accepted"].includes(offer.status) && (
         <div className="mb-8 rounded-[2rem] border border-blue-100 bg-blue-50/60 p-5 shadow-sm">
@@ -975,7 +1010,7 @@ export default function EditEmploymentOfferPage() {
       </div>
 
       {/* Reject Modal */}
-      <Dialog open={!!rejectItem} onOpenChange={() => setRejectItem(null)}>
+      <Dialog open={rejectItem !== null} onOpenChange={() => setRejectItem(null)}>
         <DialogContent className="rounded-[2rem]">
           <DialogHeader><DialogTitle>Rejeter le document</DialogTitle><DialogDescription>Précisez la raison pour informer le candidat.</DialogDescription></DialogHeader>
           <div className="py-4 space-y-3">
@@ -1017,6 +1052,7 @@ function getStatusBadge(status: EmploymentOfferStatus) {
     case 'internal_review': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 px-2 uppercase text-[9px]">En revue</Badge>;
     case 'ready_to_send': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 px-2 uppercase text-[9px]">Prête</Badge>;
     case 'viewed': return <Badge variant="secondary" className="bg-cyan-500 text-white border-none px-2 uppercase text-[9px]">Consultée</Badge>;
+    case 'declined': return <Badge variant="destructive" className="bg-red-500 border-none text-white px-2 uppercase text-[9px]">Refusée</Badge>;
     default: return <Badge variant="outline" className="px-2 uppercase text-[9px]">{status}</Badge>;
   }
 }
