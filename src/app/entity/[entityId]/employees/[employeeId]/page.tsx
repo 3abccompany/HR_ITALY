@@ -9,7 +9,8 @@ import {
   Info, Euro, Clock, History, ExternalLink,
   ShieldCheck, GraduationCap, CheckCircle2,
   FileText, AlertTriangle, FolderOpen, ShieldAlert,
-  Download, Eye, Lock, FileBadge, ListTodo, Search
+  Download, Eye, Lock, FileBadge, ListTodo, Search,
+  ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -18,6 +19,11 @@ import { Separator } from "@/components/ui/separator";
 import { 
   Tabs, TabsContent, TabsList, TabsTrigger 
 } from "@/components/ui/tabs";
+import { 
+  Collapsible, 
+  CollapsibleContent, 
+  CollapsibleTrigger 
+} from "@/components/ui/collapsible";
 import { useFirebase, useDoc, useCollection } from "@/firebase";
 import { doc, DocumentReference, query, collection, where } from "firebase/firestore";
 import { Employee } from "@/types/employee";
@@ -332,7 +338,7 @@ export default function EmployeeDetailPage() {
                 </Card>
               ) : (
                 <div className="space-y-8">
-                  <DocumentGroupSection title="Contrats & Clôture" docs={groupedDocs.contracts} icon={FileBadge} onOpen={handleOpenDoc} loadingId={loadingAction} />
+                  <DocumentGroupSection title="Contrats & Clôture" docs={groupedDocs.contracts} icon={FileBadge} onOpen={handleOpenDoc} loadingId={loadingAction} isContractSection />
                   <DocumentGroupSection title="Identité & Conformité" docs={groupedDocs.identity} icon={Fingerprint} onOpen={handleOpenDoc} loadingId={loadingAction} />
                   <DocumentGroupSection title="Embauche & Compliance" docs={groupedDocs.hiring} icon={ListTodo} onOpen={handleOpenDoc} loadingId={loadingAction} />
                   <DocumentGroupSection title="Santé & Sécurité" docs={groupedDocs.safety} icon={ShieldCheck} onOpen={handleOpenDoc} loadingId={loadingAction} />
@@ -451,8 +457,132 @@ export default function EmployeeDetailPage() {
   );
 }
 
-function DocumentGroupSection({ title, docs, icon: Icon, onOpen, loadingId }: { title: string, docs: HRDocument[], icon: any, onOpen: any, loadingId: string | null }) {
+function DocumentGroupSection({ title, docs, icon: Icon, onOpen, loadingId, isContractSection }: { 
+  title: string, 
+  docs: HRDocument[], 
+  icon: any, 
+  onOpen: any, 
+  loadingId: string | null,
+  isContractSection?: boolean
+}) {
   if (docs.length === 0) return null;
+
+  if (isContractSection) {
+    const bundles: Record<string, {
+      signed?: HRDocument;
+      latestGenerated?: HRDocument;
+      others: HRDocument[];
+      termination?: HRDocument;
+      manualContract?: HRDocument;
+    }> = {};
+    const standalone: HRDocument[] = [];
+
+    docs.forEach(doc => {
+      const cId = doc.contractId;
+      if (!cId) {
+        standalone.push(doc);
+        return;
+      }
+      if (!bundles[cId]) bundles[cId] = { others: [] };
+      
+      if (doc.documentType === 'signed_contract') {
+        bundles[cId].signed = doc;
+      } else if (doc.documentType === 'termination_document') {
+        bundles[cId].termination = doc;
+      } else if (doc.documentType === 'contract') {
+        bundles[cId].manualContract = doc;
+      } else if (doc.documentType === 'generated_contract_pdf') {
+        const current = bundles[cId].latestGenerated;
+        if (!current) {
+          bundles[cId].latestGenerated = doc;
+        } else {
+          const dDate = parseSafeDate(doc.generatedAt || doc.uploadedAt || doc.createdAt)?.getTime() || 0;
+          const cDate = parseSafeDate(current.generatedAt || current.uploadedAt || current.createdAt)?.getTime() || 0;
+          if (dDate > cDate) {
+            bundles[cId].others.push(current);
+            bundles[cId].latestGenerated = doc;
+          } else {
+            bundles[cId].others.push(doc);
+          }
+        }
+      } else {
+        standalone.push(doc);
+      }
+    });
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 px-1">
+          <Icon className="w-3.5 h-3.5 text-primary/40" />
+          <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{title}</h3>
+        </div>
+        <div className="grid grid-cols-1 gap-4">
+          {Object.entries(bundles).map(([cId, bundle]) => {
+            const hasSigned = !!bundle.signed || !!bundle.manualContract;
+            const mainDoc = bundle.signed || bundle.manualContract || bundle.latestGenerated;
+            const subLabel = bundle.signed ? "Contrat signé" : bundle.manualContract ? "Contrat" : "Dernier PDF généré";
+
+            return (
+              <div key={cId} className="space-y-3 p-4 rounded-3xl border border-primary/5 bg-slate-50/30">
+                <div className="flex items-center gap-2 px-2 mb-1">
+                  <FileBadge className="w-3 h-3 text-primary/30" />
+                  <span className="text-[8px] font-black uppercase text-muted-foreground tracking-tighter">Contrat Ref: {cId.substring(0, 8)}...</span>
+                </div>
+                
+                {mainDoc && (
+                  <DocumentRow 
+                    doc={mainDoc} 
+                    onOpen={onOpen} 
+                    loadingId={loadingId} 
+                    isMain 
+                    customLabel={subLabel} 
+                  />
+                )}
+
+                {hasSigned && bundle.latestGenerated && (
+                  <DocumentRow 
+                    doc={bundle.latestGenerated} 
+                    onOpen={onOpen} 
+                    loadingId={loadingId} 
+                    customLabel="Dernier PDF généré" 
+                  />
+                )}
+
+                {bundle.termination && (
+                  <DocumentRow doc={bundle.termination} onOpen={onOpen} loadingId={loadingId} />
+                )}
+
+                {bundle.others.length > 0 && (
+                  <div className="pl-4 sm:pl-8">
+                    <Collapsible>
+                      <CollapsibleTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black uppercase tracking-widest gap-2 hover:bg-white">
+                          <ChevronDown className="w-3 h-3" />
+                          Versions précédentes ({bundle.others.length})
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
+                        {bundle.others.sort((a,b) => {
+                          const da = parseSafeDate(a.generatedAt || a.uploadedAt || a.createdAt)?.getTime() || 0;
+                          const db = parseSafeDate(b.generatedAt || b.uploadedAt || b.createdAt)?.getTime() || 0;
+                          return db - da;
+                        }).map(d => (
+                          <DocumentRow key={d.id} doc={d} onOpen={onOpen} loadingId={loadingId} compactVersion />
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {standalone.map(doc => (
+            <DocumentRow key={doc.id} doc={doc} onOpen={onOpen} loadingId={loadingId} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -469,26 +599,46 @@ function DocumentGroupSection({ title, docs, icon: Icon, onOpen, loadingId }: { 
   );
 }
 
-function DocumentRow({ doc, onOpen, loadingId }: { doc: HRDocument, onOpen: any, loadingId: string | null }) {
+function DocumentRow({ 
+  doc, 
+  onOpen, 
+  loadingId, 
+  isMain, 
+  compactVersion, 
+  customLabel 
+}: { 
+  doc: HRDocument, 
+  onOpen: any, 
+  loadingId: string | null,
+  isMain?: boolean,
+  compactVersion?: boolean,
+  customLabel?: string
+}) {
   const isLoading = loadingId === doc.id;
   const expiryDate = parseSafeDate(doc.expiresAt);
   const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
   const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 30;
 
   return (
-    <Card className="border-primary/5 hover:border-primary/20 transition-all shadow-sm rounded-2xl group overflow-hidden bg-white">
-      <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <Card className={cn(
+      "border-primary/5 hover:border-primary/20 transition-all shadow-sm rounded-2xl group overflow-hidden bg-white",
+      isMain && "border-primary/20 shadow-md ring-1 ring-primary/5",
+      compactVersion && "rounded-xl"
+    )}>
+      <CardContent className={cn("p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4", compactVersion && "p-3")}>
         <div className="flex items-start gap-4">
-          <div className="bg-primary/5 p-3 rounded-xl text-primary shrink-0">
-            <FileText className="w-5 h-5" />
+          <div className={cn("bg-primary/5 p-3 rounded-xl text-primary shrink-0", compactVersion && "p-2")}>
+            <FileText className={cn("w-5 h-5", compactVersion && "w-4 h-4")} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <p className="font-bold text-slate-900 truncate max-w-[200px] sm:max-w-md">{doc.title}</p>
+              <p className={cn("font-bold text-slate-900 truncate max-w-[200px] sm:max-w-md", compactVersion && "text-xs")}>{doc.title}</p>
               {doc.isSensitive && <Badge variant="destructive" className="h-4 text-[8px] uppercase font-black px-1.5 border-none">Sensible</Badge>}
             </div>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-[9px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[doc.documentType]}</span>
+              <span className="text-[9px] font-black uppercase text-muted-foreground/60">
+                {customLabel || DOCUMENT_TYPE_LABELS[doc.documentType]}
+              </span>
               <span className="text-slate-200 text-[8px]">•</span>
               <span className="text-[9px] font-bold text-muted-foreground/50 italic">
                 {formatDateSafe(doc.uploadedAt || doc.generatedAt || doc.createdAt)}
@@ -521,7 +671,7 @@ function DocumentRow({ doc, onOpen, loadingId }: { doc: HRDocument, onOpen: any,
               <Button 
                 variant="secondary" 
                 size="sm" 
-                className="h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary hover:text-white transition-all gap-2"
+                className={cn("h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary hover:text-white transition-all gap-2", compactVersion && "h-7 px-2 text-[10px]")}
                 onClick={() => onOpen(doc.storagePath, doc.id)}
                 disabled={!!loadingId}
               >
