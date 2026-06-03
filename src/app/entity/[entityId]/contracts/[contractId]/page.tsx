@@ -11,7 +11,7 @@ import {
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
-  ChevronDown
+  ChevronDown, FolderOpen
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
