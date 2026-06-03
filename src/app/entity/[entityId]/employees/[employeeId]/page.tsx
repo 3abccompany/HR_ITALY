@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
@@ -8,20 +8,55 @@ import {
   Briefcase, Building2, MapPin, FileSignature,
   Info, Euro, Clock, History, ExternalLink,
   ShieldCheck, GraduationCap, CheckCircle2,
-  FileText, AlertTriangle
+  FileText, AlertTriangle, FolderOpen, ShieldAlert,
+  Download, Eye, Lock, FileBadge, ListTodo, Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { useFirebase, useDoc } from "@/firebase";
-import { doc, DocumentReference } from "firebase/firestore";
+import { 
+  Tabs, TabsContent, TabsList, TabsTrigger 
+} from "@/components/ui/tabs";
+import { useFirebase, useDoc, useCollection } from "@/firebase";
+import { doc, DocumentReference, query, collection, where } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
 import { EmploymentOffer } from "@/types/employment-offer";
+import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
+import { getDocumentDownloadUrl } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { format, isBefore, differenceInDays, startOfDay } from "date-fns";
+import { fr } from "date-fns/locale";
+
+/**
+ * Robust date parser for mixed Firestore/Admin/Corrupted formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
+  const date = parseSafeDate(val);
+  if (!date) return "-";
+  return format(date, formatStr, { locale: fr });
+}
 
 export default function EmployeeDetailPage() {
   const params = useParams();
@@ -29,7 +64,10 @@ export default function EmployeeDetailPage() {
   const entityId = params.entityId as string;
   const employeeId = params.employeeId as string;
   const { db } = useFirebase();
+  const { toast } = useToast();
   const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
   const employeeRef = useMemo(() => 
     db ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
@@ -51,30 +89,102 @@ export default function EmployeeDetailPage() {
 
   const { data: pendingContract, loading: loadingPendingContract } = useDoc<Contract>(pendingContractRef);
 
-  // Fallback data from source offer if professional labels are missing on employee record
+  // Fallback data from source offer
   const offerRef = useMemo(() => 
     db && employee?.sourceOfferId ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
   [db, entityId, employee?.sourceOfferId]);
 
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
-  const formatDate = (val: any) => {
-    if (!val) return null;
-    try {
-      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
-        const [y, m, d] = val.split('-');
-        return `${d}/${m}/${y}`;
+  // --- Documents Logic ---
+  const canReadDocs = hasPermission("documents.read");
+
+  // Query A: By EmployeeId
+  const docsByEmployeeQuery = useMemo(() => {
+    if (!db || !entityId || !employeeId || !canReadDocs) return null;
+    return query(
+      collection(db, `entities/${entityId}/documents`),
+      where("employeeId", "==", employeeId)
+    );
+  }, [db, entityId, employeeId, canReadDocs]);
+
+  // Query B: By PersonId (to catch pre-hire docs)
+  const docsByPersonQuery = useMemo(() => {
+    if (!db || !entityId || !employee?.personId || !canReadDocs) return null;
+    return query(
+      collection(db, `entities/${entityId}/documents`),
+      where("personId", "==", employee.personId)
+    );
+  }, [db, entityId, employee?.personId, canReadDocs]);
+
+  const { data: employeeDocs, loading: loadingEmpDocs } = useCollection<HRDocument>(docsByEmployeeQuery);
+  const { data: personDocs, loading: loadingPersonDocs } = useCollection<HRDocument>(docsByPersonQuery);
+
+  const allDocs = useMemo(() => {
+    const map = new Map<string, HRDocument>();
+    employeeDocs?.forEach(d => map.set(d.id, d));
+    personDocs?.forEach(d => map.set(d.id, d));
+    
+    return Array.from(map.values()).sort((a, b) => {
+      const getBestDate = (doc: HRDocument) => {
+        const d = parseSafeDate(doc.uploadedAt) || 
+                  parseSafeDate(doc.generatedAt) || 
+                  parseSafeDate(doc.createdAt) || 
+                  parseSafeDate(doc.updatedAt) || 
+                  parseSafeDate(doc.issuedAt);
+        return d ? d.getTime() : 0;
+      };
+      return getBestDate(b) - getBestDate(a);
+    });
+  }, [employeeDocs, personDocs]);
+
+  const groupedDocs = useMemo(() => {
+    const groups = {
+      contracts: [] as HRDocument[],
+      identity: [] as HRDocument[],
+      hiring: [] as HRDocument[],
+      safety: [] as HRDocument[],
+      others: [] as HRDocument[]
+    };
+
+    allDocs.forEach(doc => {
+      const type = doc.documentType;
+      if (['generated_contract_pdf', 'signed_contract', 'contract', 'termination_document'].includes(type)) {
+        groups.contracts.push(doc);
+      } else if (['identity_document', 'identity_card', 'fiscal_code', 'tax_code', 'residence_permit', 'work_permit', 'privacy'].includes(type)) {
+        groups.identity.push(doc);
+      } else if (['cpi_receipt', 'unilav_receipt', 'mandatory_communication', 'prehire_required_document'].includes(type)) {
+        groups.hiring.push(doc);
+      } else if (['training_certificate', 'medical_certificate', 'dpi_delivery_report', 'safety_document'].includes(type)) {
+        groups.safety.push(doc);
+      } else {
+        groups.others.push(doc);
       }
-      const d = val.toDate ? val.toDate() : new Date(val);
-      if (isNaN(d.getTime())) return null;
-      return d.toLocaleDateString('fr-FR', { 
-        day: '2-digit', 
-        month: '2-digit', 
-        year: 'numeric'
-      });
-    } catch (e) {
-      return null;
+    });
+
+    return groups;
+  }, [allDocs]);
+
+  const handleOpenDoc = async (storagePath: string, id: string) => {
+    setLoadingAction(id);
+    try {
+      const url = await getDocumentDownloadUrl(storagePath);
+      window.open(url, "_blank");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
+    } finally {
+      setLoadingAction(null);
     }
+  };
+
+  const formatDate = (val: any) => {
+    const d = parseSafeDate(val);
+    if (!d) return null;
+    return d.toLocaleDateString('fr-FR', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric'
+    });
   };
 
   if (membershipLoading || loadingEmployee) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
@@ -113,70 +223,124 @@ export default function EmployeeDetailPage() {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          
-          {/* Identity Card */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4 px-8">
-                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <User className="w-4 h-4" /> Identité & Contact
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Prénom" value={employee.firstName} />
-                   <DetailRow label="Nom" value={employee.lastName} />
-                   <DetailRow label="Email" value={employee.email} />
-                   <DetailRow label="Téléphone" value={employee.phone} />
-                   <DetailRow label="Identifiant National" value={employee.taxCode} className="font-mono uppercase" />
-                   <DetailRow label="Date de naissance" value={formatDate(employee.birthDate)} />
-                </div>
-             </CardContent>
-          </Card>
+        <div className="lg:col-span-2">
+          <Tabs defaultValue="profil" className="space-y-8">
+            <TabsList className="bg-white border p-1 h-11 rounded-xl shadow-sm w-full sm:w-auto">
+              <TabsTrigger value="profil" className="rounded-lg font-bold px-8">Informations</TabsTrigger>
+              <TabsTrigger value="documents" className="rounded-lg font-bold px-8 gap-2">
+                Documents
+                {canReadDocs && allDocs.length > 0 && (
+                  <Badge variant="secondary" className="bg-primary/5 text-primary text-[10px] px-1.5 h-4 min-w-[1.2rem] flex items-center justify-center">
+                    {allDocs.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
 
-          {/* Professional Context */}
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4 px-8">
-                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <Building2 className="w-4 h-4" /> Contexte Professionnel
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailRow label="Département" value={employee.departmentName || offer?.departmentName} icon={Building2} />
-                   <DetailRow label="Site Principal" value={employee.worksiteName || offer?.worksiteName} icon={MapPin} />
-                   <DetailRow label="Date d'embauche" value={formatDate(employee.hireDate)} icon={Calendar} />
-                   <DetailRow label="Poste Officiel" value={employee.jobTitle || offer?.jobTitleName} icon={Briefcase} />
-                </div>
-             </CardContent>
-          </Card>
+            <TabsContent value="profil" className="mt-0 space-y-8 animate-in fade-in slide-in-from-left-2 duration-300">
+              {/* Identity Card */}
+              <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+                <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                    <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                      <User className="w-4 h-4" /> Identité & Contact
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="p-8">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                      <DetailRow label="Prénom" value={employee.firstName} />
+                      <DetailRow label="Nom" value={employee.lastName} />
+                      <DetailRow label="Email" value={employee.email} />
+                      <DetailRow label="Téléphone" value={employee.phone} />
+                      <DetailRow label="Identifiant National" value={employee.taxCode} className="font-mono uppercase" />
+                      <DetailRow label="Date de naissance" value={formatDate(employee.birthDate)} />
+                    </div>
+                </CardContent>
+              </Card>
 
-          {/* History / Origin */}
-          <Card className="border-accent/10 bg-accent/5 rounded-[2rem] overflow-hidden">
-             <CardContent className="p-8">
-                <div className="flex items-center gap-2 text-accent font-black uppercase text-[10px] tracking-widest mb-6">
-                   <History className="w-4 h-4" /> Origine du recrutement
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                   {employee.sourceOfferId && (
-                     <Link href={`/entity/${entityId}/employment-offers/${employee.sourceOfferId}`}>
-                        <Button variant="outline" className="w-full justify-between h-12 rounded-xl bg-white border-accent/20 text-accent font-bold">
-                           Voir Proposition Source
-                           <ExternalLink className="w-4 h-4" />
+              {/* Professional Context */}
+              <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+                <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                    <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                      <Building2 className="w-4 h-4" /> Contexte Professionnel
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="p-8">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                      <DetailRow label="Département" value={employee.departmentName || offer?.departmentName} icon={Building2} />
+                      <DetailRow label="Site Principal" value={employee.worksiteName || offer?.worksiteName} icon={MapPin} />
+                      <DetailRow label="Date d'embauche" value={formatDate(employee.hireDate)} icon={Calendar} />
+                      <DetailRow label="Poste Officiel" value={employee.jobTitle || offer?.jobTitleName} icon={Briefcase} />
+                    </div>
+                </CardContent>
+              </Card>
+
+              {/* History / Origin */}
+              <Card className="border-accent/10 bg-accent/5 rounded-[2rem] overflow-hidden">
+                <CardContent className="p-8">
+                    <div className="flex items-center gap-2 text-accent font-black uppercase text-[10px] tracking-widest mb-6">
+                      <History className="w-4 h-4" /> Origine du recrutement
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                      {employee.sourceOfferId && (
+                        <Link href={`/entity/${entityId}/employment-offers/${employee.sourceOfferId}`}>
+                            <Button variant="outline" className="w-full justify-between h-12 rounded-xl bg-white border-accent/20 text-accent font-bold">
+                              Voir Proposition Source
+                              <ExternalLink className="w-4 h-4" />
+                            </Button>
+                        </Link>
+                      )}
+                      {employee.sourceCandidateId && (
+                        <Link href={`/entity/${entityId}/candidates`}>
+                            <Button variant="outline" className="w-full justify-between h-12 rounded-xl bg-white border-accent/20 text-accent font-bold">
+                              Voir Dossier Candidat
+                              <ExternalLink className="w-4 h-4" />
+                            </Button>
+                        </Link>
+                      )}
+                    </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="documents" className="mt-0 animate-in fade-in slide-in-from-right-2 duration-300">
+              {!canReadDocs ? (
+                <Alert variant="destructive" className="rounded-3xl border-none shadow-lg">
+                  <Lock className="h-5 w-5" />
+                  <AlertTitle className="font-bold">Accès restreint</AlertTitle>
+                  <AlertDescription>
+                    Vous n'avez pas l'autorisation de consulter les documents de cet employé.
+                  </AlertDescription>
+                </Alert>
+              ) : (loadingEmpDocs || loadingPersonDocs) ? (
+                <div className="py-20 text-center"><Loader2 className="w-10 h-10 animate-spin mx-auto text-primary/20" /></div>
+              ) : allDocs.length === 0 ? (
+                <Card className="border-dashed border-2 rounded-[2rem] py-20 bg-secondary/5">
+                  <div className="text-center max-w-sm mx-auto space-y-4">
+                      <div className="bg-white p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto shadow-sm">
+                        <FolderOpen className="w-10 h-10 text-muted-foreground/30" />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="font-bold text-primary">Aucun document</h3>
+                        <p className="text-sm text-muted-foreground">Aucun document n'est rattaché au dossier de {employee.displayName}.</p>
+                      </div>
+                      {hasPermission("documents.upload") && (
+                        <Button onClick={() => router.push(`/entity/${entityId}/documents`)} variant="outline" size="sm" className="rounded-xl font-bold bg-white">
+                          Gérer dans le registre global
                         </Button>
-                     </Link>
-                   )}
-                   {employee.sourceCandidateId && (
-                     <Link href={`/entity/${entityId}/candidates`}>
-                        <Button variant="outline" className="w-full justify-between h-12 rounded-xl bg-white border-accent/20 text-accent font-bold">
-                           Voir Dossier Candidat
-                           <ExternalLink className="w-4 h-4" />
-                        </Button>
-                     </Link>
-                   )}
+                      )}
+                  </div>
+                </Card>
+              ) : (
+                <div className="space-y-8">
+                  <DocumentGroupSection title="Contrats & Clôture" docs={groupedDocs.contracts} icon={FileBadge} onOpen={handleOpenDoc} loadingId={loadingAction} />
+                  <DocumentGroupSection title="Identité & Conformité" docs={groupedDocs.identity} icon={Fingerprint} onOpen={handleOpenDoc} loadingId={loadingAction} />
+                  <DocumentGroupSection title="Embauche & Compliance" docs={groupedDocs.hiring} icon={ListTodo} onOpen={handleOpenDoc} loadingId={loadingAction} />
+                  <DocumentGroupSection title="Santé & Sécurité" docs={groupedDocs.safety} icon={ShieldCheck} onOpen={handleOpenDoc} loadingId={loadingAction} />
+                  <DocumentGroupSection title="Autres documents" docs={groupedDocs.others} icon={FolderOpen} onOpen={handleOpenDoc} loadingId={loadingAction} />
                 </div>
-             </CardContent>
-          </Card>
+              )}
+            </TabsContent>
+          </Tabs>
         </div>
 
         <div className="space-y-8">
@@ -284,6 +448,90 @@ export default function EmployeeDetailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function DocumentGroupSection({ title, docs, icon: Icon, onOpen, loadingId }: { title: string, docs: HRDocument[], icon: any, onOpen: any, loadingId: string | null }) {
+  if (docs.length === 0) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 px-1">
+        <Icon className="w-3.5 h-3.5 text-primary/40" />
+        <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{title}</h3>
+      </div>
+      <div className="grid grid-cols-1 gap-3">
+        {docs.map(doc => (
+          <DocumentRow key={doc.id} doc={doc} onOpen={onOpen} loadingId={loadingId} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DocumentRow({ doc, onOpen, loadingId }: { doc: HRDocument, onOpen: any, loadingId: string | null }) {
+  const isLoading = loadingId === doc.id;
+  const expiryDate = parseSafeDate(doc.expiresAt);
+  const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
+  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 30;
+
+  return (
+    <Card className="border-primary/5 hover:border-primary/20 transition-all shadow-sm rounded-2xl group overflow-hidden bg-white">
+      <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start gap-4">
+          <div className="bg-primary/5 p-3 rounded-xl text-primary shrink-0">
+            <FileText className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-bold text-slate-900 truncate max-w-[200px] sm:max-w-md">{doc.title}</p>
+              {doc.isSensitive && <Badge variant="destructive" className="h-4 text-[8px] uppercase font-black px-1.5 border-none">Sensible</Badge>}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[9px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[doc.documentType]}</span>
+              <span className="text-slate-200 text-[8px]">•</span>
+              <span className="text-[9px] font-bold text-muted-foreground/50 italic">
+                {formatDateSafe(doc.uploadedAt || doc.generatedAt || doc.createdAt)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between sm:justify-end gap-6 pl-12 sm:pl-0">
+           {expiryDate && (
+             <div className="flex flex-col items-end">
+                <p className="text-[8px] font-black uppercase text-muted-foreground tracking-tighter">Échéance</p>
+                <div className="flex items-center gap-1.5">
+                   <span className={cn("text-[10px] font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                     {formatDateSafe(doc.expiresAt)}
+                   </span>
+                   {isExpired ? (
+                     <AlertTriangle className="w-3 h-3 text-red-500" />
+                   ) : isExpiringSoon ? (
+                     <Clock className="w-3 h-3 text-orange-500" />
+                   ) : null}
+                </div>
+             </div>
+           )}
+
+           <div className="flex items-center gap-2">
+              <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", doc.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400")}>
+                {STATUS_LABELS[doc.status]}
+              </Badge>
+              <Button 
+                variant="secondary" 
+                size="sm" 
+                className="h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary hover:text-white transition-all gap-2"
+                onClick={() => onOpen(doc.storagePath, doc.id)}
+                disabled={!!loadingId}
+              >
+                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">Consulter</span>
+              </Button>
+           </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
