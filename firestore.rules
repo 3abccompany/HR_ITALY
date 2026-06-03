@@ -163,17 +163,23 @@ service cloud.firestore {
       }
 
       match /documents/{docId} {
-        allow read: if hasPermission(entityId, 'documents.read') || isPlatformAdmin();
-        allow create: if (hasPermission(entityId, 'documents.upload') || isPlatformAdmin())
+        allow read: if hasPermission(entityId, 'documents.read') 
+                     || hasPermission(entityId, 'contracts.read') 
+                     || isPlatformAdmin();
+        
+        allow create: if (hasPermission(entityId, 'documents.upload') 
+                      || hasPermission(entityId, 'contracts.create') 
+                      || isPlatformAdmin())
                       && request.resource.data.entityId == entityId
                       && request.resource.data.title != null
                       && request.resource.data.documentType != null
-                      && request.resource.data.status != null
-                      && request.resource.data.storagePath != null
-                      && request.resource.data.fileName != null
-                      && request.resource.data.mimeType != null
-                      && request.resource.data.sizeBytes != null;
-        allow update: if hasPermission(entityId, 'documents.archive') || isPlatformAdmin();
+                      && request.resource.data.status != null;
+        
+        allow update: if hasPermission(entityId, 'documents.archive') 
+                      || hasPermission(entityId, 'documents.upload')
+                      || hasPermission(entityId, 'contracts.update')
+                      || isPlatformAdmin();
+        
         allow delete: if false;
       }
 

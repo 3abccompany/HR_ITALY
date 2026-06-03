@@ -6,7 +6,6 @@ import React from 'react';
 import { renderToBuffer } from '@react-pdf/renderer';
 import { ContractPdfTemplate } from "@/components/contracts/ContractPdfTemplate";
 import { Contract } from "@/types/contract";
-import { registerGeneratedContractPdf } from "@/services/document.service";
 
 export const dynamic = 'force-dynamic';
 
@@ -125,19 +124,55 @@ export async function POST(
     await contractRef.update(updatePayload);
 
     // 9. Mirror to Centralized Documents Registry (Phase 2A)
-    // Non-blocking call to register metadata in central module
-    registerGeneratedContractPdf({
-      entityId,
-      contractId,
-      employeeId: contract.employeeId,
-      personId: contract.personId,
-      employeeDisplayName: contract.employeeDisplayName || "Salarié",
-      generatedPdfStoragePath: storagePath,
-      generatedPdfFileName: fileName,
-      generatedPdfVersion: nextVersion,
-      generatedPdfAt: new Date(), // Using current date for mirror registry if needed, though Firestore will use its own serverTime on registration
-      generatedPdfBy: uid
-    }).catch(err => console.error("[Documents Mirroring Error] Generated PDF registration failed:", err));
+    // Server-side non-blocking call using Admin SDK to bypass security rules for automated mirror
+    (async () => {
+       const mirrorSourceKey = `contract:${contractId}:generated_pdf:v${nextVersion}`;
+       const mirrorTitle = `PDF contrat généré - ${contract.employeeDisplayName || "Salarié"} (V${nextVersion})`;
+       
+       const docsRef = adminDb.collection("entities").doc(entityId).collection("documents");
+       const mirrorSnap = await docsRef.where("sourceKey", "==", mirrorSourceKey).limit(1).get();
+       
+       const mirrorPayload = {
+         entityId,
+         title: mirrorTitle,
+         documentType: "generated_contract_pdf",
+         status: "valid",
+         relatedModule: "contracts",
+         relatedId: contractId,
+         contractId,
+         employeeId: contract.employeeId,
+         personId: contract.personId,
+         employeeDisplayName: contract.employeeDisplayName || "Salarié",
+         fileName: fileName,
+         mimeType: "application/pdf",
+         storagePath: storagePath,
+         source: "contract_pdf_generation",
+         sourceKey: mirrorSourceKey,
+         version: nextVersion,
+         generatedAt: FieldValue.serverTimestamp(),
+         generatedBy: uid,
+         isSensitive: true,
+         isRequired: true,
+         uploadedAt: FieldValue.serverTimestamp(),
+         uploadedBy: uid,
+         uploadedByDisplayName: "Système",
+         updatedAt: FieldValue.serverTimestamp(),
+         updatedBy: uid
+       };
+
+       if (!mirrorSnap.empty) {
+         // Use the document ID from the first result found to update the registry entry
+         await docsRef.doc(mirrorSnap.docs[0].id).update(mirrorPayload);
+       } else {
+         const newMirrorRef = docsRef.doc();
+         await newMirrorRef.set({
+           ...mirrorPayload,
+           id: newMirrorRef.id,
+           createdAt: FieldValue.serverTimestamp(),
+           createdBy: uid
+         });
+       }
+    })().catch(err => console.error("[Documents Mirroring Error] Server-side generated PDF registration failed:", err));
 
     return NextResponse.json({ 
       success: true, 
