@@ -78,6 +78,10 @@ export default function PublicOfferPage() {
     }
   };
 
+  const isFixedTerm = useMemo(() => {
+    return offer && offer.contractType !== "Tempo indeterminato";
+  }, [offer]);
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4 bg-slate-50">
@@ -181,6 +185,7 @@ export default function PublicOfferPage() {
                        <DetailCard icon={MapPin} label="Site d'affectation" value={offer?.worksiteName || "Site principal"} />
                        <DetailCard icon={Clock} label="Temps de travail" value={`${offer?.weeklyHours}h / semaine`} />
                        <DetailCard icon={Calendar} label="Prise de poste" value={offer?.proposedStartDate ? new Date(offer.proposedStartDate).toLocaleDateString('fr-FR', { dateStyle: 'long' }) : "À définir"} />
+                       {isFixedTerm && <DetailCard icon={Calendar} label="Fin de contrat prévue" value={offer?.proposedEndDate ? new Date(offer.proposedEndDate).toLocaleDateString('fr-FR', { dateStyle: 'long' }) : "Non spécifié"} />}
                        <DetailCard icon={FileSignature} label="Type de contrat" value={offer?.contractType || "CDI"} />
                     </div>
                  </div>

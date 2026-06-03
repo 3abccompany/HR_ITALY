@@ -264,8 +264,29 @@ export default function EditEmploymentOfferPage() {
     }));
   };
 
+  const isFixedTerm = useMemo(() => {
+    return formData.contractType !== "Tempo indeterminato";
+  }, [formData.contractType]);
+
+  const validateOfferData = () => {
+    if (isFixedTerm && !formData.proposedEndDate) {
+      return "La date de fin est obligatoire pour un contrat déterminé.";
+    }
+    if (formData.proposedEndDate && formData.proposedStartDate && formData.proposedEndDate < formData.proposedStartDate) {
+      return "La date de fin ne peut pas être antérieure à la date de début.";
+    }
+    return null;
+  };
+
   const handleSave = async (nextStatus?: EmploymentOfferStatus) => {
     if (!user || !entityId || !offerId) return;
+
+    const error = validateOfferData();
+    if (error) {
+      toast({ variant: "destructive", title: "Action bloquée", description: error });
+      return;
+    }
+
     setSaving(true);
     try {
       await updateEmploymentOffer(entityId, offerId, { ...formData, status: nextStatus || offer?.status || 'draft' }, user.uid);
@@ -278,6 +299,13 @@ export default function EditEmploymentOfferPage() {
 
   const handleSend = async () => {
     if (!user || !entityId || !offerId) return;
+
+    const error = validateOfferData();
+    if (error) {
+      toast({ variant: "destructive", title: "Action bloquée", description: error });
+      return;
+    }
+
     setSending(true);
     try {
       const result = await initiateOfferSend(entityId, offerId, user.uid);
@@ -818,6 +846,25 @@ export default function EditEmploymentOfferPage() {
                     <Label className="text-[10px] font-black uppercase text-muted-foreground">Heures par semaine</Label>
                     <Input type="number" step="0.5" value={formData.weeklyHours || ""} onChange={(e) => setFormData(p => ({...p, weeklyHours: parseFloat(e.target.value)}))} disabled={isReadOnly} className="rounded-xl h-10" />
                  </div>
+                 {isFixedTerm && (
+                    <div className="space-y-2 col-span-full">
+                      <Label className={cn("text-[10px] font-black uppercase tracking-widest", !formData.proposedEndDate && "text-red-500")}>
+                        Date de fin proposée *
+                      </Label>
+                      <Input 
+                        type="date" 
+                        value={formData.proposedEndDate || ""} 
+                        onChange={(e) => setFormData(p => ({...p, proposedEndDate: e.target.value}))} 
+                        disabled={isReadOnly} 
+                        className={cn("rounded-xl h-10", !formData.proposedEndDate && "border-red-200 ring-red-50")} 
+                      />
+                      {!formData.proposedEndDate && (
+                        <p className="text-[9px] text-red-500 font-bold uppercase tracking-tighter pl-1">
+                          Requis pour un contrat déterminé
+                        </p>
+                      )}
+                    </div>
+                 )}
               </div>
             </CardContent>
           </Card>
@@ -899,6 +946,7 @@ export default function EditEmploymentOfferPage() {
               <SummaryRow label="Candidat" value={offer.candidateDisplayName} />
               <SummaryRow label="Poste" value={formData.jobTitleName || "-"} />
               <SummaryRow label="Contrat" value={formData.contractType || "-"} />
+              {isFixedTerm && <SummaryRow label="Fin" value={formData.proposedEndDate || "-"} />}
               <SummaryRow label="Brut mensuel" value={`${Number(formData.proposedGrossMonthly || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`} />
               <SummaryRow label="Brut annuel" value={`${Number(formData.proposedGrossAnnual || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`} />
               <Separator className="bg-white/10" />

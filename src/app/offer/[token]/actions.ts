@@ -1,4 +1,3 @@
-
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
@@ -207,6 +206,9 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
     
       const startDate =
         offerData.proposedStartDate || "Data da confermare";
+      
+      const endDate =
+        offerData.proposedEndDate || "Nessuna data di fine (Indeterminato)";
     
       const consultantEmailSubject =
         `Richiesta Comunicazione Obbligatoria / UniLav — ${candidateName} — ${startDate}`;
@@ -227,6 +229,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         `- Tipo contratto: ${offerData.contractType || "-"}`,
         `- Orario: ${offerData.workingTime || "-"}`,
         `- Data inizio proposta: ${startDate}`,
+        `- Data fine proposta: ${endDate}`,
         `- CCNL: ${offerData.ccnlName || "-"}`,
         `- Livello: ${offerData.levelCode || offerData.levelLabel || "-"}`,
         `- Retribuzione lorda mensile: ${offerData.proposedGrossMonthly || "-"} €`,
@@ -241,7 +244,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         "",
         "Si prega di confermare eventuali dati mancanti.",
         "",
-        "Nota: questa email è una richiesta operativa di preparazione. Non costituisce conferma di invio ufficiale UniLav.",
+        "Nota: questa email è una richiesta operativa di préparation. Non costituisce conferma di invio ufficiale UniLav.",
         "",
         "Cordiali saluti.",
       ].join("\n");
@@ -315,7 +318,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         entityId: tokenData.entityId,
     
         employmentOfferId: offerData.offerId || tokenData.offerId,
-        preHireDossierId: dossierId,
+        preHireDossierId: dossierId || null,
         candidateId: offerData.candidateId || null,
         personId: offerData.personId || null,
         employeeId: null,

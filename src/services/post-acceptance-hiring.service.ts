@@ -28,6 +28,7 @@ export type OfferAcceptanceSnapshot = {
   contractType?: string | null;
   workingTime?: string | null;
   proposedStartDate?: string | null;
+  proposedEndDate?: string | null;
 
   ccnlName?: string | null;
   levelCode?: string | null;
@@ -84,6 +85,7 @@ function buildConsultantEmailDraft(snapshot: OfferAcceptanceSnapshot) {
     snapshot.candidateDisplayName || "Candidato non specificato";
 
   const startDate = snapshot.proposedStartDate || "Data da confermare";
+  const endDate = snapshot.proposedEndDate || "Nessuna data di fine (Indeterminato)";
 
   const subject = `Richiesta Comunicazione Obbligatoria / UniLav — ${candidateName} — ${startDate}`;
 
@@ -105,6 +107,7 @@ function buildConsultantEmailDraft(snapshot: OfferAcceptanceSnapshot) {
     `- Tipo contratto: ${snapshot.contractType || "-"}`,
     `- Orario: ${snapshot.workingTime || "-"}`,
     `- Data inizio proposta: ${startDate}`,
+    `- Data fine proposta: ${endDate}`,
     `- CCNL: ${snapshot.ccnlName || "-"}`,
     `- Livello: ${snapshot.levelCode || snapshot.levelLabel || "-"}`,
     `- Retribuzione lorda mensile: ${formatEuro(snapshot.proposedGrossMonthly)}`,
