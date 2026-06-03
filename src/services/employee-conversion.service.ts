@@ -15,6 +15,7 @@ function normalizeName(name: string): string {
 /**
  * Converts an employment offer to a formal employee record and a draft contract.
  * Captures legal snapshots of employer, employee, and compliance data.
+ * Updated: Now robustly handles linking existing records to fix lifecycle inconsistencies.
  */
 export async function convertOfferToEmployeeAction(params: {
   entityId: string;
@@ -89,97 +90,113 @@ export async function convertOfferToEmployeeAction(params: {
       const permissions = mSnap.data()?.permissions || [];
       if (!permissions.includes("employees.create") || !permissions.includes("contracts.create")) throw new Error("Permissions insuffisantes.");
 
-      if (offer.conversionStatus === "converted") throw new Error("Déjà converti.");
-
+      // Handling Already Converted (Idempotent repair mode)
+      const isAlreadyConverted = offer.conversionStatus === "converted";
+      
       const person = personSnap.data() as Person;
       const entity = entitySnap.data();
-      if (normalizeName(offer.candidateDisplayName) !== normalizeName(person.displayName)) {
-        console.warn(`[Conversion Warning] Name mismatch: ${offer.candidateDisplayName} vs ${person.displayName}`);
-      }
 
       // --- PHASE 3: PREPARE SNAPSHOTS ---
-      const employeeId = adminDb.collection("entities").doc(entityId).collection("employees").doc().id;
-      const contractId = adminDb.collection("entities").doc(entityId).collection("contracts").doc().id;
-      const employeeCode = `E-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      // Use existing IDs if this is a re-link or repair
+      let employeeId = offer.employeeId || person.currentEmployeeId;
+      let contractId = offer.contractId;
+      
+      const isNewEmployee = !employeeId;
+      const isNewContract = !contractId;
 
+      if (!employeeId) {
+        employeeId = adminDb.collection("entities").doc(entityId).collection("employees").doc().id;
+      }
+      if (!contractId) {
+        contractId = adminDb.collection("entities").doc(entityId).collection("contracts").doc().id;
+      }
+
+      const employeeCode = person.codiceFiscale 
+        ? `E-${person.codiceFiscale.substring(0, 6)}` 
+        : `E-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        
       const birthDateStr = person.dateOfBirth || (person as any).birthDate || "";
       const companyAddress = entity ? `${entity.adresseSiegeSocial || ""}, ${entity.codePostal || ""} ${entity.ville || ""} (${entity.province || ""})` : "";
       const employeeAddress = person ? `${person.address || ""}, ${person.postalCode || ""} ${person.city || ""} (${person.province || ""})` : "";
 
       // --- PHASE 4: WRITES ---
       
-      // 1. Formal Employee Record
-      transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
-        employeeId, personId: person.personId, entityId, sourceOfferId: offerId, employeeCode,
-        firstName: person.firstName, lastName: person.lastName, displayName: person.displayName,
-        email: person.email, phone: person.phone || "", birthDate: birthDateStr, taxCode: person.codiceFiscale || "",
-        hireDate: offer.proposedStartDate, departmentId: offer.departmentId || "", departmentName: offer.departmentName || "",
-        jobTitle: offer.jobTitleName, worksiteName: offer.worksiteName || "", status: "active",
-        pendingContractId: contractId,
-        createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
-      });
+      // 1. Formal Employee Record (Only if it doesn't already exist)
+      if (isNewEmployee) {
+        transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
+          employeeId, personId: person.personId, entityId, sourceOfferId: offerId, employeeCode,
+          firstName: person.firstName, lastName: person.lastName, displayName: person.displayName,
+          email: person.email, phone: person.phone || "", birthDate: birthDateStr, taxCode: person.codiceFiscale || "",
+          hireDate: offer.proposedStartDate, departmentId: offer.departmentId || "", departmentName: offer.departmentName || "",
+          jobTitle: offer.jobTitleName, worksiteName: offer.worksiteName || "", status: "active",
+          pendingContractId: contractId,
+          createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+        });
+      }
 
-      // 2. Draft Contract
-      transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), {
-        contractId, entityId, personId: person.personId, employeeId, sourceOfferId: offerId,
-        
-        // Identity Snapshot
-        employeeDisplayName: person.displayName,
-        employeeCode: employeeCode,
-        taxCode: person.codiceFiscale || "",
-        employeeAddressSnapshot: employeeAddress,
-        dateOfBirth: birthDateStr,
-        placeOfBirth: person.placeOfBirth || "",
+      // 2. Draft Contract (Only if it doesn't already exist)
+      if (isNewContract) {
+        transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), {
+          contractId, entityId, personId: person.personId, employeeId, sourceOfferId: offerId,
+          
+          // Identity Snapshot
+          employeeDisplayName: person.displayName,
+          employeeCode: employeeCode,
+          taxCode: person.codiceFiscale || "",
+          employeeAddressSnapshot: employeeAddress,
+          dateOfBirth: birthDateStr,
+          placeOfBirth: person.placeOfBirth || "",
 
-        // Employer Snapshot
-        entityName: entity?.nomEntreprise || "",
-        entityLegalName: entity?.raisonSociale || "",
-        entityVatNumber: entity?.numeroTVA || "",
-        companyAddressSnapshot: companyAddress,
-        legalRepresentativeName: entity?.referentEntreprise || "",
-        legalRepresentativeTitle: "Rappresentante Legale",
+          // Employer Snapshot
+          entityName: entity?.nomEntreprise || "",
+          entityLegalName: entity?.raisonSociale || "",
+          entityVatNumber: entity?.numeroTVA || "",
+          companyAddressSnapshot: companyAddress,
+          legalRepresentativeName: entity?.referentEntreprise || "",
+          legalRepresentativeTitle: "Rappresentante Legale",
 
-        // Job Snapshot
-        jobTitleName: offer.jobTitleName,
-        departmentName: offer.departmentName || "",
-        worksiteName: offer.worksiteName || "",
-        missionsSnapshot: offer.missionsSnapshot || (needSnap?.exists ? needSnap.data()?.jobOfferMissions : []),
+          // Job Snapshot
+          jobTitleName: offer.jobTitleName,
+          departmentName: offer.departmentName || "",
+          worksiteName: offer.worksiteName || "",
+          missionsSnapshot: offer.missionsSnapshot || (needSnap?.exists ? needSnap.data()?.jobOfferMissions : []),
 
-        // Terms Snapshot
-        contractType: offer.contractType,
-        startDate: offer.proposedStartDate,
-        endDate: offer.proposedEndDate || null,
-        weeklyHours: offer.weeklyHours,
-        trialPeriodDays: offer.trialPeriodDays || 30,
-        trialPeriodUnit: "days",
-        isPartTime: offer.workingTime?.toLowerCase().includes("part"),
-        workingScheduleNotes: offer.workingScheduleNotes || "",
+          // Terms Snapshot
+          contractType: offer.contractType,
+          startDate: offer.proposedStartDate,
+          endDate: offer.proposedEndDate || null,
+          weeklyHours: offer.weeklyHours,
+          trialPeriodDays: offer.trialPeriodDays || 30,
+          trialPeriodUnit: "days",
+          isPartTime: offer.workingTime?.toLowerCase().includes("part"),
+          workingScheduleNotes: offer.workingScheduleNotes || "",
 
-        // Classification & Remuneration Snapshot
-        ccnlName: offer.ccnlName,
-        levelCode: offer.levelCode,
-        levelLabel: offer.levelLabel,
-        qualificationCategory: offer.qualificationLabel || "",
-        grossMonthly: offer.proposedGrossMonthly || 0,
-        grossAnnual: offer.proposedGrossAnnual || 0,
-        monthlyPayments: offer.monthlyPayments || 13,
-        overtimeNote: "",
+          // Classification & Remuneration Snapshot
+          ccnlName: offer.ccnlName,
+          levelCode: offer.levelCode,
+          levelLabel: offer.levelLabel,
+          qualificationCategory: offer.qualificationLabel || "",
+          grossMonthly: offer.proposedGrossMonthly || 0,
+          grossAnnual: offer.proposedGrossAnnual || 0,
+          monthlyPayments: offer.monthlyPayments || 13,
+          overtimeNote: "",
 
-        // Compliance Snapshot
-        uniLavProtocolNumber: communication?.protocolNumber || "",
-        uniLavSubmissionDate: communication?.submittedAt ? 
-          (typeof communication.submittedAt.toDate === 'function' ? communication.submittedAt.toDate().toISOString().split('T')[0] : 
-          (communication.submittedAt.seconds ? new Date(communication.submittedAt.seconds * 1000).toISOString().split('T')[0] : "")) : "",
-        uniLavReceiptUrl: communication?.receiptPdfUrl || "",
+          // Compliance Snapshot
+          uniLavProtocolNumber: communication?.protocolNumber || "",
+          uniLavSubmissionDate: communication?.submittedAt ? 
+            (typeof (communication.submittedAt as any).toDate === 'function' ? (communication.submittedAt as any).toDate().toISOString().split('T')[0] : 
+            (communication.submittedAt.seconds ? new Date(communication.submittedAt.seconds * 1000).toISOString().split('T')[0] : "")) : "",
+          uniLavReceiptUrl: communication?.receiptPdfUrl || "",
 
-        status: "draft",
-        createdAt: FieldValue.serverTimestamp(),
-        createdBy: actorUid,
-        updatedAt: FieldValue.serverTimestamp(),
-        updatedBy: actorUid
-      });
+          status: "draft",
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: actorUid,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid
+        });
+      }
 
-      // 3. Status Updates (Mirroring Lifecycle)
+      // 3. Status Updates (Ensuring full lifecycle synchronization)
       transaction.update(offerSnap.ref, { 
         conversionStatus: "converted", 
         employeeId, 
@@ -190,31 +207,35 @@ export async function convertOfferToEmployeeAction(params: {
       transaction.update(candidateRef, { 
         status: "hired", 
         employeeId, 
-        hiredAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp() 
+        hiredAt: candidateSnap.data()?.hiredAt || FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid
       });
 
       transaction.update(personRef, { 
         currentLifecycleStatus: "employee", 
         currentCandidateId: null, 
         currentEmployeeId: employeeId, 
-        updatedAt: FieldValue.serverTimestamp() 
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid
       });
 
       transaction.update(dossiersSnap.docs[0].ref, {
         status: "converted_to_employee",
         employeeId,
         contractId,
-        convertedAt: FieldValue.serverTimestamp(),
-        convertedBy: actorUid,
-        updatedAt: FieldValue.serverTimestamp()
+        convertedAt: dossiersSnap.docs[0].data()?.convertedAt || FieldValue.serverTimestamp(),
+        convertedBy: dossiersSnap.docs[0].data()?.convertedBy || actorUid,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid
       });
 
       // 4. Read Model Synchronization (Views)
       const candidateViewRef = adminDb.collection("entities").doc(entityId).collection("candidateViews").doc(offer.candidateId);
       transaction.set(candidateViewRef, {
         status: "hired",
-        updatedAt: FieldValue.serverTimestamp()
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid
       }, { merge: true });
 
       const employeeViewRef = adminDb.collection("entities").doc(entityId).collection("employeeViews").doc(employeeId);
@@ -224,10 +245,10 @@ export async function convertOfferToEmployeeAction(params: {
         displayName: person.displayName,
         status: "active",
         updatedAt: FieldValue.serverTimestamp()
-      });
+      }, { merge: true });
 
-      // 5. Recruitment Need Impact
-      if (needRef && needSnap?.exists) {
+      // 5. Recruitment Need Impact (Only if not already processed for this specific offer)
+      if (needRef && needSnap?.exists && !isAlreadyConverted) {
         const need = needSnap.data() as RecruitmentNeed;
         const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
         transaction.update(needRef, { 
@@ -245,8 +266,8 @@ export async function convertOfferToEmployeeAction(params: {
         entityId,
         personId: person.personId,
         type: "employee.created",
-        label: "Recrutement finalisé",
-        description: `Candidat embauché avec succès. Matricule : ${employeeCode}`,
+        label: isAlreadyConverted ? "Synchronisation Recrutement" : "Recrutement finalisé",
+        description: isAlreadyConverted ? "Données de candidature synchronisées avec le profil employé." : `Candidat embauché avec succès. Matricule : ${employeeCode}`,
         sourceCollection: "employees",
         sourceId: employeeId,
         createdAt: FieldValue.serverTimestamp(),
