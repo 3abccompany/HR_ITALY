@@ -59,6 +59,7 @@ export interface Candidate {
   rejectedBy?: string;
   acceptedAt?: Date | FieldValue;
   acceptedBy?: string;
+  hiredAt?: Date | FieldValue;
 
   // Interview Tracking
   latestInterviewId?: string;

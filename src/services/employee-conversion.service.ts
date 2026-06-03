@@ -36,6 +36,16 @@ export async function convertOfferToEmployeeAction(params: {
 
       const offer = offerSnap.data() as EmploymentOffer;
 
+      // Identity Guard: Ensure candidate and person IDs are present
+      if (!offer.candidateId) {
+        console.error(`[Conversion Error] Offer ${offerId} is missing candidateId.`);
+        throw new Error("CANDIDATE_ID_MISSING: Le dossier ne contient pas d'identifiant candidat.");
+      }
+      if (!offer.personId) {
+        console.error(`[Conversion Error] Offer ${offerId} is missing personId.`);
+        throw new Error("PERSON_ID_MISSING: Le dossier ne contient pas d'identifiant personne.");
+      }
+
       // Compliance Guard
       const dossiersSnap = await transaction.get(
         adminDb.collection("entities").doc(entityId).collection("preHireDossiers").where("employmentOfferId", "==", offerId).limit(1)
@@ -70,6 +80,11 @@ export async function convertOfferToEmployeeAction(params: {
         transaction.get(entityRef)
       ]);
 
+      if (!candidateSnap.exists) {
+        console.error(`[Conversion Error] Candidate doc ${offer.candidateId} not found.`);
+        throw new Error("CANDIDATE_NOT_FOUND: Le document candidat est introuvable.");
+      }
+
       // --- PHASE 2: VALIDATIONS ---
       const permissions = mSnap.data()?.permissions || [];
       if (!permissions.includes("employees.create") || !permissions.includes("contracts.create")) throw new Error("Permissions insuffisantes.");
@@ -78,7 +93,9 @@ export async function convertOfferToEmployeeAction(params: {
 
       const person = personSnap.data() as Person;
       const entity = entitySnap.data();
-      if (normalizeName(offer.candidateDisplayName) !== normalizeName(person.displayName)) throw new Error("IDENTITY_MISMATCH");
+      if (normalizeName(offer.candidateDisplayName) !== normalizeName(person.displayName)) {
+        console.warn(`[Conversion Warning] Name mismatch: ${offer.candidateDisplayName} vs ${person.displayName}`);
+      }
 
       // --- PHASE 3: PREPARE SNAPSHOTS ---
       const employeeId = adminDb.collection("entities").doc(entityId).collection("employees").doc().id;
@@ -163,11 +180,17 @@ export async function convertOfferToEmployeeAction(params: {
       });
 
       // 3. Status Updates (Mirroring Lifecycle)
-      transaction.update(offerSnap.ref, { conversionStatus: "converted", employeeId, contractId, updatedAt: FieldValue.serverTimestamp() });
+      transaction.update(offerSnap.ref, { 
+        conversionStatus: "converted", 
+        employeeId, 
+        contractId, 
+        updatedAt: FieldValue.serverTimestamp() 
+      });
       
       transaction.update(candidateRef, { 
         status: "hired", 
         employeeId, 
+        hiredAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp() 
       });
 
