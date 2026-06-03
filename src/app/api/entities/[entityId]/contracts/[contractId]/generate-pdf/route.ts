@@ -6,6 +6,7 @@ import React from 'react';
 import { renderToBuffer } from '@react-pdf/renderer';
 import { ContractPdfTemplate } from "@/components/contracts/ContractPdfTemplate";
 import { Contract } from "@/types/contract";
+import { registerGeneratedContractPdf } from "@/services/document.service";
 
 export const dynamic = 'force-dynamic';
 
@@ -122,6 +123,21 @@ export async function POST(
     };
 
     await contractRef.update(updatePayload);
+
+    // 9. Mirror to Centralized Documents Registry (Phase 2A)
+    // Non-blocking call to register metadata in central module
+    registerGeneratedContractPdf({
+      entityId,
+      contractId,
+      employeeId: contract.employeeId,
+      personId: contract.personId,
+      employeeDisplayName: contract.employeeDisplayName || "Salarié",
+      generatedPdfStoragePath: storagePath,
+      generatedPdfFileName: fileName,
+      generatedPdfVersion: nextVersion,
+      generatedPdfAt: new Date(), // Using current date for mirror registry if needed, though Firestore will use its own serverTime on registration
+      generatedPdfBy: uid
+    }).catch(err => console.error("[Documents Mirroring Error] Generated PDF registration failed:", err));
 
     return NextResponse.json({ 
       success: true, 

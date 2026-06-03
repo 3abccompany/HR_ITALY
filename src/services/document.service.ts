@@ -10,6 +10,7 @@ import {
   orderBy, 
   serverTimestamp,
   where,
+  limit,
   deleteDoc
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, getMetadata } from "firebase/storage";
@@ -29,6 +30,141 @@ function sanitizePayload(obj: any): any {
     }
   }
   return newObj;
+}
+
+/**
+ * Upserts a document based on a unique source key to prevent duplicates.
+ */
+export async function upsertDocumentBySourceKey(
+  entityId: string, 
+  sourceKey: string, 
+  data: Partial<HRDocument>, 
+  userId: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  
+  const docsRef = collection(db, `entities/${entityId}/documents`);
+  const q = query(docsRef, where("sourceKey", "==", sourceKey), limit(1));
+  const snap = await getDocs(q);
+
+  if (!snap.empty) {
+    const docRef = snap.docs[0].ref;
+    await updateDoc(docRef, sanitizePayload({
+      ...data,
+      updatedAt: serverTimestamp(),
+      updatedBy: userId
+    }));
+    return snap.docs[0].id;
+  } else {
+    const docRef = doc(docsRef);
+    const docId = docRef.id;
+    await setDoc(docRef, sanitizePayload({
+      ...data,
+      id: docId,
+      entityId,
+      sourceKey,
+      status: data.status || "valid",
+      createdAt: serverTimestamp(),
+      createdBy: userId,
+      updatedAt: serverTimestamp(),
+      updatedBy: userId
+    }));
+    return docId;
+  }
+}
+
+/**
+ * Registers a generated contract PDF in the central documents registry.
+ */
+export async function registerGeneratedContractPdf(params: {
+  entityId: string;
+  contractId: string;
+  employeeId: string;
+  personId: string;
+  employeeDisplayName: string;
+  generatedPdfStoragePath: string;
+  generatedPdfFileName: string;
+  generatedPdfVersion: number;
+  generatedPdfAt: any;
+  generatedPdfBy: string;
+}) {
+  const { entityId, contractId, employeeId, personId, employeeDisplayName, generatedPdfStoragePath, generatedPdfFileName, generatedPdfVersion, generatedPdfAt, generatedPdfBy } = params;
+
+  const sourceKey = `contract:${contractId}:generated_pdf:v${generatedPdfVersion}`;
+  const title = `PDF contrat généré - ${employeeDisplayName} (V${generatedPdfVersion})`;
+
+  const metadata: Partial<HRDocument> = {
+    title,
+    documentType: "generated_contract_pdf",
+    status: "valid",
+    relatedModule: "contracts",
+    relatedId: contractId,
+    contractId,
+    employeeId,
+    personId,
+    employeeDisplayName,
+    fileName: generatedPdfFileName,
+    mimeType: "application/pdf",
+    storagePath: generatedPdfStoragePath,
+    source: "contract_pdf_generation",
+    version: generatedPdfVersion,
+    generatedAt: generatedPdfAt,
+    generatedBy: generatedPdfBy,
+    isSensitive: true,
+    isRequired: true,
+    uploadedAt: generatedPdfAt,
+    uploadedBy: generatedPdfBy,
+    uploadedByDisplayName: "Système"
+  };
+
+  return await upsertDocumentBySourceKey(entityId, sourceKey, metadata, generatedPdfBy);
+}
+
+/**
+ * Registers a signed contract reference/document in the central registry.
+ */
+export async function registerSignedContractDocument(params: {
+  entityId: string;
+  contractId: string;
+  employeeId: string;
+  personId: string;
+  employeeDisplayName: string;
+  signedDocumentTitle: string;
+  signedDocumentUrl?: string | null;
+  signedDocumentId?: string | null;
+  signedDocumentStoragePath?: string | null;
+  signedDocumentFileName?: string | null;
+  signedDocumentUploadedAt: any;
+  signedDocumentUploadedBy: string;
+}) {
+  const { entityId, contractId, employeeId, personId, employeeDisplayName, signedDocumentTitle, signedDocumentUrl, signedDocumentId, signedDocumentStoragePath, signedDocumentFileName, signedDocumentUploadedAt, signedDocumentUploadedBy } = params;
+
+  const sourceKey = `contract:${contractId}:signed_document`;
+
+  const metadata: Partial<HRDocument> = {
+    title: signedDocumentTitle,
+    documentType: "signed_contract",
+    status: "valid",
+    relatedModule: "contracts",
+    relatedId: contractId,
+    contractId,
+    employeeId,
+    personId,
+    employeeDisplayName,
+    fileName: signedDocumentFileName || "Lien externe",
+    mimeType: signedDocumentStoragePath ? "application/pdf" : "text/html",
+    storagePath: signedDocumentStoragePath || "",
+    externalUrl: signedDocumentUrl || null,
+    externalReference: signedDocumentId || null,
+    source: "signed_contract_reference",
+    isSensitive: true,
+    isRequired: true,
+    uploadedAt: signedDocumentUploadedAt,
+    uploadedBy: signedDocumentUploadedBy,
+    uploadedByDisplayName: "Utilisateur HR"
+  };
+
+  return await upsertDocumentBySourceKey(entityId, sourceKey, metadata, signedDocumentUploadedBy);
 }
 
 /**

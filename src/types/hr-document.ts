@@ -65,6 +65,14 @@ export interface HRDocument {
   tags?: string[];
   version: number;
 
+  // Phase 2 Integration Fields
+  sourceKey?: string | null; // For idempotency (e.g. contract:{id}:signed)
+  source?: string | null; // Origin identifier
+  externalUrl?: string | null; // Link for external docs
+  externalReference?: string | null; // External ID or code
+  generatedAt?: Date | FieldValue | null;
+  generatedBy?: string | null;
+
   // Audit
   uploadedAt: Date | FieldValue;
   uploadedBy: string;

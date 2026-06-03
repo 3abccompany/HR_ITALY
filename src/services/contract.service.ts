@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
+import { registerSignedContractDocument } from "./document.service";
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -117,10 +118,13 @@ export async function recordSignedDocumentReference(
     updatedBy: actorUid,
   });
 
+  let contractData: Contract | null = null;
+
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(contractRef);
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
+    contractData = contract;
 
     if (contract.status !== "pending_signature") {
       throw new Error("L'enregistrement du document n'est possible qu'en phase de signature.");
@@ -128,6 +132,25 @@ export async function recordSignedDocumentReference(
 
     transaction.update(contractRef, payload);
   });
+
+  // Mirror to Centralized Documents Registry (Phase 2A)
+  if (contractData) {
+    const c = contractData as Contract;
+    registerSignedContractDocument({
+      entityId,
+      contractId,
+      employeeId: c.employeeId,
+      personId: c.personId,
+      employeeDisplayName: c.employeeDisplayName || "Salarié",
+      signedDocumentTitle: data.title,
+      signedDocumentUrl: data.url,
+      signedDocumentId: data.reference,
+      signedDocumentStoragePath: data.storagePath,
+      signedDocumentFileName: data.fileName,
+      signedDocumentUploadedAt: new Date(),
+      signedDocumentUploadedBy: actorUid
+    }).catch(err => console.error("[Documents Mirroring Error] Signed contract registration failed:", err));
+  }
 
   await createAuditLog({
     userId: actorUid,
