@@ -20,6 +20,33 @@ export async function convertOfferToEmployeeAction(params: {
   const { entityId, offerId, actorUid } = params;
 
   try {
+    // --- 1. PRE-CHECK FOR DUPLICATES (Outside transaction to allow complex queries) ---
+    const offerDoc = await adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId).get();
+    if (!offerDoc.exists) throw new Error("Proposition introuvable.");
+    const offerData = offerDoc.data() as EmploymentOffer;
+
+    const personDoc = await adminDb.collection("entities").doc(entityId).collection("persons").doc(offerData.personId).get();
+    if (!personDoc.exists) throw new Error("Fiche identité introuvable.");
+    const personData = personDoc.data() as Person;
+
+    // Block if this is a fresh conversion but person is already an active employee in the entity
+    if (offerData.conversionStatus !== 'converted' && !offerData.employeeId) {
+      const employeesRef = adminDb.collection("entities").doc(entityId).collection("employees");
+
+      const [byPerson, byTax, byEmail] = await Promise.all([
+        employeesRef.where("personId", "==", offerData.personId).where("status", "==", "active").limit(1).get(),
+        personData.codiceFiscale ? employeesRef.where("taxCode", "==", personData.codiceFiscale).where("status", "==", "active").limit(1).get() : Promise.resolve(null),
+        personData.email ? employeesRef.where("email", "==", personData.email.toLowerCase().trim()).where("status", "==", "active").limit(1).get() : Promise.resolve(null)
+      ]);
+
+      if (!byPerson.empty || (byTax && !byTax.empty) || (byEmail && !byEmail.empty)) {
+        return { 
+          success: false, 
+          error: "Cette personne est déjà employée active. Utilisez une mutation, une affectation ou une modification de poste au lieu de créer une nouvelle fiche employé." 
+        };
+      }
+    }
+
     return await adminDb.runTransaction(async (transaction) => {
       // --- PHASE 1: READS ---
       const offerRef = adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId);
@@ -263,6 +290,6 @@ export async function convertOfferToEmployeeAction(params: {
     });
   } catch (err: any) {
     console.error("[Conversion Error]", err);
-    return { success: false, error: err.message || "Erreur lors de la conversion en employé." };
+    return { success: false, error: err.message || "Erreur lors de la conversion de l'offre." };
   }
 }
