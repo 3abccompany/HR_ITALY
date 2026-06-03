@@ -11,7 +11,8 @@ import {
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Send, XCircle, MessageSquare,
-  ArrowRight, CheckCircle, ClipboardList, UserPlus
+  ArrowRight, CheckCircle, ClipboardList, UserPlus,
+  AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -473,11 +474,13 @@ export default function EditEmploymentOfferPage() {
   const viewedAtSeconds = getTimestampSeconds(offer.viewedAt);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto pb-32">
-      <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b gap-4">
+    <div className="p-8 max-w-6xl mx-auto pb-32">
+      <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full"><ArrowLeft className="w-5 h-5" /></Button>
-          <div className="space-y-0.5">
+          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/contracts`)} className="rounded-full">
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-black text-primary tracking-tight">Modèle de Proposition</h1>
               {getStatusBadge(offer.status)}
@@ -693,7 +696,7 @@ export default function EditEmploymentOfferPage() {
               <CardContent className="p-6 space-y-6">
                 {!mandatoryCommunication ? (
                   <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl text-xs font-bold text-orange-700 flex items-center gap-3">
-                     <AlertTriangle className="w-5 h-5" />
+                     <AlertCircle className="w-5 h-5" />
                      Communication UniLav/CPI non initialisée pour cette offre.
                   </div>
                 ) : (
@@ -758,7 +761,7 @@ export default function EditEmploymentOfferPage() {
                         {/* Test Mode Area */}
                         <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100 space-y-3">
                            <div className="flex items-center gap-2 text-orange-800 text-[10px] font-black uppercase tracking-wider">
-                              <AlertTriangle className="w-4 h-4" />
+                              <AlertCircle className="w-4 h-4" />
                               Mode TEST / Démonstration
                            </div>
                            <p className="text-[10px] text-orange-600 leading-tight">
