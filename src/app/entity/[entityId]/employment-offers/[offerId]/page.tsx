@@ -29,6 +29,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
 import { RecruitmentNeed } from "@/types/recruitment-need";
+import { Candidate } from "@/types/candidate";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
@@ -111,6 +112,12 @@ export default function EditEmploymentOfferPage() {
   const checklistQuery = useMemo(() => dossier ? query(collection(db!, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`)) as Query<PreHireDocument> : null, [db, entityId, dossier]);
   const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
 
+  // Candidate Document Query (For Status Sync Verification)
+  const candidateRef = useMemo(() => 
+    db && offer?.candidateId ? (doc(db, `entities/${entityId}/candidates`, offer.candidateId) as DocumentReference<Candidate>) : null,
+  [db, entityId, offer?.candidateId]);
+  const { data: linkedCandidate } = useDoc<Candidate>(candidateRef);
+
   const mandatoryCommunicationQuery = useMemo(
     () =>
       db && entityId && offerId
@@ -142,6 +149,7 @@ export default function EditEmploymentOfferPage() {
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [converting, setConverting] = useState(false);
+  const [syncingCandidate, setSyncingCandidate] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
 
@@ -347,6 +355,24 @@ export default function EditEmploymentOfferPage() {
     } finally { setConverting(false); }
   };
 
+  const handleSyncCandidate = async () => {
+    if (!user || !entityId || !offerId || !isConverted) return;
+    setSyncingCandidate(true);
+    try {
+      // Reuse convertAction which is now idempotent and repairs status
+      const result = await convertOfferToEmployeeAction({ entityId, offerId, actorUid: user.uid });
+      if (result.success) {
+        toast({ title: "Synchronisation réussie", description: "Le statut du candidat a été mis à jour vers 'Embauché'." });
+      } else {
+        toast({ variant: "destructive", title: "Erreur de synchro", description: result.error });
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setSyncingCandidate(false);
+    }
+  };
+
   const handleInitDossier = async () => {
     if (!user || !offer) return;
     setSaving(true);
@@ -466,6 +492,8 @@ export default function EditEmploymentOfferPage() {
 
   const isUniLavDone = mandatoryCommunication?.status === 'receipt_received' || mandatoryCommunication?.status === 'completed' || mandatoryCommunication?.testMode === true;
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
+
+  const needsCandidateSync = isConverted && linkedCandidate && linkedCandidate.status !== 'hired';
 
   const resolvedDepartment = formData.departmentName || need?.departmentName || "Non renseigné";
   const resolvedWorksite = formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné";
@@ -831,14 +859,31 @@ export default function EditEmploymentOfferPage() {
           )}
 
           {isConverted && (
-            <div className="mb-8 p-6 bg-primary/5 border-2 border-primary/20 rounded-3xl flex items-center justify-between gap-6 shadow-xl">
+            <div className="mb-8 p-6 bg-primary/5 border-2 border-primary/20 rounded-3xl flex items-center justify-between gap-6 shadow-xl animate-in fade-in slide-in-from-top-4 duration-500">
                <div className="flex items-center gap-4 text-primary font-black">
                   <div className="bg-primary text-white p-3 rounded-2xl"><CheckCircle2 className="w-6 h-6" /></div>
-                  <div><p className="text-lg">Recrutement Finalisé</p><p className="text-[10px] uppercase font-black opacity-60">Dossier converti en employé.</p></div>
+                  <div>
+                    <p className="text-lg">Recrutement Finalisé</p>
+                    <p className="text-[10px] uppercase font-black opacity-60">Dossier converti en employé.</p>
+                  </div>
                </div>
-               <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
-                  <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir fiche employé</Link>
-               </Button>
+               
+               <div className="flex items-center gap-3">
+                 {needsCandidateSync && (
+                   <Button 
+                     variant="outline" 
+                     onClick={handleSyncCandidate} 
+                     disabled={syncingCandidate}
+                     className="rounded-xl font-bold border-accent/20 text-accent hover:bg-accent/5 gap-2"
+                   >
+                     {syncingCandidate ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+                     Synchroniser le candidat
+                   </Button>
+                 )}
+                 <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
+                    <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir fiche employé</Link>
+                 </Button>
+               </div>
             </div>
           )}
 
