@@ -19,6 +19,13 @@ import { JobProfile } from "@/types/job-profile";
 import { createAuditLog } from "./audit.service";
 
 /**
+ * Normalizes an object by removing undefined properties to satisfy Firestore.
+ */
+function sanitizePayload<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj, (key, value) => (value === undefined ? null : value)));
+}
+
+/**
  * Checks if an active offer draft already exists for a candidate.
  * Includes 'accepted' to prevent duplicate drafting after a successful recruitment cycle.
  */
@@ -181,8 +188,10 @@ export async function updateEmploymentOffer(entityId: string, offerId: string, d
   if (!db) throw new Error("Firestore not initialized");
   const offerRef = doc(db, `entities/${entityId}/employmentOffers`, offerId);
   
+  const cleanData = sanitizePayload(data);
+
   await updateDoc(offerRef, {
-    ...data,
+    ...cleanData,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
   });
