@@ -24,6 +24,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
 import { RecruitmentNeed } from "@/types/recruitment-need";
@@ -50,6 +51,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -75,23 +86,13 @@ const REVISION_REASONS = [
   "Autre"
 ];
 
-const TERMINATION_REASONS = [
-  { value: "resignation", label: "Démission" },
-  { value: "dismissal", label: "Licenciement" },
-  { value: "probation_failed", label: "Fin / échec période d’essai" },
-  { value: "mutual_agreement", label: "Rupture conventionnelle" },
-  { value: "fixed_term_end", label: "Fin de contrat à durée déterminée" },
-  { value: "retirement", label: "Retraite" },
-  { value: "other", label: "Autre" }
-];
-
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
   const entityId = params.entityId as string;
   const offerId = params.offerId as string;
   
-  const { db } = useFirebase();
+  const { db, storage } = useFirebase();
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
@@ -478,9 +479,10 @@ export default function EditEmploymentOfferPage() {
           <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full"><ArrowLeft className="w-5 h-5" /></Button>
           <div className="space-y-0.5">
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black text-primary tracking-tight">Proposition : {offer.candidateDisplayName}</h1>
+              <h1 className="text-2xl font-black text-primary tracking-tight">Modèle de Proposition</h1>
               {getStatusBadge(offer.status)}
             </div>
+            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">ID : {offerId}</p>
           </div>
         </div>
 
