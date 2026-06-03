@@ -11,7 +11,7 @@ import {
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Send, XCircle, MessageSquare,
-  ArrowRight, CheckCircle, ClipboardList, UserPlus,
+  ArrowRight, ClipboardList, UserPlus,
   AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -477,7 +477,7 @@ export default function EditEmploymentOfferPage() {
     <div className="p-8 max-w-6xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/contracts`)} className="rounded-full">
+          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/employment-offers`)} className="rounded-full">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
