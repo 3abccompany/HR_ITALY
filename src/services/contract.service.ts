@@ -120,6 +120,7 @@ export async function recordSignedDocumentReference(
   });
 
   let contractData: Contract | null = null;
+  let isReplacement = false;
 
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(contractRef);
@@ -132,14 +133,14 @@ export async function recordSignedDocumentReference(
     }
 
     const previousRefs = contract.signedDocumentPreviousReferences || [];
-    const hasPrevious = !!(
+    isReplacement = !!(
       contract.signedDocumentTitle || 
       contract.signedDocumentUrl || 
       contract.signedDocumentId || 
       contract.signedDocumentStoragePath
     );
 
-    if (hasPrevious) {
+    if (isReplacement) {
       previousRefs.push({
         signedDocumentTitle: contract.signedDocumentTitle || null,
         signedDocumentUrl: contract.signedDocumentUrl || null,
@@ -157,9 +158,9 @@ export async function recordSignedDocumentReference(
     transaction.update(contractRef, {
       ...payload,
       signedDocumentPreviousReferences: previousRefs,
-      signedDocumentReplacedAt: hasPrevious ? serverTimestamp() : null,
-      signedDocumentReplacedBy: hasPrevious ? actorUid : null,
-      signedDocumentReplacementReason: hasPrevious ? (data.replacementReason || null) : null
+      signedDocumentReplacedAt: isReplacement ? serverTimestamp() : null,
+      signedDocumentReplacedBy: isReplacement ? actorUid : null,
+      signedDocumentReplacementReason: isReplacement ? (data.replacementReason || null) : null
     });
   });
 
@@ -189,7 +190,7 @@ export async function recordSignedDocumentReference(
   await createAuditLog({
     userId: actorUid,
     entityId,
-    action: hasPrevious ? "contract.signed_document_replaced" : "contract.signed_document_recorded",
+    action: isReplacement ? "contract.signed_document_replaced" : "contract.signed_document_recorded",
     resourceType: "contract",
     resourceId: contractId,
     details: { title: data.title, replacementReason: data.replacementReason }
