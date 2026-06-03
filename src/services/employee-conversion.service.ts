@@ -29,7 +29,8 @@ export async function convertOfferToEmployeeAction(params: {
     if (!personDoc.exists) throw new Error("Fiche identité introuvable.");
     const personData = personDoc.data() as Person;
 
-    // Block if this is a fresh conversion but person is already an active employee in the entity
+    // Block if this is a fresh conversion but person is already an active employee in the entity.
+    // Duplicate detection priority: personId > taxCode > email.
     if (offerData.conversionStatus !== 'converted' && !offerData.employeeId) {
       const employeesRef = adminDb.collection("entities").doc(entityId).collection("employees");
 
@@ -39,7 +40,9 @@ export async function convertOfferToEmployeeAction(params: {
         personData.email ? employeesRef.where("email", "==", personData.email.toLowerCase().trim()).where("status", "==", "active").limit(1).get() : Promise.resolve(null)
       ]);
 
-      if (!byPerson.empty || (byTax && !byTax.empty) || (byEmail && !byEmail.empty)) {
+      const hasMatch = !byPerson.empty || (byTax && !byTax.empty) || (byEmail && !byEmail.empty);
+
+      if (hasMatch) {
         return { 
           success: false, 
           error: "Cette personne est déjà employée active. Utilisez une mutation, une affectation ou une modification de poste au lieu de créer une nouvelle fiche employé." 
@@ -162,7 +165,7 @@ export async function convertOfferToEmployeeAction(params: {
           employeeId, 
           sourceOfferId: offerId,
           employeeDisplayName: person.displayName,
-          employeeCode: isNewEmployee ? `E-...` : null, // Will be patched by system if needed
+          employeeCode: isNewEmployee ? `E-...` : null, 
           taxCode: person.codiceFiscale || "",
           employeeAddressSnapshot: employeeAddress,
           dateOfBirth: person.dateOfBirth || (person as any).birthDate || "",
