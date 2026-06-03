@@ -86,7 +86,7 @@ export async function sendContractToSignature(entityId: string, contractId: stri
 }
 
 /**
- * Records a manual reference to the signed contract document.
+ * Records or replaces a reference to the signed contract document.
  * Allowed in pending_signature only.
  */
 export async function recordSignedDocumentReference(
@@ -98,7 +98,8 @@ export async function recordSignedDocumentReference(
     reference?: string,
     fileName?: string | null,
     storagePath?: string | null,
-    mimeType?: string | null
+    mimeType?: string | null,
+    replacementReason?: string
   }, 
   actorUid: string
 ) {
@@ -130,7 +131,36 @@ export async function recordSignedDocumentReference(
       throw new Error("L'enregistrement du document n'est possible qu'en phase de signature.");
     }
 
-    transaction.update(contractRef, payload);
+    const previousRefs = contract.signedDocumentPreviousReferences || [];
+    const hasPrevious = !!(
+      contract.signedDocumentTitle || 
+      contract.signedDocumentUrl || 
+      contract.signedDocumentId || 
+      contract.signedDocumentStoragePath
+    );
+
+    if (hasPrevious) {
+      previousRefs.push({
+        signedDocumentTitle: contract.signedDocumentTitle || null,
+        signedDocumentUrl: contract.signedDocumentUrl || null,
+        signedDocumentId: contract.signedDocumentId || null,
+        signedDocumentFileName: contract.signedDocumentFileName || null,
+        signedDocumentStoragePath: contract.signedDocumentStoragePath || null,
+        signedDocumentMimeType: contract.signedDocumentMimeType || null,
+        signedDocumentUploadedAt: contract.signedDocumentUploadedAt || null,
+        signedDocumentUploadedBy: contract.signedDocumentUploadedBy || null,
+        replacedAt: new Date().toISOString(),
+        replacementReason: data.replacementReason || "Non spécifié"
+      });
+    }
+
+    transaction.update(contractRef, {
+      ...payload,
+      signedDocumentPreviousReferences: previousRefs,
+      signedDocumentReplacedAt: hasPrevious ? serverTimestamp() : null,
+      signedDocumentReplacedBy: hasPrevious ? actorUid : null,
+      signedDocumentReplacementReason: hasPrevious ? (data.replacementReason || null) : null
+    });
   });
 
   // Mirror to Centralized Documents Registry (Phase 2A)
@@ -159,16 +189,16 @@ export async function recordSignedDocumentReference(
   await createAuditLog({
     userId: actorUid,
     entityId,
-    action: "contract.signed_document_recorded",
+    action: hasPrevious ? "contract.signed_document_replaced" : "contract.signed_document_recorded",
     resourceType: "contract",
     resourceId: contractId,
-    details: { title: data.title }
+    details: { title: data.title, replacementReason: data.replacementReason }
   });
 }
 
 /**
  * Activates a contract and updates the linked employee.
- * STRICT GATE: Requires a signed document reference.
+ * STRICT GATE: Requires a signed document proof.
  */
 export async function activateContractAction(entityId: string, contractId: string, employeeId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");

@@ -77,6 +77,12 @@ export interface Contract {
   signedDocumentUploadedAt?: Date | FieldValue;
   signedDocumentUploadedBy?: string;
 
+  // --- Replacement & Audit (Phase 2B) ---
+  signedDocumentReplacedAt?: Date | FieldValue;
+  signedDocumentReplacedBy?: string;
+  signedDocumentReplacementReason?: string;
+  signedDocumentPreviousReferences?: any[];
+
   // --- Termination Metadata ---
   actualEndDate?: string;
   terminationReason?: string;

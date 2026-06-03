@@ -88,7 +88,7 @@ export default function ContractDetailPage() {
 
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
-  const [signedDocForm, setSignedDocForm] = useState({ title: "", url: "", reference: "" });
+  const [signedDocForm, setSignedDocForm] = useState({ title: "", url: "", reference: "", replacementReason: "" });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Termination State
@@ -379,6 +379,13 @@ export default function ContractDetailPage() {
 
   const handleSaveSignedDocRef = async () => {
     if (!user || !contract || !signedDocForm.title) return;
+    
+    const hasExisting = !!(contract.signedDocumentTitle || contract.signedDocumentUrl || contract.signedDocumentId || contract.signedDocumentStoragePath);
+    if (hasExisting && !signedDocForm.replacementReason) {
+       toast({ variant: "destructive", title: "Motif requis", description: "Veuillez indiquer la raison du remplacement." });
+       return;
+    }
+
     setProcessing(true);
     try {
       let url = signedDocForm.url;
@@ -390,7 +397,8 @@ export default function ContractDetailPage() {
           throw new Error("Seuls les fichiers PDF sont acceptés.");
         }
         
-        const path = `entities/${entityId}/contracts/${contractId}/signed-contract/${selectedFile.name}`;
+        const timestamp = Date.now();
+        const path = `entities/${entityId}/contracts/${contractId}/signed-contract/${timestamp}_${selectedFile.name}`;
         const fileRef = ref(storage, path);
         
         await uploadBytes(fileRef, selectedFile);
@@ -400,15 +408,17 @@ export default function ContractDetailPage() {
       }
 
       await recordSignedDocumentReference(entityId, contractId, {
-        ...signedDocForm,
-        url,
+        title: signedDocForm.title,
+        url: signedDocForm.url,
+        reference: signedDocForm.reference,
         fileName,
         storagePath,
-        mimeType: selectedFile ? "application/pdf" : null
+        mimeType: selectedFile ? "application/pdf" : null,
+        replacementReason: signedDocForm.replacementReason
       }, user.uid);
       
       setIsSignedDocModalOpen(false);
-      setSignedDocForm({ title: "", url: "", reference: "" });
+      setSignedDocForm({ title: "", url: "", reference: "", replacementReason: "" });
       setSelectedFile(null);
       toast({ title: "Référence enregistrée", description: "Le document signé est maintenant lié au dossier." });
     } catch (err: any) {
@@ -466,7 +476,8 @@ export default function ContractDetailPage() {
     contract.signedDocumentId || 
     contract.signedDocumentUrl || 
     contract.signedDocumentTitle || 
-    contract.signedDocumentFileName
+    contract.signedDocumentFileName ||
+    contract.signedDocumentStoragePath
   );
 
   const pdfDate = contract.generatedPdfAt ? (typeof (contract.generatedPdfAt as any).toDate === 'function' ? (contract.generatedPdfAt as any).toDate() : new Date((contract.generatedPdfAt as any).seconds * 1000)) : null;
@@ -660,27 +671,47 @@ export default function ContractDetailPage() {
               </CardHeader>
               <CardContent className="p-8">
                 {hasSignedDoc ? (
-                  <div className="flex items-center justify-between gap-6">
-                    <div className="flex items-center gap-4">
-                      <div className="bg-green-100 p-3 rounded-2xl text-green-600"><CheckCircle2 className="w-6 h-6" /></div>
-                      <div>
-                         <p className="text-sm font-black text-slate-800">{contract.signedDocumentTitle}</p>
-                         {contract.signedDocumentFileName && (
-                           <p className="text-[10px] font-bold text-accent uppercase flex items-center gap-1 mt-0.5">
-                             <Upload className="w-2.5 h-2.5" /> {contract.signedDocumentFileName}
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between gap-6">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-green-100 p-3 rounded-2xl text-green-600"><CheckCircle2 className="w-6 h-6" /></div>
+                        <div>
+                           <p className="text-sm font-black text-slate-800">{contract.signedDocumentTitle}</p>
+                           {contract.signedDocumentFileName && (
+                             <p className="text-[10px] font-bold text-accent uppercase flex items-center gap-1 mt-0.5">
+                               <Upload className="w-2.5 h-2.5" /> {contract.signedDocumentFileName}
+                             </p>
+                           )}
+                           <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">
+                             Enregistré le {formatDate(contract.signedDocumentUploadedAt)} par {getUserLabel(contract.signedDocumentUploadedBy)}
                            </p>
-                         )}
-                         <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">
-                           Enregistré le {formatDate(contract.signedDocumentUploadedAt)} par {getUserLabel(contract.signedDocumentUploadedBy)}
-                         </p>
+                        </div>
                       </div>
+                      {contract.signedDocumentUrl && (
+                        <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2">
+                          <a href={contract.signedDocumentUrl} target="_blank" rel="noopener noreferrer">
+                             <ExternalLink className="w-4 h-4" /> Ouvrir le document
+                          </a>
+                        </Button>
+                      )}
                     </div>
-                    {contract.signedDocumentUrl && (
-                      <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2">
-                        <a href={contract.signedDocumentUrl} target="_blank" rel="noopener noreferrer">
-                           <ExternalLink className="w-4 h-4" /> Ouvrir le document
-                        </a>
-                      </Button>
+                    
+                    {isPendingSignature && (
+                       <Button 
+                        variant="outline" 
+                        onClick={() => {
+                          setSignedDocForm({
+                            title: contract.signedDocumentTitle || "",
+                            url: contract.signedDocumentUrl || "",
+                            reference: contract.signedDocumentId || "",
+                            replacementReason: ""
+                          });
+                          setIsSignedDocModalOpen(true);
+                        }}
+                        className="w-full h-11 border-dashed border-2 rounded-xl font-bold gap-2 hover:bg-slate-50"
+                       >
+                         <RefreshCcw className="w-4 h-4" /> Remplacer le document signé
+                       </Button>
                     )}
                   </div>
                 ) : (
@@ -908,7 +939,9 @@ export default function ContractDetailPage() {
       <Dialog open={isSignedDocModalOpen} onOpenChange={setIsSignedDocModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-black text-primary">Enregistrer le contrat signé</DialogTitle>
+            <DialogTitle className="text-xl font-black text-primary">
+              {hasSignedDoc ? "Remplacer le contrat signé" : "Enregistrer le contrat signé"}
+            </DialogTitle>
             <DialogDescription>Veuillez renseigner les détails du document physique ou numérique signé par les parties.</DialogDescription>
           </DialogHeader>
           <div className="py-6 space-y-6">
@@ -949,16 +982,28 @@ export default function ContractDetailPage() {
                   </div>
                </div>
             </div>
+
+            {hasSignedDoc && (
+               <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black text-muted-foreground text-orange-600">Motif du remplacement (Requis)</Label>
+                  <Textarea 
+                    value={signedDocForm.replacementReason} 
+                    onChange={(e) => setSignedDocForm(p => ({...p, replacementReason: e.target.value}))}
+                    placeholder="Ex: Signature manquante sur la page 2, erreur de version..."
+                    className="min-h-[100px] rounded-xl border-orange-200 focus:ring-orange-100"
+                  />
+               </div>
+            )}
           </div>
           <DialogFooter>
              <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)} disabled={processing}>Annuler</Button>
              <Button 
                onClick={handleSaveSignedDocRef} 
-               disabled={processing || !signedDocForm.title}
+               disabled={processing || !signedDocForm.title || (hasSignedDoc && !signedDocForm.replacementReason)}
                className="bg-primary text-white font-black rounded-xl px-8"
              >
                {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-               Enregistrer la référence
+               {hasSignedDoc ? "Remplacer la référence" : "Enregistrer la référence"}
              </Button>
           </DialogFooter>
         </DialogContent>
@@ -1098,6 +1143,7 @@ function getStatusBadge(status: ContractStatus) {
     case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 uppercase font-black text-[9px] px-2">En signature</Badge>;
     case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white uppercase font-black text-[9px] px-2">Actif</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Terminé</Badge>;
+    case 'suspended': return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 uppercase font-black text-[9px] px-2">Suspendu</Badge>;
     case 'archived': return <Badge variant="outline" className="text-muted-foreground uppercase font-black text-[9px] px-2">Archivé</Badge>;
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
   }
