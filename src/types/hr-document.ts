@@ -36,7 +36,7 @@ export interface HRDocument {
   id: string;
   entityId: string;
   title: string;
-  description?: string;
+  description?: string | null;
   documentType: HRDocumentType;
   status: HRDocumentStatus;
   
@@ -73,10 +73,15 @@ export interface HRDocument {
   generatedAt?: Date | FieldValue | null;
   generatedBy?: string | null;
 
+  // Contract Mirror Fields
+  contractStartDate?: string | null;
+  contractEndDate?: string | null;
+  contractType?: string | null;
+
   // Audit
   uploadedAt: Date | FieldValue;
   uploadedBy: string;
-  uploadedByDisplayName?: string;
+  uploadedByDisplayName?: string | null;
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;

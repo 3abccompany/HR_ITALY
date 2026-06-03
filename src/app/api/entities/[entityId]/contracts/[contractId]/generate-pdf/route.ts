@@ -101,7 +101,7 @@ export async function POST(
       }
     });
 
-    // 7. Get Signed URL (6 days expiration - V4 signed URLs have a 7-day maximum limit)
+    // 7. Get Signed URL (6 days expiration)
     const [signedUrl] = await file.getSignedUrl({
       version: 'v4',
       action: 'read',
@@ -124,7 +124,7 @@ export async function POST(
     await contractRef.update(updatePayload);
 
     // 9. Mirror to Centralized Documents Registry (Phase 2A)
-    // Server-side non-blocking call using Admin SDK to bypass security rules for automated mirror
+    // Server-side call using Admin SDK to bypass client security rules for automated mirror
     (async () => {
        const mirrorSourceKey = `contract:${contractId}:generated_pdf:v${nextVersion}`;
        const mirrorTitle = `PDF contrat généré - ${contract.employeeDisplayName || "Salarié"} (V${nextVersion})`;
@@ -157,11 +157,15 @@ export async function POST(
          uploadedBy: uid,
          uploadedByDisplayName: "Système",
          updatedAt: FieldValue.serverTimestamp(),
-         updatedBy: uid
+         updatedBy: uid,
+         // Mirror expiry for fixed-term contracts
+         expiresAt: contract.contractType === 'Tempo determinato' ? (contract.endDate || null) : null,
+         contractType: contract.contractType || null,
+         contractStartDate: contract.startDate || null,
+         contractEndDate: contract.endDate || null
        };
 
        if (!mirrorSnap.empty) {
-         // Use the document ID from the first result found to update the registry entry
          await docsRef.doc(mirrorSnap.docs[0].id).update(mirrorPayload);
        } else {
          const newMirrorRef = docsRef.doc();
@@ -172,7 +176,7 @@ export async function POST(
            createdBy: uid
          });
        }
-    })().catch(err => console.error("[Documents Mirroring Error] Server-side generated PDF registration failed:", err));
+    })().catch(err => console.error("[Documents Mirroring Error] PDF registration failed:", err));
 
     return NextResponse.json({ 
       success: true, 

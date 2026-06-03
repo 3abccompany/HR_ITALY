@@ -4,17 +4,15 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
-  getDoc, 
   getDocs, 
   query, 
   orderBy, 
   serverTimestamp,
   where,
-  limit,
-  deleteDoc
+  limit
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, getMetadata } from "firebase/storage";
-import { HRDocument, HRDocumentStatus } from "@/types/hr-document";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { HRDocument } from "@/types/hr-document";
 import { createAuditLog } from "./audit.service";
 
 /**
@@ -33,7 +31,8 @@ function sanitizePayload(obj: any): any {
 }
 
 /**
- * Upserts a document based on a unique source key to prevent duplicates.
+ * Upserts a document based on a unique sourceKey to prevent duplicates.
+ * Standardizes metadata and handles missing fields for reference-only docs.
  */
 export async function upsertDocumentBySourceKey(
   entityId: string, 
@@ -47,34 +46,35 @@ export async function upsertDocumentBySourceKey(
   const q = query(docsRef, where("sourceKey", "==", sourceKey), limit(1));
   const snap = await getDocs(q);
 
+  const payload = sanitizePayload({
+    ...data,
+    updatedAt: serverTimestamp(),
+    updatedBy: userId
+  });
+
   if (!snap.empty) {
     const docRef = snap.docs[0].ref;
-    await updateDoc(docRef, sanitizePayload({
-      ...data,
-      updatedAt: serverTimestamp(),
-      updatedBy: userId
-    }));
+    await updateDoc(docRef, payload);
     return snap.docs[0].id;
   } else {
     const docRef = doc(docsRef);
     const docId = docRef.id;
-    await setDoc(docRef, sanitizePayload({
-      ...data,
+    await setDoc(docRef, {
+      ...payload,
       id: docId,
       entityId,
       sourceKey,
       status: data.status || "valid",
       createdAt: serverTimestamp(),
       createdBy: userId,
-      updatedAt: serverTimestamp(),
-      updatedBy: userId
-    }));
+    });
     return docId;
   }
 }
 
 /**
  * Registers a generated contract PDF in the central documents registry.
+ * Mirrors expiry for fixed-term contracts.
  */
 export async function registerGeneratedContractPdf(params: {
   entityId: string;
@@ -87,6 +87,9 @@ export async function registerGeneratedContractPdf(params: {
   generatedPdfVersion: number;
   generatedPdfAt: any;
   generatedPdfBy: string;
+  contractType?: string | null;
+  contractEndDate?: string | null;
+  contractStartDate?: string | null;
 }) {
   const { entityId, contractId, employeeId, personId, employeeDisplayName, generatedPdfStoragePath, generatedPdfFileName, generatedPdfVersion, generatedPdfAt, generatedPdfBy } = params;
 
@@ -114,7 +117,11 @@ export async function registerGeneratedContractPdf(params: {
     isRequired: true,
     uploadedAt: generatedPdfAt,
     uploadedBy: generatedPdfBy,
-    uploadedByDisplayName: "Système"
+    uploadedByDisplayName: "Système",
+    expiresAt: params.contractType === 'Tempo determinato' ? params.contractEndDate : null,
+    contractType: params.contractType,
+    contractStartDate: params.contractStartDate,
+    contractEndDate: params.contractEndDate
   };
 
   return await upsertDocumentBySourceKey(entityId, sourceKey, metadata, generatedPdfBy);
@@ -122,6 +129,7 @@ export async function registerGeneratedContractPdf(params: {
 
 /**
  * Registers a signed contract reference/document in the central registry.
+ * Mirrors expiry for fixed-term contracts.
  */
 export async function registerSignedContractDocument(params: {
   entityId: string;
@@ -136,6 +144,9 @@ export async function registerSignedContractDocument(params: {
   signedDocumentFileName?: string | null;
   signedDocumentUploadedAt: any;
   signedDocumentUploadedBy: string;
+  contractType?: string | null;
+  contractEndDate?: string | null;
+  contractStartDate?: string | null;
 }) {
   const { entityId, contractId, employeeId, personId, employeeDisplayName, signedDocumentTitle, signedDocumentUrl, signedDocumentId, signedDocumentStoragePath, signedDocumentFileName, signedDocumentUploadedAt, signedDocumentUploadedBy } = params;
 
@@ -161,7 +172,11 @@ export async function registerSignedContractDocument(params: {
     isRequired: true,
     uploadedAt: signedDocumentUploadedAt,
     uploadedBy: signedDocumentUploadedBy,
-    uploadedByDisplayName: "Utilisateur HR"
+    uploadedByDisplayName: "Utilisateur HR",
+    expiresAt: params.contractType === 'Tempo determinato' ? params.contractEndDate : null,
+    contractType: params.contractType,
+    contractStartDate: params.contractStartDate,
+    contractEndDate: params.contractEndDate
   };
 
   return await upsertDocumentBySourceKey(entityId, sourceKey, metadata, signedDocumentUploadedBy);
@@ -169,7 +184,6 @@ export async function registerSignedContractDocument(params: {
 
 /**
  * Uploads a file to Firebase Storage and creates an HRDocument record in Firestore.
- * Path: entities/{entityId}/documents/{documentId}/{fileName}
  */
 export async function uploadHRDocument(
   entityId: string, 
@@ -180,7 +194,6 @@ export async function uploadHRDocument(
 ) {
   if (!db || !storage) throw new Error("Firebase services not initialized");
 
-  // Basic File Validation
   const extension = file.name.split('.').pop()?.toLowerCase();
   if (!extension || extension === file.name.toLowerCase()) {
     throw new Error("Le fichier doit avoir une extension valide (ex: .pdf).");
@@ -194,15 +207,12 @@ export async function uploadHRDocument(
   const docRef = doc(collection(db, `entities/${entityId}/documents`));
   const docId = docRef.id;
 
-  // 1. Upload to Storage using the required structured path
-  // Path: entities/{entityId}/documents/{documentId}/{fileName}
   const safeFileName = file.name.replace(/\s+/g, '_');
   const storagePath = `entities/${entityId}/documents/${docId}/${safeFileName}`;
   const fileRef = ref(storage, storagePath);
   
   await uploadBytes(fileRef, file);
   
-  // 2. Prepare Firestore Record
   const docData: HRDocument = {
     ...(metadata as any),
     id: docId,
@@ -267,14 +277,4 @@ export async function getDocumentDownloadUrl(storagePath: string) {
   if (!storage) throw new Error("Storage not initialized");
   const fileRef = ref(storage, storagePath);
   return await getDownloadURL(fileRef);
-}
-
-/**
- * Lists all documents for an entity.
- */
-export async function listEntityDocuments(entityId: string) {
-  if (!db) return [];
-  const q = query(collection(db, `entities/${entityId}/documents`), orderBy("uploadedAt", "desc"));
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ ...d.data(), id: d.id } as HRDocument));
 }

@@ -148,7 +148,11 @@ export async function recordSignedDocumentReference(
       signedDocumentStoragePath: data.storagePath,
       signedDocumentFileName: data.fileName,
       signedDocumentUploadedAt: new Date(),
-      signedDocumentUploadedBy: actorUid
+      signedDocumentUploadedBy: actorUid,
+      // Pass expiry info for CDD mirroring
+      contractType: c.contractType,
+      contractStartDate: c.startDate,
+      contractEndDate: c.endDate
     }).catch(err => console.error("[Documents Mirroring Error] Signed contract registration failed:", err));
   }
 
@@ -270,12 +274,12 @@ export async function terminateContractAction(
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
-  await runTransaction(db, async (transaction) => {
-    // ALL READS FIRST
+  return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS FIRST
     const snap = await transaction.get(contractRef);
     const empSnap = await transaction.get(employeeRef);
 
-    // VALIDATIONS
+    // 2. VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
@@ -288,7 +292,7 @@ export async function terminateContractAction(
       throw new Error("La date de fin ne peut pas être antérieure à la date de début.");
     }
 
-    // ALL WRITES AFTER
+    // 3. ALL WRITES AFTER ALL READS
     transaction.update(contractRef, {
       status: "terminated",
       actualEndDate: terminationData.actualEndDate,
@@ -306,15 +310,18 @@ export async function terminateContractAction(
         updatedAt: serverTimestamp(),
       });
     }
-  });
 
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "contract.terminated",
-    resourceType: "contract",
-    resourceId: contractId,
-    details: { employeeId, ...terminationData }
+    // Implicitly return from transaction
+    return { employeeId };
+  }).then(async (res) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "contract.terminated",
+      resourceType: "contract",
+      resourceId: contractId,
+      details: { employeeId: res.employeeId, ...terminationData }
+    });
   });
 }
 

@@ -169,11 +169,14 @@ service cloud.firestore {
         
         allow create: if (hasPermission(entityId, 'documents.upload') 
                       || hasPermission(entityId, 'contracts.create') 
+                      || hasPermission(entityId, 'contracts.update')
                       || isPlatformAdmin())
                       && request.resource.data.entityId == entityId
                       && request.resource.data.title != null
                       && request.resource.data.documentType != null
-                      && request.resource.data.status != null;
+                      && request.resource.data.status != null
+                      // Flexible shape check: either storagePath or external source (reference/url)
+                      && (request.resource.data.storagePath != null || request.resource.data.externalUrl != null || request.resource.data.externalReference != null);
         
         allow update: if hasPermission(entityId, 'documents.archive') 
                       || hasPermission(entityId, 'documents.upload')
