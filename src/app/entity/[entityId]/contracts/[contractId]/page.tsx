@@ -10,7 +10,8 @@ import {
   MapPin, CheckCircle2, Ban, Archive, 
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
-  Upload, FileCode
+  Upload, FileCode, Download, Eye, FileBadge,
+  ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -28,6 +29,8 @@ import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
 import { EmploymentOffer } from "@/types/employment-offer";
+import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
+import { getDocumentDownloadUrl } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
@@ -56,6 +59,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { 
+  Collapsible, 
+  CollapsibleContent, 
+  CollapsibleTrigger 
+} from "@/components/ui/collapsible";
+import { format, isBefore, startOfDay, differenceInDays } from "date-fns";
+import { fr } from "date-fns/locale";
 
 const TERMINATION_REASONS = [
   { value: "resignation", label: "Démission" },
@@ -66,6 +76,31 @@ const TERMINATION_REASONS = [
   { value: "retirement", label: "Retraite" },
   { value: "other", label: "Autre" }
 ];
+
+/**
+ * Robust date parser for mixed formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
+  const date = parseSafeDate(val);
+  if (!date) return "-";
+  return format(date, formatStr, { locale: fr });
+}
 
 export default function ContractDetailPage() {
   const params = useParams();
@@ -85,6 +120,7 @@ export default function ContractDetailPage() {
   const [formData, setFormData] = useState<Partial<Contract>>({});
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isValidationDialogOpen, setIsValidationDialogOpen] = useState(false);
+  const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
@@ -105,7 +141,54 @@ export default function ContractDetailPage() {
   [db, entityId, contractId]);
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
-  // 2. Source Documents for fallbacks
+  // 2. Registry Documents
+  const canReadDocs = hasPermission("documents.read");
+  const docsQuery = useMemo(() => {
+    if (!db || !entityId || !contractId || !canReadDocs) return null;
+    return query(
+      collection(db, `entities/${entityId}/documents`), 
+      where("contractId", "==", contractId)
+    ) as Query<HRDocument>;
+  }, [db, entityId, contractId, canReadDocs]);
+
+  const { data: contractDocs, loading: loadingDocs } = useCollection<HRDocument>(docsQuery);
+
+  // Grouped Documents for Display
+  const groupedDocs = useMemo(() => {
+    if (!contractDocs) return { signed: null, latestGenerated: null, history: [], termination: [], others: [] };
+
+    const sorted = [...contractDocs].sort((a, b) => {
+      const dateA = parseSafeDate(a.generatedAt || a.uploadedAt || a.createdAt)?.getTime() || 0;
+      const dateB = parseSafeDate(b.generatedAt || b.uploadedAt || b.createdAt)?.getTime() || 0;
+      return dateB - dateA;
+    });
+
+    const bundles = {
+      signed: null as HRDocument | null,
+      latestGenerated: null as HRDocument | null,
+      history: [] as HRDocument[],
+      termination: [] as HRDocument[],
+      others: [] as HRDocument[]
+    };
+
+    sorted.forEach(doc => {
+      if (doc.documentType === 'signed_contract' || doc.documentType === 'contract') {
+        if (!bundles.signed) bundles.signed = doc;
+        else bundles.others.push(doc);
+      } else if (doc.documentType === 'generated_contract_pdf') {
+        if (!bundles.latestGenerated) bundles.latestGenerated = doc;
+        else bundles.history.push(doc);
+      } else if (doc.documentType === 'termination_document') {
+        bundles.termination.push(doc);
+      } else {
+        bundles.others.push(doc);
+      }
+    });
+
+    return bundles;
+  }, [contractDocs]);
+
+  // 3. Source Documents for fallbacks
   const employeeRef = useMemo(() => 
     db && contract?.employeeId ? doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee> : null,
   [db, entityId, contract?.employeeId]);
@@ -206,6 +289,18 @@ export default function ContractDetailPage() {
       toast({ variant: "destructive", title: "Erreur PDF", description: err.message });
     } finally {
       setGeneratingPdf(false);
+    }
+  };
+
+  const handleOpenDoc = async (storagePath: string, id: string) => {
+    setLoadingActionId(id);
+    try {
+      const url = await getDocumentDownloadUrl(storagePath);
+      window.open(url, "_blank");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
+    } finally {
+      setLoadingActionId(null);
     }
   };
 
@@ -738,6 +833,67 @@ export default function ContractDetailPage() {
             </Card>
           )}
 
+          {/* Registry Documents History Section */}
+          {canReadDocs && (
+            <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+               <CardHeader className="bg-secondary/10 border-b py-4 px-8">
+                  <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                     <FolderOpen className="w-4 h-4" /> Historique & Documents rattachés
+                  </CardTitle>
+               </CardHeader>
+               <CardContent className="p-8">
+                  {loadingDocs ? (
+                    <div className="py-12 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
+                  ) : contractDocs?.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-muted-foreground italic">Aucun document lié à ce contrat.</div>
+                  ) : (
+                    <div className="space-y-8">
+                       <DocumentGroup 
+                         title="Contrat Signé" 
+                         doc={groupedDocs.signed} 
+                         onOpen={handleOpenDoc} 
+                         loadingId={loadingActionId} 
+                         icon={CheckCircle2}
+                         colorClass="bg-green-50 text-green-600"
+                       />
+                       
+                       <DocumentGroup 
+                         title="Dernier PDF de travail" 
+                         doc={groupedDocs.latestGenerated} 
+                         history={groupedDocs.history}
+                         onOpen={handleOpenDoc} 
+                         loadingId={loadingActionId} 
+                         icon={FileCode}
+                         colorClass="bg-primary/5 text-primary"
+                       />
+
+                       {groupedDocs.termination.length > 0 && (
+                         <div className="space-y-3">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Documents de clôture</p>
+                            <div className="grid gap-3">
+                               {groupedDocs.termination.map(d => (
+                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} />
+                               ))}
+                            </div>
+                         </div>
+                       )}
+
+                       {groupedDocs.others.length > 0 && (
+                         <div className="space-y-3">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Autres documents liés</p>
+                            <div className="grid gap-3">
+                               {groupedDocs.others.map(d => (
+                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} />
+                               ))}
+                            </div>
+                         </div>
+                       )}
+                    </div>
+                  )}
+               </CardContent>
+            </Card>
+          )}
+
           {/* Employer Card */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
@@ -1079,6 +1235,142 @@ export default function ContractDetailPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, loadingId }: { 
+  title: string, 
+  doc: HRDocument | null, 
+  history?: HRDocument[],
+  icon: any,
+  colorClass: string,
+  onOpen: any,
+  loadingId: string | null
+}) {
+  if (!doc && (!history || history.length === 0)) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 px-1">
+        <Icon className={cn("w-3.5 h-3.5", colorClass)} />
+        <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{title}</h3>
+      </div>
+      <div className="grid grid-cols-1 gap-4">
+        {doc && (
+          <DocumentRow 
+            doc={doc} 
+            onOpen={onOpen} 
+            loadingId={loadingId} 
+            isMain 
+            customLabel={doc.documentType === 'signed_contract' ? 'Contrat signé' : 'Dernier PDF généré'}
+          />
+        )}
+
+        {history && history.length > 0 && (
+          <div className="pl-4 sm:pl-8">
+            <Collapsible>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black uppercase tracking-widest gap-2 hover:bg-white">
+                  <ChevronDown className="w-3 h-3" />
+                  Versions précédentes ({history.length})
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
+                {history.map(d => (
+                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} loadingId={loadingId} compactVersion />
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DocumentRow({ 
+  doc, 
+  onOpen, 
+  loadingId, 
+  isMain, 
+  compactVersion, 
+  customLabel 
+}: { 
+  doc: HRDocument, 
+  onOpen: any, 
+  loadingId: string | null,
+  isMain?: boolean,
+  compactVersion?: boolean,
+  customLabel?: string
+}) {
+  const isLoading = loadingId === doc.id;
+  const expiryDate = parseSafeDate(doc.expiresAt);
+  const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
+  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 30;
+
+  return (
+    <Card className={cn(
+      "border-primary/5 hover:border-primary/20 transition-all shadow-sm rounded-2xl group overflow-hidden bg-white",
+      isMain && "border-primary/20 shadow-md ring-1 ring-primary/5",
+      compactVersion && "rounded-xl"
+    )}>
+      <CardContent className={cn("p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4", compactVersion && "p-3")}>
+        <div className="flex items-start gap-4">
+          <div className={cn("bg-primary/5 p-3 rounded-xl text-primary shrink-0", compactVersion && "p-2")}>
+            <FileText className={cn("w-5 h-5", compactVersion && "w-4 h-4")} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className={cn("font-bold text-slate-900 truncate max-w-[200px] sm:max-w-md", compactVersion && "text-xs")}>{doc.title}</p>
+              {doc.isSensitive && <Badge variant="destructive" className="h-4 text-[8px] uppercase font-black px-1.5 border-none">Sensible</Badge>}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[9px] font-black uppercase text-muted-foreground/60">
+                {customLabel || DOCUMENT_TYPE_LABELS[doc.documentType]}
+              </span>
+              <span className="text-slate-200 text-[8px]">•</span>
+              <span className="text-[9px] font-bold text-muted-foreground/50 italic">
+                {formatDateSafe(doc.uploadedAt || doc.generatedAt || doc.createdAt)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between sm:justify-end gap-6 pl-12 sm:pl-0">
+           {expiryDate && (
+             <div className="flex flex-col items-end">
+                <p className="text-[8px] font-black uppercase text-muted-foreground tracking-tighter">Échéance</p>
+                <div className="flex items-center gap-1.5">
+                   <span className={cn("text-[10px] font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                     {formatDateSafe(doc.expiresAt)}
+                   </span>
+                   {isExpired ? (
+                     <AlertTriangle className="w-3 h-3 text-red-500" />
+                   ) : isExpiringSoon ? (
+                     <Clock className="w-3 h-3 text-orange-500" />
+                   ) : null}
+                </div>
+             </div>
+           )}
+
+           <div className="flex items-center gap-2">
+              <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", doc.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400")}>
+                {STATUS_LABELS[doc.status]}
+              </Badge>
+              <Button 
+                variant="secondary" 
+                size="sm" 
+                className={cn("h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary hover:text-white transition-all gap-2", compactVersion && "h-7 px-2 text-[10px]")}
+                onClick={() => onOpen(doc.storagePath, doc.id)}
+                disabled={!!loadingId}
+              >
+                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">Consulter</span>
+              </Button>
+           </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
