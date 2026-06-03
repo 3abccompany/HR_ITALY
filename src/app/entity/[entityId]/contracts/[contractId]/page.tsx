@@ -64,7 +64,7 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
-import { format, isBefore, startOfDay, differenceInDays } from "date-fns";
+import { format, isBefore, startOfDay, differenceInDays, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 
 const TERMINATION_REASONS = [
@@ -579,6 +579,12 @@ export default function ContractDetailPage() {
   const updateDate = contract.updatedAt ? (typeof (contract.updatedAt as any).toDate === 'function' ? (contract.updatedAt as any).toDate() : new Date((contract.updatedAt as any).seconds * 1000)) : null;
   const isPdfOutdated = pdfDate && updateDate && updateDate > pdfDate;
 
+  // Expiry Logic
+  const contractExpiryDate = parseSafeDate(contract.endDate);
+  const today = startOfDay(new Date());
+  const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
+  const isContractExpiringSoon = isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30));
+
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
@@ -656,6 +662,30 @@ export default function ContractDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <div className="lg:col-span-3 space-y-8">
           
+          {/* Expiry Banners */}
+          {isContractExpired && (
+            <Alert variant="destructive" className="rounded-2xl border-none shadow-lg bg-red-600 text-white animate-in fade-in slide-in-from-top-2">
+              <AlertTriangle className="h-5 w-5 text-white" />
+              <div className="ml-2">
+                <AlertTitle className="font-black uppercase text-xs tracking-widest">Contrat arrivé à échéance</AlertTitle>
+                <AlertDescription className="text-sm opacity-90">
+                  Le terme du contrat ({formatDateSafe(contract.endDate)}) est dépassé. Veuillez régulariser la situation (renouvellement ou solde de tout compte).
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
+          {isContractExpiringSoon && (
+            <Alert className="rounded-2xl border-orange-200 bg-orange-50 shadow-md animate-in fade-in slide-in-from-top-2">
+              <Clock className="h-5 w-5 text-orange-600" />
+              <div className="ml-2">
+                <AlertTitle className="font-bold text-orange-800">Échéance proche</AlertTitle>
+                <AlertDescription className="text-sm text-orange-700">
+                  Ce contrat arrive à échéance le <span className="font-bold">{formatDateSafe(contract.endDate)}</span> (dans {differenceInDays(contractExpiryDate!, today)} jours).
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
+
           {/* Termination Info if terminated */}
           {isTerminated && (
             <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm">
@@ -1305,8 +1335,9 @@ function DocumentRow({
 }) {
   const isLoading = loadingId === doc.id;
   const expiryDate = parseSafeDate(doc.expiresAt);
-  const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
-  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 30;
+  const today = startOfDay(new Date());
+  const isExpired = expiryDate && isBefore(expiryDate, today);
+  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 30;
 
   return (
     <Card className={cn(
@@ -1354,8 +1385,11 @@ function DocumentRow({
            )}
 
            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", doc.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400")}>
-                {STATUS_LABELS[doc.status]}
+              <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", 
+                isExpired ? "bg-red-50 text-red-700 border-red-100" :
+                isExpiringSoon ? "bg-orange-50 text-orange-700 border-orange-100" :
+                doc.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400")}>
+                {isExpired ? "Expiré" : isExpiringSoon ? "Échéance proche" : STATUS_LABELS[doc.status]}
               </Badge>
               <Button 
                 variant="secondary" 

@@ -616,8 +616,9 @@ function DocumentRow({
 }) {
   const isLoading = loadingId === doc.id;
   const expiryDate = parseSafeDate(doc.expiresAt);
-  const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
-  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 30;
+  const today = startOfDay(new Date());
+  const isExpired = expiryDate && isBefore(expiryDate, today);
+  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 30;
 
   return (
     <Card className={cn(
@@ -665,8 +666,11 @@ function DocumentRow({
            )}
 
            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", doc.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400")}>
-                {STATUS_LABELS[doc.status]}
+              <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", 
+                isExpired ? "bg-red-50 text-red-700 border-red-100" :
+                isExpiringSoon ? "bg-orange-50 text-orange-700 border-orange-100" :
+                doc.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400")}>
+                {isExpired ? "Expiré" : isExpiringSoon ? "Échéance proche" : STATUS_LABELS[doc.status]}
               </Badge>
               <Button 
                 variant="secondary" 
