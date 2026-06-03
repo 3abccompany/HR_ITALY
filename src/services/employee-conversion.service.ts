@@ -90,6 +90,8 @@ export async function convertOfferToEmployeeAction(params: {
       const employeeAddress = person ? `${person.address || ""}, ${person.postalCode || ""} ${person.city || ""} (${person.province || ""})` : "";
 
       // --- PHASE 4: WRITES ---
+      
+      // 1. Formal Employee Record
       transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
         employeeId, personId: person.personId, entityId, sourceOfferId: offerId, employeeCode,
         firstName: person.firstName, lastName: person.lastName, displayName: person.displayName,
@@ -100,6 +102,7 @@ export async function convertOfferToEmployeeAction(params: {
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
       });
 
+      // 2. Draft Contract
       transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), {
         contractId, entityId, personId: person.personId, employeeId, sourceOfferId: offerId,
         
@@ -159,8 +162,22 @@ export async function convertOfferToEmployeeAction(params: {
         updatedBy: actorUid
       });
 
+      // 3. Status Updates (Mirroring Lifecycle)
       transaction.update(offerSnap.ref, { conversionStatus: "converted", employeeId, contractId, updatedAt: FieldValue.serverTimestamp() });
       
+      transaction.update(candidateRef, { 
+        status: "hired", 
+        employeeId, 
+        updatedAt: FieldValue.serverTimestamp() 
+      });
+
+      transaction.update(personRef, { 
+        currentLifecycleStatus: "employee", 
+        currentCandidateId: null, 
+        currentEmployeeId: employeeId, 
+        updatedAt: FieldValue.serverTimestamp() 
+      });
+
       transaction.update(dossiersSnap.docs[0].ref, {
         status: "converted_to_employee",
         employeeId,
@@ -170,6 +187,23 @@ export async function convertOfferToEmployeeAction(params: {
         updatedAt: FieldValue.serverTimestamp()
       });
 
+      // 4. Read Model Synchronization (Views)
+      const candidateViewRef = adminDb.collection("entities").doc(entityId).collection("candidateViews").doc(offer.candidateId);
+      transaction.set(candidateViewRef, {
+        status: "hired",
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      const employeeViewRef = adminDb.collection("entities").doc(entityId).collection("employeeViews").doc(employeeId);
+      transaction.set(employeeViewRef, {
+        id: employeeId,
+        employeeId,
+        displayName: person.displayName,
+        status: "active",
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      // 5. Recruitment Need Impact
       if (needRef && needSnap?.exists) {
         const need = needSnap.data() as RecruitmentNeed;
         const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
@@ -180,6 +214,21 @@ export async function convertOfferToEmployeeAction(params: {
           updatedAt: FieldValue.serverTimestamp()
         });
       }
+
+      // 6. Timeline Entry
+      const timelineRef = adminDb.collection("entities").doc(entityId).collection("personTimeline").doc();
+      transaction.set(timelineRef, {
+        eventId: timelineRef.id,
+        entityId,
+        personId: person.personId,
+        type: "employee.created",
+        label: "Recrutement finalisé",
+        description: `Candidat embauché avec succès. Matricule : ${employeeCode}`,
+        sourceCollection: "employees",
+        sourceId: employeeId,
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: actorUid,
+      });
 
       return { success: true, employeeId };
     });
