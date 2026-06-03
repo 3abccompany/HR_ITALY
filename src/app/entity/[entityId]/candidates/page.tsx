@@ -6,8 +6,8 @@ import {
   Search, UserPlus, Edit, PowerOff, RefreshCcw, 
   Loader2, Mail, Briefcase, AlertCircle, MoreVertical, Globe, User,
   LayoutDashboard, X, Filter, ChevronRight, Calendar as CalendarIcon,
-  Building2, MapPin, ListFilter, Trash2, ChevronDown, Download,
-  ChevronUp, ChevronLeft, ListFilter as ListFilterIcon
+  Building2, MapPin, ListFilter as ListFilterIcon, Download,
+  ChevronUp, ChevronDown, ChevronLeft
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,7 +58,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { format, isWithinInterval, startOfDay, endOfDay } from "date-fns";
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
 
 const initialForm = {
@@ -187,6 +187,36 @@ export default function CandidatesManagementPage() {
 
   const { data: candidates, loading: loadingCandidates } = useCollection<Candidate>(candidatesQuery);
 
+  // --- Normalization Logic (UI Fix for old data) ---
+  // Ensures candidates already converted to employees are shown as "Hired" even if DB status is "Accepted"
+  const normalizedCandidates = useMemo(() => {
+    if (!candidates) return [];
+    return candidates.map(c => {
+      const isEffectiveHired = c.status === 'hired' || !!c.employeeId || (c as any).conversionStatus === 'converted';
+      if (isEffectiveHired && c.status !== 'hired') {
+        return { ...c, status: 'hired' as CandidateStatus };
+      }
+      return c;
+    });
+  }, [candidates]);
+
+  // Optional background sync for data consistency
+  useEffect(() => {
+    if (!db || !entityId || !user || !candidates || !canUpdate) return;
+    
+    const candidatesToSync = candidates.filter(c => 
+      c.employeeId && c.status !== 'hired'
+    );
+
+    if (candidatesToSync.length > 0) {
+      console.log(`[Lifecycle Sync] Patching ${candidatesToSync.length} candidates to status "hired" based on existing employeeId link.`);
+      candidatesToSync.forEach(c => {
+        updateCandidate(entityId, c.candidateId, { status: 'hired' }, user.uid)
+          .catch(err => console.warn("[Lifecycle Sync] Failed to update status", err));
+      });
+    }
+  }, [candidates, db, entityId, user, canUpdate]);
+
   // Manual master data fetch logic
   useEffect(() => {
     async function fetchMasters() {
@@ -205,7 +235,6 @@ export default function CandidatesManagementPage() {
         if (results[2]) setNeeds(results[2].docs.map(d => ({ ...d.data(), needId: d.id } as RecruitmentNeed)));
       } catch (err: any) {
         console.error("Error fetching master data:", err);
-        // Silently fail or show minimal warning; rules might be tighter for specific users
       } finally {
         setLoadingMasters(false);
       }
@@ -224,9 +253,9 @@ export default function CandidatesManagementPage() {
 
   // 1. Filtering Logic
   const filteredCandidates = useMemo(() => {
-    if (!candidates) return [];
+    if (!normalizedCandidates) return [];
     
-    return candidates.filter(c => {
+    return normalizedCandidates.filter(c => {
       // Search
       if (filters.search) {
         const search = filters.search.toLowerCase().trim();
@@ -269,7 +298,7 @@ export default function CandidatesManagementPage() {
 
       return true;
     });
-  }, [candidates, filters]);
+  }, [normalizedCandidates, filters]);
 
   // 2. Sorting Logic
   const sortedCandidates = useMemo(() => {
@@ -356,10 +385,10 @@ export default function CandidatesManagementPage() {
   }, [paginatedCandidates, filters.status, groupBy]);
 
   // Dynamic values for dropdowns
-  const uniqueJobs = useMemo(() => Array.from(new Set(candidates?.map(c => c.positionApplied || 'Non renseigné') || [])).sort(), [candidates]);
-  const uniqueDepts = useMemo(() => Array.from(new Set(candidates?.map(c => c.department || 'Non renseigné') || [])).sort(), [candidates]);
-  const uniqueWorksites = useMemo(() => Array.from(new Set(candidates?.map(c => (c as any).worksiteNameSnapshot || (c as any).worksiteName || 'Non renseigné') || [])).sort(), [candidates]);
-  const uniqueSources = useMemo(() => Array.from(new Set(candidates?.map(c => c.source || 'Non renseigné') || [])).sort(), [candidates]);
+  const uniqueJobs = useMemo(() => Array.from(new Set(normalizedCandidates?.map(c => c.positionApplied || 'Non renseigné') || [])).sort(), [normalizedCandidates]);
+  const uniqueDepts = useMemo(() => Array.from(new Set(normalizedCandidates?.map(c => c.department || 'Non renseigné') || [])).sort(), [normalizedCandidates]);
+  const uniqueWorksites = useMemo(() => Array.from(new Set(normalizedCandidates?.map(c => (c as any).worksiteNameSnapshot || (c as any).worksiteName || 'Non renseigné') || [])).sort(), [normalizedCandidates]);
+  const uniqueSources = useMemo(() => Array.from(new Set(normalizedCandidates?.map(c => c.source || 'Non renseigné') || [])).sort(), [normalizedCandidates]);
 
   // --- Handlers ---
 
