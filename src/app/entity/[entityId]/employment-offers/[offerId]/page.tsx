@@ -10,7 +10,8 @@ import {
   MapPin, CheckCircle2, Ban, Archive, 
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
-  Upload, FileCode, Send, XCircle, MessageSquare
+  Upload, FileCode, Send, XCircle, MessageSquare,
+  ArrowRight, CheckCircle, ClipboardList, UserPlus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -34,6 +35,21 @@ import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -57,6 +73,16 @@ const REVISION_REASONS = [
   "Autre poste",
   "Correction / erreur dans la proposition précédente",
   "Autre"
+];
+
+const TERMINATION_REASONS = [
+  { value: "resignation", label: "Démission" },
+  { value: "dismissal", label: "Licenciement" },
+  { value: "probation_failed", label: "Fin / échec période d’essai" },
+  { value: "mutual_agreement", label: "Rupture conventionnelle" },
+  { value: "fixed_term_end", label: "Fin de contrat à durée déterminée" },
+  { value: "retirement", label: "Retraite" },
+  { value: "other", label: "Autre" }
 ];
 
 export default function EditEmploymentOfferPage() {
@@ -561,7 +587,7 @@ export default function EditEmploymentOfferPage() {
                         <Info className="w-8 h-8 text-slate-400" />
                         <div className="space-y-1">
                           <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Dossier non disponible</p>
-                          <p className="text-[10px] text-slate-400 max-w-[280px]">Dossier d’embauche non disponible pour cette conversion existante.</p>
+                          <p className="text-[10px] text-slate-400 max-w-[280px]">Dossier d’embauche non disponible for cette conversion existante.</p>
                         </div>
                       </div>
                     ) : (
@@ -577,7 +603,7 @@ export default function EditEmploymentOfferPage() {
                          <div className="space-y-1">
                             <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">État documents</p>
                             <div className="flex items-center gap-2">
-                               {dossier.readyForConversion ? <CheckCircle className="w-5 h-5 text-green-500" /> : <Clock className="w-5 h-5 text-orange-500" />}
+                               {dossier.readyForConversion ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <Clock className="w-5 h-5 text-orange-500" />}
                                <span className="font-bold text-slate-800">{dossier.readyForConversion ? "Documents validés" : "Documents en attente"}</span>
                             </div>
                          </div>
@@ -606,7 +632,7 @@ export default function EditEmploymentOfferPage() {
                                  </div>
                                  {!isConverted && (
                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle className="w-4 h-4" /></Button>
+                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
                                       <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
                                    </div>
                                  )}
