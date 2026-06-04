@@ -91,6 +91,31 @@ const REVISION_REASONS = [
   "Autre"
 ];
 
+/**
+ * Robust date parser for mixed formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
+  const date = parseSafeDate(val);
+  if (!date) return "-";
+  return format(date, formatStr, { locale: fr });
+}
+
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
@@ -156,6 +181,7 @@ export default function EditEmploymentOfferPage() {
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
   const [pendingExpiresAt, setPendingExpiresAt] = useState("");
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isUploadingPreHireDocument, setIsUploadingPreHireDocument] = useState(false);
 
   // UniLav Form State
   const [uniLavData, setUniLavData] = useState({
@@ -409,8 +435,8 @@ export default function EditEmploymentOfferPage() {
   const handleExecuteUpload = async () => {
     if (!pendingUploadItem || !pendingUploadFile || !user || !offer || !dossier) return;
 
+    setIsUploadingPreHireDocument(true);
     setUploadingItem(pendingUploadItem.itemId);
-    setIsUploadDialogOpen(false);
     try {
       await uploadPreHireDocument({
         entityId,
@@ -423,9 +449,11 @@ export default function EditEmploymentOfferPage() {
         expiresAt: pendingExpiresAt || undefined
       });
       toast({ title: "Document téléversé", description: `${pendingUploadItem.label} a été ajouté au dossier.` });
+      setIsUploadDialogOpen(false);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
     } finally {
+      setIsUploadingPreHireDocument(false);
       setUploadingItem(null);
       setPendingUploadItem(null);
       setPendingUploadFile(null);
@@ -1235,9 +1263,9 @@ export default function EditEmploymentOfferPage() {
           </div>
 
           <DialogFooter>
-             <Button variant="ghost" onClick={() => { setIsUploadDialogOpen(false); setPendingUploadItem(null); setPendingUploadFile(null); setPendingExpiresAt(""); }}>Annuler</Button>
-             <Button onClick={handleExecuteUpload} className="rounded-xl px-8 font-black shadow-lg">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
+             <Button variant="ghost" onClick={() => { setIsUploadDialogOpen(false); setPendingUploadItem(null); setPendingUploadFile(null); setPendingExpiresAt(""); }} disabled={isUploadingPreHireDocument}>Annuler</Button>
+             <Button onClick={handleExecuteUpload} className="rounded-xl px-8 font-black shadow-lg" disabled={isUploadingPreHireDocument || !pendingUploadFile}>
+                {isUploadingPreHireDocument ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
                 Confirmer le téléversement
              </Button>
           </DialogFooter>
