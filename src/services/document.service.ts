@@ -11,11 +11,14 @@ import {
   serverTimestamp,
   where,
   limit,
-  runTransaction
+  runTransaction,
+  writeBatch
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { HRDocument } from "@/types/hr-document";
+import { HRDocument, HRDocumentType, DOCUMENT_TYPE_LABELS } from "@/types/hr-document";
 import { createAuditLog } from "./audit.service";
+import { PreHireDocument } from "@/types/pre-hire-dossier";
+import { EmploymentOffer } from "@/types/employment-offer";
 
 /**
  * Normalizes payload for Firestore
@@ -249,6 +252,105 @@ export async function uploadHRDocument(
     resourceId: docId,
     details: { title: docData.title, type: docData.documentType }
   });
+
+  return docId;
+}
+
+/**
+ * Specialized upload for pre-hire checklist items.
+ * Creates an HRDocument and updates the dossier checklist item atomically.
+ */
+export async function uploadPreHireDocument(params: {
+  entityId: string;
+  dossierId: string;
+  item: PreHireDocument;
+  file: File;
+  offer: EmploymentOffer;
+  actorUid: string;
+  actorName?: string;
+}) {
+  const { entityId, dossierId, item, file, offer, actorUid, actorName } = params;
+  if (!db || !storage) throw new Error("Firebase services not initialized");
+
+  // 1. Storage Upload
+  const docRef = doc(collection(db, `entities/${entityId}/documents`));
+  const docId = docRef.id;
+  const extension = file.name.split('.').pop() || 'bin';
+  const timestamp = Date.now();
+  const storagePath = `entities/${entityId}/documents/${docId}/${item.type}_${timestamp}.${extension}`;
+  const fileRef = ref(storage, storagePath);
+  
+  await uploadBytes(fileRef, file);
+
+  // 2. Metadata Preparation
+  const now = serverTimestamp();
+  const sensitiveTypes = ["id_card", "tax_code", "iban", "residence", "residence_permit"];
+  const isSensitive = sensitiveTypes.includes(item.type) || item.label.toLowerCase().includes("iban");
+
+  const docData = {
+    id: docId,
+    entityId,
+    title: item.label,
+    documentType: "prehire_required_document",
+    status: "valid",
+    storagePath,
+    fileName: file.name,
+    mimeType: file.type,
+    sizeBytes: file.size,
+    
+    personId: offer.personId || null,
+    candidateId: offer.candidateId || null,
+    employmentOfferId: offer.offerId,
+    preHireDossierId: dossierId,
+    checklistItemId: item.itemId,
+    relatedModule: "preHireDossiers",
+    relatedId: dossierId,
+    
+    version: 1,
+    isSensitive,
+    isRequired: true,
+    
+    uploadedAt: now,
+    uploadedBy: actorUid,
+    uploadedByDisplayName: actorName || null,
+    createdAt: now,
+    createdBy: actorUid,
+    updatedAt: now,
+    updatedBy: actorUid
+  };
+
+  // 3. Atomic update
+  const batch = writeBatch(db);
+  
+  batch.set(docRef, sanitizePayload(docData));
+
+  const itemRef = doc(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`, item.itemId);
+  batch.update(itemRef, {
+    fileId: docId,
+    documentId: docId,
+    fileName: file.name,
+    status: "uploaded",
+    uploadedAt: now,
+    uploadedBy: actorUid,
+    updatedAt: now,
+    updatedBy: actorUid
+  });
+
+  await batch.commit();
+
+  // 4. Audit Log
+  try {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "document.uploaded",
+      resourceType: "document",
+      resourceId: docId,
+      details: { checklistItemId: item.itemId, offerId: offer.offerId, context: "pre-hire" }
+    });
+  } catch (e) {
+    console.warn("[Audit] Failed to log pre-hire doc upload:", e);
+  }
 
   return docId;
 }

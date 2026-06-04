@@ -40,7 +40,7 @@ import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
-import { getDocumentDownloadUrl } from "@/services/document.service";
+import { getDocumentDownloadUrl, uploadPreHireDocument } from "@/services/document.service";
 import {
   Dialog,
   DialogContent,
@@ -101,7 +101,7 @@ export default function EditEmploymentOfferPage() {
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
   const offerRef = useMemo(() => db ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null, [db, entityId, offerId]);
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
@@ -132,11 +132,11 @@ export default function EditEmploymentOfferPage() {
     [db, entityId, offerId]
   );
   
-  const { data: mandatoryCommunications } = useCollection<any>(
+  const { data: communications } = useCollection<any>(
     mandatoryCommunicationQuery
   );
   
-  const mandatoryCommunication = mandatoryCommunications?.find(
+  const mandatoryCommunication = communications?.find(
     (item: any) => item.type === "UNILAV_ASSUNZIONE"
   );
 
@@ -156,6 +156,7 @@ export default function EditEmploymentOfferPage() {
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
+  const [uploadingItem, setUploadingItem] = useState<string | null>(null);
 
   // UniLav Form State
   const [uniLavData, setUniLavData] = useState({
@@ -414,8 +415,33 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const handleUploadPreHireDoc = async (item: PreHireDocument, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !offer || !dossier) return;
+
+    setUploadingItem(item.itemId);
+    try {
+      await uploadPreHireDocument({
+        entityId,
+        dossierId: dossier.dossierId,
+        item,
+        file,
+        offer,
+        actorUid: user.uid,
+        actorName: membership?.userDisplayName
+      });
+      toast({ title: "Document téléversé", description: `${item.label} a été ajouté au dossier.` });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
+    } finally {
+      setUploadingItem(null);
+      e.target.value = ""; // reset for same file re-selection if needed
+    }
+  };
+
   const handleConsultDocument = async (item: PreHireDocument) => {
-    if (!item.fileId) {
+    const fileId = item.fileId || (item as any).documentId;
+    if (!fileId) {
       toast({ variant: "destructive", title: "Erreur", description: "Aucun fichier n'est associé à cette ligne." });
       return;
     }
@@ -423,7 +449,7 @@ export default function EditEmploymentOfferPage() {
     setLoadingFileId(item.itemId);
     try {
       // 1. Get document metadata from central registry
-      const docRef = doc(db!, `entities/${entityId}/documents`, item.fileId);
+      const docRef = doc(db!, `entities/${entityId}/documents`, fileId);
       const docSnap = await getDoc(docRef);
 
       if (!docSnap.exists()) {
@@ -526,7 +552,12 @@ export default function EditEmploymentOfferPage() {
   const isConverted = offer.conversionStatus === 'converted';
   const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer.status) || isConverted;
 
-  const isUniLavDone = mandatoryCommunication?.status === 'receipt_received' || mandatoryCommunication?.status === 'completed' || mandatoryCommunication?.testMode === true;
+  const isUniLavDone = Array.isArray(communications)
+    ? communications.some(
+        (c: any) => c?.status === "receipt_received" || c?.testMode === true
+      )
+    : false;
+
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
 
   const needsCandidateSync = isConverted && linkedCandidate && linkedCandidate.status !== 'hired';
@@ -688,47 +719,72 @@ export default function EditEmploymentOfferPage() {
                       <div className="space-y-3">
                          <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest px-1">Checklist documents obligatoires (Italie)</p>
                          <div className="grid gap-3">
-                            {loadingChecklist ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : checklist?.map(item => (
-                              <div key={item.itemId} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm group">
-                                 <div className="flex items-center gap-3">
-                                    <div className={cn("p-2 rounded-xl", 
-                                       item.status === 'approved' ? "bg-green-100 text-green-600" : 
-                                       item.status === 'rejected' ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-400")}>
-                                       <FileText className="w-4 h-4" />
-                                    </div>
-                                    <div>
-                                       <p className="text-xs font-bold text-slate-700">{item.label}</p>
-                                       <div className="flex items-center gap-2 mt-0.5">
-                                          <p className="text-[10px] text-muted-foreground uppercase">{item.status}</p>
-                                          {!item.fileId && (item.status === 'approved' || item.status === 'uploaded') && (
-                                            <span className="text-[8px] font-black text-orange-500 uppercase bg-orange-50 px-1 rounded-sm">Lien absent</span>
-                                          )}
-                                       </div>
-                                    </div>
-                                 </div>
-                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {item.fileId && (
-                                      <Button 
-                                        size="sm" 
-                                        variant="outline" 
-                                        className="h-8 rounded-lg text-[10px] font-black uppercase tracking-wider gap-1.5"
-                                        onClick={() => handleConsultDocument(item)}
-                                        disabled={loadingFileId === item.itemId}
-                                      >
-                                        {loadingFileId === item.itemId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
-                                        Consulter
-                                      </Button>
-                                    )}
+                            {loadingChecklist ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : checklist?.map(item => {
+                              const hasFile = !!(item.fileId || (item as any).documentId);
+                              
+                              return (
+                                <div key={item.itemId} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm group">
+                                  <div className="flex items-center gap-3">
+                                      <div className={cn("p-2 rounded-xl", 
+                                        item.status === 'approved' ? "bg-green-100 text-green-600" : 
+                                        item.status === 'rejected' ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-400")}>
+                                        <FileText className="w-4 h-4" />
+                                      </div>
+                                      <div>
+                                        <p className="text-xs font-bold text-slate-700">{item.label}</p>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                            <p className="text-[10px] text-muted-foreground uppercase">{item.status}</p>
+                                            {!hasFile && (item.status === 'approved' || item.status === 'uploaded') && (
+                                              <span className="text-[8px] font-black text-orange-500 uppercase bg-orange-50 px-1 rounded-sm">Lien absent</span>
+                                            )}
+                                        </div>
+                                      </div>
+                                  </div>
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      {hasFile && (
+                                        <Button 
+                                          size="sm" 
+                                          variant="outline" 
+                                          className="h-8 rounded-lg text-[10px] font-black uppercase tracking-wider gap-1.5"
+                                          onClick={() => handleConsultDocument(item)}
+                                          disabled={loadingFileId === item.itemId || uploadingItem === item.itemId}
+                                        >
+                                          {loadingFileId === item.itemId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                                          Consulter
+                                        </Button>
+                                      )}
 
-                                    {!isConverted && (
-                                      <>
-                                        <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
-                                        <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
-                                      </>
-                                    )}
-                                 </div>
-                              </div>
-                            ))}
+                                      {!isConverted && (
+                                        <>
+                                          {(item.status === 'missing' || item.status === 'rejected') && (
+                                            <div className="relative">
+                                              <Button 
+                                                size="sm" 
+                                                variant="outline" 
+                                                className="h-8 rounded-lg text-[10px] font-black uppercase tracking-wider gap-1.5 border-dashed"
+                                                disabled={uploadingItem === item.itemId}
+                                              >
+                                                {uploadingItem === item.itemId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                                                Joindre fichier
+                                              </Button>
+                                              <input 
+                                                type="file" 
+                                                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
+                                                onChange={(e) => handleUploadPreHireDoc(item, e)}
+                                                disabled={uploadingItem === item.itemId}
+                                                accept=".pdf,.png,.jpg,.jpeg"
+                                              />
+                                            </div>
+                                          )}
+
+                                          <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
+                                          <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
+                                        </>
+                                      )}
+                                  </div>
+                                </div>
+                              );
+                            })}
                          </div>
                       </div>
 
