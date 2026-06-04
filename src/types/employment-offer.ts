@@ -83,6 +83,8 @@ export interface EmploymentOffer {
   sentAt?: any;
   sentBy?: string;
   viewedAt?: any;
+  lastViewedAt?: any;
+  viewCount?: number;
   respondedAt?: any;
   candidateResponse?: "accepted" | "declined";
   declinedReason?: string;

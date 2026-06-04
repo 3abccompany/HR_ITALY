@@ -110,9 +110,22 @@ export async function getPublicOfferAction(rawToken: string) {
     const entityData = entitySnap.data();
     const resolvedEntityName = entityData?.nomEntreprise || "Notre entreprise";
 
+    // Update tracking metrics
+    const updatePayload: any = {
+      viewCount: FieldValue.increment(1),
+      lastViewedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    };
+
     if (offer.status === "sent") {
-      await offerSnap.ref.update({ status: "viewed", viewedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+      updatePayload.status = "viewed";
     }
+
+    if (!offer.viewedAt) {
+      updatePayload.viewedAt = FieldValue.serverTimestamp();
+    }
+
+    await offerSnap.ref.update(updatePayload);
 
     const dto: PublicOfferDTO = {
       entityName: resolvedEntityName,
@@ -244,7 +257,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         "",
         "Si prega di confermare eventuali dati mancanti.",
         "",
-        "Nota: questa email è una richiesta operativa di préparation. Non costituisce conferma di invio ufficiale UniLav.",
+        "Nota: questa email è una requête operative di préparation. Non constitue confirmation d'envoi officiel UniLav.",
         "",
         "Cordiali saluti.",
       ].join("\n");

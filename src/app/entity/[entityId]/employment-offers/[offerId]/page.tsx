@@ -60,7 +60,6 @@ import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
-  AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -625,8 +624,8 @@ export default function EditEmploymentOfferPage() {
             </div>
             <div className="flex items-center justify-end">
               <div className="text-right">
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Nombre de vues</p>
-                <p className="text-lg font-black text-primary">{offer.resendCount || 0}</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Nombre d'ouvertures</p>
+                <p className="text-lg font-black text-primary">{offer.viewCount ?? 0}</p>
               </div>
             </div>
           </div>
@@ -735,7 +734,7 @@ export default function EditEmploymentOfferPage() {
                       {dossier.readyForConversion && !isConverted && (
                         <div className="bg-primary/5 p-5 rounded-2xl border border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-2">
                            <div className="flex items-center gap-3 text-primary text-sm font-bold">
-                              <CheckCircle2 className="w-6 h-6 text-green-600" />
+                              <CheckCircle2 className="w-5 h-5 text-green-600" />
                               <div className="space-y-0.5">
                                  <p>Documents validés.</p>
                                  <p className="text-[10px] uppercase opacity-70">Étape suivante : communication obligatoire Italie / UniLav.</p>
