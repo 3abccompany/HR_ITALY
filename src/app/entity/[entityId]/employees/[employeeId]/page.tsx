@@ -49,6 +49,13 @@ import {
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 /**
  * Robust date parser for mixed Firestore/Admin/Corrupted formats.
@@ -56,16 +63,19 @@ import { Textarea } from "@/components/ui/textarea";
 function parseSafeDate(val: any): Date | null {
   if (!val) return null;
   if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  
   if (typeof val === 'object') {
     if (typeof val.toDate === 'function') return val.toDate();
     if (val.seconds !== undefined) return new Date(val.seconds * 1000);
     if (val._seconds !== undefined) return new Date(val._seconds * 1000);
     return null;
   }
+  
   if (typeof val === 'string' || typeof val === 'number') {
     const d = new Date(val);
     return isNaN(d.getTime()) ? null : d;
   }
+  
   return null;
 }
 
