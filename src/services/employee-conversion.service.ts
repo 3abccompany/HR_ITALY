@@ -51,11 +51,13 @@ export async function convertOfferToEmployeeAction(params: {
     }
 
     // --- 1.5. PRE-FETCH DOCUMENTS TO BACKFILL ---
+    // (This list is generated once before the transaction to ensure we update exactly these records)
     const docsRef = adminDb.collection("entities").doc(entityId).collection("documents");
     const docsToBackfillSnap = await docsRef.where("personId", "==", offerData.personId).get();
 
     return await adminDb.runTransaction(async (transaction) => {
-      // --- PHASE 1: READS ---
+      // --- PHASE 1: READS (ALL READS MUST HAPPEN BEFORE ALL WRITES) ---
+      
       const offerRef = adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId);
       const offerSnap = await transaction.get(offerRef);
       if (!offerSnap.exists) throw new Error("Proposition introuvable.");
@@ -71,12 +73,29 @@ export async function convertOfferToEmployeeAction(params: {
       const membershipId = `${actorUid}_${entityId}`;
       const membershipRef = adminDb.collection("memberships").doc(membershipId);
 
-      const [candidateSnap, personSnap, entitySnap, mSnap] = await Promise.all([
+      // Pre-fetch Need Ref for headcount update later
+      const needRef = offer.recruitmentNeedId 
+        ? adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId)
+        : null;
+
+      const [candidateSnap, personSnap, entitySnap, mSnap, needSnap] = await Promise.all([
         transaction.get(candidateRef),
         transaction.get(personRef),
         transaction.get(entityRef),
-        transaction.get(membershipRef)
+        transaction.get(membershipRef),
+        needRef ? transaction.get(needRef) : Promise.resolve(null)
       ]);
+
+      const dossierQuery = adminDb.collection("entities").doc(entityId).collection("preHireDossiers").where("employmentOfferId", "==", offerId).limit(1);
+      const dossiersSnap = await transaction.get(dossierQuery);
+
+      const commsQuery = adminDb.collection("entities").doc(entityId).collection("mandatoryCommunications")
+        .where("employmentOfferId", "==", offerId)
+        .where("type", "==", "UNILAV_ASSUNZIONE")
+        .limit(1);
+      const commsSnap = await transaction.get(commsQuery);
+
+      // --- PHASE 2: VALIDATIONS & LOGIC ---
 
       if (!mSnap.exists || mSnap.data()?.status !== 'active') throw new Error("Accès refusé: Membership inactif.");
       if (!candidateSnap.exists) throw new Error("Dossier candidat introuvable.");
@@ -87,27 +106,20 @@ export async function convertOfferToEmployeeAction(params: {
 
       // Permissions check
       const permissions = mSnap.data()?.permissions || [];
-      if (!permissions.includes("employees.create") || !permissions.includes("contracts.create")) throw new Error("Permissions insuffisantes.");
+      if (!permissions.includes("employees.create") || !permissions.includes("contracts.create")) {
+        throw new Error("Permissions insuffisantes.");
+      }
 
       // Compliance Gate check
-      const dossierQuery = adminDb.collection("entities").doc(entityId).collection("preHireDossiers").where("employmentOfferId", "==", offerId).limit(1);
-      const dossiersSnap = await transaction.get(dossierQuery);
       if (dossiersSnap.empty) throw new Error("Dossier d'embauche non initialisé.");
       const dossier = dossiersSnap.docs[0].data() as PreHireDossier;
       if (!dossier.readyForConversion) throw new Error("CONVERSION_BLOCKED: Documents candidats non validés.");
 
       // Mandatory Communication check (UniLav)
-      const commsSnap = await transaction.get(
-        adminDb.collection("entities").doc(entityId).collection("mandatoryCommunications")
-          .where("employmentOfferId", "==", offerId)
-          .where("type", "==", "UNILAV_ASSUNZIONE")
-          .limit(1)
-      );
       const communication = commsSnap.empty ? null : commsSnap.docs[0].data();
       const isUniLavDone = communication?.status === 'receipt_received' || communication?.status === 'completed' || communication?.testMode === true;
       if (!isUniLavDone) throw new Error("CONVERSION_BLOCKED: Protocole UniLav obligatoire non enregistré.");
 
-      // --- PHASE 2: IDEMPOTENCY / REPAIR LOGIC ---
       const isAlreadyConverted = offer.conversionStatus === "converted";
       let employeeId = offer.employeeId || person.currentEmployeeId;
       let contractId = offer.contractId;
@@ -124,7 +136,7 @@ export async function convertOfferToEmployeeAction(params: {
         contractId = newContractRef.id;
       }
 
-      // --- PHASE 3: WRITES ---
+      // --- PHASE 3: WRITES (ALL WRITES MUST HAPPEN AFTER ALL READS) ---
 
       // A. Create Employee record
       if (isNewEmployee) {
@@ -247,7 +259,6 @@ export async function convertOfferToEmployeeAction(params: {
       // D. Update Registry Documents (Backfill employeeId)
       docsToBackfillSnap.docs.forEach(docSnap => {
         const docData = docSnap.data();
-        // Backfill only if employeeId is missing or null to preserve any manual overrides
         if (!docData.employeeId) {
           transaction.update(docSnap.ref, {
             employeeId,
@@ -277,19 +288,15 @@ export async function convertOfferToEmployeeAction(params: {
       }, { merge: true });
 
       // F. Recruitment Need Progression (Headcount Protection)
-      if (offer.recruitmentNeedId && !isAlreadyConverted) {
-        const needRef = adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId);
-        const needSnap = await transaction.get(needRef);
-        if (needSnap.exists) {
-          const need = needSnap.data() as RecruitmentNeed;
-          const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
-          transaction.update(needRef, {
-            fulfilledHeadcount: newFulfilled,
-            remainingHeadcount: Math.max(0, need.requestedHeadcount - newFulfilled),
-            status: newFulfilled >= need.requestedHeadcount ? "fulfilled" : "partially_fulfilled",
-            updatedAt: FieldValue.serverTimestamp()
-          });
-        }
+      if (needRef && needSnap && needSnap.exists && !isAlreadyConverted) {
+        const need = needSnap.data() as RecruitmentNeed;
+        const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
+        transaction.update(needRef, {
+          fulfilledHeadcount: newFulfilled,
+          remainingHeadcount: Math.max(0, need.requestedHeadcount - newFulfilled),
+          status: newFulfilled >= need.requestedHeadcount ? "fulfilled" : "partially_fulfilled",
+          updatedAt: FieldValue.serverTimestamp()
+        });
       }
 
       // G. Timeline Event
