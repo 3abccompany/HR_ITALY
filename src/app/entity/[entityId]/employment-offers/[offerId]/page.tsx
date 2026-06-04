@@ -60,6 +60,7 @@ import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
+  AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -624,7 +625,7 @@ export default function EditEmploymentOfferPage() {
             </div>
             <div className="flex items-center justify-end">
               <div className="text-right">
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Nombre d'ouvertures</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Nombre d’ouvertures</p>
                 <p className="text-lg font-black text-primary">{offer.viewCount ?? 0}</p>
               </div>
             </div>
