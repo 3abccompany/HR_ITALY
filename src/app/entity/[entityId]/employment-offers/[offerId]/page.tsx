@@ -12,7 +12,9 @@ import {
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Send, XCircle, MessageSquare,
   ArrowRight, ClipboardList, UserPlus,
-  AlertCircle
+  AlertCircle,
+  Eye,
+  Download
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -24,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp, getDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
@@ -38,6 +40,7 @@ import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { ensurePreHireDossier, sendDocumentRequestEmail, updateDocumentStatus } from "@/services/pre-hire-dossier.service";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
+import { getDocumentDownloadUrl } from "@/services/document.service";
 import {
   Dialog,
   DialogContent,
@@ -152,6 +155,7 @@ export default function EditEmploymentOfferPage() {
   const [syncingCandidate, setSyncingCandidate] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
+  const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
   // UniLav Form State
   const [uniLavData, setUniLavData] = useState({
@@ -410,6 +414,40 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const handleConsultDocument = async (item: PreHireDocument) => {
+    if (!item.fileId) {
+      toast({ variant: "destructive", title: "Erreur", description: "Aucun fichier n'est associé à cette ligne." });
+      return;
+    }
+
+    setLoadingFileId(item.itemId);
+    try {
+      // 1. Get document metadata from central registry
+      const docRef = doc(db!, `entities/${entityId}/documents`, item.fileId);
+      const docSnap = await getDoc(docRef);
+
+      if (!docSnap.exists()) {
+        throw new Error("Métadonnées du document introuvables.");
+      }
+
+      const docData = docSnap.data();
+      const storagePath = docData.storagePath;
+
+      if (!storagePath) {
+        throw new Error("Lien de stockage manquant dans les métadonnées.");
+      }
+
+      // 2. Generate secure download URL
+      const url = await getDocumentDownloadUrl(storagePath);
+      window.open(url, "_blank");
+    } catch (err: any) {
+      console.error("[Consult PreHire Doc] Error:", err);
+      toast({ variant: "destructive", title: "Action impossible", description: err.message || "Impossible d'ouvrir le document." });
+    } finally {
+      setLoadingFileId(null);
+    }
+  };
+
   const handleSaveUniLav = async () => {
     if (!user || !mandatoryCommunication) return;
     setSavingUniLav(true);
@@ -476,9 +514,7 @@ export default function EditEmploymentOfferPage() {
   if (!offer) {
     return (
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
-        <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6">
-          <User className="w-10 h-10 text-muted-foreground" />
-        </div>
+        <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Proposition introuvable</h2>
         <Button onClick={() => router.push(`/entity/${entityId}/employment-offers`)} className="mt-8">Retour au registre</Button>
       </div>
@@ -641,9 +677,11 @@ export default function EditEmploymentOfferPage() {
                             </div>
                          </div>
                          {!isConverted && (
-                           <Button variant="outline" size="sm" onClick={handleSendDocRequest} disabled={saving} className="gap-2">
-                              <Send className="w-3.5 h-3.5" /> Envoyer demande docs
-                           </Button>
+                           <div className="flex gap-2">
+                              <Button variant="outline" size="sm" onClick={handleSendDocRequest} disabled={saving} className="gap-2">
+                                 <Send className="w-3.5 h-3.5" /> Envoyer demande docs
+                              </Button>
+                           </div>
                          )}
                       </div>
 
@@ -660,15 +698,35 @@ export default function EditEmploymentOfferPage() {
                                     </div>
                                     <div>
                                        <p className="text-xs font-bold text-slate-700">{item.label}</p>
-                                       <p className="text-[10px] text-muted-foreground uppercase">{item.status}</p>
+                                       <div className="flex items-center gap-2 mt-0.5">
+                                          <p className="text-[10px] text-muted-foreground uppercase">{item.status}</p>
+                                          {!item.fileId && (item.status === 'approved' || item.status === 'uploaded') && (
+                                            <span className="text-[8px] font-black text-orange-500 uppercase bg-orange-50 px-1 rounded-sm">Lien absent</span>
+                                          )}
+                                       </div>
                                     </div>
                                  </div>
-                                 {!isConverted && (
-                                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
-                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
-                                   </div>
-                                 )}
+                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {item.fileId && (
+                                      <Button 
+                                        size="sm" 
+                                        variant="outline" 
+                                        className="h-8 rounded-lg text-[10px] font-black uppercase tracking-wider gap-1.5"
+                                        onClick={() => handleConsultDocument(item)}
+                                        disabled={loadingFileId === item.itemId}
+                                      >
+                                        {loadingFileId === item.itemId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                                        Consulter
+                                      </Button>
+                                    )}
+
+                                    {!isConverted && (
+                                      <>
+                                        <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
+                                        <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
+                                      </>
+                                    )}
+                                 </div>
                               </div>
                             ))}
                          </div>
@@ -929,7 +987,7 @@ export default function EditEmploymentOfferPage() {
                 <FileSignature className="w-4 h-4" /> Conditions Contractuelles
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-6 space-y-6">
+            <CardContent className="p-8 pt-6 space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                  <div className="space-y-2">
                     <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de contrat</Label>
@@ -1109,9 +1167,9 @@ export default function EditEmploymentOfferPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={converting}>Annuler</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConvert} disabled={converting} className="bg-primary text-white font-black rounded-xl">
+            <AlertDialogAction onClick={handleConvert} disabled={converting} className="bg-green-600 hover:bg-green-700 text-white font-black rounded-xl px-8 shadow-lg shadow-green-100 transition-all">
                {converting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-               Confirmer la création
+               Confirmer l'embauche
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
