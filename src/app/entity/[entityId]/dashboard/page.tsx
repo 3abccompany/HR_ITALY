@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useCollection, useFirebase } from "@/firebase";
 import { collection, query, where } from "firebase/firestore";
