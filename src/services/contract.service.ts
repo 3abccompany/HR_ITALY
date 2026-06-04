@@ -38,6 +38,7 @@ export async function updateContract(entityId: string, contractId: string, data:
 
     transaction.update(contractRef, {
       ...cleanData,
+      contentUpdatedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
     });

@@ -127,6 +127,10 @@ export async function convertOfferToEmployeeAction(params: {
       const isNewEmployee = !employeeId;
       const isNewContract = !contractId;
 
+      const employeeCode = person.codiceFiscale 
+          ? `E-${person.codiceFiscale.substring(0, 6)}` 
+          : `E-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
       if (!employeeId) {
         const newEmpRef = adminDb.collection("entities").doc(entityId).collection("employees").doc();
         employeeId = newEmpRef.id;
@@ -140,10 +144,6 @@ export async function convertOfferToEmployeeAction(params: {
 
       // A. Create Employee record
       if (isNewEmployee) {
-        const employeeCode = person.codiceFiscale 
-          ? `E-${person.codiceFiscale.substring(0, 6)}` 
-          : `E-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
         transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
           employeeId, 
           personId: person.personId, 
@@ -181,7 +181,7 @@ export async function convertOfferToEmployeeAction(params: {
           employeeId, 
           sourceOfferId: offerId,
           employeeDisplayName: person.displayName,
-          employeeCode: isNewEmployee ? `E-...` : null, 
+          employeeCode: isNewEmployee ? employeeCode : (personData.employeeCode || employeeCode), 
           taxCode: person.codiceFiscale || "",
           employeeAddressSnapshot: employeeAddress,
           dateOfBirth: person.dateOfBirth || (person as any).birthDate || "",

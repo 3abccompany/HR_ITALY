@@ -397,10 +397,10 @@ export default function ContractDetailPage() {
     }
 
     // Outdated Check
-    const pdfDate = contract.generatedPdfAt ? (typeof (contract.generatedPdfAt as any).toDate === 'function' ? (contract.generatedPdfAt as any).toDate() : new Date((contract.generatedPdfAt as any).seconds * 1000)) : null;
-    const updateDate = contract.updatedAt ? (typeof (contract.updatedAt as any).toDate === 'function' ? (contract.updatedAt as any).toDate() : new Date((contract.updatedAt as any).seconds * 1000)) : null;
+    const pdfDate = parseSafeDate(contract.generatedPdfAt);
+    const contentDate = parseSafeDate(contract.contentUpdatedAt);
 
-    if (pdfDate && updateDate && updateDate > pdfDate) {
+    if (pdfDate && contentDate && contentDate > pdfDate) {
       setValidationErrors(["Le contrat a été modifié après la génération du PDF. Veuillez régénérer le PDF."]);
       setIsValidationDialogOpen(true);
       return;
@@ -452,7 +452,7 @@ export default function ContractDetailPage() {
         "employeeAddressSnapshot", "dateOfBirth", "placeOfBirth", "taxCode",
         "endDate", "trialPeriodDays", "trialPeriodUnit", "workingScheduleNotes",
         "qualificationCategory", "overtimeNote", "uniLavProtocolNumber", 
-        "uniLavSubmissionDate", "uniLavReceiptUrl"
+        "uniLavSubmissionDate", "uniLavReceiptUrl", "missionsSnapshot"
       ];
 
       const payload: any = {};
@@ -575,9 +575,9 @@ export default function ContractDetailPage() {
     contract.signedDocumentStoragePath
   );
 
-  const pdfDate = contract.generatedPdfAt ? (typeof (contract.generatedPdfAt as any).toDate === 'function' ? (contract.generatedPdfAt as any).toDate() : new Date((contract.generatedPdfAt as any).seconds * 1000)) : null;
-  const updateDate = contract.updatedAt ? (typeof (contract.updatedAt as any).toDate === 'function' ? (contract.updatedAt as any).toDate() : new Date((contract.updatedAt as any).seconds * 1000)) : null;
-  const isPdfOutdated = pdfDate && updateDate && updateDate > pdfDate;
+  const pdfDate = parseSafeDate(contract.generatedPdfAt);
+  const contentDate = parseSafeDate(contract.contentUpdatedAt);
+  const isPdfOutdated = Boolean(pdfDate && contentDate && contentDate > pdfDate);
 
   // Expiry Logic
   const contractExpiryDate = parseSafeDate(contract.endDate);
@@ -1032,7 +1032,7 @@ export default function ContractDetailPage() {
                 <Separator className="bg-slate-100" />
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Convention Collective (CCNL)" value={effectiveData.ccnlName} editValue={formData.ccnlName} isEditing={isEditing} id="ccnlName" disabled required onChange={(v) => setFormData(p => ({...p, ccnlName: v}))} />
+                   <DetailEditable label="Convention Collective (CCNL)" value={effectiveData.ccnlName} editValue={formData.ccnlName} isEditing={isEditing} id="ccnlName" disabled required onChange={(v) => setFormData(p => ({...p, worksiteName: v}))} />
                    <DetailEditable label="Niveau" value={effectiveData.levelCode} editValue={formData.levelCode} isEditing={isEditing} id="levelCode" disabled required onChange={(v) => setFormData(p => ({...p, levelCode: v}))} />
                    <DetailEditable label="Qualification" value={effectiveData.qualificationCategory} editValue={formData.qualificationCategory} isEditing={isEditing} id="qualificationCategory" onChange={(v) => setFormData(p => ({...p, qualificationCategory: v}))} />
                 </div>

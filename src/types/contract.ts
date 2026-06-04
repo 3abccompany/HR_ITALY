@@ -102,6 +102,7 @@ export interface Contract {
   terminatedAt_old?: Date | FieldValue; // Keeping for compatibility if needed
   archivedAt?: Date | FieldValue;
 
+  contentUpdatedAt?: Date | FieldValue;
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
