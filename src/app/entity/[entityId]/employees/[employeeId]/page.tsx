@@ -180,14 +180,20 @@ export default function EmployeeDetailPage() {
 
     allDocs.forEach(doc => {
       // Logic for bundle key: 
-      // 1. Identity/Residence/Tax -> group by type
-      // 2. Contracts -> group by contractId
-      // 3. Training/Medical -> group by relatedId
-      // 4. Everything else -> group by rootDocumentId
+      // 1. Checklist items (Pre-hire) -> group by unique slot ID within dossier
+      // 2. Identity/Residence/Tax -> group by type
+      // 3. Contracts -> group by contractId
+      // 4. Training/Medical -> group by relatedId
+      // 5. Everything else -> group by rootDocumentId
       let key = doc.rootDocumentId || doc.id;
       
       const identityTypes = ['identity_document', 'fiscal_code', 'residence_permit', 'work_permit'];
-      if (identityTypes.includes(doc.documentType)) {
+      
+      if (doc.checklistItemId) {
+        // Pre-hire checklist items MUST be isolated by their unique slot ID within the dossier
+        // This prevents different docs (ID, IBAN, etc.) from being incorrectly treated as versions of each other
+        key = `checklist_${doc.preHireDossierId || doc.relatedId || "unknown"}_${doc.checklistItemId}`;
+      } else if (identityTypes.includes(doc.documentType)) {
         key = `type_${doc.documentType}`;
       } else if (doc.contractId) {
         key = `contract_${doc.contractId}`;
