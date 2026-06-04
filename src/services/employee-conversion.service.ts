@@ -50,6 +50,10 @@ export async function convertOfferToEmployeeAction(params: {
       }
     }
 
+    // --- 1.5. PRE-FETCH DOCUMENTS TO BACKFILL ---
+    const docsRef = adminDb.collection("entities").doc(entityId).collection("documents");
+    const docsToBackfillSnap = await docsRef.where("personId", "==", offerData.personId).get();
+
     return await adminDb.runTransaction(async (transaction) => {
       // --- PHASE 1: READS ---
       const offerRef = adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId);
@@ -240,7 +244,21 @@ export async function convertOfferToEmployeeAction(params: {
         updatedBy: actorUid
       });
 
-      // D. Update Read Models (Views)
+      // D. Update Registry Documents (Backfill employeeId)
+      docsToBackfillSnap.docs.forEach(docSnap => {
+        const docData = docSnap.data();
+        // Backfill only if employeeId is missing or null to preserve any manual overrides
+        if (!docData.employeeId) {
+          transaction.update(docSnap.ref, {
+            employeeId,
+            employeeDisplayName: person.displayName,
+            updatedAt: FieldValue.serverTimestamp(),
+            updatedBy: actorUid
+          });
+        }
+      });
+
+      // E. Update Read Models (Views)
       const candidateViewRef = adminDb.collection("entities").doc(entityId).collection("candidateViews").doc(offer.candidateId);
       transaction.set(candidateViewRef, {
         status: "hired",
@@ -258,7 +276,7 @@ export async function convertOfferToEmployeeAction(params: {
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
 
-      // E. Recruitment Need Progression (Headcount Protection)
+      // F. Recruitment Need Progression (Headcount Protection)
       if (offer.recruitmentNeedId && !isAlreadyConverted) {
         const needRef = adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId);
         const needSnap = await transaction.get(needRef);
@@ -274,7 +292,7 @@ export async function convertOfferToEmployeeAction(params: {
         }
       }
 
-      // F. Timeline Event
+      // G. Timeline Event
       const timelineRef = adminDb.collection("entities").doc(entityId).collection("personTimeline").doc();
       transaction.set(timelineRef, {
         eventId: timelineRef.id,
