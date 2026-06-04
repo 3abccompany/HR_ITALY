@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -10,7 +11,8 @@ import {
   ShieldCheck, GraduationCap, CheckCircle2,
   FileText, AlertTriangle, FolderOpen, ShieldAlert,
   Download, Eye, Lock, FileBadge, ListTodo, Search,
-  ChevronDown, RefreshCcw, Save, X, Plus, Upload
+  ChevronDown, RefreshCcw, Save, X, Plus, Upload,
+  FileCode, Ban
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -242,7 +244,7 @@ export default function EmployeeDetailPage() {
       if (!doc) return;
 
       const type = doc.documentType;
-      if (['generated_contract_pdf', 'signed_contract', 'contract', 'termination_document'].includes(type)) {
+      if (['generated_contract_pdf', 'contract_pdf', 'generated_contract', 'signed_contract', 'contract', 'termination_document'].includes(type)) {
         groups.contracts.push(bundle);
       } else if (['identity_document', 'identity_card', 'fiscal_code', 'tax_code', 'residence_permit', 'work_permit', 'privacy'].includes(type)) {
         groups.identity.push(bundle);
@@ -551,7 +553,7 @@ export default function EmployeeDetailPage() {
         <DialogContent className="sm:max-w-[500px] rounded-[2.5rem]">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
-              <RefreshCcw className="w-6 h-6" /> Renouveler le document
+              <RefreshCcw className="w-6 h-6" /> Remplacer le document
             </DialogTitle>
             <DialogDescription>
               Remplacez la version actuelle de "{replacingDoc?.title}" par un nouveau fichier.
@@ -640,6 +642,8 @@ function DocumentGroupSection({ title, bundles, icon: Icon, onOpen, onReplace, l
 }) {
   if (bundles.length === 0) return null;
 
+  const isContractSection = title === "Contrats & Clôture";
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 px-1">
@@ -647,49 +651,186 @@ function DocumentGroupSection({ title, bundles, icon: Icon, onOpen, onReplace, l
         <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{title}</h3>
       </div>
       <div className="grid grid-cols-1 gap-6">
-        {bundles.map((bundle, i) => (
-          <div key={i} className="space-y-3">
-             {bundle.current ? (
-               <DocumentRow 
-                 doc={bundle.current} 
-                 onOpen={onOpen} 
-                 onReplace={onReplace}
-                 loadingId={loadingId} 
-                 isMain 
-                 canReplace={canReplace}
-               />
-             ) : bundle.history.length > 0 ? (
-               <DocumentRow 
-                 doc={bundle.history[0]} 
-                 onOpen={onOpen} 
-                 onReplace={onReplace}
-                 loadingId={loadingId} 
-                 isMain 
-                 canReplace={canReplace}
-               />
-             ) : null}
+        {bundles.map((bundle, i) => {
+          if (isContractSection) {
+            const allDocsInBundle = [bundle.current, ...bundle.history].filter(Boolean) as HRDocument[];
+            
+            const signedDocs = allDocsInBundle.filter(d => ['signed_contract', 'contract_signed', 'contract'].includes(d.documentType));
+            const generatedDocs = allDocsInBundle
+              .filter(d => ['generated_contract_pdf', 'contract_pdf', 'generated_contract'].includes(d.documentType))
+              .sort((a, b) => {
+                const ta = parseSafeDate(a.uploadedAt || a.generatedAt || a.createdAt)?.getTime() || 0;
+                const tb = parseSafeDate(b.uploadedAt || b.generatedAt || b.createdAt)?.getTime() || 0;
+                return tb - ta;
+              });
+            const terminationDocs = allDocsInBundle.filter(d => d.documentType === 'termination_document');
+            const otherDocsInBundle = allDocsInBundle.filter(d => !['signed_contract', 'contract_signed', 'contract', 'generated_contract_pdf', 'contract_pdf', 'generated_contract', 'termination_document'].includes(d.documentType));
 
-             {bundle.history.length > 0 && (bundle.current ? true : bundle.history.length > 1) && (
-                <div className="pl-4 sm:pl-8">
-                  <Collapsible>
-                    <CollapsibleTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black uppercase tracking-widest gap-2 hover:bg-white">
-                        <ChevronDown className="w-3 h-3" />
-                        Historique des versions ({bundle.current ? bundle.history.length : bundle.history.length - 1})
-                      </Button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
-                      {bundle.history
-                        .filter(h => h.id !== bundle.current?.id)
-                        .map(d => (
-                          <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={onReplace} loadingId={loadingId} compactVersion canReplace={false} />
-                        ))}
-                    </CollapsibleContent>
-                  </Collapsible>
-                </div>
-             )}
-          </div>
-        ))}
+            return (
+              <div key={i} className="space-y-8 bg-slate-50/50 p-6 rounded-[2.5rem] border border-primary/5">
+                 <div className="flex items-center justify-between px-2">
+                    <p className="text-[10px] font-black text-primary/30 uppercase tracking-[0.2em]">
+                       Contrat Réf: {bundle.current?.contractId || bundle.history[0]?.contractId || "N/A"}
+                    </p>
+                 </div>
+
+                 {/* 1. Signed Section */}
+                 <div className="space-y-3">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-2 flex items-center gap-2">
+                       <CheckCircle2 className="w-3 h-3 text-green-600" /> Contrat officiel signé
+                    </p>
+                    {signedDocs.length > 0 ? (
+                      <div className="space-y-3">
+                        <DocumentRow 
+                          doc={signedDocs[0]} 
+                          onOpen={onOpen} 
+                          onReplace={onReplace} 
+                          loadingId={loadingId} 
+                          isMain 
+                          canReplace={canReplace}
+                          customBadge={<Badge className="bg-green-600 text-white border-none text-[8px] h-4 uppercase font-black px-2">SIGNÉ</Badge>}
+                        />
+                        {signedDocs.length > 1 && (
+                          <div className="pl-4 sm:pl-8">
+                             <Collapsible>
+                               <CollapsibleTrigger asChild>
+                                 <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black uppercase tracking-widest gap-2 hover:bg-white">
+                                   <ChevronDown className="w-3 h-3" />
+                                   Historique signatures ({signedDocs.length - 1})
+                                 </Button>
+                               </CollapsibleTrigger>
+                               <CollapsibleContent className="space-y-2 mt-2">
+                                  {signedDocs.slice(1).map(d => (
+                                    <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={onReplace} loadingId={loadingId} compactVersion canReplace={false} />
+                                  ))}
+                               </CollapsibleContent>
+                             </Collapsible>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="px-6 py-4 rounded-2xl border border-dashed bg-white/50 text-[10px] font-bold text-muted-foreground/40 uppercase italic tracking-wider">
+                         Aucun contrat signé enregistré
+                      </div>
+                    )}
+                 </div>
+
+                 {/* 2. Generated PDFs Section */}
+                 <div className="space-y-3">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-2 flex items-center gap-2">
+                       <FileCode className="w-3 h-3 text-primary" /> Documents de préparation non signés
+                    </p>
+                    {generatedDocs.length > 0 ? (
+                      <div className="space-y-3">
+                        <DocumentRow 
+                          doc={generatedDocs[0]} 
+                          onOpen={onOpen} 
+                          onReplace={onReplace} 
+                          loadingId={loadingId} 
+                          isMain 
+                          canReplace={false}
+                          customLabel="Dernier PDF généré non signé"
+                          customBadge={<Badge variant="outline" className="text-[8px] h-4 border-orange-200 text-orange-600 bg-orange-50 font-black uppercase px-2">NON SIGNÉ</Badge>}
+                        />
+                        {generatedDocs.length > 1 && (
+                          <div className="pl-4 sm:pl-8">
+                             <Collapsible>
+                               <CollapsibleTrigger asChild>
+                                 <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black uppercase tracking-widest gap-2 hover:bg-white">
+                                   <ChevronDown className="w-3 h-3" />
+                                   Versions précédentes du PDF généré ({generatedDocs.length - 1})
+                                 </Button>
+                               </CollapsibleTrigger>
+                               <CollapsibleContent className="space-y-2 mt-2">
+                                  {generatedDocs.slice(1).map(d => (
+                                    <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={onReplace} loadingId={loadingId} compactVersion canReplace={false} />
+                                  ))}
+                               </CollapsibleContent>
+                             </Collapsible>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="px-6 py-4 rounded-2xl border border-dashed bg-white/50 text-[10px] font-bold text-muted-foreground/40 uppercase italic tracking-wider">
+                         Aucun PDF généré
+                      </div>
+                    )}
+                 </div>
+
+                 {/* 3. Termination / Others */}
+                 {terminationDocs.length > 0 && (
+                    <div className="space-y-3">
+                       <p className="text-[10px] font-black uppercase tracking-widest text-red-400 px-2 flex items-center gap-2">
+                          <Ban className="w-3 h-3" /> Documents de clôture
+                       </p>
+                       <div className="space-y-2">
+                          {terminationDocs.map(d => (
+                            <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={onReplace} loadingId={loadingId} canReplace={false} />
+                          ))}
+                       </div>
+                    </div>
+                 )}
+
+                 {otherDocsInBundle.length > 0 && (
+                    <div className="space-y-3">
+                       <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 px-2 flex items-center gap-2">
+                          <Plus className="w-3 h-3" /> Autres pièces contractuelles
+                       </p>
+                       <div className="space-y-2">
+                          {otherDocsInBundle.map(d => (
+                            <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={onReplace} loadingId={loadingId} canReplace={canReplace} />
+                          ))}
+                       </div>
+                    </div>
+                 )}
+              </div>
+            );
+          }
+
+          return (
+            <div key={i} className="space-y-3">
+               {bundle.current ? (
+                 <DocumentRow 
+                   doc={bundle.current} 
+                   onOpen={onOpen} 
+                   onReplace={onReplace}
+                   loadingId={loadingId} 
+                   isMain 
+                   canReplace={canReplace}
+                 />
+               ) : bundle.history.length > 0 ? (
+                 <DocumentRow 
+                   doc={bundle.history[0]} 
+                   onOpen={onOpen} 
+                   onReplace={onReplace}
+                   loadingId={loadingId} 
+                   isMain 
+                   canReplace={canReplace}
+                 />
+               ) : null}
+
+               {bundle.history.length > 0 && (bundle.current ? true : bundle.history.length > 1) && (
+                  <div className="pl-4 sm:pl-8">
+                    <Collapsible>
+                      <CollapsibleTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black uppercase tracking-widest gap-2 hover:bg-white">
+                          <ChevronDown className="w-3 h-3" />
+                          Historique des versions ({bundle.current ? bundle.history.length : bundle.history.length - 1})
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
+                        {bundle.history
+                          .filter(h => h.id !== bundle.current?.id)
+                          .map(d => (
+                            <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={onReplace} loadingId={loadingId} compactVersion canReplace={false} />
+                          ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </div>
+               )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -703,6 +844,7 @@ function DocumentRow({
   isMain, 
   compactVersion, 
   customLabel,
+  customBadge,
   canReplace
 }: { 
   doc: HRDocument, 
@@ -712,6 +854,7 @@ function DocumentRow({
   isMain?: boolean,
   compactVersion?: boolean,
   customLabel?: string,
+  customBadge?: React.ReactNode,
   canReplace: boolean
 }) {
   const isLoading = loadingId === doc.id;
@@ -734,6 +877,7 @@ function DocumentRow({
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <p className={cn("font-bold text-slate-900 truncate max-w-[200px] sm:max-w-md", compactVersion && "text-xs")}>{doc.title}</p>
+              {customBadge}
               {doc.isSensitive && <Badge variant="destructive" className="h-4 text-[8px] uppercase font-black px-1.5 border-none">Sensible</Badge>}
               {doc.version > 1 && <Badge variant="outline" className="h-4 text-[8px] uppercase font-black border-primary/20">V{doc.version}</Badge>}
             </div>
@@ -795,7 +939,7 @@ function DocumentRow({
                     onClick={() => onReplace(doc)}
                   >
                     <RefreshCcw className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Renouveler</span>
+                    <span className="hidden sm:inline">Remplacer document</span>
                   </Button>
                 )}
               </div>
