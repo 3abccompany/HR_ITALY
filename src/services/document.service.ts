@@ -268,8 +268,9 @@ export async function uploadPreHireDocument(params: {
   offer: EmploymentOffer;
   actorUid: string;
   actorName?: string;
+  expiresAt?: string;
 }) {
-  const { entityId, dossierId, item, file, offer, actorUid, actorName } = params;
+  const { entityId, dossierId, item, file, offer, actorUid, actorName, expiresAt } = params;
   if (!db || !storage) throw new Error("Firebase services not initialized");
 
   // 1. Storage Upload
@@ -309,6 +310,7 @@ export async function uploadPreHireDocument(params: {
     version: 1,
     isSensitive,
     isRequired: true,
+    expiresAt: expiresAt || undefined,
     
     uploadedAt: now,
     uploadedBy: actorUid,
@@ -325,16 +327,17 @@ export async function uploadPreHireDocument(params: {
   batch.set(docRef, sanitizePayload(docData));
 
   const itemRef = doc(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`, item.itemId);
-  batch.update(itemRef, {
+  batch.update(itemRef, sanitizePayload({
     fileId: docId,
     documentId: docId,
     fileName: file.name,
     status: "uploaded",
+    expiresAt: expiresAt || undefined,
     uploadedAt: now,
     uploadedBy: actorUid,
     updatedAt: now,
     updatedBy: actorUid
-  });
+  }));
 
   await batch.commit();
 

@@ -115,12 +115,6 @@ export default function EditEmploymentOfferPage() {
   const checklistQuery = useMemo(() => dossier ? query(collection(db!, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`)) as Query<PreHireDocument> : null, [db, entityId, dossier]);
   const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
 
-  // Candidate Document Query (For Status Sync Verification)
-  const candidateRef = useMemo(() => 
-    db && offer?.candidateId ? (doc(db, `entities/${entityId}/candidates`, offer.candidateId) as DocumentReference<Candidate>) : null,
-  [db, entityId, offer?.candidateId]);
-  const { data: linkedCandidate } = useDoc<Candidate>(candidateRef);
-
   const mandatoryCommunicationQuery = useMemo(
     () =>
       db && entityId && offerId
@@ -152,11 +146,16 @@ export default function EditEmploymentOfferPage() {
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [converting, setConverting] = useState(false);
-  const [syncingCandidate, setSyncingCandidate] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
   const [uploadingItem, setUploadingItem] = useState<string | null>(null);
+
+  // New Upload States
+  const [pendingUploadItem, setPendingUploadItem] = useState<PreHireDocument | null>(null);
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [pendingExpiresAt, setPendingExpiresAt] = useState("");
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
 
   // UniLav Form State
   const [uniLavData, setUniLavData] = useState({
@@ -360,24 +359,6 @@ export default function EditEmploymentOfferPage() {
     } finally { setConverting(false); }
   };
 
-  const handleSyncCandidate = async () => {
-    if (!user || !entityId || !offerId || !isConverted) return;
-    setSyncingCandidate(true);
-    try {
-      // Reuse convertAction which is now idempotent and repairs status
-      const result = await convertOfferToEmployeeAction({ entityId, offerId, actorUid: user.uid });
-      if (result.success) {
-        toast({ title: "Synchronisation réussie", description: "Le statut du candidat a été mis à jour vers 'Embauché'." });
-      } else {
-        toast({ variant: "destructive", title: "Erreur de synchro", description: result.error });
-      }
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
-      setSyncingCandidate(false);
-    }
-  };
-
   const handleInitDossier = async () => {
     if (!user || !offer) return;
     setSaving(true);
@@ -415,27 +396,40 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
-  const handleUploadPreHireDoc = async (item: PreHireDocument, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadPreHireDoc = (item: PreHireDocument, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user || !offer || !dossier) return;
 
-    setUploadingItem(item.itemId);
+    setPendingUploadItem(item);
+    setPendingUploadFile(file);
+    setIsUploadDialogOpen(true);
+    e.target.value = ""; // reset for same file re-selection if needed
+  };
+
+  const handleExecuteUpload = async () => {
+    if (!pendingUploadItem || !pendingUploadFile || !user || !offer || !dossier) return;
+
+    setUploadingItem(pendingUploadItem.itemId);
+    setIsUploadDialogOpen(false);
     try {
       await uploadPreHireDocument({
         entityId,
         dossierId: dossier.dossierId,
-        item,
-        file,
+        item: pendingUploadItem,
+        file: pendingUploadFile,
         offer,
         actorUid: user.uid,
-        actorName: membership?.userDisplayName
+        actorName: membership?.userDisplayName,
+        expiresAt: pendingExpiresAt || undefined
       });
-      toast({ title: "Document téléversé", description: `${item.label} a été ajouté au dossier.` });
+      toast({ title: "Document téléversé", description: `${pendingUploadItem.label} a été ajouté au dossier.` });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
     } finally {
       setUploadingItem(null);
-      e.target.value = ""; // reset for same file re-selection if needed
+      setPendingUploadItem(null);
+      setPendingUploadFile(null);
+      setPendingExpiresAt("");
     }
   };
 
@@ -531,6 +525,21 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const formatDate = (val: any) => {
+    if (!val) return "-";
+    try {
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+        const [y, m, d] = val.split('-');
+        return `${d}/${m}/${y}`;
+      }
+      const d = val.toDate ? val.toDate() : new Date(val);
+      if (isNaN(d.getTime())) return "-";
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch (e) {
+      return "-";
+    }
+  };
+
   const getTimestampSeconds = (value?: any) => {
     return value?.seconds ?? value?._seconds ?? null;
   };
@@ -559,8 +568,6 @@ export default function EditEmploymentOfferPage() {
     : false;
 
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
-
-  const needsCandidateSync = isConverted && linkedCandidate && linkedCandidate.status !== 'hired';
 
   const resolvedDepartment = formData.departmentName || need?.departmentName || "Non renseigné";
   const resolvedWorksite = formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné";
@@ -734,6 +741,11 @@ export default function EditEmploymentOfferPage() {
                                         <p className="text-xs font-bold text-slate-700">{item.label}</p>
                                         <div className="flex items-center gap-2 mt-0.5">
                                             <p className="text-[10px] text-muted-foreground uppercase">{item.status}</p>
+                                            {item.expiresAt && (
+                                              <span className="text-[9px] font-black text-slate-500 uppercase bg-slate-50 px-1 rounded-sm">
+                                                Échéance : {formatDate(item.expiresAt)}
+                                              </span>
+                                            )}
                                             {!hasFile && (item.status === 'approved' || item.status === 'uploaded') && (
                                               <span className="text-[8px] font-black text-orange-500 uppercase bg-orange-50 px-1 rounded-sm">Lien absent</span>
                                             )}
@@ -981,23 +993,9 @@ export default function EditEmploymentOfferPage() {
                     <p className="text-[10px] uppercase font-black opacity-60">Dossier converti en employé.</p>
                   </div>
                </div>
-               
-               <div className="flex items-center gap-3">
-                 {needsCandidateSync && (
-                   <Button 
-                     variant="outline" 
-                     onClick={handleSyncCandidate} 
-                     disabled={syncingCandidate}
-                     className="rounded-xl font-bold border-accent/20 text-accent hover:bg-accent/5 gap-2"
-                   >
-                     {syncingCandidate ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
-                     Synchroniser le candidat
-                   </Button>
-                 )}
-                 <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
-                    <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir fiche employé</Link>
-                 </Button>
-               </div>
+               <Button asChild className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20">
+                  <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir fiche employé</Link>
+               </Button>
             </div>
           )}
 
@@ -1210,6 +1208,38 @@ export default function EditEmploymentOfferPage() {
           <DialogFooter>
              <Button variant="ghost" onClick={() => setRejectItem(null)}>Annuler</Button>
              <Button variant="destructive" disabled={!rejectItem?.reason} onClick={() => rejectItem && handleUpdateDoc(rejectItem.id, 'rejected', rejectItem.reason)}>Confirmer le rejet</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload Pre-hire Doc Confirmation Dialog */}
+      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+        <DialogContent className="rounded-[2.5rem] sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary">Téléverser le document</DialogTitle>
+            <DialogDescription>
+              Fichier : <span className="font-bold">{pendingUploadFile?.name}</span>
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-6 space-y-4">
+            <div className="space-y-2">
+              <Label className="text-[10px] uppercase font-black text-muted-foreground">Date d'échéance (Optionnel)</Label>
+              <Input 
+                type="date"
+                value={pendingExpiresAt}
+                onChange={(e) => setPendingExpiresAt(e.target.value)}
+                className="h-12 rounded-xl"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+             <Button variant="ghost" onClick={() => { setIsUploadDialogOpen(false); setPendingUploadItem(null); setPendingUploadFile(null); setPendingExpiresAt(""); }}>Annuler</Button>
+             <Button onClick={handleExecuteUpload} className="rounded-xl px-8 font-black shadow-lg">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
+                Confirmer le téléversement
+             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

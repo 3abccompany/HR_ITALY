@@ -27,6 +27,7 @@ export interface PreHireDocument {
   rejectionReason?: string;
   reviewedAt?: Date | FieldValue;
   reviewedBy?: string;
+  expiresAt?: string;
   createdAt: Date | FieldValue;
   updatedAt: Date | FieldValue;
 }
