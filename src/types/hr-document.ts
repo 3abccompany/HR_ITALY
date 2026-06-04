@@ -1,6 +1,6 @@
 import { FieldValue } from "firebase/firestore";
 
-export type HRDocumentStatus = "valid" | "expired" | "replaced" | "archived" | "rejected";
+export type HRDocumentStatus = "valid" | "expiring_soon" | "expired" | "replaced" | "archived" | "rejected" | "missing";
 
 export type HRDocumentType = 
   | "identity_document"
@@ -63,7 +63,15 @@ export interface HRDocument {
   isSensitive: boolean;
   isRequired: boolean;
   tags?: string[];
+  
+  // Versioning
   version: number;
+  replacesId?: string | null;
+  replacedById?: string | null;
+  rootDocumentId?: string | null;
+  replacementReason?: string | null;
+  replacedAt?: Date | FieldValue | null;
+  replacedBy?: string | null;
 
   // Phase 2 Integration Fields
   sourceKey?: string | null; // For idempotency (e.g. contract:{id}:signed)
@@ -110,8 +118,10 @@ export const DOCUMENT_TYPE_LABELS: Record<HRDocumentType, string> = {
 
 export const STATUS_LABELS: Record<HRDocumentStatus, string> = {
   valid: "Valide",
+  expiring_soon: "Échéance proche",
   expired: "Expiré",
   replaced: "Remplacé",
   archived: "Archivé",
-  rejected: "Rejeté"
+  rejected: "Rejeté",
+  missing: "Manquant"
 };

@@ -4,12 +4,14 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
+  getDoc,
   getDocs, 
   query, 
   orderBy, 
   serverTimestamp,
   where,
-  limit
+  limit,
+  runTransaction
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { HRDocument } from "@/types/hr-document";
@@ -65,6 +67,7 @@ export async function upsertDocumentBySourceKey(
       entityId,
       sourceKey,
       status: data.status || "valid",
+      version: data.version || 1,
       createdAt: serverTimestamp(),
       createdBy: userId,
     });
@@ -170,6 +173,7 @@ export async function registerSignedContractDocument(params: {
     source: "signed_contract_reference",
     isSensitive: true,
     isRequired: true,
+    version: 1,
     uploadedAt: signedDocumentUploadedAt,
     uploadedBy: signedDocumentUploadedBy,
     uploadedByDisplayName: "Utilisateur HR",
@@ -223,6 +227,7 @@ export async function uploadHRDocument(
     mimeType: file.type,
     sizeBytes: file.size,
     version: metadata.version || 1,
+    rootDocumentId: metadata.rootDocumentId || docId,
     isSensitive: metadata.isSensitive ?? false,
     isRequired: metadata.isRequired ?? true,
     uploadedAt: serverTimestamp(),
@@ -246,6 +251,115 @@ export async function uploadHRDocument(
   });
 
   return docId;
+}
+
+/**
+ * Replaces an existing HR document with a new version.
+ * Atomic transaction to maintain history links.
+ */
+export async function replaceHRDocument(
+  entityId: string,
+  oldDocumentId: string,
+  file: File,
+  actorUid: string,
+  replacementReason: string,
+  metadata: Partial<HRDocument>,
+  actorName?: string
+) {
+  if (!db || !storage) throw new Error("Firebase services not initialized");
+
+  // 1. Get old document
+  const oldDocRef = doc(db, `entities/${entityId}/documents`, oldDocumentId);
+  const oldDocSnap = await getDoc(oldDocRef);
+  if (!oldDocSnap.exists()) throw new Error("Document d'origine introuvable.");
+  const oldDoc = oldDocSnap.data() as HRDocument;
+
+  if (oldDoc.status === "replaced" || oldDoc.status === "archived") {
+    throw new Error("Ce document a déjà été remplacé ou archivé.");
+  }
+
+  // 2. Upload new file
+  const newDocId = doc(collection(db, `entities/${entityId}/documents`)).id;
+  const safeFileName = file.name.replace(/\s+/g, '_');
+  const storagePath = `entities/${entityId}/documents/${newDocId}/${safeFileName}`;
+  const fileRef = ref(storage, storagePath);
+  
+  await uploadBytes(fileRef, file);
+
+  // 3. Atomic Transaction
+  return await runTransaction(db, async (transaction) => {
+    const newDocRef = doc(db, `entities/${entityId}/documents`, newDocId);
+    const now = serverTimestamp();
+    const version = (oldDoc.version || 1) + 1;
+    const rootId = oldDoc.rootDocumentId || oldDoc.id;
+
+    const newDocData: HRDocument = {
+      ...oldDoc, // Copy links
+      ...(metadata as any), // Override with new metadata (like expiry)
+      id: newDocId,
+      entityId,
+      status: "valid",
+      storagePath,
+      fileName: safeFileName,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      version,
+      replacesId: oldDocumentId,
+      replacedById: null,
+      rootDocumentId: rootId,
+      replacementReason,
+      uploadedAt: now,
+      uploadedBy: actorUid,
+      uploadedByDisplayName: actorName || actorUid,
+      createdAt: now,
+      createdBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid,
+      sourceKey: null, // Clear source key for versions to allow history
+    };
+
+    // Create new doc
+    transaction.set(newDocRef, sanitizePayload(newDocData));
+
+    // Update old doc
+    transaction.update(oldDocRef, {
+      status: "replaced",
+      replacedById: newDocId,
+      replacedAt: now,
+      replacedBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid
+    });
+
+    // Timeline event
+    if (oldDoc.personId) {
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(timelineRef, {
+        eventId: timelineRef.id,
+        entityId,
+        personId: oldDoc.personId,
+        type: "document.replaced",
+        label: `Document renouvelé : ${DOCUMENT_TYPE_LABELS[oldDoc.documentType] || oldDoc.documentType}`,
+        description: `Remplacement de "${oldDoc.title}" par une nouvelle version. Motif : ${replacementReason}`,
+        sourceCollection: "documents",
+        sourceId: newDocId,
+        createdAt: now,
+        createdBy: actorUid,
+      });
+    }
+
+    return newDocId;
+  }).then(async (id) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "document.replaced",
+      resourceType: "document",
+      resourceId: id,
+      details: { oldId: oldDocumentId, reason: replacementReason }
+    });
+    return id;
+  });
 }
 
 /**
