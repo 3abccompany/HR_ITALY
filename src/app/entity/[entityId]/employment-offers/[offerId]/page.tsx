@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -897,7 +898,14 @@ export default function EditEmploymentOfferPage() {
                     {/* UniLav Protocol Recording Form */}
                     {dossier?.readyForConversion && !isConverted && (
                       <div className="space-y-4 pt-4 border-t border-dashed">
-                        <p className="text-[10px] font-black uppercase text-primary tracking-widest">Enregistrement du protocole UniLav</p>
+                        <div className="flex items-center justify-between gap-4">
+                          <p className="text-[10px] font-black uppercase text-primary tracking-widest">Enregistrement du protocole UniLav</p>
+                          <Button asChild variant="outline" size="sm" className="h-7 text-[10px] font-black uppercase border-primary/10 gap-2">
+                             <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
+                                Gérer dans le module CPI foundation <ChevronRight className="w-3 h-3" />
+                             </Link>
+                          </Button>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <Label className="text-[9px] uppercase font-bold">Numéro de protocole</Label>
@@ -1099,7 +1107,7 @@ export default function EditEmploymentOfferPage() {
                  </div>
                  {isFixedTerm && (
                     <div className="space-y-2 col-span-full">
-                      <Label className={cn("text-[10px] font-black uppercase tracking-widest", !formData.proposedEndDate && "text-red-500")}>
+                      <Label className={cn("text-[10px] font-black uppercase tracking-widest", !formData.proposedEndDate && "text-red-50")}>
                         Date de fin proposée *
                       </Label>
                       <Input 

@@ -109,4 +109,17 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "settings.read", module: "settings", action: "read", label: "Voir paramètres", description: "Consultation de la configuration entité.", scope: "entity" },
   { code: "settings.manage", module: "settings", action: "manage", label: "Gérer paramètres", description: "Mise à jour des réglages de l'entité.", scope: "entity" },
   { code: "audit.read", module: "audit", action: "read", label: "Voir audit entité", description: "Historique des actions locales.", scope: "entity" },
+
+  // --- Employment Requests (Italy UniLav/CPI) ---
+  { code: "employmentRequests.read", module: "employmentRequests", action: "read", label: "Voir les demandes d'embauche CPI", description: "Accès au registre des communications UniLav.", scope: "entity" },
+  { code: "employmentRequests.create", module: "employmentRequests", action: "create", label: "Créer une demande d'embauche CPI", description: "Saisie manuelle d'une demande de communication.", scope: "entity" },
+  { code: "employmentRequests.update", module: "employmentRequests", action: "update", label: "Modifier une demande CPI", description: "Mise à jour des détails de communication.", scope: "entity" },
+  { code: "employmentRequests.complete", module: "employmentRequests", action: "complete", label: "Finaliser un dossier CPI", description: "Enregistrement du protocole final et du reçu.", scope: "entity" },
+  { code: "employmentRequests.cancel", module: "employmentRequests", action: "cancel", label: "Annuler une demande CPI", description: "Annulation d'une communication CPI.", scope: "entity" },
+
+  // --- Consultants Registry ---
+  { code: "consultants.read", module: "consultants", action: "read", label: "Voir les consultants", description: "Liste des consultants externes (travail/paie).", scope: "entity" },
+  { code: "consultants.create", module: "consultants", action: "create", label: "Ajouter un consultant", description: "Ajout d'un nouveau partenaire externe au registre.", scope: "entity" },
+  { code: "consultants.update", module: "consultants", action: "update", label: "Modifier un consultant", description: "Mise à jour des coordonnées des consultants.", scope: "entity" },
+  { code: "consultants.archive", module: "consultants", action: "archive", label: "Archiver un consultant", description: "Désactivation d'un partenaire consultant.", scope: "entity" },
 ];

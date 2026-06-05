@@ -1,3 +1,4 @@
+
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
@@ -157,6 +158,7 @@ export async function getPublicOfferAction(rawToken: string) {
 
 /**
  * 7K-F-A Extension: Automatically ensures a Pre-Hire Dossier when offer is accepted.
+ * Phase 5A: Mirrors acceptance into standalone Employment Request foundation.
  */
 export async function respondToOfferAction(rawToken: string, response: "accepted" | "declined", reason?: string) {
   if (!rawToken) throw new Error("Token manquant.");
@@ -364,6 +366,34 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         updatedAt: FieldValue.serverTimestamp(),
         updatedBy: "candidate_portal",
       });
+
+      // --- PHASE 5A: Mirror to standalone EmploymentRequest foundation ---
+      try {
+         const requestId = `unilav_${offer.offerId}`;
+         const requestRef = adminDb.collection("entities").doc(tokenData.entityId).collection("employmentRequests").doc(requestId);
+         
+         // Use transaction.set to ensure atomicity within existing response transaction
+         transaction.set(requestRef, {
+           id: requestId,
+           entityId: tokenData.entityId,
+           offerId: offer.offerId,
+           personId: offer.personId,
+           candidateId: offer.candidateId,
+           mandatoryCommunicationId: communicationId,
+           source: "offer",
+           type: "unilav",
+           status: "draft",
+           plannedHireDate: offer.proposedStartDate || "",
+           jobRoleId: offer.jobTitleName || "",
+           worksiteId: offer.worksiteId || "",
+           createdAt: FieldValue.serverTimestamp(),
+           createdBy: "candidate_portal",
+           updatedAt: FieldValue.serverTimestamp(),
+           updatedBy: "candidate_portal",
+         });
+      } catch (err) {
+         console.warn("[Phase 5A Mirror] Mirror creation skipped or failed:", err);
+      }
     }
 
     const timelineRef = adminDb.collection("entities").doc(tokenData.entityId).collection("personTimeline").doc();

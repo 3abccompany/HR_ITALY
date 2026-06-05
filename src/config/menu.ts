@@ -21,7 +21,8 @@ import {
   Library,
   Scroll,
   FileSignature,
-  LucideIcon
+  LucideIcon,
+  Send
 } from "lucide-react";
 
 export interface MenuItem {
@@ -37,6 +38,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Candidats", href: "candidates", permission: "candidates.read", icon: Search },
   { label: "Entretiens", href: "interviews", permission: "interviews.read", icon: Calendar },
   { label: "Propositions d'embauche", href: "employment-offers", permission: "contracts.read", icon: FileSignature },
+  { label: "Embauches / CPI", href: "employment-requests", permission: "employmentRequests.read", icon: Send },
   { label: "Départements", href: "departments", permission: "departments.read", icon: Building2 },
   { label: "Lieux de travail", href: "worksites", permission: "worksites.read", icon: MapPin },
   { label: "Fiches de postes", href: "job-profiles", permission: "jobProfiles.read", icon: FileBadge },
