@@ -11,7 +11,7 @@ import {
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
-  ChevronDown, FolderOpen
+  ChevronDown, FolderOpen, FileCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -30,7 +30,7 @@ import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
-import { getDocumentDownloadUrl } from "@/services/document.service";
+import { getDocumentDownloadUrl, uploadHRDocument } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
@@ -134,6 +134,7 @@ export default function ContractDetailPage() {
     terminationReason: "",
     terminationNotes: ""
   });
+  const [terminationFile, setTerminationFile] = useState<File | null>(null);
 
   // 1. Core Data
   const contractRef = useMemo(() => 
@@ -532,14 +533,31 @@ export default function ContractDetailPage() {
 
     setProcessing(true);
     try {
+      let documentId: string | undefined = undefined;
+
+      if (terminationFile) {
+        documentId = await uploadHRDocument(entityId, terminationFile, {
+          title: "Document de clôture du contrat",
+          documentType: "termination_document",
+          personId: contract.personId,
+          employeeId: contract.employeeId,
+          contractId: contract.contractId,
+          relatedModule: "contracts",
+          relatedId: contract.contractId,
+          status: "valid"
+        }, user.uid, membership?.userDisplayName);
+      }
+
       await terminateContractAction(
         entityId, 
         contractId, 
         contract.employeeId, 
         user.uid, 
-        terminationForm
+        terminationForm,
+        documentId
       );
       setIsTerminationModalOpen(false);
+      setTerminationFile(null);
       toast({ title: "Contrat terminé", description: "Le contrat est maintenant clos." });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -689,10 +707,26 @@ export default function ContractDetailPage() {
           {/* Termination Info if terminated */}
           {isTerminated && (
             <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm">
-               <CardHeader className="bg-red-50 border-b py-4 px-8">
+               <CardHeader className="bg-red-50 border-b py-4 px-8 flex flex-row items-center justify-between">
                   <CardTitle className="text-xs font-black uppercase tracking-widest text-red-700 flex items-center gap-2">
                      <Ban className="w-4 h-4" /> Détails de la clôture
                   </CardTitle>
+                  {contract.terminationDocumentId && (
+                     <Button 
+                       variant="outline" 
+                       size="sm" 
+                       className="h-8 rounded-xl bg-white text-xs font-bold gap-2"
+                       onClick={() => {
+                         const doc = contractDocs?.find(d => d.id === contract.terminationDocumentId);
+                         if (doc) handleOpenDoc(doc.storagePath, doc.id);
+                         else toast({ variant: "destructive", title: "Erreur", description: "Le document est introuvable." });
+                       }}
+                       disabled={!!loadingActionId}
+                     >
+                       {loadingActionId === contract.terminationDocumentId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                       Consulter document de clôture
+                     </Button>
+                  )}
                </CardHeader>
                <CardContent className="p-8">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
@@ -1244,6 +1278,48 @@ export default function ContractDetailPage() {
                 />
              </div>
 
+             <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black text-muted-foreground">Document de clôture (Optionnel)</Label>
+                <div className={cn(
+                  "border-2 border-dashed rounded-2xl p-6 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
+                  terminationFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                )}>
+                   <Input 
+                     type="file" 
+                     accept=".pdf,.png,.jpg,.jpeg,.webp" 
+                     onChange={(e) => {
+                       const file = e.target.files?.[0] || null;
+                       if (file && file.size > 10 * 1024 * 1024) {
+                         toast({ variant: "destructive", title: "Fichier trop volumineux", description: "Max 10Mo." });
+                         e.target.value = "";
+                         return;
+                       }
+                       setTerminationFile(file);
+                     }}
+                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                   />
+                   {terminationFile ? (
+                     <>
+                        <div className="bg-green-100 p-2 rounded-xl text-green-600 mb-1"><FileCheck className="w-5 h-5" /></div>
+                        <p className="text-xs font-bold text-green-800">{terminationFile.name}</p>
+                        <button 
+                          type="button" 
+                          onClick={(e) => { e.stopPropagation(); setTerminationFile(null); }}
+                          className="text-[9px] text-red-500 font-black uppercase hover:underline"
+                        >
+                          Supprimer le fichier
+                        </button>
+                     </>
+                   ) : (
+                     <>
+                        <Upload className="w-5 h-5 text-slate-300 mb-1" />
+                        <p className="text-xs font-bold text-slate-600">Joindre lettre de démission, accord, etc.</p>
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">PDF, Images (10 Mo max)</p>
+                     </>
+                   )}
+                </div>
+             </div>
+
              <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
                 <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
                 <p className="text-[10px] font-bold text-red-800 leading-tight">
@@ -1252,7 +1328,7 @@ export default function ContractDetailPage() {
              </div>
           </div>
           <DialogFooter>
-             <Button variant="ghost" onClick={() => setIsTerminationModalOpen(false)} disabled={processing}>Annuler</Button>
+             <Button variant="ghost" onClick={() => { setIsTerminationModalOpen(false); setTerminationFile(null); }} disabled={processing}>Annuler</Button>
              <Button 
                onClick={handleTerminateContract} 
                disabled={processing || !terminationForm.actualEndDate || !terminationForm.terminationReason}
@@ -1292,7 +1368,7 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
             onOpen={onOpen} 
             loadingId={loadingId} 
             isMain 
-            customLabel={doc.documentType === 'signed_contract' ? 'Contrat signé' : 'Dernier PDF généré'}
+            customLabel={doc.documentType === 'signed_contract' ? 'Contrat signé' : doc.documentType === 'termination_document' ? 'Document de clôture' : 'Dernier PDF généré'}
           />
         )}
 
@@ -1307,7 +1383,7 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
                 {history.map(d => (
-                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} loadingId={loadingId} compactVersion />
+                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} loadingId={loadingActionId} compactVersion />
                 ))}
               </CollapsibleContent>
             </Collapsible>

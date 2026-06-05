@@ -14,6 +14,7 @@ import {
 import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
 import { registerSignedContractDocument } from "./document.service";
+import { Employee } from "@/types/employee";
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -225,7 +226,7 @@ export async function activateContractAction(entityId: string, contractId: strin
 
     // Guard: Prevent duplicate activation and timeline events
     if (contract.status === "active") {
-      return false;
+      return { success: true, alreadyActive: true };
     }
 
     const hasProof = !!(
@@ -281,10 +282,10 @@ export async function activateContractAction(entityId: string, contractId: strin
       });
     }
 
-    return true;
+    return { success: true };
   });
 
-  if (activated) {
+  if (activated && !(activated as any).alreadyActive) {
     await createAuditLog({
       userId: actorUid,
       entityId,
@@ -331,7 +332,8 @@ export async function terminateContractAction(
     actualEndDate: string;
     terminationReason: string;
     terminationNotes?: string;
-  }
+  },
+  terminationDocumentId?: string
 ) {
   if (!db) throw new Error("Firestore not initialized");
   if (!employeeId) throw new Error("ID Employé manquant.");
@@ -351,6 +353,15 @@ export async function terminateContractAction(
     .map(d => ({ id: d.id, ...d.data() } as Contract))
     .filter(c => c.contractId !== contractId);
 
+  // 1b. Fetch termination document metadata if provided
+  let terminationDocMetadata = null;
+  if (terminationDocumentId) {
+     const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, terminationDocumentId));
+     if (docSnap.exists()) {
+       terminationDocMetadata = docSnap.data();
+     }
+  }
+
   return await runTransaction(db, async (transaction) => {
     // 2. READ SNAPSHOTS
     const snap = await transaction.get(contractRef);
@@ -368,23 +379,34 @@ export async function terminateContractAction(
       throw new Error("La date de fin ne peut pas être antérieure à la date de début.");
     }
 
+    if (terminationDocumentId && !terminationDocMetadata) {
+      throw new Error("Document de clôture introuvable dans le registre.");
+    }
+
+    if (terminationDocMetadata) {
+       if (terminationDocMetadata.entityId !== entityId || terminationDocMetadata.contractId !== contractId) {
+         throw new Error("Incohérence sur le document de clôture (entité/contrat).");
+       }
+    }
+
     // 4. WRITES
     
     // A. Terminate Contract
-    transaction.update(contractRef, {
+    transaction.update(contractRef, sanitizePayload({
       status: "terminated",
       actualEndDate: terminationData.actualEndDate,
       terminationReason: terminationData.terminationReason,
       terminationNotes: terminationData.terminationNotes || null,
+      terminationDocumentId: terminationDocumentId || null,
       terminatedAt: serverTimestamp(),
       terminatedBy: actorUid,
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    });
+    }));
 
     // B. Synchronize Employee
     if (empSnap.exists()) {
-      const empData = empSnap.data();
+      const empData = empSnap.data() as Employee;
       const isCurrentlyActiveContract = empData.activeContractId === contractId;
 
       if (isCurrentlyActiveContract) {
@@ -434,7 +456,7 @@ export async function terminateContractAction(
     // C. Record Timeline Event
     if (contract.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-      transaction.set(timelineRef, {
+      transaction.set(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
         personId: contract.personId,
@@ -442,12 +464,15 @@ export async function terminateContractAction(
         contractId,
         type: "contract.terminated",
         label: "Contrat terminé",
-        description: `Le contrat ${contract.employeeCode || contractId} a été terminé le ${terminationData.actualEndDate}. Motif: ${terminationData.terminationReason}`,
+        description: `Le contrat ${contract.employeeCode || contractId} a été terminé le ${terminationData.actualEndDate}. Motif: ${terminationData.terminationReason}.${terminationDocumentId ? " Document de clôture joint." : ""}`,
         sourceCollection: "contracts",
         sourceId: contractId,
+        metadata: {
+           terminationDocumentId: terminationDocumentId || null
+        },
         createdAt: serverTimestamp(),
         createdBy: actorUid,
-      });
+      }));
     }
 
     return { employeeId };
@@ -459,7 +484,11 @@ export async function terminateContractAction(
       action: "contract.terminated",
       resourceType: "contract",
       resourceId: contractId,
-      details: { employeeId: res.employeeId, ...terminationData }
+      details: sanitizePayload({ 
+        employeeId: res.employeeId, 
+        ...terminationData,
+        terminationDocumentId: terminationDocumentId || null
+      })
     });
   });
 }
