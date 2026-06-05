@@ -105,8 +105,8 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
 export default function ContractDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const entityId = params.entityId as string;
-  const contractId = params.contractId as string;
+  const entityId = params?.entityId as string;
+  const contractId = params?.contractId as string;
   
   const { db, storage } = useFirebase();
   const { user } = useUser();
@@ -138,7 +138,7 @@ export default function ContractDetailPage() {
 
   // 1. Core Data
   const contractRef = useMemo(() => 
-    db ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
+    db && entityId && contractId ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
   [db, entityId, contractId]);
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
@@ -307,11 +307,13 @@ export default function ContractDetailPage() {
 
   // Sync formData with best available data when entering edit mode
   const handleEnterEditMode = () => {
-    setFormData({
-      ...contract,
-      ...effectiveData
-    });
-    setIsEditing(true);
+    if (contract) {
+      setFormData({
+        ...contract,
+        ...effectiveData
+      });
+      setIsEditing(true);
+    }
   };
 
   const formatMoney = (value: any, decimals = 2) => {
@@ -936,7 +938,7 @@ export default function ContractDetailPage() {
                             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Documents de clôture</p>
                             <div className="grid gap-3">
                                {groupedDocs.termination.map(d => (
-                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} canReplace={false} />
+                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} onReplace={() => {}} loadingId={loadingActionId} compactVersion canReplace={false} />
                                ))}
                             </div>
                          </div>
@@ -947,7 +949,7 @@ export default function ContractDetailPage() {
                             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Autres documents liés</p>
                             <div className="grid gap-3">
                                {groupedDocs.others.map(d => (
-                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} canReplace={false} />
+                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} canReplace={false} onReplace={() => {}} />
                                ))}
                             </div>
                          </div>

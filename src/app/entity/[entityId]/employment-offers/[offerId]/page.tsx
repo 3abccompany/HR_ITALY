@@ -3,18 +3,15 @@
 import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  Loader2, ArrowLeft, User, UserCheck, 
+  Loader2, ArrowLeft, User, 
   Briefcase, Building2, FileSignature,
-  Info, Euro, Clock, History, 
-  Scale, Fingerprint, Calendar, FileText,
-  MapPin, CheckCircle2, Ban, Archive, 
-  RefreshCcw, ScrollText, Globe,
-  Edit, Save, X, AlertTriangle, ExternalLink,
-  Upload, FileCode, Send, XCircle, MessageSquare,
+  Euro, Clock, Calendar, FileText,
+  MapPin, CheckCircle2, RefreshCcw, 
+  Save, AlertTriangle, ExternalLink,
+  Upload, Send, XCircle, MessageSquare,
   ArrowRight, ClipboardList, UserPlus,
   AlertCircle,
   Eye,
-  Download,
   ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,8 +21,6 @@ import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp, getDoc } from "firebase/firestore";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
@@ -55,7 +50,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { fr } from "date-fns/locale";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -71,30 +65,11 @@ const WORKING_TIME_OPTIONS = [
   "Intermittente / Chiamata"
 ];
 
-/**
- * Robust date parser for mixed formats.
- */
-function parseSafeDate(val: any): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
-  if (typeof val === 'object') {
-    if (typeof val.toDate === 'function') return val.toDate();
-    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
-    return null;
-  }
-  if (typeof val === 'string' || typeof val === 'number') {
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  return null;
-}
-
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
-  const entityId = params.entityId as string;
-  const offerId = params.offerId as string;
+  const entityId = params?.entityId as string;
+  const offerId = params?.offerId as string;
   
   const { db } = useFirebase();
   const { user } = useUser();
@@ -102,16 +77,16 @@ export default function EditEmploymentOfferPage() {
   const { toast } = useToast();
   const { loading: membershipLoading, membership } = useActiveMembership(entityId);
 
-  const offerRef = useMemo(() => db ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null, [db, entityId, offerId]);
+  const offerRef = useMemo(() => db && entityId && offerId ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null, [db, entityId, offerId]);
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
 
   // Pre-Hire Dossier Query
   const dossierQuery = useMemo(() => db && entityId && offerId ? query(collection(db, `entities/${entityId}/preHireDossiers`), where("employmentOfferId", "==", offerId)) as Query<PreHireDossier> : null, [db, entityId, offerId]);
-  const { data: dossiers, loading: loadingDossiers } = useCollection<PreHireDossier>(dossierQuery);
+  const { data: dossiers } = useCollection<PreHireDossier>(dossierQuery);
   const dossier = dossiers?.[0];
 
   // Dossier Checklist Query
-  const checklistQuery = useMemo(() => dossier ? query(collection(db!, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`)) as Query<PreHireDocument> : null, [db, entityId, dossier]);
+  const checklistQuery = useMemo(() => dossier && db && entityId ? query(collection(db, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`)) as Query<PreHireDocument> : null, [db, entityId, dossier]);
   const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
 
   const mandatoryCommunicationQuery = useMemo(
@@ -134,11 +109,11 @@ export default function EditEmploymentOfferPage() {
   );
 
   // Master Data
-  const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any> : null, [db, entityId]);
+  const ccnlsQuery = useMemo(() => db && entityId ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any> : null, [db, entityId]);
   const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
 
   // Source Besoin RH for fallbacks
-  const needRef = useMemo(() => db && offer?.recruitmentNeedId ? doc(db, `entities/${entityId}/recruitmentNeeds`, offer.recruitmentNeedId) as DocumentReference<RecruitmentNeed> : null, [db, entityId, offer?.recruitmentNeedId]);
+  const needRef = useMemo(() => db && entityId && offer?.recruitmentNeedId ? doc(db, `entities/${entityId}/recruitmentNeeds`, offer.recruitmentNeedId) as DocumentReference<RecruitmentNeed> : null, [db, entityId, offer?.recruitmentNeedId]);
   const { data: need } = useDoc<RecruitmentNeed>(needRef);
 
   const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
@@ -322,7 +297,7 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleSend = async () => {
-    if (!user || !entityId || !offerId) return;
+    if (!user || !entityId || !offerId || !offer) return;
 
     const error = validateOfferData();
     if (error) {
@@ -373,7 +348,7 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleSendDocRequest = async () => {
-    if (!user || !dossier) return;
+    if (!user || !dossier || !entityId) return;
     setSaving(true);
     try {
       await sendDocumentRequestEmail(entityId, dossier.dossierId, user.uid);
@@ -386,7 +361,7 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleUpdateDoc = async (itemId: string, status: PreHireDocumentStatus, reason?: string) => {
-    if (!user || !dossier) return;
+    if (!user || !dossier || !entityId) return;
     try {
       await updateDocumentStatus(entityId, dossier.dossierId, itemId, status, user.uid, reason);
       toast({ title: "Document mis à jour" });
@@ -419,7 +394,7 @@ export default function EditEmploymentOfferPage() {
         file: pendingUploadFile,
         offer,
         actorUid: user.uid,
-        actorName: membership?.userDisplayName,
+        actorName: membership?.userDisplayName || undefined,
         expiresAt: pendingExpiresAt || undefined
       });
       toast({ title: "Document téléversé", description: `${pendingUploadItem.label} a été ajouté au dossier.` });
@@ -445,8 +420,8 @@ export default function EditEmploymentOfferPage() {
     setLoadingFileId(item.itemId);
     try {
       // 1. Get document metadata from central registry
-      const docRef = doc(db!, `entities/${entityId}/documents`, fileId);
-      const docSnap = await getDoc(docRef);
+      const documentRef = doc(db!, `entities/${entityId}/documents`, fileId);
+      const docSnap = await getDoc(documentRef);
 
       if (!docSnap.exists()) {
         throw new Error("Métadonnées du document introuvables.");
@@ -471,7 +446,7 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleSaveUniLav = async () => {
-    if (!user || !mandatoryCommunication) return;
+    if (!user || !mandatoryCommunication || !entityId) return;
     setSavingUniLav(true);
     try {
       const commRef = doc(db!, `entities/${entityId}/mandatoryCommunications`, mandatoryCommunication.id);
@@ -492,7 +467,7 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleTestUniLav = async () => {
-    if (!user || !mandatoryCommunication) return;
+    if (!user || !mandatoryCommunication || !entityId) return;
     setSavingUniLav(true);
     try {
       const commRef = doc(db!, `entities/${entityId}/mandatoryCommunications`, mandatoryCommunication.id);
@@ -587,7 +562,7 @@ export default function EditEmploymentOfferPage() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-black text-primary tracking-tight">Modèle de Proposition</h1>
-              {getStatusBadge(offer.status)}
+              {getStatusBadge(offer.status as EmploymentOfferStatus)}
             </div>
             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">ID : {offerId}</p>
           </div>
@@ -686,7 +661,7 @@ export default function EditEmploymentOfferPage() {
                   {dossier && <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black">{(dossier.status as string).replace(/_/g, ' ')}</Badge>}
                </CardHeader>
                <CardContent className="p-8 space-y-6">
-                  {loadingDossiers ? (
+                  {loadingChecklist ? (
                     <div className="flex items-center justify-center py-12">
                        <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
                     </div>
@@ -1182,7 +1157,7 @@ export default function EditEmploymentOfferPage() {
               <SummaryRow label="Brut mensuel" value={`${Number(formData.proposedGrossMonthly || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`} />
               <SummaryRow label="Brut annuel" value={`${Number(formData.proposedGrossAnnual || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`} />
               <Separator className="bg-white/10" />
-              <SummaryRow label="Statut" value={getStatusBadge(offer.status)} />
+              <SummaryRow label="Statut" value={getStatusBadge(offer.status as EmploymentOfferStatus)} />
             </CardContent>
           </Card>
 

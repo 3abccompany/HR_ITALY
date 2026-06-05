@@ -1,13 +1,12 @@
-
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  Loader2, ArrowLeft, Send, Clock, 
-  Building2, Briefcase, User, Info, 
+  Loader2, ArrowLeft, Clock, 
+  Briefcase, Building2, User, Info, 
   ShieldCheck, Calendar, FileText, 
-  Hash, Mail, MessageSquare, ExternalLink,
+  Hash, Mail, 
   History, AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,22 +15,21 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useFirebase, useDoc } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
-import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
+import { EmploymentRequest } from "@/types/employment-request";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const entityId = params.entityId as string;
-  const requestId = params.requestId as string;
+  const entityId = params?.entityId as string;
+  const requestId = params?.requestId as string;
   const { db } = useFirebase();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading } = useActiveMembership(entityId);
 
   const requestRef = useMemo(() => 
-    db ? (doc(db, `entities/${entityId}/employmentRequests`, requestId) as DocumentReference<EmploymentRequest>) : null,
+    db && entityId && requestId ? (doc(db, `entities/${entityId}/employmentRequests`, requestId) as DocumentReference<EmploymentRequest>) : null,
   [db, entityId, requestId]);
 
   const { data: request, loading } = useDoc<EmploymentRequest>(requestRef);

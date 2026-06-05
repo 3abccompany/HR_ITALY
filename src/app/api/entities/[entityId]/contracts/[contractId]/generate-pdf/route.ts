@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminBucket } from "@/lib/firebase/admin";
 import { getAuth } from "firebase-admin/auth";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 import React from 'react';
 import { renderToBuffer } from '@react-pdf/renderer';
 import { ContractPdfTemplate } from "@/components/contracts/ContractPdfTemplate";
@@ -22,7 +22,7 @@ function validateContractData(contract: Contract) {
   if (!contract.jobTitleName) missing.push("Intitulé poste");
   if (!contract.ccnlName) missing.push("Convention collective (CCNL)");
   if (!contract.startDate) missing.push("Date début");
-  if (contract.grossMonthly === undefined || contract.grossMonthly === null || isNaN(Number(contract.grossMonthly))) missing.push("Rémunération");
+  if ((contract as any).grossMonthly === undefined || (contract as any).grossMonthly === null || isNaN(Number(contract.grossMonthly))) missing.push("Rémunération");
   if (!contract.weeklyHours) missing.push("Temps de travail");
 
   return missing;

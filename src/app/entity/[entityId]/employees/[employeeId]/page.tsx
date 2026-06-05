@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState } from "react";
@@ -10,7 +9,7 @@ import {
   Info, Euro, Clock, History, ExternalLink,
   ShieldCheck, GraduationCap, CheckCircle2,
   FileText, AlertTriangle, FolderOpen, ShieldAlert,
-  Download, Eye, Lock, FileBadge, ListTodo, Search,
+  Download, Eye, Lock, FileBadge, ListTodo,
   ChevronDown, RefreshCcw, Save, X, Plus, Upload,
   FileCode, Ban
 } from "lucide-react";
@@ -90,8 +89,8 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
 export default function EmployeeDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const entityId = params.entityId as string;
-  const employeeId = params.employeeId as string;
+  const entityId = params?.entityId as string;
+  const employeeId = params?.employeeId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
@@ -105,28 +104,28 @@ export default function EmployeeDetailPage() {
   const [isReplacing, setIsReplacing] = useState(false);
 
   const employeeRef = useMemo(() => 
-    db ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
+    db && entityId && employeeId ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
   [db, entityId, employeeId]);
 
   const { data: employee, loading: loadingEmployee } = useDoc<Employee>(employeeRef);
 
   // Active Contract Query
   const contractRef = useMemo(() => 
-    db && employee?.activeContractId ? (doc(db, `entities/${entityId}/contracts`, employee.activeContractId) as DocumentReference<Contract>) : null,
+    db && entityId && employee?.activeContractId ? (doc(db, `entities/${entityId}/contracts`, employee.activeContractId) as DocumentReference<Contract>) : null,
   [db, entityId, employee?.activeContractId]);
 
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
   // Pending Contract Query (Draft from Onboarding)
   const pendingContractRef = useMemo(() => 
-    db && employee?.pendingContractId ? (doc(db, `entities/${entityId}/contracts`, employee.pendingContractId) as DocumentReference<Contract>) : null,
+    db && entityId && employee?.pendingContractId ? (doc(db, `entities/${entityId}/contracts`, employee.pendingContractId) as DocumentReference<Contract>) : null,
   [db, entityId, employee?.pendingContractId]);
 
   const { data: pendingContract, loading: loadingPendingContract } = useDoc<Contract>(pendingContractRef);
 
   // Fallback data from source offer
   const offerRef = useMemo(() => 
-    db && employee?.sourceOfferId ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
+    db && entityId && employee?.sourceOfferId ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
   [db, entityId, employee?.sourceOfferId]);
 
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
@@ -162,12 +161,12 @@ export default function EmployeeDetailPage() {
     personDocs?.forEach(d => map.set(d.id, d));
     
     return Array.from(map.values()).sort((a, b) => {
-      const getBestDate = (doc: HRDocument) => {
-        const d = parseSafeDate(doc.uploadedAt) || 
-                  parseSafeDate(doc.generatedAt) || 
-                  parseSafeDate(doc.createdAt) || 
-                  parseSafeDate(doc.updatedAt) || 
-                  parseSafeDate(doc.issuedAt);
+      const getBestDate = (docItem: HRDocument) => {
+        const d = parseSafeDate(docItem.uploadedAt) || 
+                  parseSafeDate(docItem.generatedAt) || 
+                  parseSafeDate(docItem.createdAt) || 
+                  parseSafeDate(docItem.updatedAt) || 
+                  parseSafeDate(docItem.issuedAt);
         return d ? d.getTime() : 0;
       };
       return getBestDate(b) - getBestDate(a);
@@ -178,49 +177,49 @@ export default function EmployeeDetailPage() {
   const documentBundles = useMemo(() => {
     const bundles: Record<string, { current?: HRDocument, history: HRDocument[] }> = {};
 
-    allDocs.forEach(doc => {
+    allDocs.forEach(docItem => {
       // Logic for bundle key: 
       // 1. Checklist items (Pre-hire) -> group by unique slot ID within dossier
       // 2. Identity/Residence/Tax -> group by type
       // 3. Contracts -> group by contractId
       // 4. Training/Medical -> group by relatedId
       // 5. Everything else -> group by rootDocumentId
-      let key = doc.rootDocumentId || doc.id;
+      let key = docItem.rootDocumentId || docItem.id;
       
       const identityTypes = ['identity_document', 'fiscal_code', 'residence_permit', 'work_permit'];
       
-      if (doc.checklistItemId) {
+      if (docItem.checklistItemId) {
         // Pre-hire checklist items MUST be isolated by their unique slot ID within the dossier
         // This prevents different docs (ID, IBAN, etc.) from being incorrectly treated as versions of each other
-        key = `checklist_${doc.preHireDossierId || doc.relatedId || "unknown"}_${doc.checklistItemId}`;
-      } else if (identityTypes.includes(doc.documentType)) {
-        key = `type_${doc.documentType}`;
-      } else if (doc.contractId) {
-        key = `contract_${doc.contractId}`;
-      } else if (doc.relatedId) {
-        key = `related_${doc.relatedId}`;
+        key = `checklist_${docItem.preHireDossierId || docItem.relatedId || "unknown"}_${docItem.checklistItemId}`;
+      } else if (identityTypes.includes(docItem.documentType)) {
+        key = `type_${docItem.documentType}`;
+      } else if (docItem.contractId) {
+        key = `contract_${docItem.contractId}`;
+      } else if (docItem.relatedId) {
+        key = `related_${docItem.relatedId}`;
       }
 
       if (!bundles[key]) bundles[key] = { history: [] };
 
       // Current document is the one that hasn't been replaced
-      if (doc.status !== "replaced" && !doc.replacedById) {
+      if (docItem.status !== "replaced" && !docItem.replacedById) {
         // If there's already a "current", the newest one takes precedence
         if (!bundles[key].current) {
-          bundles[key].current = doc;
+          bundles[key].current = docItem;
         } else {
           // Compare dates
           const currentT = parseSafeDate(bundles[key].current!.uploadedAt)?.getTime() || 0;
-          const newT = parseSafeDate(doc.uploadedAt)?.getTime() || 0;
+          const newT = parseSafeDate(docItem.uploadedAt)?.getTime() || 0;
           if (newT > currentT) {
             bundles[key].history.push(bundles[key].current!);
-            bundles[key].current = doc;
+            bundles[key].current = docItem;
           } else {
-            bundles[key].history.push(doc);
+            bundles[key].history.push(docItem);
           }
         }
       } else {
-        bundles[key].history.push(doc);
+        bundles[key].history.push(docItem);
       }
     });
 
@@ -246,10 +245,10 @@ export default function EmployeeDetailPage() {
     };
 
     Object.values(documentBundles).forEach(bundle => {
-      const doc = bundle.current || bundle.history[0];
-      if (!doc) return;
+      const docItem = bundle.current || bundle.history[0];
+      if (!docItem) return;
 
-      const type = doc.documentType;
+      const type = docItem.documentType;
       if (['generated_contract_pdf', 'contract_pdf', 'generated_contract', 'signed_contract', 'contract', 'termination_document'].includes(type)) {
         groups.contracts.push(bundle);
       } else if (['identity_document', 'identity_card', 'fiscal_code', 'tax_code', 'residence_permit', 'work_permit', 'privacy'].includes(type)) {
