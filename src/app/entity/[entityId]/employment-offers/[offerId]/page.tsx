@@ -88,7 +88,7 @@ export default function EditEmploymentOfferPage() {
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading, membership } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
 
   const offerRef = useMemo(() => db && entityId && offerId ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null, [db, entityId, offerId]);
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
@@ -99,9 +99,11 @@ export default function EditEmploymentOfferPage() {
   const dossier = dossiers?.[0];
 
   // Standalone Employment Request foundation check
+  // MICRO FIX: Only read if user has permission to avoid Firestore rules noise
+  const canReadCPI = hasPermission("employmentRequests.read");
   const standaloneRequestRef = useMemo(() => 
-    db && entityId && offerId ? doc(db, `entities/${entityId}/employmentRequests`, `unilav_${offerId}`) as DocumentReference<any> : null,
-  [db, entityId, offerId]);
+    db && entityId && offerId && canReadCPI ? doc(db, `entities/${entityId}/employmentRequests`, `unilav_${offerId}`) as DocumentReference<any> : null,
+  [db, entityId, offerId, canReadCPI]);
   const { data: standaloneRequest, loading: loadingStandalone } = useDoc<any>(standaloneRequestRef);
 
   // Dossier Checklist Query
@@ -346,7 +348,7 @@ export default function EditEmploymentOfferPage() {
         toast({ title: "Embauche réussie !" });
         setIsConvertDialogOpen(false);
       } else {
-        toast({ variant: "destructive", title: "Conversion bloquée", description: result.error });
+        toast({ variant: "destructive", title: "Conversion bloquée", description: (result as any).error });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -464,6 +466,39 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const formatDateTime = (val: any) => {
+    if (!val) return "-";
+    try {
+      const d = val.toDate ? val.toDate() : new Date(val);
+      if (isNaN(d.getTime())) return "-";
+      return d.toLocaleString('fr-FR', { 
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+    } catch (e) {
+      return "-";
+    }
+  };
+
+  const formatDate = (val: any) => {
+    if (!val) return "-";
+    try {
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+        const [y, m, d] = val.split('-');
+        return `${d}/${m}/${y}`;
+      }
+      const d = val.toDate ? val.toDate() : new Date(val);
+      if (isNaN(d.getTime())) return "-";
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch (e) {
+      return "-";
+    }
+  };
+
+  const getTimestampSeconds = (value?: any) => {
+    return value?.seconds ?? value?._seconds ?? null;
+  };
+
   const handleSaveUniLav = async () => {
     if (!user || !mandatoryCommunication || !entityId) return;
     setSavingUniLav(true);
@@ -505,39 +540,6 @@ export default function EditEmploymentOfferPage() {
     } finally {
       setSavingUniLav(false);
     }
-  };
-
-  const formatDateTime = (val: any) => {
-    if (!val) return "-";
-    try {
-      const d = val.toDate ? val.toDate() : new Date(val);
-      if (isNaN(d.getTime())) return "-";
-      return d.toLocaleString('fr-FR', { 
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit'
-      });
-    } catch (e) {
-      return "-";
-    }
-  };
-
-  const formatDate = (val: any) => {
-    if (!val) return "-";
-    try {
-      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
-        const [y, m, d] = val.split('-');
-        return `${d}/${m}/${y}`;
-      }
-      const d = val.toDate ? val.toDate() : new Date(val);
-      if (isNaN(d.getTime())) return "-";
-      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    } catch (e) {
-      return "-";
-    }
-  };
-
-  const getTimestampSeconds = (value?: any) => {
-    return value?.seconds ?? value?._seconds ?? null;
   };
 
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
