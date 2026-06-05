@@ -112,7 +112,7 @@ export default function ContractDetailPage() {
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
   const [processing, setProcessing] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -1167,21 +1167,21 @@ export default function ContractDetailPage() {
           <div className="py-6 space-y-6">
             <div className="space-y-2">
                <Label className="text-[10px] uppercase font-black text-muted-foreground">Titre du document (Requis)</Label>
-               <Input 
+               <input 
                  value={signedDocForm.title} 
                  onChange={(e) => setSignedDocForm(p => ({...p, title: e.target.value}))}
                  placeholder="Ex: Contrat_CDI_Dumont_Signe.pdf"
-                 className="h-12 rounded-xl"
+                 className="flex h-12 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                />
             </div>
             
             <div className="space-y-2">
                <Label className="text-[10px] uppercase font-black text-muted-foreground">Lien ou Référence (Optionnel)</Label>
-               <Input 
+               <input 
                  value={signedDocForm.url} 
                  onChange={(e) => setSignedDocForm(p => ({...p, url: e.target.value}))}
                  placeholder="https://..."
-                 className="h-12 rounded-xl"
+                 className="flex h-12 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                />
             </div>
 
@@ -1383,7 +1383,7 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
                 {history.map(d => (
-                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} loadingId={loadingActionId} compactVersion />
+                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} loadingId={loadingId} compactVersion />
                 ))}
               </CollapsibleContent>
             </Collapsible>
