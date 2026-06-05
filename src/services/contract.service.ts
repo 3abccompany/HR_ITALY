@@ -4,7 +4,12 @@ import {
   runTransaction, 
   serverTimestamp,
   getDoc,
-  updateDoc
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  setDoc
 } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
@@ -287,7 +292,7 @@ export async function rollbackToDraft(entityId: string, contractId: string, acto
 
 /**
  * Terminates an active contract.
- * Updates both the contract document and the linked employee.
+ * Updates the contract, the linked employee status, read models, and timeline.
  */
 export async function terminateContractAction(
   entityId: string, 
@@ -305,13 +310,25 @@ export async function terminateContractAction(
 
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
+  const employeeViewRef = doc(db, `entities/${entityId}/employeeViews`, employeeId);
+
+  // 1. Fetch other active contracts BEFORE transaction (reads must happen before writes)
+  const q = query(
+    collection(db, `entities/${entityId}/contracts`),
+    where("employeeId", "==", employeeId),
+    where("status", "==", "active")
+  );
+  const otherActiveSnap = await getDocs(q);
+  const otherActiveContracts = otherActiveSnap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Contract))
+    .filter(c => c.contractId !== contractId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
+    // 2. READ SNAPSHOTS
     const snap = await transaction.get(contractRef);
     const empSnap = await transaction.get(employeeRef);
 
-    // 2. VALIDATIONS
+    // 3. VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
@@ -319,12 +336,13 @@ export async function terminateContractAction(
       throw new Error("Seul un contrat actif peut être terminé.");
     }
 
-    // Basic date validation: end date cannot be before start date
     if (new Date(terminationData.actualEndDate) < new Date(contract.startDate)) {
       throw new Error("La date de fin ne peut pas être antérieure à la date de début.");
     }
 
-    // 3. ALL WRITES AFTER ALL READS
+    // 4. WRITES
+    
+    // A. Terminate Contract
     transaction.update(contractRef, {
       status: "terminated",
       actualEndDate: terminationData.actualEndDate,
@@ -336,16 +354,77 @@ export async function terminateContractAction(
       updatedBy: actorUid,
     });
 
-    if (empSnap.exists() && empSnap.data().activeContractId === contractId) {
-      transaction.update(employeeRef, {
-        activeContractId: null,
-        updatedAt: serverTimestamp(),
+    // B. Synchronize Employee
+    if (empSnap.exists()) {
+      const empData = empSnap.data();
+      const isCurrentlyActiveContract = empData.activeContractId === contractId;
+
+      if (isCurrentlyActiveContract) {
+        if (otherActiveContracts.length > 0) {
+          // Promote next available active contract
+          const nextContract = otherActiveContracts[0];
+          transaction.update(employeeRef, {
+            activeContractId: nextContract.contractId,
+            updatedAt: serverTimestamp(),
+          });
+          
+          // Sync View Model
+          transaction.set(employeeViewRef, {
+            activeContractId: nextContract.contractId,
+            updatedAt: serverTimestamp(),
+          }, { merge: true });
+        } else {
+          // No more active contracts: Mark employee as terminated
+          transaction.update(employeeRef, {
+            activeContractId: null,
+            status: "terminated",
+            terminationDate: terminationData.actualEndDate,
+            terminationReason: terminationData.terminationReason,
+            updatedAt: serverTimestamp(),
+          });
+
+          // Sync View Model
+          transaction.set(employeeViewRef, {
+            activeContractId: null,
+            status: "terminated",
+            updatedAt: serverTimestamp(),
+          }, { merge: true });
+
+          // Update Person Lifecycle Status
+          if (contract.personId) {
+             const personRef = doc(db, `entities/${entityId}/persons`, contract.personId);
+             transaction.update(personRef, {
+               currentLifecycleStatus: "former_employee",
+               updatedAt: serverTimestamp(),
+               updatedBy: actorUid
+             });
+          }
+        }
+      }
+    }
+
+    // C. Record Timeline Event
+    if (contract.personId) {
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(timelineRef, {
+        eventId: timelineRef.id,
+        entityId,
+        personId: contract.personId,
+        employeeId,
+        contractId,
+        type: "contract.terminated",
+        label: "Contrat terminé",
+        description: `Le contrat ${contract.employeeCode || contractId} a été terminé le ${terminationData.actualEndDate}. Motif: ${terminationData.terminationReason}`,
+        sourceCollection: "contracts",
+        sourceId: contractId,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
       });
     }
 
-    // Implicitly return from transaction
     return { employeeId };
   }).then(async (res) => {
+    // 5. Audit Logging (Outside transaction for better performance)
     await createAuditLog({
       userId: actorUid,
       entityId,
