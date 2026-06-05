@@ -214,7 +214,7 @@ export async function activateContractAction(entityId: string, contractId: strin
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
-  await runTransaction(db, async (transaction) => {
+  const activated = await runTransaction(db, async (transaction) => {
     // ALL READS FIRST
     const snap = await transaction.get(contractRef);
     const empSnap = await transaction.get(employeeRef);
@@ -222,6 +222,11 @@ export async function activateContractAction(entityId: string, contractId: strin
     // VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
+
+    // Guard: Prevent duplicate activation and timeline events
+    if (contract.status === "active") {
+      return false;
+    }
 
     const hasProof = !!(
       contract.signedDocumentId || 
@@ -275,16 +280,20 @@ export async function activateContractAction(entityId: string, contractId: strin
         createdBy: actorUid,
       });
     }
+
+    return true;
   });
 
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "contract.activated",
-    resourceType: "contract",
-    resourceId: contractId,
-    details: { employeeId }
-  });
+  if (activated) {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "contract.activated",
+      resourceType: "contract",
+      resourceId: contractId,
+      details: { employeeId }
+    });
+  }
 }
 
 /**
