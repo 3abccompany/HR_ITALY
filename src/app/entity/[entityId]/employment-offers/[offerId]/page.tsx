@@ -218,7 +218,7 @@ export default function EditEmploymentOfferPage() {
       levelLabel: "",
       minGrossMonthly: 0,
       minGrossHourly: 0,
-      proposedGrossMonthly: ccnl?.standardWeeklyHours ? 0 : p.proposedGrossMonthly
+      proposedGrossMonthly: ccnl?.standardWeeklyHours ? 0 : (p.proposedGrossMonthly || 0)
     }));
   };
 
@@ -533,10 +533,10 @@ export default function EditEmploymentOfferPage() {
     );
   }
 
-  const isAccepted = offer.status === 'accepted';
-  const isDeclined = offer.status === 'declined' || (offer.status as string).toLowerCase() === 'declined';
-  const isConverted = offer.conversionStatus === 'converted';
-  const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer.status) || isConverted;
+  const isAccepted = offer?.status === 'accepted';
+  const isDeclined = offer?.status === 'declined' || (offer?.status as string).toLowerCase() === 'declined';
+  const isConverted = offer?.conversionStatus === 'converted';
+  const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer?.status || '') || isConverted;
 
   const isUniLavDone = Array.isArray(communications)
     ? communications.some(
@@ -549,8 +549,8 @@ export default function EditEmploymentOfferPage() {
   const resolvedDepartment = formData.departmentName || need?.departmentName || "Non renseigné";
   const resolvedWorksite = formData.worksiteName || need?.worksiteName || need?.worksiteNameSnapshot || "Non renseigné";
   
-  const sentAtSeconds = getTimestampSeconds(offer.sentAt);
-  const viewedAtSeconds = getTimestampSeconds(offer.viewedAt);
+  const sentAtSeconds = getTimestampSeconds(offer?.sentAt);
+  const viewedAtSeconds = getTimestampSeconds(offer?.viewedAt);
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
@@ -926,16 +926,16 @@ export default function EditEmploymentOfferPage() {
                         <div className="grid grid-cols-2 gap-4">
                            <div>
                               <p className="text-[8px] uppercase font-bold text-muted-foreground">Protocole</p>
-                              <p className="text-xs font-mono font-bold text-slate-800">{mandatoryCommunication.protocolNumber}</p>
+                              <p className="text-xs font-mono font-bold text-slate-800">{mandatoryCommunication?.protocolNumber}</p>
                            </div>
                            <div>
                               <p className="text-[8px] uppercase font-bold text-muted-foreground">Date</p>
                               <p className="text-xs font-bold text-slate-800">
-                                {mandatoryCommunication.submittedAt && new Date(getTimestampSeconds(mandatoryCommunication.submittedAt) * 1000).toLocaleDateString('fr-FR')}
+                                {mandatoryCommunication?.submittedAt && new Date(getTimestampSeconds(mandatoryCommunication.submittedAt) * 1000).toLocaleDateString('fr-FR')}
                               </p>
                            </div>
                         </div>
-                        {mandatoryCommunication.testMode && (
+                        {mandatoryCommunication?.testMode && (
                           <div className="mt-2 pt-2 border-t border-green-100 flex items-center gap-2 text-[9px] font-black text-orange-600 uppercase">
                              <AlertCircle className="w-3 h-3" />
                              Validé en mode hors-ligne / test
@@ -950,7 +950,7 @@ export default function EditEmploymentOfferPage() {
                         variant="outline"
                         className="w-full rounded-xl font-bold"
                         onClick={async () => {
-                          const emailBody = mandatoryCommunication.emailBody || "";
+                          const emailBody = mandatoryCommunication?.emailBody || "";
                           if (!emailBody) {
                             toast({ title: "Email non disponible", variant: "destructive" });
                             return;

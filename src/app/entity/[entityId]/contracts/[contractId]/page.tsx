@@ -316,16 +316,6 @@ export default function ContractDetailPage() {
     }
   };
 
-  const formatMoney = (value: any, decimals = 2) => {
-    if (value === undefined || value === null) return "-";
-    const num = Number(value);
-    if (!Number.isFinite(num)) return "-";
-    return num.toLocaleString("fr-FR", {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    });
-  };
-
   const formatDate = (val: any) => {
     if (!val) return "-";
     try {
@@ -582,10 +572,10 @@ export default function ContractDetailPage() {
 
   const businessReference = contract.employeeCode || effectiveData.employeeCode || "Brouillon d'intégration";
   const canUpdate = hasPermission("contracts.update");
-  const isDraft = contract.status === 'draft';
-  const isPendingSignature = contract.status === 'pending_signature';
-  const isActive = contract.status === 'active';
-  const isTerminated = contract.status === 'terminated';
+  const isDraft = contract?.status === 'draft';
+  const isPendingSignature = contract?.status === 'pending_signature';
+  const isActive = contract?.status === 'active';
+  const isTerminated = contract?.status === 'terminated';
   
   const hasSignedDoc = !!(
     contract.signedDocumentId || 

@@ -28,7 +28,7 @@ import {
 import { useFirebase, useDoc, useCollection, useUser } from "@/firebase";
 import { doc, DocumentReference, query, collection, where } from "firebase/firestore";
 import { Employee } from "@/types/employee";
-import { Contract } from "@/types/contract";
+import { Contract, ContractStatus } from "@/types/contract";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
 import { getDocumentDownloadUrl, replaceHRDocument } from "@/services/document.service";
@@ -518,7 +518,7 @@ export default function EmployeeDetailPage() {
                       <div className="bg-accent/5 p-3 rounded-xl border border-accent/10 flex items-start gap-3">
                          <AlertTriangle className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                          <p className="text-[10px] font-bold text-accent-foreground leading-relaxed">
-                            {pendingContract.status === 'pending_signature' 
+                            {pendingContract?.status === 'pending_signature' 
                               ? "Ce contrat est prêt et en attente de signature. Il n’est pas encore actif."
                               : "Ce contrat est en cours de préparation et n’est pas encore prêt pour signature."
                             }
