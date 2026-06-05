@@ -323,6 +323,11 @@ export default function EmployeeDetailPage() {
     );
   }
 
+  const contractExpiryDate = parseSafeDate(contract?.endDate);
+  const today = startOfDay(new Date());
+  const isContractExpired = contract?.status === 'active' && contractExpiryDate && isBefore(contractExpiryDate, today);
+  const isContractExpiringSoon = contract?.status === 'active' && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30));
+
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">

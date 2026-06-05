@@ -173,7 +173,7 @@ export default function ContractDetailPage() {
     };
 
     sorted.forEach(docItem => {
-      if (docItem.documentType === 'signed_contract' || docItem.documentType === 'contract') {
+      if (docItem.documentType === 'signed_contract' || (docItem.documentType as string) === 'contract') {
         if (!bundles.signed) bundles.signed = docItem;
         else bundles.others.push(docItem);
       } else if (docItem.documentType === 'generated_contract_pdf') {
@@ -393,8 +393,8 @@ export default function ContractDetailPage() {
     }
 
     // Outdated Check
-    const pdfDate = parseSafeDate(contract.generatedPdfAt);
-    const contentDate = parseSafeDate(contract.contentUpdatedAt);
+    const pdfDate = parseSafeDate(contract?.generatedPdfAt);
+    const contentDate = parseSafeDate(contract?.contentUpdatedAt);
 
     if (pdfDate && contentDate && contentDate > pdfDate) {
       setValidationErrors(["Le contrat a été modifié après la génération du PDF. Veuillez régénérer le PDF."]);
@@ -588,12 +588,12 @@ export default function ContractDetailPage() {
     contract.signedDocumentStoragePath
   );
 
-  const pdfDate = parseSafeDate(contract.generatedPdfAt);
-  const contentDate = parseSafeDate(contract.contentUpdatedAt);
+  const pdfDate = parseSafeDate(contract?.generatedPdfAt);
+  const contentDate = parseSafeDate(contract?.contentUpdatedAt);
   const isPdfOutdated = Boolean(pdfDate && contentDate && contentDate > pdfDate);
 
   // Expiry Logic
-  const contractExpiryDate = parseSafeDate(contract.endDate);
+  const contractExpiryDate = parseSafeDate(contract?.endDate);
   const today = startOfDay(new Date());
   const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
   const isContractExpiringSoon = isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30));
