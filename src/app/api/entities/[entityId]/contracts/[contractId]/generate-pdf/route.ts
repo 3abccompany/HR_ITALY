@@ -87,7 +87,7 @@ export async function POST(
     }
 
     // 5. Render PDF
-    const buffer = await renderToBuffer(React.createElement(ContractPdfTemplate, { contract }));
+    const buffer = await renderToBuffer(React.createElement(ContractPdfTemplate, { contract }) as any);
 
     // 6. Upload to Storage
     const nextVersion = (contract.generatedPdfVersion || 0) + 1;
