@@ -98,6 +98,12 @@ export default function EditEmploymentOfferPage() {
   const { data: dossiers } = useCollection<PreHireDossier>(dossierQuery);
   const dossier = dossiers?.[0];
 
+  // Standalone Employment Request foundation check
+  const standaloneRequestRef = useMemo(() => 
+    db && entityId && offerId ? doc(db, `entities/${entityId}/employmentRequests`, `unilav_${offerId}`) as DocumentReference<any> : null,
+  [db, entityId, offerId]);
+  const { data: standaloneRequest, loading: loadingStandalone } = useDoc<any>(standaloneRequestRef);
+
   // Dossier Checklist Query
   const checklistQuery = useMemo(() => dossier && db && entityId ? query(collection(db, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`)) as Query<PreHireDocument> : null, [db, entityId, dossier]);
   const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
@@ -301,7 +307,7 @@ export default function EditEmploymentOfferPage() {
 
     setSaving(true);
     try {
-      await updateEmploymentOffer(entityId, offerId, { ...formData, status: nextStatus || offer?.status || 'draft' }, user.uid);
+      await updateEmploymentOffer(entityId, offerId, { ...formData, status: nextStatus || (offer?.status as EmploymentOfferStatus) || 'draft' }, user.uid);
       toast({ title: "Enregistré" });
     } catch (err: any) {
       console.error("Save error:", err);
@@ -547,7 +553,7 @@ export default function EditEmploymentOfferPage() {
   }
 
   const isAccepted = offer?.status === 'accepted';
-  const isDeclined = offer?.status === 'declined' || (offer?.status as string).toLowerCase() === 'declined';
+  const isDeclined = (offer?.status || '').toString().toLowerCase() === 'declined';
   const isConverted = offer?.conversionStatus === 'converted';
   const isReadOnly = ["sent", "viewed", "accepted", "declined", "cancelled", "expired"].includes(offer?.status || '') || isConverted;
 
@@ -860,11 +866,19 @@ export default function EditEmploymentOfferPage() {
                       <div className="space-y-4 pt-4 border-t border-dashed">
                         <div className="flex items-center justify-between gap-4">
                           <p className="text-[10px] font-black uppercase text-primary tracking-widest">Enregistrement du protocole UniLav</p>
-                          <Button asChild variant="outline" size="sm" className="h-7 text-[10px] font-black uppercase border-primary/10 gap-2">
-                             <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
-                                Gérer dans le module CPI foundation <ChevronRight className="w-3 h-3" />
-                             </Link>
-                          </Button>
+                          {loadingStandalone ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-primary/20" />
+                          ) : standaloneRequest ? (
+                            <Button asChild variant="outline" size="sm" className="h-7 text-[10px] font-black uppercase border-primary/10 gap-2">
+                               <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
+                                  Gérer dans le module CPI foundation <ChevronRight className="w-3 h-3" />
+                               </Link>
+                            </Button>
+                          ) : (
+                            <span className="text-[9px] font-bold text-muted-foreground italic bg-secondary/30 px-2 py-0.5 rounded">
+                               Dossier CPI autonome non créé (offre ancienne)
+                            </span>
+                          )}
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">

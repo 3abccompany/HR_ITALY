@@ -231,6 +231,16 @@ service cloud.firestore {
            allow read: if isEntityMember(entityId) || isPlatformAdmin();
         }
       }
+
+      match /employmentRequests/{requestId} {
+        allow read: if hasPermission(entityId, 'employmentRequests.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'employmentRequests.create') || hasPermission(entityId, 'employmentRequests.update') || isPlatformAdmin();
+      }
+
+      match /consultants/{consultantId} {
+        allow read: if hasPermission(entityId, 'consultants.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'consultants.create') || hasPermission(entityId, 'consultants.update') || isPlatformAdmin();
+      }
     }
 
     // --- Global Reference Data ---

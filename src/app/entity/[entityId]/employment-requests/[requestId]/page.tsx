@@ -26,7 +26,9 @@ export default function EmploymentRequestDetailPage() {
   const entityId = params?.entityId as string;
   const requestId = params?.requestId as string;
   const { db } = useFirebase();
-  const { loading: membershipLoading } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+
+  const canRead = hasPermission("employmentRequests.read");
 
   const requestRef = useMemo(() => 
     db && entityId && requestId ? (doc(db, `entities/${entityId}/employmentRequests`, requestId) as DocumentReference<EmploymentRequest>) : null,
@@ -36,11 +38,30 @@ export default function EmploymentRequestDetailPage() {
 
   if (membershipLoading || loading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
+  if (!canRead) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <Card className="bg-destructive/5 border-destructive/20 rounded-3xl">
+          <CardContent className="flex flex-col items-center py-12 text-center">
+            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
+            <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
+            <p className="text-muted-foreground">
+              Vous n'avez pas la permission de consulter les demandes d'embauche.
+              Votre membership doit inclure le privilège "employmentRequests.read".
+            </p>
+            <Button variant="outline" onClick={() => router.back()} className="mt-6">Retour</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (!request) {
     return (
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Dossier introuvable</h2>
+        <p className="text-sm text-muted-foreground mt-2">Le dossier demandé n'existe pas ou n'a pas encore été synchronisé.</p>
         <Button onClick={() => router.push(`/entity/${entityId}/employment-requests`)} className="mt-8">Retour au registre</Button>
       </div>
     );
