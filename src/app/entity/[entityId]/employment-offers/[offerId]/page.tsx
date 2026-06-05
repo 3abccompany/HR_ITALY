@@ -205,20 +205,20 @@ export default function EditEmploymentOfferPage() {
       return;
     }
 
-    const ccnl = activeCcnls?.find((c: any) => c.id === ccnlId);
+    const foundCcnl = activeCcnls?.find((c: any) => c.id === ccnlId);
     setFormData(p => ({
       ...p,
-      ccnlId: ccnlId,
-      ccnlName: ccnl?.name || "",
-      cnelCode: ccnl?.cnelCode || "",
-      monthlyPayments: ccnl?.monthlyPayments || 13,
-      hourlyDivisor: ccnl?.hourlyDivisor || 173,
+      ccnlId,
+      ccnlName: foundCcnl?.name || "",
+      cnelCode: foundCcnl?.cnelCode || "",
+      monthlyPayments: foundCcnl?.monthlyPayments || 13,
+      hourlyDivisor: foundCcnl?.hourlyDivisor || 173,
       levelId: "",
       levelCode: "",
       levelLabel: "",
       minGrossMonthly: 0,
       minGrossHourly: 0,
-      proposedGrossMonthly: ccnl?.standardWeeklyHours ? 0 : (p.proposedGrossMonthly || 0)
+      proposedGrossMonthly: foundCcnl?.standardWeeklyHours ? 0 : (p.proposedGrossMonthly || 0)
     }));
   };
 
@@ -236,18 +236,18 @@ export default function EditEmploymentOfferPage() {
        return;
     }
 
-    const level = activeLevels?.find(l => l.id === levelId);
+    const foundLevel = activeLevels?.find(l => l.id === levelId);
     setFormData(p => {
-      const monthly = level?.minimumGrossMonthly || 0;
+      const monthly = foundLevel?.minimumGrossMonthly || 0;
       const payments = p.monthlyPayments || 13;
       return {
         ...p,
-        levelId: levelId,
-        levelCode: level?.levelCode || "",
-        levelLabel: level?.label || "",
-        qualificationLabel: level?.qualificationLabel || "",
+        levelId,
+        levelCode: foundLevel?.levelCode || "",
+        levelLabel: foundLevel?.label || "",
+        qualificationLabel: foundLevel?.qualificationLabel || "",
         minGrossMonthly: monthly,
-        minGrossHourly: level?.minimumGrossHourly || 0,
+        minGrossHourly: foundLevel?.minimumGrossHourly || 0,
         proposedGrossMonthly: monthly,
         proposedGrossAnnual: monthly * payments
       };
@@ -703,7 +703,7 @@ export default function EditEmploymentOfferPage() {
                       <div className="space-y-3">
                          <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest px-1">Checklist documents obligatoires (Italie)</p>
                          <div className="grid gap-3">
-                            {loadingChecklist ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : checklist?.map(item => {
+                            {checklist?.map(item => {
                               const hasFile = !!(item.fileId);
                               
                               return (
@@ -843,7 +843,6 @@ export default function EditEmploymentOfferPage() {
                       </div>
                     </div>
 
-                    {/* UniLav Protocol Recording Form */}
                     {dossier?.readyForConversion && !isConverted && (
                       <div className="space-y-4 pt-4 border-t border-dashed">
                         <div className="flex items-center justify-between gap-4">
@@ -896,7 +895,6 @@ export default function EditEmploymentOfferPage() {
                         
                         <Separator className="my-4" />
                         
-                        {/* Test Mode Area */}
                         <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100 space-y-3">
                            <div className="flex items-center gap-2 text-orange-800 text-[10px] font-black uppercase tracking-wider">
                               <AlertCircle className="w-4 h-4" />
@@ -983,7 +981,6 @@ export default function EditEmploymentOfferPage() {
             </div>
           )}
 
-          {/* Offer Editor Sections */}
           <Card className="border-primary/10 shadow-xl rounded-3xl overflow-hidden">
             <CardHeader className="bg-primary/5 border-b py-4">
               <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
@@ -1181,7 +1178,6 @@ export default function EditEmploymentOfferPage() {
         </div>
       </div>
 
-      {/* Reject Modal */}
       <Dialog open={rejectItem !== null} onOpenChange={() => setRejectItem(null)}>
         <DialogContent className="rounded-[2rem]">
           <DialogHeader><DialogTitle>Rejeter le document</DialogTitle><DialogDescription>Précisez la raison pour informer le candidat.</DialogDescription></DialogHeader>
@@ -1196,7 +1192,6 @@ export default function EditEmploymentOfferPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Upload Pre-hire Doc Confirmation Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[450px]">
           <DialogHeader>
@@ -1228,7 +1223,6 @@ export default function EditEmploymentOfferPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Convert Confirmation */}
       <AlertDialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>

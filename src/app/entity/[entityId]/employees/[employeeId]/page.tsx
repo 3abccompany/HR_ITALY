@@ -28,7 +28,7 @@ import {
 import { useFirebase, useDoc, useCollection, useUser } from "@/firebase";
 import { doc, DocumentReference, query, collection, where } from "firebase/firestore";
 import { Employee } from "@/types/employee";
-import { Contract, ContractStatus } from "@/types/contract";
+import { Contract } from "@/types/contract";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
 import { getDocumentDownloadUrl, replaceHRDocument } from "@/services/document.service";
@@ -178,20 +178,13 @@ export default function EmployeeDetailPage() {
     const bundles: Record<string, { current?: HRDocument, history: HRDocument[] }> = {};
 
     allDocs.forEach(docItem => {
-      // Logic for bundle key: 
-      // 1. Checklist items (Pre-hire) -> group by unique slot ID within dossier
-      // 2. Identity/Residence/Tax -> group by type
-      // 3. Contracts -> group by contractId
-      // 4. Training/Medical -> group by relatedId
-      // 5. Everything else -> group by rootDocumentId
+      const d = docItem as any;
       let key = docItem.rootDocumentId || docItem.id;
       
       const identityTypes = ['identity_document', 'fiscal_code', 'residence_permit', 'work_permit'];
       
-      if (docItem.checklistItemId) {
-        // Pre-hire checklist items MUST be isolated by their unique slot ID within the dossier
-        // This prevents different docs (ID, IBAN, etc.) from being incorrectly treated as versions of each other
-        key = `checklist_${docItem.preHireDossierId || docItem.relatedId || "unknown"}_${docItem.checklistItemId}`;
+      if (d.checklistItemId) {
+        key = `checklist_${d.preHireDossierId || docItem.relatedId || "unknown"}_${d.checklistItemId}`;
       } else if (identityTypes.includes(docItem.documentType)) {
         key = `type_${docItem.documentType}`;
       } else if (docItem.contractId) {
@@ -202,13 +195,10 @@ export default function EmployeeDetailPage() {
 
       if (!bundles[key]) bundles[key] = { history: [] };
 
-      // Current document is the one that hasn't been replaced
       if (docItem.status !== "replaced" && !docItem.replacedById) {
-        // If there's already a "current", the newest one takes precedence
         if (!bundles[key].current) {
           bundles[key].current = docItem;
         } else {
-          // Compare dates
           const currentT = parseSafeDate(bundles[key].current!.uploadedAt)?.getTime() || 0;
           const newT = parseSafeDate(docItem.uploadedAt)?.getTime() || 0;
           if (newT > currentT) {
@@ -223,7 +213,6 @@ export default function EmployeeDetailPage() {
       }
     });
 
-    // Final sorting of histories
     Object.values(bundles).forEach(b => {
       b.history.sort((x, y) => {
         const tx = parseSafeDate(x.uploadedAt)?.getTime() || 0;
@@ -370,7 +359,6 @@ export default function EmployeeDetailPage() {
             </TabsList>
 
             <TabsContent value="profil" className="mt-0 space-y-8 animate-in fade-in slide-in-from-left-2 duration-300">
-              {/* Identity Card */}
               <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
                 <CardHeader className="bg-primary/5 border-b py-4 px-8">
                     <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -389,7 +377,6 @@ export default function EmployeeDetailPage() {
                 </CardContent>
               </Card>
 
-              {/* Professional Context */}
               <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
                 <CardHeader className="bg-primary/5 border-b py-4 px-8">
                     <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -449,7 +436,6 @@ export default function EmployeeDetailPage() {
         </div>
 
         <div className="space-y-8">
-          {/* Active Contract Summary */}
           <Card className="border-primary/20 bg-primary/90 text-white shadow-2xl shadow-primary/20 rounded-[2.5rem] overflow-hidden">
              <CardHeader className="bg-white/10 py-6 px-8 border-b border-white/10">
                 <CardTitle className="text-xs font-black uppercase tracking-[0.2em] flex items-center gap-2">
@@ -488,7 +474,6 @@ export default function EmployeeDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Pending / Onboarding Contract */}
           {employee.pendingContractId && !contract && (
             <Card className="border-dashed border-2 border-accent/30 bg-white shadow-lg rounded-[2.5rem] overflow-hidden animate-in fade-in slide-in-from-top-2">
                <CardHeader className="bg-accent/5 py-4 px-8 border-b">
@@ -537,7 +522,6 @@ export default function EmployeeDetailPage() {
             </Card>
           )}
 
-          {/* Quick Shortcuts */}
           <div className="space-y-3">
              <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Actions Rapides</p>
              <Button variant="outline" className="w-full h-11 rounded-xl justify-start gap-3 border-primary/10 opacity-50 cursor-not-allowed">
@@ -553,7 +537,6 @@ export default function EmployeeDetailPage() {
         </div>
       </div>
 
-      {/* Replacement Dialog */}
       <Dialog open={!!replacingDoc} onOpenChange={(open) => !open && setReplacingDoc(null)}>
         <DialogContent className="sm:max-w-[500px] rounded-[2.5rem]">
           <DialogHeader>
@@ -679,7 +662,6 @@ function DocumentGroupSection({ title, bundles, icon: Icon, onOpen, onReplace, l
                     </p>
                  </div>
 
-                 {/* 1. Signed Section */}
                  <div className="space-y-3">
                     <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-2 flex items-center gap-2">
                        <CheckCircle2 className="w-3 h-3 text-green-600" /> Contrat officiel signé
@@ -720,7 +702,6 @@ function DocumentGroupSection({ title, bundles, icon: Icon, onOpen, onReplace, l
                     )}
                  </div>
 
-                 {/* 2. Generated PDFs Section */}
                  <div className="space-y-3">
                     <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-2 flex items-center gap-2">
                        <FileCode className="w-3 h-3 text-primary" /> Documents de préparation non signés
@@ -762,7 +743,6 @@ function DocumentGroupSection({ title, bundles, icon: Icon, onOpen, onReplace, l
                     )}
                  </div>
 
-                 {/* 3. Termination / Others */}
                  {terminationDocs.length > 0 && (
                     <div className="space-y-3">
                        <p className="text-[10px] font-black uppercase tracking-widest text-red-400 px-2 flex items-center gap-2">

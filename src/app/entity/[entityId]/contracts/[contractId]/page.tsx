@@ -152,7 +152,7 @@ export default function ContractDetailPage() {
     ) as Query<HRDocument>;
   }, [db, entityId, contractId, canReadDocs]);
 
-  const { data: contractDocs, loading: loadingDocs } = useCollection<HRDocument>(docsQuery);
+  const { data: contractDocs } = useCollection<HRDocument>(docsQuery);
 
   // Grouped Documents for Display
   const groupedDocs = useMemo(() => {
@@ -172,17 +172,17 @@ export default function ContractDetailPage() {
       others: [] as HRDocument[]
     };
 
-    sorted.forEach(doc => {
-      if (doc.documentType === 'signed_contract' || doc.documentType === 'contract') {
-        if (!bundles.signed) bundles.signed = doc;
-        else bundles.others.push(doc);
-      } else if (doc.documentType === 'generated_contract_pdf') {
-        if (!bundles.latestGenerated) bundles.latestGenerated = doc;
-        else bundles.history.push(doc);
-      } else if (doc.documentType === 'termination_document') {
-        bundles.termination.push(doc);
+    sorted.forEach(docItem => {
+      if (docItem.documentType === 'signed_contract' || docItem.documentType === 'contract') {
+        if (!bundles.signed) bundles.signed = docItem;
+        else bundles.others.push(docItem);
+      } else if (docItem.documentType === 'generated_contract_pdf') {
+        if (!bundles.latestGenerated) bundles.latestGenerated = docItem;
+        else bundles.history.push(docItem);
+      } else if (docItem.documentType === 'termination_document') {
+        bundles.termination.push(docItem);
       } else {
-        bundles.others.push(doc);
+        bundles.others.push(docItem);
       }
     });
 
@@ -268,6 +268,9 @@ export default function ContractDetailPage() {
       uniLavSubmissionDate: getEffectiveValue('uniLavSubmissionDate', mandatoryCommunication?.submittedAt ? 
         (mandatoryCommunication.submittedAt.seconds ? new Date(mandatoryCommunication.submittedAt.seconds * 1000).toISOString().split('T')[0] : mandatoryCommunication.submittedAt) : ""),
       uniLavReceiptUrl: getEffectiveValue('uniLavReceiptUrl', mandatoryCommunication?.receiptPdfUrl),
+      missionsSnapshot: getEffectiveValue('missionsSnapshot', []),
+      workingScheduleNotes: getEffectiveValue('workingScheduleNotes', ""),
+      overtimeNote: getEffectiveValue('overtimeNote', ""),
     };
   }, [contract, entity, employee, person, offer, mandatoryCommunication]);
 
@@ -426,7 +429,7 @@ export default function ContractDetailPage() {
         msg = "Un autre contrat actif existe déjà pour cet employé.";
       }
       if (err.message === "MISSING_SIGNED_DOCUMENT") {
-        msg = "Veuillez enregistrer le contrat signé avant activation.";
+        msg = "Veuillez enregistrer le contrat signé avant l'activation.";
       }
       toast({ variant: "destructive", title: "Erreur", description: msg });
     } finally {
@@ -497,7 +500,7 @@ export default function ContractDetailPage() {
 
       await recordSignedDocumentReference(entityId, contractId, {
         title: signedDocForm.title,
-        url: signedDocForm.url,
+        url,
         reference: signedDocForm.reference,
         fileName,
         storagePath,
@@ -537,7 +540,7 @@ export default function ContractDetailPage() {
           relatedModule: "contracts",
           relatedId: contract.contractId,
           status: "valid"
-        }, user.uid, membership?.userDisplayName);
+        }, user.uid, membership?.userDisplayName || "Utilisateur");
       }
 
       await terminateContractAction(
@@ -709,8 +712,8 @@ export default function ContractDetailPage() {
                        size="sm" 
                        className="h-8 rounded-xl bg-white text-xs font-bold gap-2"
                        onClick={() => {
-                         const doc = contractDocs?.find(d => d.id === contract.terminationDocumentId);
-                         if (doc) handleOpenDoc(doc.storagePath, doc.id);
+                         const foundDoc = contractDocs?.find(d => d.id === contract.terminationDocumentId);
+                         if (foundDoc) handleOpenDoc(foundDoc.storagePath, foundDoc.id);
                          else toast({ variant: "destructive", title: "Erreur", description: "Le document est introuvable." });
                        }}
                        disabled={!!loadingActionId}
@@ -898,9 +901,9 @@ export default function ContractDetailPage() {
                   </CardTitle>
                </CardHeader>
                <CardContent className="p-8">
-                  {loadingDocs ? (
+                  {!contractDocs ? (
                     <div className="py-12 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
-                  ) : contractDocs?.length === 0 ? (
+                  ) : contractDocs.length === 0 ? (
                     <div className="py-8 text-center text-xs text-muted-foreground italic">Aucun document lié à ce contrat.</div>
                   ) : (
                     <div className="space-y-8">
