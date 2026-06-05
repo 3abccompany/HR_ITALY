@@ -1114,6 +1114,7 @@ export default function ContractDetailPage() {
                 <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
                 <Separator className="opacity-20" />
                 {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
+                {contract.signedAt && <AuditRow label="Signé le" value={formatDateTime(contract.signedAt)} />}
                 {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
                 {contract.terminatedAt && <AuditRow label="Clôturé le" value={formatDateTime(contract.terminatedAt)} />}
                 <Separator className="opacity-20" />

@@ -178,7 +178,7 @@ export default function EmployeeDetailPage() {
     const bundles: Record<string, { current?: HRDocument, history: HRDocument[] }> = {};
 
     allDocs.forEach(docItem => {
-      const d = docItem as any;
+      const d = docItem as any; // Cast to safely access checklistItemId/preHireDossierId
       let key = docItem.rootDocumentId || docItem.id;
       
       const identityTypes = ['identity_document', 'identity_card', 'fiscal_code', 'tax_code', 'residence_permit', 'work_permit'];

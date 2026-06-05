@@ -7,7 +7,7 @@ import {
   Briefcase, Building2, User, Info, 
   ShieldCheck, Calendar, FileText, 
   Hash, Mail, 
-  History, AlertCircle
+  History, AlertCircle, Eye
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
