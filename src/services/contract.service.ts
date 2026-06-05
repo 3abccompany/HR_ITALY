@@ -256,6 +256,25 @@ export async function activateContractAction(entityId: string, contractId: strin
       pendingContractId: null, // Clear onboarding link if it matches
       updatedAt: serverTimestamp(),
     });
+
+    // Timeline Event
+    if (contract.personId) {
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(timelineRef, {
+        eventId: timelineRef.id,
+        entityId,
+        personId: contract.personId,
+        employeeId,
+        contractId,
+        type: "contract.activated",
+        label: "Contrat activé",
+        description: `Le contrat ${contract.employeeCode || contractId} a été activé.`,
+        sourceCollection: "contracts",
+        sourceId: contractId,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+      });
+    }
   });
 
   await createAuditLog({
