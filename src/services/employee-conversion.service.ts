@@ -181,7 +181,7 @@ export async function convertOfferToEmployeeAction(params: {
           employeeId, 
           sourceOfferId: offerId,
           employeeDisplayName: person.displayName,
-          employeeCode: isNewEmployee ? employeeCode : (personData.employeeCode || employeeCode), 
+          employeeCode: isNewEmployee ? employeeCode : ((personData as any).employeeCode || employeeCode), 
           taxCode: person.codiceFiscale || "",
           employeeAddressSnapshot: employeeAddress,
           dateOfBirth: person.dateOfBirth || (person as any).birthDate || "",
@@ -288,7 +288,7 @@ export async function convertOfferToEmployeeAction(params: {
       }, { merge: true });
 
       // F. Recruitment Need Progression (Headcount Protection)
-      if (needRef && needSnap && needSnap.exists && !isAlreadyConverted) {
+      if (needRef && needSnap?.exists && !isAlreadyConverted) {
         const need = needSnap.data() as RecruitmentNeed;
         const newFulfilled = (need.fulfilledHeadcount || 0) + 1;
         transaction.update(needRef, {

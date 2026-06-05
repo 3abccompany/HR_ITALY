@@ -3,14 +3,11 @@ import {
   collection, 
   doc, 
   setDoc, 
-  updateDoc, 
   getDoc, 
   getDocs, 
   query, 
   orderBy, 
   serverTimestamp,
-  where,
-  limit
 } from "firebase/firestore";
 import { EmploymentRequest } from "@/types/employment-request";
 import { EmploymentOffer } from "@/types/employment-offer";
@@ -85,9 +82,6 @@ export async function createEmploymentRequestFromOfferIfMissing(params: {
     plannedHireDate: offer.proposedStartDate || "",
     jobRoleId: offer.jobTitleName || "",
     worksiteId: offer.worksiteId || "",
-    
-    consultantName: offer.consultantName || "",
-    consultantEmail: offer.consultantEmail || "",
     
     createdAt: serverTimestamp(),
     createdBy: actorUid,

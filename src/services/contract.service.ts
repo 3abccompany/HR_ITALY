@@ -15,6 +15,8 @@ import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
 import { registerSignedContractDocument } from "./document.service";
 import { Employee } from "@/types/employee";
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -350,11 +352,11 @@ export async function terminateContractAction(
   );
   const otherActiveSnap = await getDocs(q);
   const otherActiveContracts = otherActiveSnap.docs
-    .map(d => ({ id: d.id, ...d.data() } as Contract))
+    .map(d => ({ ...d.data(), contractId: d.id } as Contract))
     .filter(c => c.contractId !== contractId);
 
   // 1b. Fetch termination document metadata if provided
-  let terminationDocMetadata = null;
+  let terminationDocMetadata: any = null;
   if (terminationDocumentId) {
      const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, terminationDocumentId));
      if (docSnap.exists()) {
@@ -362,7 +364,7 @@ export async function terminateContractAction(
      }
   }
 
-  return await runTransaction(db, async (transaction) => {
+  return await runTransaction(db, async (transaction): Promise<{ employeeId: string }> => {
     // 2. READ SNAPSHOTS
     const snap = await transaction.get(contractRef);
     const empSnap = await transaction.get(employeeRef);

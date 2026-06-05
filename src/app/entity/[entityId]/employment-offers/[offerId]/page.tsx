@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -15,7 +14,8 @@ import {
   ArrowRight, ClipboardList, UserPlus,
   AlertCircle,
   Eye,
-  Download
+  Download,
+  ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -28,11 +28,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp, getDoc } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
-import { PreHireDossier, PreHireDocument } from "@/types/pre-hire-dossier";
+import { PreHireDossier, PreHireDocument, PreHireDocumentStatus } from "@/types/pre-hire-dossier";
 import { RecruitmentNeed } from "@/types/recruitment-need";
-import { Candidate } from "@/types/candidate";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
@@ -57,16 +55,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { fr } from "date-fns/locale";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -80,16 +69,6 @@ const WORKING_TIME_OPTIONS = [
   "Tempo pieno (Full-time)",
   "Tempo parziale (Part-time)",
   "Intermittente / Chiamata"
-];
-
-const REVISION_REASONS = [
-  "Nouvelle négociation",
-  "Salaire modifié",
-  "Niveau CCNL modifié",
-  "Date de début modifiée",
-  "Autre poste",
-  "Correction / erreur dans la proposition précédente",
-  "Autre"
 ];
 
 /**
@@ -111,23 +90,17 @@ function parseSafeDate(val: any): Date | null {
   return null;
 }
 
-function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
-  const date = parseSafeDate(val);
-  if (!date) return "-";
-  return format(date, formatStr, { locale: fr });
-}
-
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
   const entityId = params.entityId as string;
   const offerId = params.offerId as string;
   
-  const { db, storage } = useFirebase();
+  const { db } = useFirebase();
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
+  const { loading: membershipLoading, membership } = useActiveMembership(entityId);
 
   const offerRef = useMemo(() => db ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null, [db, entityId, offerId]);
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
@@ -412,7 +385,7 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
-  const handleUpdateDoc = async (itemId: string, status: any, reason?: string) => {
+  const handleUpdateDoc = async (itemId: string, status: PreHireDocumentStatus, reason?: string) => {
     if (!user || !dossier) return;
     try {
       await updateDocumentStatus(entityId, dossier.dossierId, itemId, status, user.uid, reason);
@@ -463,7 +436,7 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleConsultDocument = async (item: PreHireDocument) => {
-    const fileId = item.fileId || (item as any).documentId;
+    const fileId = item.fileId;
     if (!fileId) {
       toast({ variant: "destructive", title: "Erreur", description: "Aucun fichier n'est associé à cette ligne." });
       return;
@@ -710,7 +683,7 @@ export default function EditEmploymentOfferPage() {
                   <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-primary/70">
                     <ClipboardList className="w-4 h-4" /> Dossier d’embauche & Compliance
                   </CardTitle>
-                  {dossier && <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black">{dossier.status.replace(/_/g, ' ')}</Badge>}
+                  {dossier && <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black">{(dossier.status as string).replace(/_/g, ' ')}</Badge>}
                </CardHeader>
                <CardContent className="p-8 space-y-6">
                   {loadingDossiers ? (
@@ -756,7 +729,7 @@ export default function EditEmploymentOfferPage() {
                          <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest px-1">Checklist documents obligatoires (Italie)</p>
                          <div className="grid gap-3">
                             {loadingChecklist ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : checklist?.map(item => {
-                              const hasFile = !!(item.fileId || (item as any).documentId);
+                              const hasFile = !!(item.fileId);
                               
                               return (
                                 <div key={item.itemId} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm group">
@@ -1284,7 +1257,7 @@ export default function EditEmploymentOfferPage() {
       <AlertDialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-2xl font-black text-primary">Finaliser l'embauche</AlertDialogTitle>
+            <AlertDialogTitle>Finaliser l'embauche</AlertDialogTitle>
             <AlertDialogDescription>Validation des documents et UniLav terminée. Le dossier est prêt.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

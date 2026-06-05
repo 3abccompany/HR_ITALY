@@ -936,7 +936,7 @@ export default function ContractDetailPage() {
                             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Documents de clôture</p>
                             <div className="grid gap-3">
                                {groupedDocs.termination.map(d => (
-                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} />
+                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} canReplace={false} />
                                ))}
                             </div>
                          </div>
@@ -947,7 +947,7 @@ export default function ContractDetailPage() {
                             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Autres documents liés</p>
                             <div className="grid gap-3">
                                {groupedDocs.others.map(d => (
-                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} />
+                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} canReplace={false} />
                                ))}
                             </div>
                          </div>
@@ -1366,8 +1366,10 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
           <DocumentRow 
             doc={doc} 
             onOpen={onOpen} 
+            onReplace={() => {}} 
             loadingId={loadingId} 
             isMain 
+            canReplace={false}
             customLabel={doc.documentType === 'signed_contract' ? 'Contrat signé' : doc.documentType === 'termination_document' ? 'Document de clôture' : 'Dernier PDF généré'}
           />
         )}
@@ -1383,7 +1385,7 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
                 {history.map(d => (
-                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} loadingId={loadingId} compactVersion />
+                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={() => {}} loadingId={loadingId} compactVersion canReplace={false} />
                 ))}
               </CollapsibleContent>
             </Collapsible>
@@ -1397,17 +1399,23 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
 function DocumentRow({ 
   doc, 
   onOpen, 
+  onReplace,
   loadingId, 
   isMain, 
   compactVersion, 
-  customLabel 
+  customLabel,
+  customBadge,
+  canReplace
 }: { 
   doc: HRDocument, 
   onOpen: any, 
+  onReplace: (doc: HRDocument) => void,
   loadingId: string | null,
   isMain?: boolean,
   compactVersion?: boolean,
-  customLabel?: string
+  customLabel?: string,
+  customBadge?: React.ReactNode,
+  canReplace: boolean
 }) {
   const isLoading = loadingId === doc.id;
   const expiryDate = parseSafeDate(doc.expiresAt);
@@ -1419,7 +1427,7 @@ function DocumentRow({
     <Card className={cn(
       "border-primary/5 hover:border-primary/20 transition-all shadow-sm rounded-2xl group overflow-hidden bg-white",
       isMain && "border-primary/20 shadow-md ring-1 ring-primary/5",
-      compactVersion && "rounded-xl"
+      compactVersion && "rounded-xl opacity-80"
     )}>
       <CardContent className={cn("p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4", compactVersion && "p-3")}>
         <div className="flex items-start gap-4">
@@ -1429,7 +1437,9 @@ function DocumentRow({
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <p className={cn("font-bold text-slate-900 truncate max-w-[200px] sm:max-w-md", compactVersion && "text-xs")}>{doc.title}</p>
+              {customBadge}
               {doc.isSensitive && <Badge variant="destructive" className="h-4 text-[8px] uppercase font-black px-1.5 border-none">Sensible</Badge>}
+              {doc.version > 1 && <Badge variant="outline" className="h-4 text-[8px] uppercase font-black border-primary/20">V{doc.version}</Badge>}
             </div>
             <div className="flex items-center gap-2 mt-1">
               <span className="text-[9px] font-black uppercase text-muted-foreground/60">
@@ -1464,19 +1474,35 @@ function DocumentRow({
               <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", 
                 isExpired ? "bg-red-50 text-red-700 border-red-100" :
                 isExpiringSoon ? "bg-orange-50 text-orange-700 border-orange-100" :
-                doc.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400")}>
+                doc.status === 'valid' ? "bg-green-50 text-green-700" : 
+                doc.status === 'replaced' ? "bg-slate-100 text-slate-500" : "bg-slate-50 text-slate-400")}>
                 {isExpired ? "Expiré" : isExpiringSoon ? "Échéance proche" : STATUS_LABELS[doc.status]}
               </Badge>
-              <Button 
-                variant="secondary" 
-                size="sm" 
-                className={cn("h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary hover:text-white transition-all gap-2", compactVersion && "h-7 px-2 text-[10px]")}
-                onClick={() => onOpen(doc.storagePath, doc.id)}
-                disabled={!!loadingId}
-              >
-                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                <span className="hidden sm:inline">Consulter</span>
-              </Button>
+              
+              <div className="flex gap-1">
+                <Button 
+                  variant="secondary" 
+                  size="sm" 
+                  className={cn("h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary hover:text-white transition-all gap-2", compactVersion && "h-7 px-2 text-[10px]")}
+                  onClick={() => onOpen(doc.storagePath, doc.id)}
+                  disabled={!!loadingId}
+                >
+                  {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  <span className="hidden sm:inline">Consulter</span>
+                </Button>
+
+                {canReplace && isMain && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-8 rounded-xl font-bold border-primary/10 gap-2 hover:bg-secondary/50"
+                    onClick={() => onReplace(doc)}
+                  >
+                    <RefreshCcw className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Remplacer document</span>
+                  </Button>
+                )}
+              </div>
            </div>
         </div>
       </CardContent>
