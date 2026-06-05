@@ -12,7 +12,10 @@ import {
   ArrowRight, ClipboardList, UserPlus,
   AlertCircle,
   Eye,
-  ChevronRight
+  ChevronRight,
+  Info,
+  Plus,
+  Scale
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -50,6 +53,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",

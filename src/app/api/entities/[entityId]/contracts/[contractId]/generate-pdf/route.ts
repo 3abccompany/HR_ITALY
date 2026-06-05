@@ -22,7 +22,12 @@ function validateContractData(contract: Contract) {
   if (!contract.jobTitleName) missing.push("Intitulé poste");
   if (!contract.ccnlName) missing.push("Convention collective (CCNL)");
   if (!contract.startDate) missing.push("Date début");
-  if ((contract as any).grossMonthly === undefined || (contract as any).grossMonthly === null || isNaN(Number(contract.grossMonthly))) missing.push("Rémunération");
+  
+  const grossMonthly = (contract as any).grossMonthly;
+  if (grossMonthly === undefined || grossMonthly === null || isNaN(Number(grossMonthly))) {
+    missing.push("Rémunération");
+  }
+  
   if (!contract.weeklyHours) missing.push("Temps de travail");
 
   return missing;
