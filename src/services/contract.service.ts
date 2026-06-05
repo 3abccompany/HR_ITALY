@@ -1,15 +1,15 @@
 import { db } from "@/lib/firebase/client";
 import { 
+  collection, 
   doc, 
   runTransaction, 
-  serverTimestamp,
-  getDoc,
+  serverTimestamp, 
   updateDoc,
-  collection,
+  getDoc,
+  setDoc,
   query,
   where,
-  getDocs,
-  setDoc
+  getDocs
 } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";

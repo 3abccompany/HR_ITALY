@@ -37,7 +37,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { format, isBefore, differenceInDays, startOfDay } from "date-fns";
+import { format, isBefore, differenceInDays, startOfDay, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { 
   Dialog, 
@@ -96,7 +96,7 @@ export default function EmployeeDetailPage() {
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
 
-  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
   const [replacingDoc, setReplacingDoc] = useState<HRDocument | null>(null);
   const [replacementReason, setReplacementReason] = useState("");
   const [replacementFile, setReplacementFile] = useState<File | null>(null);
@@ -181,7 +181,7 @@ export default function EmployeeDetailPage() {
       const d = docItem as any;
       let key = docItem.rootDocumentId || docItem.id;
       
-      const identityTypes = ['identity_document', 'fiscal_code', 'residence_permit', 'work_permit'];
+      const identityTypes = ['identity_document', 'identity_card', 'fiscal_code', 'tax_code', 'residence_permit', 'work_permit'];
       
       if (d.checklistItemId) {
         key = `checklist_${d.preHireDossierId || docItem.relatedId || "unknown"}_${d.checklistItemId}`;
@@ -255,14 +255,14 @@ export default function EmployeeDetailPage() {
   }, [documentBundles]);
 
   const handleOpenDoc = async (storagePath: string, id: string) => {
-    setLoadingAction(id);
+    setLoadingActionId(id);
     try {
       const url = await getDocumentDownloadUrl(storagePath);
       window.open(url, "_blank");
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
     } finally {
-      setLoadingAction(null);
+      setLoadingActionId(null);
     }
   };
 
@@ -429,11 +429,11 @@ export default function EmployeeDetailPage() {
                 </Card>
               ) : (
                 <div className="space-y-12">
-                  <DocumentGroupSection title="Contrats & Clôture" bundles={groupedDocsByTab.contracts} icon={FileBadge} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingAction} canReplace={canUploadDocs} />
-                  <DocumentGroupSection title="Identité & Conformité" bundles={groupedDocsByTab.identity} icon={Fingerprint} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingAction} canReplace={canUploadDocs} />
-                  <DocumentGroupSection title="Embauche & Compliance" bundles={groupedDocsByTab.hiring} icon={ListTodo} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingAction} canReplace={canUploadDocs} />
-                  <DocumentGroupSection title="Santé & Sécurité" bundles={groupedDocsByTab.safety} icon={ShieldCheck} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingAction} canReplace={canUploadDocs} />
-                  <DocumentGroupSection title="Autres documents" bundles={groupedDocsByTab.others} icon={FolderOpen} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingAction} canReplace={canUploadDocs} />
+                  <DocumentGroupSection title="Contrats & Clôture" bundles={groupedDocsByTab.contracts} icon={FileBadge} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingActionId} canReplace={canUploadDocs} />
+                  <DocumentGroupSection title="Identité & Conformité" bundles={groupedDocsByTab.identity} icon={Fingerprint} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingActionId} canReplace={canUploadDocs} />
+                  <DocumentGroupSection title="Embauche & Compliance" bundles={groupedDocsByTab.hiring} icon={ListTodo} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingActionId} canReplace={canUploadDocs} />
+                  <DocumentGroupSection title="Santé & Sécurité" bundles={groupedDocsByTab.safety} icon={ShieldCheck} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingActionId} canReplace={canUploadDocs} />
+                  <DocumentGroupSection title="Autres documents" bundles={groupedDocsByTab.others} icon={FolderOpen} onOpen={handleOpenDoc} onReplace={setReplacingDoc} loadingId={loadingActionId} canReplace={canUploadDocs} />
                 </div>
               )}
             </TabsContent>
