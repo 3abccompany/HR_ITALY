@@ -9,7 +9,8 @@ import {
   query, 
   orderBy, 
   serverTimestamp,
-  where
+  where,
+  limit
 } from "firebase/firestore";
 import { Consultant } from "@/types/consultant";
 import { createAuditLog } from "./audit.service";
@@ -28,6 +29,17 @@ export async function getConsultant(entityId: string, consultantId: string) {
   if (!db) return null;
   const snap = await getDoc(doc(db, `entities/${entityId}/consultants`, consultantId));
   return snap.exists() ? (snap.data() as Consultant) : null;
+}
+
+export async function findConsultantByEmail(entityId: string, email: string): Promise<Consultant | null> {
+  if (!db || !email) return null;
+  const q = query(
+    collection(db, `entities/${entityId}/consultants`),
+    where("email", "==", email.toLowerCase().trim()),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  return snap.empty ? null : (snap.docs[0].data() as Consultant);
 }
 
 export async function createConsultant(entityId: string, data: Partial<Consultant>, actorUid: string) {

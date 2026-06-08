@@ -31,11 +31,22 @@ import {
   linkReceiptToEmploymentRequest,
   completeEmploymentRequest
 } from "@/services/employment-request.service";
+import { findConsultantByEmail, createConsultant } from "@/services/consultant.service";
 import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { cn } from "@/lib/utils";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
@@ -77,6 +88,7 @@ export default function EmploymentRequestDetailPage() {
   const [cpiForm, setCpiForm] = useState({ date: "", code: "" });
   const [processing, setProcessing] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
+  const [isRegistryConfirmOpen, setIsRegistryConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (request) {
@@ -110,11 +122,50 @@ export default function EmploymentRequestDetailPage() {
         consultantEmail: consultantForm.email,
         actorUid: user.uid
       });
-      toast({ title: "Consultant enregistré" });
+      
+      if (consultantForm.id === "manual" || !consultantForm.id) {
+        setIsRegistryConfirmOpen(true);
+      } else {
+        toast({ title: "Consultant enregistré" });
+      }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const handleConfirmRegistrySave = async () => {
+    if (!user || !entityId || !requestId || !consultantForm.email) return;
+    setProcessing(true);
+    try {
+      // Duplicate prevention check
+      const existing = await findConsultantByEmail(entityId, consultantForm.email);
+      let consultantId = existing?.id;
+
+      if (!consultantId) {
+        consultantId = await createConsultant(entityId, {
+          name: consultantForm.name,
+          email: consultantForm.email,
+        }, user.uid);
+      }
+
+      // Link the ID back to the request
+      await updateConsultantAssignment({
+        entityId,
+        requestId,
+        consultantId,
+        consultantName: consultantForm.name,
+        consultantEmail: consultantForm.email,
+        actorUid: user.uid
+      });
+
+      toast({ title: "Ajouté au registre", description: "Le consultant a été enregistré et lié à ce dossier." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur registre", description: err.message });
+    } finally {
+      setProcessing(false);
+      setIsRegistryConfirmOpen(false);
     }
   };
 
@@ -571,6 +622,32 @@ export default function EmploymentRequestDetailPage() {
           </Card>
         </div>
       </div>
+
+      <AlertDialog open={isRegistryConfirmOpen} onOpenChange={setIsRegistryConfirmOpen}>
+        <AlertDialogContent className="rounded-[2.5rem]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ajouter au registre ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Voulez-vous ajouter ce consultant au registre pour le réutiliser plus tard ?
+              <div className="mt-4 p-3 bg-secondary/30 rounded-xl">
+                 <p className="text-xs font-bold text-primary">{consultantForm.name}</p>
+                 <p className="text-[10px] text-muted-foreground">{consultantForm.email}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="sm:justify-between">
+            <AlertDialogCancel disabled={processing}>Non, garder seulement pour ce dossier</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => { e.preventDefault(); handleConfirmRegistrySave(); }}
+              disabled={processing}
+              className="bg-primary font-bold rounded-xl"
+            >
+              {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+              Oui, ajouter au registre
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -634,4 +711,3 @@ function getStatusBadge(status: string) {
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
   }
 }
-
