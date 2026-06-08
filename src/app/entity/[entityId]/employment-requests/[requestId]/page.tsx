@@ -47,6 +47,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
 
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
@@ -514,7 +516,13 @@ export default function EmploymentRequestDetailPage() {
                             <div className="flex items-center gap-2 mt-1">
                                <p className="text-[9px] font-black uppercase text-muted-foreground/60">ID: {request.receiptDocumentId.substring(0, 8)}</p>
                                {receipt && (
-                                 <p className="text-[9px] font-bold text-slate-400">Reçu le {formatDateTime(receipt.uploadedAt || receipt.createdAt)}</p>
+                                 <p className="text-[9px] font-bold text-slate-400">
+                                   {(() => {
+                                      const dateVal = receipt.uploadedAt || receipt.createdAt || (receipt as any).uploadedOn || (receipt as any).createdOn;
+                                      const formatted = formatDateTime(dateVal);
+                                      return formatted === "Date non disponible" ? formatted : `Reçu le ${formatted}`;
+                                   })()}
+                                 </p>
                                )}
                             </div>
                          </div>
@@ -667,11 +675,6 @@ function AuditMiniRow({ label, value }: { label: string, value: string }) {
  */
 function formatDateTime(val: any): string {
   if (!val) return "Date non disponible";
-  
-  // Detect invalid map ({}) from corrupted storage
-  if (typeof val === 'object' && !val.seconds && !val._seconds && !(val instanceof Date) && typeof val.toDate !== 'function') {
-    return "Date non disponible";
-  }
 
   try {
     let date: Date | null = null;
@@ -680,22 +683,21 @@ function formatDateTime(val: any): string {
       date = val;
     } else if (typeof val.toDate === 'function') {
       date = val.toDate();
-    } else if (val.seconds !== undefined) {
-      date = new Date(val.seconds * 1000);
-    } else if (val._seconds !== undefined) {
-      date = new Date(val._seconds * 1000);
-    } else if (typeof val === 'string') {
+    } else if (val && typeof val === 'object') {
+      const s = val.seconds ?? val._seconds;
+      if (typeof s === 'number') {
+        date = new Date(s * 1000);
+      }
+    }
+
+    if (!date && (typeof val === 'string' || typeof val === 'number')) {
       const parsed = new Date(val);
       if (!isNaN(parsed.getTime())) date = parsed;
     }
 
     if (!date || isNaN(date.getTime())) return "Date non disponible";
-    
-    return date.toLocaleDateString('fr-FR', { 
-      day: '2-digit', 
-      month: '2-digit', 
-      year: 'numeric' 
-    });
+
+    return format(date, "dd/MM/yyyy", { locale: fr });
   } catch (e) {
     return "Date non disponible";
   }
