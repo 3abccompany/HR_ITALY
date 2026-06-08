@@ -3,13 +3,16 @@ import {
   collection, 
   doc, 
   setDoc, 
+  updateDoc,
   getDoc, 
   getDocs, 
   query, 
   orderBy, 
   serverTimestamp,
+  Timestamp,
+  runTransaction
 } from "firebase/firestore";
-import { EmploymentRequest } from "@/types/employment-request";
+import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { createAuditLog } from "./audit.service";
 
@@ -101,4 +104,158 @@ export async function createEmploymentRequestFromOfferIfMissing(params: {
   });
 
   return { id: requestId, alreadyExists: false };
+}
+
+/**
+ * Update consultant information on an employment request.
+ */
+export async function updateConsultantAssignment(params: {
+  entityId: string;
+  requestId: string;
+  consultantId?: string | null;
+  consultantName: string;
+  consultantEmail: string;
+  actorUid: string;
+}) {
+  const { entityId, requestId, consultantId, consultantName, consultantEmail, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Dossier introuvable.");
+  const request = snap.data() as EmploymentRequest;
+
+  if (request.status === "completed" || request.status === "cancelled") {
+    throw new Error("Impossible de modifier un dossier clôturé ou annulé.");
+  }
+
+  await updateDoc(requestRef, {
+    consultantId: consultantId || null,
+    consultantName: consultantName.trim(),
+    consultantEmail: consultantEmail.trim().toLowerCase(),
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "employmentRequest.consultantAssigned",
+    resourceType: "employmentRequest",
+    resourceId: requestId,
+    details: { consultantName }
+  });
+
+  return { success: true };
+}
+
+/**
+ * Marks a request as transmitted to the consultant.
+ */
+export async function markAsSentToConsultant(params: {
+  entityId: string;
+  requestId: string;
+  sendMode: "email" | "portal" | "manual" | "draft_only";
+  actorUid: string;
+}) {
+  const { entityId, requestId, sendMode, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Dossier introuvable.");
+  const request = snap.data() as EmploymentRequest;
+
+  if (request.status === "completed" || request.status === "cancelled") {
+    throw new Error("Action impossible sur un dossier clôturé.");
+  }
+
+  if (sendMode !== "manual" && (!request.consultantName || !request.consultantEmail)) {
+    throw new Error("Veuillez renseigner le consultant avant l'envoi.");
+  }
+
+  const now = serverTimestamp();
+  const updateData: Partial<EmploymentRequest> = {
+    status: "sent_to_consultant",
+    sendMode,
+    sentAt: now,
+    sentBy: actorUid,
+    requestDate: request.requestDate || new Date().toISOString().split('T')[0],
+    updatedAt: now,
+    updatedBy: actorUid,
+  };
+
+  await updateDoc(requestRef, updateData);
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "employmentRequest.sentToConsultant",
+    resourceType: "employmentRequest",
+    resourceId: requestId,
+    details: { sendMode }
+  });
+
+  return { success: true };
+}
+
+/**
+ * Records the official CPI communication results and mirrors to legacy if needed.
+ */
+export async function recordCpiCommunication(params: {
+  entityId: string;
+  requestId: string;
+  cpiCommunicationDate: string;
+  protocolCode: string;
+  actorUid: string;
+}) {
+  const { entityId, requestId, cpiCommunicationDate, protocolCode, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Dossier introuvable.");
+  const request = snap.data() as EmploymentRequest;
+
+  if (request.status === "completed" || request.status === "cancelled") {
+    throw new Error("Dossier clôturé.");
+  }
+
+  const now = serverTimestamp();
+  
+  // 1. Update primary EmploymentRequest record
+  await updateDoc(requestRef, {
+    status: "communication_done",
+    cpiCommunicationDate,
+    protocolCode: protocolCode.trim(),
+    updatedAt: now,
+    updatedBy: actorUid,
+  });
+
+  // 2. Legacy Mirroring (Non-blocking)
+  if (request.mandatoryCommunicationId) {
+    try {
+      const legacyRef = doc(db, `entities/${entityId}/mandatoryCommunications`, request.mandatoryCommunicationId);
+      await updateDoc(legacyRef, {
+        protocolNumber: protocolCode.trim(),
+        submittedAt: Timestamp.fromDate(new Date(cpiCommunicationDate)),
+        status: "receipt_received",
+        updatedAt: now,
+        updatedBy: actorUid
+      });
+    } catch (err) {
+      console.warn("[Legacy Sync] Failed to update mandatoryCommunication:", err);
+    }
+  }
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "cpi.communicationRecorded",
+    resourceType: "employmentRequest",
+    resourceId: requestId,
+    details: { protocolCode }
+  });
+
+  return { success: true };
 }

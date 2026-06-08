@@ -34,24 +34,28 @@ export interface EmploymentRequest {
   jobRoleId?: string;
 
   // Consultant fields
-  consultantId?: string;
-  consultantName?: string;
-  consultantEmail?: string;
-  requestDate?: string;
-  sendMode?: "email" | "portal" | "manual";
-  sentAt?: Date | FieldValue;
-  sentBy?: string;
+  consultantId?: string | null;
+  consultantName?: string | null;
+  consultantEmail?: string | null;
+  requestDate?: string | null;
+  sendMode?: "email" | "portal" | "manual" | "draft_only" | null;
+  sentAt?: Date | FieldValue | null;
+  sentBy?: string | null;
 
   // Response fields
-  cpiCommunicationDate?: string;
-  protocolCode?: string;
-  receiptDocumentId?: string;
-  legacyReceiptPdfUrl?: string;
+  cpiCommunicationDate?: string | null;
+  protocolCode?: string | null;
+  receiptDocumentId?: string | null;
+  legacyReceiptPdfUrl?: string | null;
+
+  // Completion Audit
+  completedAt?: Date | FieldValue | null;
+  completedBy?: string | null;
 
   // Notes & Audit
   notes?: string;
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
-  updatedBy: string;
+  updatedBy: string | null;
 }

@@ -873,7 +873,7 @@ export default function EditEmploymentOfferPage() {
                           ) : standaloneRequest ? (
                             <Button asChild variant="outline" size="sm" className="h-7 text-[10px] font-black uppercase border-primary/10 gap-2">
                                <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
-                                  Gérer dans le module CPI foundation <ChevronRight className="w-3 h-3" />
+                                  Gérer dans le module CPI <ChevronRight className="w-3 h-3" />
                                </Link>
                             </Button>
                           ) : (
