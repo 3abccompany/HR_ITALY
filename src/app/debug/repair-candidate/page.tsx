@@ -9,6 +9,7 @@ import { useUser } from "@/firebase";
 import { repairCandidateEmployeeRecord } from "@/services/admin-repair.service";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, ShieldAlert, CheckCircle2, AlertCircle } from "lucide-react";
+import { cn } from '@/lib/utils';
 
 export default function RepairCandidatePage() {
   const [candidateId, setCandidateId] = useState("bbJ1tMjhE2pUrcUsv9jy");

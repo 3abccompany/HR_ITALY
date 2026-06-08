@@ -259,3 +259,108 @@ export async function recordCpiCommunication(params: {
 
   return { success: true };
 }
+
+/**
+ * Links a GED document ID as the official CPI receipt.
+ */
+export async function linkReceiptToEmploymentRequest(params: {
+  entityId: string;
+  requestId: string;
+  documentId: string;
+  actorUid: string;
+}) {
+  const { entityId, requestId, documentId, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Dossier introuvable.");
+  const request = snap.data() as EmploymentRequest;
+
+  if (request.status === "completed" || request.status === "cancelled") {
+    throw new Error("Action impossible sur un dossier clôturé.");
+  }
+
+  await updateDoc(requestRef, {
+    receiptDocumentId: documentId,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "cpi.receiptLinked",
+    resourceType: "employmentRequest",
+    resourceId: requestId,
+    details: { documentId }
+  });
+
+  return { success: true };
+}
+
+/**
+ * Finalizes the CPI dossier and marks it as completed.
+ * Validates that all mandatory fields (protocol, date, receipt) are present.
+ */
+export async function completeEmploymentRequest(params: {
+  entityId: string;
+  requestId: string;
+  actorUid: string;
+}) {
+  const { entityId, requestId, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Dossier introuvable.");
+  const request = snap.data() as EmploymentRequest;
+
+  if (request.status === "completed") return { success: true };
+
+  // Validation
+  if (!request.protocolCode || !request.cpiCommunicationDate || !request.receiptDocumentId) {
+    throw new Error("MISSING_DATA: Le protocole, la date et le récépissé sont obligatoires pour clôturer le dossier.");
+  }
+
+  const now = serverTimestamp();
+  await updateDoc(requestRef, {
+    status: "completed",
+    completedAt: now,
+    completedBy: actorUid,
+    updatedAt: now,
+    updatedBy: actorUid,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "employmentRequest.completed",
+    resourceType: "employmentRequest",
+    resourceId: requestId,
+    details: { protocolCode: request.protocolCode }
+  });
+
+  // Timeline entry for the person
+  if (request.personId) {
+    try {
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      await setDoc(timelineRef, {
+        eventId: timelineRef.id,
+        entityId,
+        personId: request.personId,
+        type: "employment_request.completed",
+        label: "Communication CPI finalisée",
+        description: `Le dossier d'embauche CPI a été clôturé avec le protocole ${request.protocolCode}.`,
+        sourceCollection: "employmentRequests",
+        sourceId: requestId,
+        createdAt: now,
+        createdBy: actorUid,
+      });
+    } catch (e) {
+      console.warn("[Timeline Sync] Failed to record completion event:", e);
+    }
+  }
+
+  return { success: true };
+}

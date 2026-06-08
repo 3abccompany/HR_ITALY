@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -9,7 +8,8 @@ import {
   ShieldCheck, Calendar, FileText, 
   Hash, Mail, Save, Send,
   History, AlertCircle, Eye,
-  RefreshCcw, CheckCircle2
+  RefreshCcw, CheckCircle2,
+  Upload, Download, FileCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -22,15 +22,20 @@ import { useFirebase, useDoc, useUser, useCollection } from "@/firebase";
 import { doc, DocumentReference, collection, query, orderBy } from "firebase/firestore";
 import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
 import { Consultant } from "@/types/consultant";
+import { HRDocument } from "@/types/hr-document";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   updateConsultantAssignment, 
   markAsSentToConsultant, 
-  recordCpiCommunication 
+  recordCpiCommunication,
+  linkReceiptToEmploymentRequest,
+  completeEmploymentRequest
 } from "@/services/employment-request.service";
+import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { cn } from "@/lib/utils";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
+import Link from "next/link";
 
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
@@ -41,7 +46,7 @@ export default function EmploymentRequestDetailPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
 
   const canRead = hasPermission("employmentRequests.read");
   const canUpdate = hasPermission("employmentRequests.update") || hasPermission("employmentRequests.write");
@@ -60,11 +65,18 @@ export default function EmploymentRequestDetailPage() {
   }, [db, entityId, canReadConsultants]);
   const { data: consultants } = useCollection<Consultant>(consultantsQuery);
 
+  // Receipt Document Lookup
+  const receiptRef = useMemo(() => 
+    db && entityId && request?.receiptDocumentId ? (doc(db, `entities/${entityId}/documents`, request.receiptDocumentId) as DocumentReference<HRDocument>) : null,
+  [db, entityId, request?.receiptDocumentId]);
+  const { data: receipt, loading: loadingReceipt } = useDoc<HRDocument>(receiptRef);
+
   // --- Local States for Forms ---
   const [consultantForm, setConsultantForm] = useState({ id: "", name: "", email: "" });
-  const [sendMode, setSendMode] = useState<"email" | "portal" | "manual" | "draft_only">("email");
+  const [sendMode, setSendMode] = useState<"email" | "portal" | "manual" | "draft_only" | "">("email");
   const [cpiForm, setCpiForm] = useState({ date: "", code: "" });
   const [processing, setProcessing] = useState(false);
+  const [loadingFile, setLoadingFile] = useState(false);
 
   useEffect(() => {
     if (request) {
@@ -82,6 +94,7 @@ export default function EmploymentRequestDetailPage() {
   }, [request]);
 
   const isTerminal = request?.status === "completed" || request?.status === "cancelled";
+  const canComplete = request && !isTerminal && request.protocolCode && request.cpiCommunicationDate && request.receiptDocumentId;
 
   // --- Handlers ---
 
@@ -92,7 +105,7 @@ export default function EmploymentRequestDetailPage() {
       await updateConsultantAssignment({
         entityId,
         requestId,
-        consultantId: consultantForm.id,
+        consultantId: consultantForm.id === "manual" ? null : consultantForm.id,
         consultantName: consultantForm.name,
         consultantEmail: consultantForm.email,
         actorUid: user.uid
@@ -101,8 +114,7 @@ export default function EmploymentRequestDetailPage() {
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
-      setProcessing(true);
-      setTimeout(() => setProcessing(false), 500); // UI breathing room
+      setProcessing(false);
     }
   };
 
@@ -113,7 +125,7 @@ export default function EmploymentRequestDetailPage() {
       await markAsSentToConsultant({
         entityId,
         requestId,
-        sendMode,
+        sendMode: sendMode as any,
         actorUid: user.uid
       });
       toast({ title: "Dossier marqué comme transmis" });
@@ -142,6 +154,79 @@ export default function EmploymentRequestDetailPage() {
       toast({ title: "Communication CPI enregistrée" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleUploadReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !request) return;
+
+    if (file.type !== "application/pdf") {
+      toast({ variant: "destructive", title: "Format invalide", description: "Veuillez envoyer un fichier PDF." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const docId = await uploadHRDocument(
+        entityId, 
+        file, 
+        {
+          title: `Récépissé CPI - ${request.candidateDisplayName || 'Candidat'}`,
+          documentType: "cpi_receipt",
+          relatedModule: "employmentRequests",
+          relatedId: requestId,
+          personId: request.personId,
+          candidateId: request.candidateId,
+          employeeId: request.employeeId,
+          status: "valid"
+        }, 
+        user.uid, 
+        membership?.userDisplayName || "Utilisateur"
+      );
+
+      await linkReceiptToEmploymentRequest({
+        entityId,
+        requestId,
+        documentId: docId,
+        actorUid: user.uid
+      });
+
+      toast({ title: "Récépissé enregistré" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleOpenReceipt = async () => {
+    if (!receipt) return;
+    setLoadingFile(true);
+    try {
+      const url = await getDocumentDownloadUrl(receipt.storagePath);
+      window.open(url, "_blank");
+    } catch (err) {
+      toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
+    } finally {
+      setLoadingFile(false);
+    }
+  };
+
+  const handleFinalize = async () => {
+    if (!user || !entityId || !requestId) return;
+    setProcessing(true);
+    try {
+      await completeEmploymentRequest({
+        entityId,
+        requestId,
+        actorUid: user.uid
+      });
+      toast({ title: "Dossier clôturé", description: "Le dossier d'embauche est maintenant finalisé." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Clôture impossible", description: err.message });
     } finally {
       setProcessing(false);
     }
@@ -193,13 +278,15 @@ export default function EmploymentRequestDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           
-          <Alert className="bg-blue-50 border-blue-200 text-blue-800 rounded-2xl">
-            <Info className="h-4 w-4" />
-            <AlertTitle className="font-bold text-xs uppercase tracking-wider">Module CPI Foundation — Phase 5B-1</AlertTitle>
-            <AlertDescription className="text-xs">
-              Workflow opérationnel actif. Enregistrez les étapes de transmission et les résultats CPI.
-            </AlertDescription>
-          </Alert>
+          {isTerminal && (
+            <Alert className="bg-green-50 border-green-200 text-green-800 rounded-2xl">
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertTitle className="font-black uppercase text-[10px] tracking-[0.2em]">Dossier Clôturé</AlertTitle>
+              <AlertDescription className="text-xs font-bold opacity-80">
+                Ce dossier a été finalisé le {formatDateTime(request.completedAt)}. Les modifications sont désormais verrouillées.
+              </AlertDescription>
+            </Alert>
+          )}
 
           {/* 1. Consultant Assignment Section */}
           <Card className={cn("border-primary/10 shadow-xl rounded-[2rem] overflow-hidden transition-all", !request.consultantName && "border-orange-200 ring-2 ring-orange-50")}>
@@ -356,10 +443,102 @@ export default function EmploymentRequestDetailPage() {
                 )}
              </CardContent>
           </Card>
+
+          {/* 4. Receipt Section */}
+          <Card className={cn("border-primary/10 shadow-xl rounded-[2rem] overflow-hidden", request.receiptDocumentId ? "border-primary/20 bg-primary/5" : "border-dashed border-2")}>
+             <CardHeader className="py-4 px-8 border-b bg-white/50">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <FileText className="w-4 h-4" /> Récépissé officiel (PDF)
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8">
+                {request.receiptDocumentId ? (
+                   <div className="flex items-center justify-between gap-6 p-5 bg-white rounded-2xl border shadow-sm">
+                      <div className="flex items-center gap-4 min-w-0">
+                         <div className="bg-primary/10 p-3 rounded-2xl text-primary shrink-0">
+                            <FileCheck className="w-6 h-6" />
+                         </div>
+                         <div className="min-w-0">
+                            <p className="text-sm font-black text-slate-800 truncate">{receipt?.title || "Chargement..."}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                               <p className="text-[9px] font-black uppercase text-muted-foreground/60">ID: {request.receiptDocumentId.substring(0, 8)}</p>
+                               {receipt?.uploadedAt && (
+                                 <p className="text-[9px] font-bold text-slate-400">Reçu le {formatDateTime(receipt.uploadedAt)}</p>
+                               )}
+                            </div>
+                         </div>
+                      </div>
+                      <Button variant="outline" size="sm" className="rounded-xl font-bold gap-2 bg-white" onClick={handleOpenReceipt} disabled={loadingFile || !receipt}>
+                         {loadingFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                         Ouvrir
+                      </Button>
+                   </div>
+                ) : (
+                   <div className={cn(
+                    "border-2 border-dashed rounded-3xl p-10 transition-all relative flex flex-col items-center justify-center gap-4 text-center cursor-pointer",
+                    isTerminal ? "bg-slate-50 opacity-40 grayscale" : "bg-slate-50/50 hover:bg-slate-100 hover:border-primary/30"
+                   )}>
+                      {!isTerminal && (
+                        <input 
+                          type="file" 
+                          accept=".pdf" 
+                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
+                          onChange={handleUploadReceipt}
+                          disabled={processing}
+                        />
+                      )}
+                      <div className="bg-white p-4 rounded-2xl shadow-sm text-primary/30">
+                         <Upload className="w-8 h-8" />
+                      </div>
+                      <div className="space-y-1">
+                         <p className="text-sm font-bold text-slate-600">Joindre le récépissé de communication</p>
+                         <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter">Fichier PDF uniquement — Max 10 Mo</p>
+                      </div>
+                   </div>
+                )}
+             </CardContent>
+          </Card>
         </div>
 
         {/* Sidebar Info */}
         <div className="space-y-8">
+           
+           {!isTerminal && canUpdate && (
+             <Card className={cn("border-2 rounded-[2rem] shadow-2xl overflow-hidden", canComplete ? "border-green-600 bg-green-600 text-white" : "border-slate-200 bg-white opacity-60")}>
+                <CardHeader className="py-5 px-6 border-b border-white/10">
+                   <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4" /> Finalisation
+                   </CardTitle>
+                </CardHeader>
+                <CardContent className="p-6 space-y-4">
+                   <p className="text-[10px] font-bold leading-relaxed opacity-90">
+                     La clôture verrouille les données et notifie le système de la conformité du recrutement.
+                   </p>
+                   <Button 
+                    onClick={handleFinalize} 
+                    disabled={processing || !canComplete} 
+                    className={cn(
+                      "w-full h-12 rounded-xl font-black shadow-lg gap-2 transition-all",
+                      canComplete ? "bg-white text-green-700 hover:bg-slate-100" : "bg-slate-100 text-slate-400"
+                    )}
+                   >
+                      {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      Clôturer le dossier CPI
+                   </Button>
+                   {!canComplete && (
+                     <div className="space-y-1 mt-2">
+                        <p className="text-[8px] font-black uppercase opacity-60">Pré-requis manquants :</p>
+                        <ul className="text-[8px] font-bold space-y-1 list-disc pl-3 opacity-60">
+                           {!request.protocolCode && <li>Protocole UniLav</li>}
+                           {!request.cpiCommunicationDate && <li>Date de communication</li>}
+                           {!request.receiptDocumentId && <li>Fichier récépissé PDF</li>}
+                        </ul>
+                     </div>
+                   )}
+                </CardContent>
+             </Card>
+           )}
+
            <Card className="border-primary/10 rounded-[2rem] shadow-lg bg-secondary/5 overflow-hidden">
              <CardHeader className="py-4 border-b bg-secondary/10">
                 <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
@@ -370,6 +549,13 @@ export default function EmploymentRequestDetailPage() {
                 <AuditMiniRow label="Dossier initié" value={formatDateTime(request.createdAt)} />
                 <AuditMiniRow label="Dernière modif." value={formatDateTime(request.updatedAt)} />
                 <AuditMiniRow label="Auteur" value={request.createdBy === 'candidate_portal' ? 'Candidat (Auto)' : 'Interne'} />
+                {request.completedAt && (
+                   <>
+                     <Separator className="opacity-20" />
+                     <AuditMiniRow label="Clôturé le" value={formatDateTime(request.completedAt)} />
+                     <AuditMiniRow label="Clôturé par" value={request.completedBy === 'system' ? 'Auto' : 'Utilisateur'} />
+                   </>
+                )}
                 <Separator className="opacity-20" />
                 <div className="space-y-2">
                    <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">Source de données</p>
@@ -383,15 +569,6 @@ export default function EmploymentRequestDetailPage() {
                 </div>
              </CardContent>
           </Card>
-
-          {request.notes && (
-            <div className="space-y-2">
-               <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Notes Internes</p>
-               <div className="p-4 bg-white rounded-2xl border border-primary/5 shadow-sm text-xs text-slate-600 italic leading-relaxed">
-                  {request.notes}
-               </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -422,7 +599,7 @@ function getStatusBadge(status: string) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 uppercase font-black text-[9px] px-2">Brouillon</Badge>;
     case 'sent_to_consultant': return <Badge className="bg-blue-500 text-white uppercase font-black text-[9px] px-2 border-none">Envoyé</Badge>;
-    case 'communication_done': return <Badge className="bg-green-600 text-white uppercase font-black text-[9px] px-2 border-none">Validé CPI</Badge>;
+    case 'communication_done': return <Badge className="bg-orange-500 text-white uppercase font-black text-[9px] px-2 border-none">Validé CPI</Badge>;
     case 'completed': return <Badge className="bg-slate-900 text-white uppercase font-black text-[9px] px-2 border-none">Terminé</Badge>;
     case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Annulé</Badge>;
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
