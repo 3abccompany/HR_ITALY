@@ -680,13 +680,15 @@ export default function EmploymentRequestDetailPage() {
             <AlertDialogTitle>Ajouter au registre ?</AlertDialogTitle>
             <AlertDialogDescription>
               Voulez-vous ajouter ce consultant au registre pour le réutiliser plus tard ?
-              <div className="mt-4 p-3 bg-secondary/30 rounded-xl">
-                 <p className="text-xs font-bold text-primary">{consultantForm.name}</p>
-                 <p className="text-[10px] text-muted-foreground">{consultantForm.email}</p>
-              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="sm:justify-between">
+          
+          <div className="mt-4 p-3 bg-secondary/30 rounded-xl">
+             <div className="text-xs font-bold text-primary">{consultantForm.name}</div>
+             <div className="text-[10px] text-muted-foreground">{consultantForm.email}</div>
+          </div>
+
+          <AlertDialogFooter className="sm:justify-between pt-4">
             <AlertDialogCancel disabled={processing}>Non, garder seulement pour ce dossier</AlertDialogCancel>
             <AlertDialogAction 
               onClick={(e) => { e.preventDefault(); handleConfirmRegistrySave(); }}
