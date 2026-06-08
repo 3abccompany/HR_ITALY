@@ -1226,7 +1226,7 @@ export default function ContractDetailPage() {
              <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)} disabled={processing}>Annuler</Button>
              <Button 
                onClick={handleSaveSignedDocRef} 
-               disabled={processing || !signedDocForm.title || (hasExisting && !signedDocForm.replacementReason)}
+               disabled={processing || !signedDocForm.title || (hasSignedDoc && !signedDocForm.replacementReason)}
                className="bg-primary text-white font-black rounded-xl px-8"
              >
                {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
