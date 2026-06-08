@@ -28,6 +28,7 @@ function sanitizePayload<T>(obj: T): T {
 /**
  * Updates contract data.
  * STRICT RULE: Only allowed if contract.status === "draft".
+ * Implementation: Only bumps contentUpdatedAt if relevant content fields have changed.
  */
 export async function updateContract(entityId: string, contractId: string, data: Partial<Contract>, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -44,12 +45,55 @@ export async function updateContract(entityId: string, contractId: string, data:
       throw new Error("Ce contrat n'est plus modifiable (statut: " + contract.status + ")");
     }
 
-    transaction.update(contractRef, {
+    // Metadata fields to exclude from content change detection
+    const metadataFields = [
+      'status', 'updatedAt', 'updatedBy', 'createdBy', 'createdAt', 'notes',
+      'contentUpdatedAt', 'contentVersion', 'contentHash',
+      'sentForSignatureAt', 'signedAt', 'activatedAt', 'terminatedAt', 'archivedAt',
+      'generatedPdfUrl', 'generatedPdfStoragePath', 'generatedPdfFileName', 
+      'generatedPdfVersion', 'generatedPdfAt', 'generatedPdfBy', 'generatedPdfStatus',
+      'signedDocumentId', 'signedDocumentTitle', 'signedDocumentUrl', 
+      'signedDocumentFileName', 'signedDocumentStoragePath', 'signedDocumentMimeType',
+      'signedDocumentUploadedAt', 'signedDocumentUploadedBy', 'signedDocumentReplacedAt',
+      'signedDocumentReplacedBy', 'signedDocumentReplacementReason', 'signedDocumentPreviousReferences',
+      'actualEndDate', 'terminationReason', 'terminationNotes', 'terminationDocumentId', 'terminationDocumentUrl',
+      'terminatedBy'
+    ];
+
+    let hasContentChanges = false;
+    for (const [key, value] of Object.entries(cleanData)) {
+      if (metadataFields.includes(key)) continue;
+
+      const oldValue = (contract as any)[key];
+      
+      // Robust comparison helper: treat undefined, null, and "" as equivalent for content comparison
+      const normalize = (v: any) => (v === undefined || v === null || v === "") ? null : v;
+      const nNew = normalize(value);
+      const nOld = normalize(oldValue);
+
+      if (Array.isArray(nNew) || Array.isArray(nOld)) {
+        if (JSON.stringify(nNew) !== JSON.stringify(nOld)) {
+          hasContentChanges = true;
+          break;
+        }
+      } else if (nNew !== nOld) {
+        hasContentChanges = true;
+        break;
+      }
+    }
+
+    const updatePayload: any = {
       ...cleanData,
-      contentUpdatedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    });
+    };
+
+    // Only bump content threshold if a business-relevant field changed
+    if (hasContentChanges) {
+      updatePayload.contentUpdatedAt = serverTimestamp();
+    }
+
+    transaction.update(contractRef, updatePayload);
   });
 
   await createAuditLog({

@@ -11,7 +11,8 @@ import {
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
-  ChevronDown, FolderOpen, FileCheck
+  ChevronDown, FolderOpen, FileCheck,
+  Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -59,6 +60,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { 
   Collapsible, 
   CollapsibleContent, 
@@ -392,11 +403,11 @@ export default function ContractDetailPage() {
       return;
     }
 
-    // Outdated Check
+    // Outdated Check (Content vs PDF)
     const pdfDate = parseSafeDate(contract?.generatedPdfAt);
     const contentDate = parseSafeDate(contract?.contentUpdatedAt);
 
-    if (pdfDate && contentDate && contentDate > pdfDate) {
+    if (pdfDate && contentDate && isBefore(pdfDate, contentDate)) {
       setValidationErrors(["Le contrat a été modifié après la génération du PDF. Veuillez régénérer le PDF."]);
       setIsValidationDialogOpen(true);
       return;
@@ -590,7 +601,7 @@ export default function ContractDetailPage() {
 
   const pdfDate = parseSafeDate(contract?.generatedPdfAt);
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
-  const isPdfOutdated = Boolean(pdfDate && contentDate && contentDate > pdfDate);
+  const isPdfOutdated = Boolean(pdfDate && contentDate && isBefore(pdfDate, contentDate));
 
   // Expiry Logic
   const contractExpiryDate = parseSafeDate(contract?.endDate);
@@ -608,7 +619,7 @@ export default function ContractDetailPage() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-black text-primary tracking-tight">Modèle de Contrat</h1>
-              {getStatusBadge(contract.status)}
+              {getStatusBadge(contract.status as ContractStatus)}
             </div>
             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">Référence : {businessReference}</p>
           </div>
@@ -1215,7 +1226,7 @@ export default function ContractDetailPage() {
              <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)} disabled={processing}>Annuler</Button>
              <Button 
                onClick={handleSaveSignedDocRef} 
-               disabled={processing || !signedDocForm.title || (hasSignedDoc && !signedDocForm.replacementReason)}
+               disabled={processing || !signedDocForm.title || (hasExisting && !signedDocForm.replacementReason)}
                className="bg-primary text-white font-black rounded-xl px-8"
              >
                {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
