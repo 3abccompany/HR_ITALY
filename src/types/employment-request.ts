@@ -18,6 +18,7 @@ export interface EmploymentRequest {
   // Relational links
   personId?: string;
   candidateId?: string;
+  candidateDisplayName?: string; // Added for display & email consistency
   offerId?: string;
   employeeId?: string | null;
   contractId?: string | null;
@@ -32,6 +33,7 @@ export interface EmploymentRequest {
   plannedHireDate?: string; // YYYY-MM-DD
   worksiteId?: string;
   jobRoleId?: string;
+  contractType?: string | null;
 
   // Consultant fields
   consultantId?: string | null;
@@ -41,6 +43,7 @@ export interface EmploymentRequest {
   sendMode?: "email" | "portal" | "manual" | "draft_only" | null;
   sentAt?: Date | FieldValue | null;
   sentBy?: string | null;
+  emailMessageId?: string | null;
 
   // Response fields
   cpiCommunicationDate?: string | null;

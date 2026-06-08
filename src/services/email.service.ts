@@ -1,4 +1,3 @@
-
 'use server';
 /**
  * @fileOverview Server-only email service for HR communications.
@@ -43,6 +42,24 @@ export interface SendDocumentRequestParams {
   jobTitle: string;
   requiredDocuments: string[];
   contactEmail: string;
+}
+
+export interface SendConsultantCPIParams {
+  entityId: string;
+  requestId: string;
+  to: string;
+  subject: string;
+  templateData: {
+    consultantName: string;
+    candidateName: string;
+    candidateEmail?: string;
+    candidatePhone?: string;
+    jobTitle: string;
+    companyName: string;
+    plannedHireDate: string;
+    contractType: string;
+    requestId: string;
+  };
 }
 
 /**
@@ -231,6 +248,89 @@ export async function sendDocumentRequestEmailAction(params: SendDocumentRequest
     return { success: true };
   } catch (error: any) {
     console.error("[Email Service] SMTP Send Error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Sends the official request for UniLav / CPI communication to the Labor Consultant.
+ */
+export async function sendConsultantCPIRequestAction(params: SendConsultantCPIParams) {
+  const { entityId, requestId, to, subject, templateData } = params;
+
+  try {
+    const host = process.env.SMTP_HOST;
+    const port = parseInt(process.env.SMTP_PORT || '587');
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const from = process.env.SMTP_FROM || user;
+
+    if (!host || !user || !pass) {
+      throw new Error("SMTP_NOT_CONFIGURED: Il servizio email non è configurato.");
+    }
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+    });
+
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.5;">
+        <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 20px;">Richiesta Comunicazione Obbligatoria (UniLav)</h1>
+        </div>
+        <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
+          <p>Gentile <strong>${templateData.consultantName || 'Consulente'}</strong>,</p>
+          <p>con la presente si richiede la predisposizione della comunicazione obbligatoria (UniLav) per l'assunzione del seguente candidato:</p>
+          
+          <div style="background: #F8FAFC; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #E2E8F0;">
+            <p style="margin: 0 0 10px 0;"><strong>Dettagli Candidato:</strong></p>
+            <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+              <li>Nome: ${templateData.candidateName}</li>
+              <li>Email: ${templateData.candidateEmail || '-'}</li>
+              <li>Telefono: ${templateData.candidatePhone || '-'}</li>
+            </ul>
+            <p style="margin: 15px 0 10px 0;"><strong>Dettagli Contrattuali:</strong></p>
+            <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+              <li>Posizione: ${templateData.jobTitle}</li>
+              <li>Azienda: ${templateData.companyName}</li>
+              <li>Tipo contratto: ${templateData.contractType}</li>
+              <li>Data inizio prevista: <strong>${templateData.plannedHireDate}</strong></li>
+            </ul>
+          </div>
+
+          <p>Vi preghiamo gentilmente di procedere con l'invio e di trasmetterci non appena disponibili:</p>
+          <ul style="font-size: 14px; color: #475569;">
+            <li>Il <strong>codice di protocollo</strong> UniLav.</li>
+            <li>La <strong>data effettiva</strong> di comunicazione.</li>
+            <li>Il <strong>file PDF del récépissé</strong> ufficiale.</li>
+          </ul>
+
+          <p style="margin-top: 30px; font-size: 13px; color: #94A3B8;">
+            Riferimento interno pratica: ${templateData.requestId}
+          </p>
+          
+          <p style="border-top: 1px solid #EEEFF7; padding-top: 20px; font-size: 14px; font-weight: bold;">
+            Cordiali saluti,<br>
+            Ufficio Risorse Umane — ${templateData.companyName}
+          </p>
+        </div>
+      </div>
+    `;
+
+    const info = await transporter.sendMail({
+      from,
+      to,
+      subject,
+      html,
+      text: `Richiesta UniLav per ${templateData.candidateName}. Data inizio: ${templateData.plannedHireDate}.`,
+    });
+
+    return { success: true, messageId: info.messageId };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send consultant email:", error);
     return { success: false, error: error.message };
   }
 }

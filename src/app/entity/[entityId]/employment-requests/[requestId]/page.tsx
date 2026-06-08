@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
+import { sendConsultantCPIRequestAction } from "@/services/email.service";
 
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
@@ -59,7 +60,7 @@ export default function EmploymentRequestDetailPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
   const canRead = hasPermission("employmentRequests.read");
   const canUpdate = hasPermission("employmentRequests.update") || hasPermission("employmentRequests.write");
@@ -171,17 +172,59 @@ export default function EmploymentRequestDetailPage() {
     }
   };
 
-  const handleMarkSent = async () => {
+  const handleSendViaEmail = async () => {
+    if (!user || !entityId || !requestId || !request) return;
+    if (!consultantForm.email) {
+      toast({ variant: "destructive", title: "Email manquant", description: "Veuillez renseigner l'email du consultant." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const result = await sendConsultantCPIRequestAction({
+        entityId,
+        requestId,
+        to: consultantForm.email,
+        subject: `Richiesta Comunicazione UniLav/CPI — ${request.candidateDisplayName || 'Candidato'} — ${request.plannedHireDate || 'da definire'}`,
+        templateData: {
+          consultantName: consultantForm.name || "Consulente",
+          candidateName: request.candidateDisplayName || "Candidato",
+          jobTitle: request.jobRoleId || "da definire",
+          companyName: entity?.nomEntreprise || "la nostra azienda",
+          plannedHireDate: request.plannedHireDate || "da definire",
+          contractType: request.contractType || "da definire",
+          requestId: requestId
+        }
+      });
+
+      if (!result.success) throw new Error(result.error);
+
+      await markAsSentToConsultant({
+        entityId,
+        requestId,
+        sendMode: "email",
+        actorUid: user.uid
+      });
+
+      toast({ title: "Email envoyé", description: "Le dossier a été transmis au consultant." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleMarkSentManual = async () => {
     if (!user || !entityId || !requestId) return;
     setProcessing(true);
     try {
       await markAsSentToConsultant({
         entityId,
         requestId,
-        sendMode: sendMode as any,
+        sendMode: "manual",
         actorUid: user.uid
       });
-      toast({ title: "Dossier marqué comme transmis" });
+      toast({ title: "Dossier marqué comme transmis (Manuel)" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -410,29 +453,16 @@ export default function EmploymentRequestDetailPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Mode d'envoi</Label>
-                      <Select 
-                        value={sendMode} 
-                        onValueChange={(v) => setSendMode(v as any)}
-                        disabled={isTerminal || !canUpdate}
-                      >
-                        <SelectTrigger className="rounded-xl h-10"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="email">Email direct</SelectItem>
-                          <SelectItem value="portal">Portail Consultant</SelectItem>
-                          <SelectItem value="manual">Remise manuelle / Courrier</SelectItem>
-                          <SelectItem value="draft_only">Mode Brouillon (Pas d'envoi)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                   </div>
-                   <div className="bg-slate-50 p-4 rounded-2xl border flex flex-col justify-center">
+                   <div className="space-y-1">
                       <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Dernier envoi</p>
                       <div className="flex items-center gap-2">
                         {request.sentAt ? (
                           <>
                             <CheckCircle2 className="w-4 h-4 text-green-600" />
-                            <span className="text-xs font-bold text-slate-800">{formatDateTime(request.sentAt)}</span>
+                            <div className="flex flex-col">
+                               <span className="text-xs font-bold text-slate-800">{formatDateTime(request.sentAt)}</span>
+                               <Badge variant="outline" className="w-fit text-[8px] h-3 px-1 mt-0.5 border-primary/20 uppercase">{request.sendMode}</Badge>
+                            </div>
                           </>
                         ) : (
                           <span className="text-xs text-muted-foreground italic">Non transmis</span>
@@ -440,16 +470,27 @@ export default function EmploymentRequestDetailPage() {
                       </div>
                    </div>
                 </div>
+
                 {canUpdate && !isTerminal && (
-                   <Button 
-                    onClick={handleMarkSent} 
-                    disabled={processing || !request.consultantName} 
-                    variant="outline" 
-                    className="w-full h-12 rounded-xl font-black border-dashed border-2 text-primary hover:bg-primary hover:text-white transition-all gap-3"
-                   >
-                      <Send className="w-4 h-4" />
-                      {request.status === "draft" ? "Marquer comme envoyé au consultant" : "Mettre à jour l'état d'envoi"}
-                   </Button>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                      <Button 
+                        onClick={handleSendViaEmail} 
+                        disabled={processing || !request.consultantEmail} 
+                        className="h-12 rounded-xl font-black bg-primary text-white shadow-lg gap-2"
+                      >
+                         {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                         Envoyer email au consultant
+                      </Button>
+                      <Button 
+                        onClick={handleMarkSentManual} 
+                        disabled={processing} 
+                        variant="outline" 
+                        className="h-12 rounded-xl font-bold border-dashed border-2 text-primary hover:bg-slate-50 transition-all gap-2"
+                      >
+                         {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                         Marquer comme envoyé manuellement
+                      </Button>
+                   </div>
                 )}
              </CardContent>
           </Card>
