@@ -28,6 +28,7 @@ export type RelatedModule =
   | "employees"
   | "contracts"
   | "mandatoryCommunications"
+  | "employmentRequests"
   | "payroll"
   | "termination"
   | "general";
