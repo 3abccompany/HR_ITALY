@@ -134,3 +134,80 @@ export async function repairCandidateEmployeeRecord(entityId: string, candidateI
     return res;
   });
 }
+
+/**
+ * REPAIR ONLY: Links a specific EmploymentRequest and its linked receipt document to an existing employeeId.
+ * Derived from offerId.
+ */
+export async function repairCpiLink(entityId: string, offerId: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestId = `unilav_${offerId}`;
+  
+  return await runTransaction(db, async (transaction) => {
+    const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+    const requestSnap = await transaction.get(requestRef);
+    if (!requestSnap.exists()) throw new Error(`Dossier CPI ${requestId} introuvable.`);
+    const request = requestSnap.data() as any;
+
+    // Try to resolve employeeId from various links
+    let employeeId = request.employeeId;
+    
+    if (!employeeId) {
+      const personRef = doc(db, `entities/${entityId}/persons`, request.personId);
+      const personSnap = await transaction.get(personRef);
+      employeeId = personSnap.exists() ? personSnap.data().currentEmployeeId : null;
+    }
+    
+    if (!employeeId) {
+      const candidateRef = doc(db, `entities/${entityId}/candidates`, request.candidateId);
+      const candidateSnap = await transaction.get(candidateRef);
+      employeeId = candidateSnap.exists() ? candidateSnap.data().employeeId : null;
+    }
+
+    if (!employeeId) {
+      const offerRef = doc(db, `entities/${entityId}/employmentOffers`, offerId);
+      const offerSnap = await transaction.get(offerRef);
+      employeeId = offerSnap.exists() ? offerSnap.data().employeeId : null;
+    }
+
+    if (!employeeId) throw new Error("CONVERSION_NOT_FOUND: Impossible de résoudre l'EmployeeId pour ce dossier.");
+
+    // Verify employee exists
+    const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
+    const employeeSnap = await transaction.get(employeeRef);
+    if (!employeeSnap.exists()) throw new Error(`EMPLOYEE_MISSING: Le document employé ${employeeId} n'existe pas.`);
+    const employeeData = employeeSnap.data();
+
+    // 1. Update EmploymentRequest
+    transaction.update(requestRef, {
+      employeeId,
+      candidateDisplayName: employeeData.displayName,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid
+    });
+
+    // 2. Update Receipt Document
+    if (request.receiptDocumentId) {
+      const docRef = doc(db, `entities/${entityId}/documents`, request.receiptDocumentId);
+      transaction.update(docRef, {
+        employeeId,
+        employeeDisplayName: employeeData.displayName,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid
+      });
+    }
+
+    return { employeeId, receiptDocumentId: request.receiptDocumentId };
+  }).then(async (res) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "admin.repair_cpi_link",
+      resourceType: "employmentRequest",
+      resourceId: requestId,
+      details: res
+    });
+    return res;
+  });
+}
