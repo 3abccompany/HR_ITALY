@@ -27,7 +27,7 @@ export async function convertOfferToEmployeeAction(params: {
 
     const personDoc = await adminDb.collection("entities").doc(entityId).collection("persons").doc(offerData.personId).get();
     if (!personDoc.exists) throw new Error("Fiche identité introuvable.");
-    const personData = personDoc.data() as Person;
+    const person = personDoc.data() as Person;
 
     // Block if this is a fresh conversion but person is already an active employee in the entity.
     // Duplicate detection priority: personId > taxCode > email.
@@ -36,8 +36,8 @@ export async function convertOfferToEmployeeAction(params: {
 
       const [byPerson, byTax, byEmail] = await Promise.all([
         employeesRef.where("personId", "==", offerData.personId).where("status", "==", "active").limit(1).get(),
-        personData.codiceFiscale ? employeesRef.where("taxCode", "==", personData.codiceFiscale).where("status", "==", "active").limit(1).get() : Promise.resolve(null),
-        personData.email ? employeesRef.where("email", "==", personData.email.toLowerCase().trim()).where("status", "==", "active").limit(1).get() : Promise.resolve(null)
+        person.codiceFiscale ? employeesRef.where("taxCode", "==", person.codiceFiscale).where("status", "==", "active").limit(1).get() : Promise.resolve(null),
+        person.email ? employeesRef.where("email", "==", person.email.toLowerCase().trim()).where("status", "==", "active").limit(1).get() : Promise.resolve(null)
       ]);
 
       const hasMatch = !byPerson.empty || (byTax && !byTax.empty) || (byEmail && !byEmail.empty);
@@ -73,17 +73,22 @@ export async function convertOfferToEmployeeAction(params: {
       const membershipId = `${actorUid}_${entityId}`;
       const membershipRef = adminDb.collection("memberships").doc(membershipId);
 
+      // Link to standalone Employment Request foundation
+      const requestId = `unilav_${offerId}`;
+      const requestRef = adminDb.collection("entities").doc(entityId).collection("employmentRequests").doc(requestId);
+
       // Pre-fetch Need Ref for headcount update later
       const needRef = offer.recruitmentNeedId 
         ? adminDb.collection("entities").doc(entityId).collection("recruitmentNeeds").doc(offer.recruitmentNeedId)
         : null;
 
-      const [candidateSnap, personSnap, entitySnap, mSnap, needSnap] = await Promise.all([
+      const [candidateSnap, personSnap, entitySnap, mSnap, needSnap, requestSnap] = await Promise.all([
         transaction.get(candidateRef),
         transaction.get(personRef),
         transaction.get(entityRef),
         transaction.get(membershipRef),
-        needRef ? transaction.get(needRef) : Promise.resolve(null)
+        needRef ? transaction.get(needRef) : Promise.resolve(null),
+        transaction.get(requestRef)
       ]);
 
       const dossierQuery = adminDb.collection("entities").doc(entityId).collection("preHireDossiers").where("employmentOfferId", "==", offerId).limit(1);
@@ -101,7 +106,7 @@ export async function convertOfferToEmployeeAction(params: {
       if (!candidateSnap.exists) throw new Error("Dossier candidat introuvable.");
       if (!personSnap.exists) throw new Error("Fiche identité introuvable.");
 
-      const person = personSnap.data() as Person;
+      const personData = personSnap.data() as Person;
       const entity = entitySnap.data();
 
       // Permissions check
@@ -121,14 +126,14 @@ export async function convertOfferToEmployeeAction(params: {
       if (!isUniLavDone) throw new Error("CONVERSION_BLOCKED: Protocole UniLav obligatoire non enregistré.");
 
       const isAlreadyConverted = offer.conversionStatus === "converted";
-      let employeeId = offer.employeeId || person.currentEmployeeId;
+      let employeeId = offer.employeeId || personData.currentEmployeeId;
       let contractId = offer.contractId;
 
       const isNewEmployee = !employeeId;
       const isNewContract = !contractId;
 
-      const employeeCode = person.codiceFiscale 
-          ? `E-${person.codiceFiscale.substring(0, 6)}` 
+      const employeeCode = personData.codiceFiscale 
+          ? `E-${personData.codiceFiscale.substring(0, 6)}` 
           : `E-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
       if (!employeeId) {
@@ -146,17 +151,17 @@ export async function convertOfferToEmployeeAction(params: {
       if (isNewEmployee) {
         transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
           employeeId, 
-          personId: person.personId, 
+          personId: personData.personId, 
           entityId, 
           sourceOfferId: offerId, 
           employeeCode,
-          firstName: person.firstName, 
-          lastName: person.lastName, 
-          displayName: person.displayName,
-          email: person.email, 
-          phone: person.phone || "", 
-          birthDate: person.dateOfBirth || (person as any).birthDate || "",
-          taxCode: person.codiceFiscale || "", 
+          firstName: personData.firstName, 
+          lastName: personData.lastName, 
+          displayName: personData.displayName,
+          email: personData.email, 
+          phone: personData.phone || "", 
+          birthDate: personData.dateOfBirth || (personData as any).birthDate || "",
+          taxCode: personData.codiceFiscale || "", 
           hireDate: offer.proposedStartDate, 
           departmentId: offer.departmentId || "", 
           departmentName: offer.departmentName || "",
@@ -172,20 +177,20 @@ export async function convertOfferToEmployeeAction(params: {
       // B. Create Draft Contract
       if (isNewContract) {
         const companyAddress = entity ? `${entity.adresseSiegeSocial || ""}, ${entity.codePostal || ""} ${entity.ville || ""} (${entity.province || ""})` : "";
-        const employeeAddress = person ? `${person.address || ""}, ${person.postalCode || ""} ${person.city || ""} (${person.province || ""})` : "";
+        const employeeAddress = personData ? `${personData.address || ""}, ${personData.postalCode || ""} ${personData.city || ""} (${personData.province || ""})` : "";
 
         transaction.set(adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId), {
           contractId, 
           entityId, 
-          personId: person.personId, 
+          personId: personData.personId, 
           employeeId, 
           sourceOfferId: offerId,
-          employeeDisplayName: person.displayName,
+          employeeDisplayName: personData.displayName,
           employeeCode: isNewEmployee ? employeeCode : ((personData as any).employeeCode || employeeCode), 
-          taxCode: person.codiceFiscale || "",
+          taxCode: personData.codiceFiscale || "",
           employeeAddressSnapshot: employeeAddress,
-          dateOfBirth: person.dateOfBirth || (person as any).birthDate || "",
-          placeOfBirth: person.placeOfBirth || "",
+          dateOfBirth: personData.dateOfBirth || (personData as any).birthDate || "",
+          placeOfBirth: personData.placeOfBirth || "",
           entityName: entity?.nomEntreprise || "",
           entityLegalName: entity?.raisonSociale || "",
           entityVatNumber: entity?.numeroTVA || "",
@@ -256,13 +261,22 @@ export async function convertOfferToEmployeeAction(params: {
         updatedBy: actorUid
       });
 
+      // Sync Standalone Employment Request (UniLav) if it exists
+      if (requestSnap.exists) {
+        transaction.update(requestRef, {
+          employeeId,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid
+        });
+      }
+
       // D. Update Registry Documents (Backfill employeeId)
       docsToBackfillSnap.docs.forEach(docSnap => {
         const docData = docSnap.data();
         if (!docData.employeeId) {
           transaction.update(docSnap.ref, {
             employeeId,
-            employeeDisplayName: person.displayName,
+            employeeDisplayName: personData.displayName,
             updatedAt: FieldValue.serverTimestamp(),
             updatedBy: actorUid
           });
@@ -282,7 +296,7 @@ export async function convertOfferToEmployeeAction(params: {
       transaction.set(employeeViewRef, {
         id: employeeId,
         employeeId,
-        displayName: person.displayName,
+        displayName: personData.displayName,
         status: "active",
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
@@ -304,7 +318,7 @@ export async function convertOfferToEmployeeAction(params: {
       transaction.set(timelineRef, {
         eventId: timelineRef.id,
         entityId,
-        personId: person.personId,
+        personId: personData.personId,
         type: "employee.created",
         label: isAlreadyConverted ? "Synchronisation Lifecycle" : "Embauche finalisée",
         description: isAlreadyConverted ? "Données de candidature synchronisées avec le profil employé." : `Candidat embauché. EmployeeId: ${employeeId}`,
