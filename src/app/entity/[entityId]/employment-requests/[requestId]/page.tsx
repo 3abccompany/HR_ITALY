@@ -462,8 +462,8 @@ export default function EmploymentRequestDetailPage() {
                             <p className="text-sm font-black text-slate-800 truncate">{receipt?.title || "Chargement..."}</p>
                             <div className="flex items-center gap-2 mt-1">
                                <p className="text-[9px] font-black uppercase text-muted-foreground/60">ID: {request.receiptDocumentId.substring(0, 8)}</p>
-                               {receipt?.uploadedAt && (
-                                 <p className="text-[9px] font-bold text-slate-400">Reçu le {formatDateTime(receipt.uploadedAt)}</p>
+                               {receipt && (
+                                 <p className="text-[9px] font-bold text-slate-400">Reçu le {formatDateTime(receipt.uploadedAt || receipt.createdAt)}</p>
                                )}
                             </div>
                          </div>
@@ -584,15 +584,44 @@ function AuditMiniRow({ label, value }: { label: string, value: string }) {
   );
 }
 
+/**
+ * Robust date formatter that handles Firestore Timestamps (Client & Admin),
+ * regular Date objects, and serialized timestamp maps.
+ */
 function formatDateTime(val: any): string {
-  if (!val) return "N/A";
+  if (!val) return "Date non disponible";
+  
+  // Detect invalid map ({}) from corrupted storage
+  if (typeof val === 'object' && !val.seconds && !val._seconds && !(val instanceof Date) && typeof val.toDate !== 'function') {
+    return "Date non disponible";
+  }
+
   try {
-    const d = val.toDate ? val.toDate() : new Date(val);
-    return d.toLocaleString('fr-FR', { 
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit'
+    let date: Date | null = null;
+
+    if (val instanceof Date) {
+      date = val;
+    } else if (typeof val.toDate === 'function') {
+      date = val.toDate();
+    } else if (val.seconds !== undefined) {
+      date = new Date(val.seconds * 1000);
+    } else if (val._seconds !== undefined) {
+      date = new Date(val._seconds * 1000);
+    } else if (typeof val === 'string') {
+      const parsed = new Date(val);
+      if (!isNaN(parsed.getTime())) date = parsed;
+    }
+
+    if (!date || isNaN(date.getTime())) return "Date non disponible";
+    
+    return date.toLocaleDateString('fr-FR', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric' 
     });
-  } catch (e) { return "N/A"; }
+  } catch (e) {
+    return "Date non disponible";
+  }
 }
 
 function getStatusBadge(status: string) {
@@ -605,3 +634,4 @@ function getStatusBadge(status: string) {
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
   }
 }
+
