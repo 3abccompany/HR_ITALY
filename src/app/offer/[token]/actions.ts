@@ -1,4 +1,3 @@
-
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
@@ -379,6 +378,9 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
            offerId: offer.offerId,
            personId: offer.personId,
            candidateId: offer.candidateId,
+           candidateDisplayName: offer.candidateDisplayName || null,
+           candidateEmail: offer.candidateEmail || null,
+           candidatePhone: offer.candidatePhone || null,
            mandatoryCommunicationId: communicationId,
            source: "offer",
            type: "unilav",
@@ -386,6 +388,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
            plannedHireDate: offer.proposedStartDate || "",
            jobRoleId: offer.jobTitleName || "",
            worksiteId: offer.worksiteId || "",
+           contractType: offer.contractType || null,
            createdAt: FieldValue.serverTimestamp(),
            createdBy: "candidate_portal",
            updatedAt: FieldValue.serverTimestamp(),

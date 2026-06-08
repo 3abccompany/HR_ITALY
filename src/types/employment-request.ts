@@ -19,6 +19,8 @@ export interface EmploymentRequest {
   personId?: string;
   candidateId?: string;
   candidateDisplayName?: string; // Added for display & email consistency
+  candidateEmail?: string | null;
+  candidatePhone?: string | null;
   offerId?: string;
   employeeId?: string | null;
   contractId?: string | null;

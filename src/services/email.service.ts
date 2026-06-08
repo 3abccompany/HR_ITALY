@@ -230,7 +230,7 @@ export async function sendDocumentRequestEmailAction(params: SendDocumentRequest
         <ul style="background: #F8FAFC; padding: 20px 40px; border-radius: 12px; list-style-type: square; color: #334155;">
           ${docList}
         </ul>
-        <p>Ti preghiamo di trasmettere i documenti rispondendo a questa email o contattando il nostro ufficio RU all'indirizzo: <strong>${params.contactEmail}</strong>.</p>
+        <p>Ti preghiamo di trasmettere i documenti rispondendo a cette email o contattando il nostro ufficio RU all'indirizzo: <strong>${params.contactEmail}</strong>.</p>
         <p style="font-size: 13px; color: #64748B; margin-top: 30px;">
           <em>Nota sulla privacy: I dati forniti saranno trattati esclusivamente per le finalità legate alla gestione del rapporto di lavoro, nel rispetto del GDPR.</em>
         </p>
@@ -328,9 +328,47 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
       text: `Richiesta UniLav per ${templateData.candidateName}. Data inizio: ${templateData.plannedHireDate}.`,
     });
 
+    // Logging for traceability
+    try {
+       const logRef = adminDb.collection("entities").doc(entityId).collection("emailLogs").doc();
+       await logRef.set({
+         logId: logRef.id,
+         entityId,
+         requestId,
+         module: "employmentRequests",
+         type: "cpi_consultant_request",
+         to,
+         from,
+         subject,
+         status: "sent",
+         messageId: info.messageId,
+         createdAt: FieldValue.serverTimestamp(),
+       });
+    } catch (logErr) {
+       console.warn("[Email Service] Non-blocking log failure:", logErr);
+    }
+
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     console.error("[Email Service] Failed to send consultant email:", error);
+    
+    // Attempt to log failure
+    try {
+       const logRef = adminDb.collection("entities").doc(entityId).collection("emailLogs").doc();
+       await logRef.set({
+         logId: logRef.id,
+         entityId,
+         requestId,
+         module: "employmentRequests",
+         type: "cpi_consultant_request",
+         to,
+         subject,
+         status: "failed",
+         error: error.message,
+         createdAt: FieldValue.serverTimestamp(),
+       });
+    } catch (e) {}
+
     return { success: false, error: error.message };
   }
 }

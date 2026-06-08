@@ -189,6 +189,8 @@ export default function EmploymentRequestDetailPage() {
         templateData: {
           consultantName: consultantForm.name || "Consulente",
           candidateName: request.candidateDisplayName || "Candidato",
+          candidateEmail: request.candidateEmail || undefined,
+          candidatePhone: request.candidatePhone || undefined,
           jobTitle: request.jobRoleId || "da definire",
           companyName: entity?.nomEntreprise || "la nostra azienda",
           plannedHireDate: request.plannedHireDate || "da definire",
