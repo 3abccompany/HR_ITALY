@@ -21,10 +21,22 @@ import { PreHireDocument } from "@/types/pre-hire-dossier";
 import { EmploymentOffer } from "@/types/employment-offer";
 
 /**
- * Normalizes payload for Firestore
+ * Normalizes payload for Firestore.
+ * Preserves FieldValue and Timestamp instances to avoid stripping server directives.
  */
 function sanitizePayload(obj: any): any {
   if (obj === null || typeof obj !== 'object') return obj;
+  
+  // Preservation check for Firestore internal objects
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp'
+  ) {
+    return obj;
+  }
+
   const newObj: any = Array.isArray(obj) ? [] : {};
   for (const key in obj) {
     const val = obj[key];
@@ -441,7 +453,7 @@ export async function replaceHRDocument(
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, {
         eventId: timelineRef.id,
-        entityId,
+        entityId: entityId,
         personId: oldDoc.personId,
         type: "document.replaced",
         label: `Document renouvelé : ${DOCUMENT_TYPE_LABELS[oldDoc.documentType] || oldDoc.documentType}`,

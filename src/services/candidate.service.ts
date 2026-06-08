@@ -16,9 +16,20 @@ import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/e
 
 /**
  * Utility to remove undefined properties from an object to prevent Firestore errors.
+ * Preserves FieldValue and Timestamp instances to avoid stripping server directives.
  */
 function sanitizePayload(obj: any): any {
   if (obj === null || typeof obj !== 'object') return obj;
+  
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp'
+  ) {
+    return obj;
+  }
+
   const newObj: any = Array.isArray(obj) ? [] : {};
   for (const key in obj) {
     const val = obj[key];
@@ -81,16 +92,16 @@ export async function createCandidate(
     transaction.set(candidateRef, candidateData);
 
     // 2. Update Person
-    transaction.update(personRef, {
+    transaction.update(personRef, sanitizePayload({
       currentLifecycleStatus: "candidate",
       currentCandidateId: candidateId,
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    });
+    }));
 
     // 3. Timeline Event
     const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-    transaction.set(timelineRef, {
+    transaction.set(timelineRef, sanitizePayload({
       eventId: timelineRef.id,
       entityId,
       personId,
@@ -101,7 +112,7 @@ export async function createCandidate(
       sourceId: candidateId,
       createdAt: serverTimestamp(),
       createdBy: actorUid,
-    });
+    }));
 
     return candidateId;
   }).then(async (id) => {
@@ -138,11 +149,11 @@ export async function updateCandidate(
     throw new Error("Le statut 'Hired' est réservé au processus d'embauche.");
   }
 
-  updateDoc(candidateRef, {
+  updateDoc(candidateRef, sanitizePayload({
     ...data,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  }).catch(async (serverError) => {
+  })).catch(async (serverError) => {
     const permissionError = new FirestorePermissionError({
       path: candidateRef.path,
       operation: 'update',
@@ -156,19 +167,19 @@ export async function updateCandidate(
   const personRef = doc(db, `entities/${entityId}/persons`, currentCandidate.personId);
   
   if (data.status && (terminalStatuses.includes(data.status as CandidateStatus) || data.status === "hired")) {
-    setDoc(personRef, {
+    setDoc(personRef, sanitizePayload({
       currentLifecycleStatus: data.status === "hired" ? "employee" : "person",
       currentCandidateId: null,
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    }, { merge: true }).catch(err => console.warn("Person sync failed", err));
+    }), { merge: true }).catch(err => console.warn("Person sync failed", err));
   } else if (data.status && !terminalStatuses.includes(data.status as CandidateStatus)) {
-    setDoc(personRef, {
+    setDoc(personRef, sanitizePayload({
       currentLifecycleStatus: "candidate",
       currentCandidateId: candidateId,
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    }, { merge: true }).catch(err => console.warn("Person sync failed", err));
+    }), { merge: true }).catch(err => console.warn("Person sync failed", err));
   }
 
   createAuditLog({
@@ -239,7 +250,7 @@ export async function updateCandidateStatus(params: {
   }
 
   // 1. Update main candidate document
-  updateDoc(candidateRef, updateData).catch(async (serverError) => {
+  updateDoc(candidateRef, sanitizePayload(updateData)).catch(async (serverError) => {
     const permissionError = new FirestorePermissionError({
       path: candidateRef.path,
       operation: 'update',
@@ -256,17 +267,17 @@ export async function updateCandidateStatus(params: {
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
   };
-  setDoc(personRef, personUpdate, { merge: true }).catch(err => {
+  setDoc(personRef, sanitizePayload(personUpdate), { merge: true }).catch(err => {
     console.warn("Secondary Person sync failed (non-critical):", err);
   });
 
   // 3. Update optional read models safely
   const viewRef = doc(db, `entities/${entityId}/candidateViews`, candidateId);
-  setDoc(viewRef, { 
+  setDoc(viewRef, sanitizePayload({ 
     status: nextStatus, 
     updatedAt: serverTimestamp(), 
     updatedBy: actorUid 
-  }, { merge: true }).catch(err => {
+  }), { merge: true }).catch(err => {
     console.debug("Secondary candidateView sync skipped or failed (non-critical):", err);
   });
 
@@ -304,7 +315,7 @@ export async function updateCandidateStatus(params: {
       createdBy: actorUid,
     };
     
-    setDoc(timelineRef, timelineData).catch(async (err) => {
+    setDoc(timelineRef, sanitizePayload(timelineData)).catch(async (err) => {
       const permissionError = new FirestorePermissionError({
         path: timelineRef.path,
         operation: 'create',
@@ -338,23 +349,23 @@ export async function disableCandidate(entityId: string, candidateId: string, ac
   if (!snap.exists()) return;
   const cand = snap.data() as Candidate;
 
-  updateDoc(candidateRef, {
+  updateDoc(candidateRef, sanitizePayload({
     status: "inactive",
     previousStatus: cand.status,
     disabledAt: serverTimestamp(),
     disabledBy: actorUid,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  });
+  }));
 
   // Clear Person link using safe set merge
   const personRef = doc(db, `entities/${entityId}/persons`, cand.personId);
-  setDoc(personRef, {
+  setDoc(personRef, sanitizePayload({
     currentLifecycleStatus: "person",
     currentCandidateId: null,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  }, { merge: true }).catch(err => console.warn("Person sync failed", err));
+  }), { merge: true }).catch(err => console.warn("Person sync failed", err));
 
   createAuditLog({
     userId: actorUid,
@@ -378,22 +389,22 @@ export async function reactivateCandidate(entityId: string, candidateId: string,
 
   const targetStatus = cand.previousStatus || "under_review";
 
-  updateDoc(candidateRef, {
+  updateDoc(candidateRef, sanitizePayload({
     status: targetStatus,
     reactivatedAt: serverTimestamp(),
     reactivatedBy: actorUid,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  });
+  }));
 
   // Restore Person link if eligible using safe set merge
   const personRef = doc(db, `entities/${entityId}/persons`, cand.personId);
-  setDoc(personRef, {
+  setDoc(personRef, sanitizePayload({
     currentLifecycleStatus: "candidate",
     currentCandidateId: candidateId,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  }, { merge: true }).catch(err => console.warn("Person sync failed", err));
+  }), { merge: true }).catch(err => console.warn("Person sync failed", err));
 
   createAuditLog({
     userId: actorUid,

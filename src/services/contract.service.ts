@@ -20,9 +20,28 @@ import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/e
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
+ * Preserves FieldValue and Timestamp identities.
  */
-function sanitizePayload<T>(obj: T): T {
-  return JSON.parse(JSON.stringify(obj, (key, value) => (value === undefined ? null : value)));
+function sanitizePayload(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp'
+  ) {
+    return obj;
+  }
+
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  for (const key in obj) {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = typeof val === 'object' ? sanitizePayload(val) : val;
+    }
+  }
+  return newObj;
 }
 
 /**
@@ -121,12 +140,12 @@ export async function sendContractToSignature(entityId: string, contractId: stri
       throw new Error("Action impossible pour le statut actuel.");
     }
 
-    transaction.update(contractRef, {
+    transaction.update(contractRef, sanitizePayload({
       status: "pending_signature",
       sentForSignatureAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    });
+    }));
   });
 
   await createAuditLog({
@@ -208,13 +227,13 @@ export async function recordSignedDocumentReference(
       });
     }
 
-    transaction.update(contractRef, {
+    transaction.update(contractRef, sanitizePayload({
       ...payload,
       signedDocumentPreviousReferences: previousRefs,
       signedDocumentReplacedAt: isReplacement ? serverTimestamp() : null,
       signedDocumentReplacedBy: isReplacement ? actorUid : null,
       signedDocumentReplacementReason: isReplacement ? (data.replacementReason || null) : null
-    });
+    }));
   });
 
   // Mirror to Centralized Documents Registry (Phase 2A)
@@ -295,13 +314,13 @@ export async function activateContractAction(entityId: string, contractId: strin
     }
 
     // ALL WRITES AFTER
-    transaction.update(contractRef, {
+    transaction.update(contractRef, sanitizePayload({
       status: "active",
       activatedAt: serverTimestamp(),
       signedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
-    });
+    }));
 
     transaction.update(employeeRef, {
       activeContractId: contractId,
@@ -312,7 +331,7 @@ export async function activateContractAction(entityId: string, contractId: strin
     // Timeline Event
     if (contract.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-      transaction.set(timelineRef, {
+      transaction.set(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
         personId: contract.personId,
@@ -325,7 +344,7 @@ export async function activateContractAction(entityId: string, contractId: strin
         sourceId: contractId,
         createdAt: serverTimestamp(),
         createdBy: actorUid,
-      });
+      }));
     }
 
     return { success: true };
@@ -350,11 +369,11 @@ export async function rollbackToDraft(entityId: string, contractId: string, acto
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
 
-  await updateDoc(contractRef, {
+  await updateDoc(contractRef, sanitizePayload({
     status: "draft",
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  });
+  }));
 
   await createAuditLog({
     userId: actorUid,
@@ -465,35 +484,35 @@ export async function terminateContractAction(
           });
           
           // Sync View Model
-          transaction.set(employeeViewRef, {
+          transaction.set(employeeViewRef, sanitizePayload({
             activeContractId: nextContract.contractId,
             updatedAt: serverTimestamp(),
-          }, { merge: true });
+          }), { merge: true });
         } else {
           // No more active contracts: Mark employee as terminated
-          transaction.update(employeeRef, {
+          transaction.update(employeeRef, sanitizePayload({
             activeContractId: null,
             status: "terminated",
             terminationDate: terminationData.actualEndDate,
             terminationReason: terminationData.terminationReason,
             updatedAt: serverTimestamp(),
-          });
+          }));
 
           // Sync View Model
-          transaction.set(employeeViewRef, {
+          transaction.set(employeeViewRef, sanitizePayload({
             activeContractId: null,
             status: "terminated",
             updatedAt: serverTimestamp(),
-          }, { merge: true });
+          }), { merge: true });
 
           // Update Person Lifecycle Status
           if (contract.personId) {
              const personRef = doc(db, `entities/${entityId}/persons`, contract.personId);
-             transaction.update(personRef, {
+             transaction.update(personRef, sanitizePayload({
                currentLifecycleStatus: "former_employee",
                updatedAt: serverTimestamp(),
                updatedBy: actorUid
-             });
+             }));
           }
         }
       }
@@ -546,12 +565,12 @@ export async function archiveContractAction(entityId: string, contractId: string
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
 
-  await updateDoc(contractRef, {
+  await updateDoc(contractRef, sanitizePayload({
     status: "archived",
     archivedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  });
+  }));
 
   await createAuditLog({
     userId: actorUid,

@@ -17,10 +17,21 @@ import { EmploymentOffer } from "@/types/employment-offer";
 import { createAuditLog } from "./audit.service";
 
 /**
- * Normalizes payload for Firestore
+ * Normalizes payload for Firestore.
+ * Preserves FieldValue and Timestamp instances.
  */
 function sanitizePayload(obj: any): any {
   if (obj === null || typeof obj !== 'object') return obj;
+  
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp'
+  ) {
+    return obj;
+  }
+
   const newObj: any = Array.isArray(obj) ? [] : {};
   for (const key in obj) {
     const val = obj[key];
@@ -185,7 +196,7 @@ export async function markAsSentToConsultant(params: {
     updatedBy: actorUid,
   };
 
-  await updateDoc(requestRef, updateData);
+  await updateDoc(requestRef, sanitizePayload(updateData));
 
   await createAuditLog({
     userId: actorUid,
@@ -224,13 +235,13 @@ export async function recordCpiCommunication(params: {
   const now = serverTimestamp();
   
   // 1. Update primary EmploymentRequest record
-  await updateDoc(requestRef, {
+  await updateDoc(requestRef, sanitizePayload({
     status: "communication_done",
     cpiCommunicationDate,
     protocolCode: protocolCode.trim(),
     updatedAt: now,
     updatedBy: actorUid,
-  });
+  }));
 
   // 2. Legacy Mirroring (Non-blocking)
   if (request.mandatoryCommunicationId) {
@@ -281,11 +292,11 @@ export async function linkReceiptToEmploymentRequest(params: {
     throw new Error("Action impossible sur un dossier clôturé.");
   }
 
-  await updateDoc(requestRef, {
+  await updateDoc(requestRef, sanitizePayload({
     receiptDocumentId: documentId,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
-  });
+  }));
 
   await createAuditLog({
     userId: actorUid,
@@ -324,13 +335,13 @@ export async function completeEmploymentRequest(params: {
   }
 
   const now = serverTimestamp();
-  await updateDoc(requestRef, {
+  await updateDoc(requestRef, sanitizePayload({
     status: "completed",
     completedAt: now,
     completedBy: actorUid,
     updatedAt: now,
     updatedBy: actorUid,
-  });
+  }));
 
   await createAuditLog({
     userId: actorUid,
@@ -345,7 +356,7 @@ export async function completeEmploymentRequest(params: {
   if (request.personId) {
     try {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
-      await setDoc(timelineRef, {
+      await setDoc(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
         personId: request.personId,
@@ -356,7 +367,7 @@ export async function completeEmploymentRequest(params: {
         sourceId: requestId,
         createdAt: now,
         createdBy: actorUid,
-      });
+      }));
     } catch (e) {
       console.warn("[Timeline Sync] Failed to record completion event:", e);
     }
