@@ -29,7 +29,7 @@ import {
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useFirebase, useDoc, useCollection, useUser } from "@/firebase";
+import { useFirebase, useDoc, useCollection, useUser, useAuth } from "@/firebase";
 import { doc, DocumentReference, query, collection, where, Query, orderBy } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
@@ -45,6 +45,7 @@ import { cn } from "@/lib/utils";
 import { format, isBefore, differenceInDays, startOfDay, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
+import { Person } from "@/types/person";
 
 /**
  * Robust date parser for mixed formats.
@@ -78,8 +79,9 @@ export default function Employee360HubPage() {
   const employeeId = params?.employeeId as string;
   
   const { db } = useFirebase();
+  const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
@@ -87,58 +89,76 @@ export default function Employee360HubPage() {
   const canReadDocs = hasPermission("documents.read");
   const canReadContracts = hasPermission("contracts.read");
   const canReadCPI = hasPermission("employmentRequests.read");
+  const canReadPersons = hasPermission("persons.read");
+  const canReadCandidates = hasPermission("candidates.read");
 
-  // --- Core Employee & Person Data ---
+  // --- Core Employee Data ---
   const employeeRef = useMemo(() => 
-    db && entityId && employeeId ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
-  [db, entityId, employeeId]);
+    db && entityId && employeeId && !membershipLoading ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
+  [db, entityId, employeeId, membershipLoading]);
   const { data: employee, loading: loadingEmployee } = useDoc<Employee>(employeeRef);
 
-  // --- Recruitment Context ---
+  // --- Recruitment Context (Guarded) ---
   const candidateRef = useMemo(() => 
-    db && entityId && employee?.sourceCandidateId ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) : null,
-  [db, entityId, employee?.sourceCandidateId]);
+    db && entityId && employee?.sourceCandidateId && canReadCandidates && !membershipLoading 
+      ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) 
+      : null,
+  [db, entityId, employee?.sourceCandidateId, canReadCandidates, membershipLoading]);
   const { data: candidate } = useDoc<Candidate>(candidateRef);
 
   const offerRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
-  [db, entityId, employee?.sourceOfferId]);
+    db && entityId && employee?.sourceOfferId && (canReadContracts || canReadCandidates) && !membershipLoading 
+      ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) 
+      : null,
+  [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates, membershipLoading]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
-  // --- Compliance Context ---
+  // --- Person Snapshot (Guarded) ---
+  const personRef = useMemo(() => 
+    db && entityId && employee?.personId && canReadPersons && !membershipLoading 
+      ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) 
+      : null,
+  [db, entityId, employee?.personId, canReadPersons, membershipLoading]);
+  const { data: person } = useDoc<Person>(personRef);
+
+  // --- Compliance Context (Guarded) ---
   const cpiRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<EmploymentRequest>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI]);
+    db && entityId && employee?.sourceOfferId && canReadCPI && !membershipLoading 
+      ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<EmploymentRequest>) 
+      : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI, membershipLoading]);
   const { data: cpi } = useDoc<EmploymentRequest>(cpiRef);
 
   const communicationsQuery = useMemo(() => 
-    db && employee?.sourceOfferId && canReadCPI ? query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any> : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI]);
+    db && entityId && employee?.sourceOfferId && canReadCPI && !membershipLoading 
+      ? (query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>) 
+      : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI, membershipLoading]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   
-  // --- Contract History ---
+  // --- Contract History (Guarded) ---
   const contractsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !canReadContracts) return null;
+    if (!db || !entityId || !employeeId || !canReadContracts || membershipLoading) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
       where("employeeId", "==", employeeId),
       orderBy("createdAt", "desc")
     ) as Query<Contract>;
-  }, [db, entityId, employeeId, canReadContracts]);
+  }, [db, entityId, employeeId, canReadContracts, membershipLoading]);
   const { data: allContracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery);
 
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
-  // --- Documents Context ---
+  // --- Documents Context (Guarded) ---
   const docsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !canReadDocs) return null;
+    if (!db || !entityId || !employeeId || !canReadDocs || membershipLoading) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
       where("employeeId", "==", employeeId),
       orderBy("uploadedAt", "desc")
     ) as Query<HRDocument>;
-  }, [db, entityId, employeeId, canReadDocs]);
+  }, [db, entityId, employeeId, canReadDocs, membershipLoading]);
   const { data: allDocs, loading: loadingDocs } = useCollection<HRDocument>(docsQuery);
 
   // --- Handlers ---
@@ -403,7 +423,7 @@ export default function Employee360HubPage() {
                     </CardTitle>
                  </CardHeader>
                  <CardContent className="p-8 space-y-8">
-                    {!candidate ? (
+                    {!candidate && !offer ? (
                       <div className="flex flex-col items-center py-6 text-center space-y-3">
                          <div className="bg-secondary/30 p-4 rounded-full"><UserPlus className="w-8 h-8 text-muted-foreground/40" /></div>
                          <div>
@@ -413,22 +433,24 @@ export default function Employee360HubPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="space-y-4">
-                           <div className="flex items-center justify-between">
-                              <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Snapshot Candidat</p>
-                              <Badge variant="outline" className="bg-slate-50 text-[9px] uppercase font-black border-primary/10">Converti</Badge>
-                           </div>
-                           <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
-                              <div className="flex items-center gap-4">
-                                 <div className="bg-white p-2.5 rounded-xl shadow-sm"><User className="w-5 h-5 text-primary/40" /></div>
-                                 <div>
-                                    <p className="text-sm font-bold text-slate-900">{candidate.displayName}</p>
-                                    <p className="text-[10px] text-muted-foreground font-medium">{candidate.email}</p>
-                                 </div>
-                              </div>
-                              <p className="text-[10px] font-bold text-muted-foreground text-right italic">Soumis le {formatDateSafe(candidate.createdAt)}</p>
-                           </div>
-                        </div>
+                        {candidate && (
+                          <div className="space-y-4">
+                             <div className="flex items-center justify-between">
+                                <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Snapshot Candidat</p>
+                                <Badge variant="outline" className="bg-slate-50 text-[9px] uppercase font-black border-primary/10">Converti</Badge>
+                             </div>
+                             <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                   <div className="bg-white p-2.5 rounded-xl shadow-sm"><User className="w-5 h-5 text-primary/40" /></div>
+                                   <div>
+                                      <p className="text-sm font-bold text-slate-900">{candidate.displayName}</p>
+                                      <p className="text-[10px] text-muted-foreground font-medium">{candidate.email}</p>
+                                   </div>
+                                </div>
+                                <p className="text-[10px] font-bold text-muted-foreground text-right italic">Soumis le {formatDateSafe(candidate.createdAt)}</p>
+                             </div>
+                          </div>
+                        )}
                         
                         {offer && (
                           <div className="space-y-4">
@@ -554,7 +576,11 @@ export default function Employee360HubPage() {
         {/* --- Tab 6: History (Timeline) --- */}
         <TabsContent value="timeline" className="mt-0 animate-in fade-in slide-in-from-bottom-2">
            <div className="max-w-3xl mx-auto py-8">
-              <PersonTimeline entityId={entityId} personId={employee.personId} />
+              {!canReadPersons ? (
+                <AccessDeniedSection permission="persons.read" />
+              ) : (
+                <PersonTimeline entityId={entityId} personId={employee.personId} />
+              )}
            </div>
         </TabsContent>
       </Tabs>
