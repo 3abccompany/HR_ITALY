@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
@@ -91,7 +92,7 @@ export default function Employee360HubPage() {
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
-  // --- 1. STRICT PERMISSION READINESS (Race condition fix) ---
+  // --- 1. STRICT PERMISSION READINESS ---
   const permissionsReady = 
     !membershipLoading && 
     !!membership && 
@@ -132,33 +133,102 @@ export default function Employee360HubPage() {
   [db, entityId, employee?.sourceOfferId, canReadCPI]);
   const { data: cpi } = useDoc<EmploymentRequest>(cpiRef, "employee360.employmentRequest");
 
-  const communicationsQuery = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI ? (query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI]);
+  const communicationsQuery = useMemo(() => {
+    const isReady = db && entityId && employee?.sourceOfferId && canReadCPI;
+    if (!isReady) return null;
+    return query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>;
+  }, [db, entityId, employee?.sourceOfferId, canReadCPI]);
   const { data: communications } = useCollection<any>(communicationsQuery, "employee360.communications");
-  
-  const contractsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !permissionsReady || !canReadContracts || !employee) return null;
+
+  // --- 2A. Contracts Sub-Queries ---
+  const contractsByEmployeeQuery = useMemo(() => {
+    const isReady = db && entityId && employeeId && permissionsReady && canReadContracts && employee;
+    console.log(`[Trace:employee360.contracts.byEmployeeId]`, { isReady, entityId, employeeId, canReadContracts });
+    if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
       where("employeeId", "==", employeeId),
       orderBy("createdAt", "desc")
     ) as Query<Contract>;
   }, [db, entityId, employeeId, permissionsReady, canReadContracts, employee]);
-  const { data: allContracts } = useCollection<Contract>(contractsQuery, "employee360.contracts");
+
+  const contractsByPersonQuery = useMemo(() => {
+    const isReady = db && entityId && employee?.personId && permissionsReady && canReadContracts;
+    console.log(`[Trace:employee360.contracts.byPersonIdFallback]`, { isReady, entityId, personId: employee?.personId, canReadContracts });
+    if (!isReady) return null;
+    return query(
+      collection(db, `entities/${entityId}/contracts`),
+      where("personId", "==", employee.personId),
+      orderBy("createdAt", "desc")
+    ) as Query<Contract>;
+  }, [db, entityId, employee?.personId, permissionsReady, canReadContracts]);
+
+  const { data: contractsByEmp } = useCollection<Contract>(contractsByEmployeeQuery, "employee360.contracts.byEmployeeId");
+  const { data: contractsByPers } = useCollection<Contract>(contractsByPersonQuery, "employee360.contracts.byPersonIdFallback");
+
+  const allContracts = useMemo(() => {
+    const map = new Map<string, Contract>();
+    contractsByEmp.forEach(c => map.set(c.contractId, c));
+    contractsByPers.forEach(c => { if (!map.has(c.contractId)) map.set(c.contractId, c); });
+    return Array.from(map.values()).sort((a, b) => {
+       const da = parseSafeDate(a.createdAt)?.getTime() || 0;
+       const db = parseSafeDate(b.createdAt)?.getTime() || 0;
+       return db - da;
+    });
+  }, [contractsByEmp, contractsByPers]);
 
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
-  const docsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !permissionsReady || !canReadDocs || !employee) return null;
+  // --- 2B. Documents Sub-Queries ---
+  const docsByEmployeeQuery = useMemo(() => {
+    const isReady = db && entityId && employeeId && permissionsReady && canReadDocs && employee;
+    console.log(`[Trace:employee360.documents.byEmployeeId]`, { isReady, entityId, employeeId, canReadDocs });
+    if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
       where("employeeId", "==", employeeId),
       orderBy("uploadedAt", "desc")
     ) as Query<HRDocument>;
   }, [db, entityId, employeeId, permissionsReady, canReadDocs, employee]);
-  const { data: allDocs } = useCollection<HRDocument>(docsQuery, "employee360.documents");
+
+  const docsByPersonQuery = useMemo(() => {
+    const isReady = db && entityId && employee?.personId && permissionsReady && canReadDocs;
+    console.log(`[Trace:employee360.documents.byPersonIdFallback]`, { isReady, entityId, personId: employee?.personId, canReadDocs });
+    if (!isReady) return null;
+    return query(
+      collection(db, `entities/${entityId}/documents`),
+      where("personId", "==", employee.personId),
+      orderBy("uploadedAt", "desc")
+    ) as Query<HRDocument>;
+  }, [db, entityId, employee?.personId, permissionsReady, canReadDocs]);
+
+  const docsByCandidateQuery = useMemo(() => {
+    const isReady = db && entityId && employee?.sourceCandidateId && permissionsReady && canReadDocs;
+    console.log(`[Trace:employee360.documents.byCandidateIdFallback]`, { isReady, entityId, candidateId: employee?.sourceCandidateId, canReadDocs });
+    if (!isReady) return null;
+    return query(
+      collection(db, `entities/${entityId}/documents`),
+      where("candidateId", "==", employee.sourceCandidateId),
+      orderBy("uploadedAt", "desc")
+    ) as Query<HRDocument>;
+  }, [db, entityId, employee?.sourceCandidateId, permissionsReady, canReadDocs]);
+
+  const { data: docsByEmp } = useCollection<HRDocument>(docsByEmployeeQuery, "employee360.documents.byEmployeeId");
+  const { data: docsByPers } = useCollection<HRDocument>(docsByPersonQuery, "employee360.documents.byPersonIdFallback");
+  const { data: docsByCand } = useCollection<HRDocument>(docsByCandidateQuery, "employee360.documents.byCandidateIdFallback");
+
+  const allDocs = useMemo(() => {
+    const map = new Map<string, HRDocument>();
+    docsByEmp.forEach(d => map.set(d.id, d));
+    docsByPers.forEach(d => { if (!map.has(d.id)) map.set(d.id, d); });
+    docsByCand.forEach(d => { if (!map.has(d.id)) map.set(d.id, d); });
+    return Array.from(map.values()).sort((a, b) => {
+       const da = parseSafeDate(a.uploadedAt || a.createdAt)?.getTime() || 0;
+       const db = parseSafeDate(b.uploadedAt || b.createdAt)?.getTime() || 0;
+       return db - da;
+    });
+  }, [docsByEmp, docsByPers, docsByCand]);
 
   // --- Handlers ---
   const handleOpenDoc = async (storagePath: string, id: string) => {
@@ -186,7 +256,7 @@ export default function Employee360HubPage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4 bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
-        <p className="text-muted-foreground font-medium animate-pulse">Vérification des accès...</p>
+        <p className="text-muted-foreground font-medium animate-pulse">Vérification de la session...</p>
       </div>
     );
   }
@@ -404,7 +474,7 @@ export default function Employee360HubPage() {
                            <TableRow>
                               <TableHead className="text-[10px] font-black uppercase">Statut</TableHead>
                               <TableHead className="text-[10px] font-black uppercase">Type</TableHead>
-                              <TableHead className="text-[10px] font-black uppercase">Période</TableHead>
+                              <TableHead className="text-[10px] font-black uppercase">Periodo</TableHead>
                               <TableHead className="text-[10px] font-black uppercase text-right">Actions</TableHead>
                            </TableRow>
                         </TableHeader>
