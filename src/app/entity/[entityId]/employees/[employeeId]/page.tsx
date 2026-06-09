@@ -47,7 +47,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { format, isBefore } from "date-fns";
+import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { Person } from "@/types/person";
@@ -91,16 +91,19 @@ export default function Employee360HubPage() {
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
-  // --- 1. Permission Readiness Guard (Race condition fix) ---
-  const permissionsReady = useMemo(() => 
-    !membershipLoading && !!membership && membership.entityId === entityId,
-  [membershipLoading, membership, entityId]);
+  // --- 1. STRICT PERMISSION READINESS (Race condition fix) ---
+  const permissionsReady = 
+    !membershipLoading && 
+    !!membership && 
+    membership.entityId === entityId;
 
-  const canReadDocs = permissionsReady && hasPermission("documents.read");
-  const canReadContracts = permissionsReady && hasPermission("contracts.read");
-  const canReadCPI = permissionsReady && hasPermission("employmentRequests.read");
-  const canReadPersons = permissionsReady && hasPermission("persons.read");
-  const canReadCandidates = permissionsReady && hasPermission("candidates.read");
+  const activePermissions = membership?.permissions || [];
+
+  const canReadDocs = permissionsReady && activePermissions.includes("documents.read");
+  const canReadContracts = permissionsReady && activePermissions.includes("contracts.read");
+  const canReadCPI = permissionsReady && activePermissions.includes("employmentRequests.read");
+  const canReadPersons = permissionsReady && activePermissions.includes("persons.read");
+  const canReadCandidates = permissionsReady && activePermissions.includes("candidates.read");
 
   // --- 2. Aggregate Queries ---
   
@@ -110,51 +113,51 @@ export default function Employee360HubPage() {
   const { data: employee, loading: loadingEmployee } = useDoc<Employee>(employeeRef, "employee360.core");
 
   const personRef = useMemo(() => 
-    db && entityId && employee?.personId && canReadPersons && permissionsReady ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) : null,
-  [db, entityId, employee?.personId, canReadPersons, permissionsReady]);
+    db && entityId && employee?.personId && canReadPersons ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) : null,
+  [db, entityId, employee?.personId, canReadPersons]);
   const { data: person } = useDoc<Person>(personRef, "employee360.person");
 
   const candidateRef = useMemo(() => 
-    db && entityId && employee?.sourceCandidateId && canReadCandidates && permissionsReady ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) : null,
-  [db, entityId, employee?.sourceCandidateId, canReadCandidates, permissionsReady]);
+    db && entityId && employee?.sourceCandidateId && canReadCandidates ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) : null,
+  [db, entityId, employee?.sourceCandidateId, canReadCandidates]);
   const { data: candidate } = useDoc<Candidate>(candidateRef, "employee360.candidate");
 
   const offerRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && (canReadContracts || canReadCandidates) && permissionsReady ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates, permissionsReady]);
+    db && entityId && employee?.sourceOfferId && (canReadContracts || canReadCandidates) ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
+  [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef, "employee360.offer");
 
   const cpiRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI && permissionsReady ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI, permissionsReady]);
+    db && entityId && employee?.sourceOfferId && canReadCPI ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI]);
   const { data: cpi } = useDoc<EmploymentRequest>(cpiRef, "employee360.employmentRequest");
 
   const communicationsQuery = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI && permissionsReady ? (query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI, permissionsReady]);
+    db && entityId && employee?.sourceOfferId && canReadCPI ? (query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>) : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI]);
   const { data: communications } = useCollection<any>(communicationsQuery, "employee360.communications");
   
   const contractsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !canReadContracts || !permissionsReady || !employee) return null;
+    if (!db || !entityId || !employeeId || !permissionsReady || !canReadContracts || !employee) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
       where("employeeId", "==", employeeId),
       orderBy("createdAt", "desc")
     ) as Query<Contract>;
-  }, [db, entityId, employeeId, canReadContracts, permissionsReady, employee]);
+  }, [db, entityId, employeeId, permissionsReady, canReadContracts, employee]);
   const { data: allContracts } = useCollection<Contract>(contractsQuery, "employee360.contracts");
 
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
   const docsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !canReadDocs || !permissionsReady || !employee) return null;
+    if (!db || !entityId || !employeeId || !permissionsReady || !canReadDocs || !employee) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
       where("employeeId", "==", employeeId),
       orderBy("uploadedAt", "desc")
     ) as Query<HRDocument>;
-  }, [db, entityId, employeeId, canReadDocs, permissionsReady, employee]);
+  }, [db, entityId, employeeId, permissionsReady, canReadDocs, employee]);
   const { data: allDocs } = useCollection<HRDocument>(docsQuery, "employee360.documents");
 
   // --- Handlers ---
@@ -178,7 +181,7 @@ export default function Employee360HubPage() {
     return `${f}${l}`.toUpperCase() || "??";
   }, [employee]);
 
-  // Loading States
+  // Main Loading Guards
   if (membershipLoading || !permissionsReady) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4 bg-background">
@@ -192,7 +195,7 @@ export default function Employee360HubPage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
-        <p className="text-muted-foreground font-medium animate-pulse">Chargement du dossier collaborateur...</p>
+        <p className="text-muted-foreground font-medium animate-pulse">Chargement du dossier...</p>
       </div>
     );
   }
