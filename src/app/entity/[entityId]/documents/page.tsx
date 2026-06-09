@@ -203,7 +203,7 @@ export default function DocumentsRegistryPage() {
         isSensitive: uploadForm.isSensitive,
         status: "valid"
       };
-      await uploadHRDocument(entityId, selectedFile, metadata, user.uid, membership?.userDisplayName);
+      await uploadHRDocument(entityId, selectedFile, metadata, user.uid, membership?.userDisplayName || "Utilisateur");
       toast({ title: "Document téléversé" });
       setIsUploadOpen(false);
     } catch (err: any) {
@@ -356,7 +356,16 @@ function StatCard({ title, value, icon: Icon, color }: { title: string, value: n
   );
 }
 
-function DocumentsTable({ docs, loadingId, onOpen, onArchive, onViewDetails, canArchive }: any) {
+interface DocumentsTableProps {
+  docs: HRDocument[];
+  loadingId: string | null;
+  onOpen: (path: string, id: string) => void;
+  onArchive: (id: string) => void;
+  onViewDetails: (doc: HRDocument) => void;
+  canArchive: boolean;
+}
+
+function DocumentsTable({ docs, loadingId, onOpen, onArchive, onViewDetails, canArchive }: DocumentsTableProps) {
   return (
     <Table>
       <TableHeader className="bg-secondary/10">
@@ -365,7 +374,7 @@ function DocumentsTable({ docs, loadingId, onOpen, onArchive, onViewDetails, can
       <TableBody>
         {docs.length === 0 ? (
           <TableRow><TableCell colSpan={3} className="text-center py-12 text-muted-foreground italic">Aucun document.</TableCell></TableRow>
-        ) : docs.map((d: any) => (
+        ) : docs.map((d: HRDocument) => (
           <TableRow key={d.id}>
             <TableCell><div className="font-bold text-primary">{d.title}</div><div className="text-[9px] uppercase">{DOCUMENT_TYPE_LABELS[d.documentType]}</div></TableCell>
             <TableCell><Badge variant="outline" className={d.status === 'valid' ? "bg-green-50 text-green-700" : ""}>{STATUS_LABELS[d.status]}</Badge></TableCell>
