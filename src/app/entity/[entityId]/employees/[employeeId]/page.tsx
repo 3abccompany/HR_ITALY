@@ -14,7 +14,12 @@ import {
   Plus, 
   LayoutDashboard,
   Stethoscope, Shield, Edit, MoreVertical,
-  ChevronRight
+  ChevronRight,
+  Search,
+  ArrowRight,
+  UserPlus,
+  Globe,
+  GraduationCap
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -42,7 +47,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { format, isBefore, startOfDay } from "date-fns";
+import { format, isBefore } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { Person } from "@/types/person";
@@ -176,7 +181,7 @@ export default function Employee360HubPage() {
   // Loading States
   if (membershipLoading || !permissionsReady) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4 bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
         <p className="text-muted-foreground font-medium animate-pulse">Vérification des accès...</p>
       </div>
