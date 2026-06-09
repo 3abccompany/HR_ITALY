@@ -60,7 +60,8 @@ function parseSafeDate(val: any): Date | null {
   }
   if (typeof val === 'string' || typeof val === 'number') {
     const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
+    if (isNaN(d.getTime())) return null;
+    return d;
   }
   return null;
 }
@@ -84,67 +85,71 @@ export default function Employee360HubPage() {
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
-  // --- Permission Guards ---
-  const canReadDocs = hasPermission("documents.read");
-  const canReadContracts = hasPermission("contracts.read");
-  const canReadCPI = hasPermission("employmentRequests.read");
-  const canReadPersons = hasPermission("persons.read");
-  const canReadCandidates = hasPermission("candidates.read");
+  // --- Permission & Race Condition Guard ---
+  // Ensures we don't query with stale membership data during entity navigation
+  const permissionsReady = useMemo(() => 
+    !membershipLoading && !!membership && membership.entityId === entityId,
+  [membershipLoading, membership, entityId]);
+
+  const canReadDocs = permissionsReady && hasPermission("documents.read");
+  const canReadContracts = permissionsReady && hasPermission("contracts.read");
+  const canReadCPI = permissionsReady && hasPermission("employmentRequests.read");
+  const canReadPersons = permissionsReady && hasPermission("persons.read");
+  const canReadCandidates = permissionsReady && hasPermission("candidates.read");
 
   // --- Core Employee Data ---
   const employeeRef = useMemo(() => 
-    db && entityId && employeeId && !membershipLoading ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
-  [db, entityId, employeeId, membershipLoading]);
+    db && entityId && employeeId && permissionsReady ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
+  [db, entityId, employeeId, permissionsReady]);
   const { data: employee, loading: loadingEmployee } = useDoc<Employee>(employeeRef);
 
   // --- Recruitment Context (Guarded) ---
   const candidateRef = useMemo(() => 
-    db && entityId && employee?.sourceCandidateId && canReadCandidates && !membershipLoading 
+    db && entityId && employee?.sourceCandidateId && canReadCandidates && permissionsReady 
       ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) 
       : null,
-  [db, entityId, employee?.sourceCandidateId, canReadCandidates, membershipLoading]);
+  [db, entityId, employee?.sourceCandidateId, canReadCandidates, permissionsReady]);
   const { data: candidate } = useDoc<Candidate>(candidateRef);
 
   const offerRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && (canReadContracts || canReadCandidates) && !membershipLoading 
+    db && entityId && employee?.sourceOfferId && (canReadContracts || canReadCandidates) && permissionsReady 
       ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) 
       : null,
-  [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates, membershipLoading]);
+  [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates, permissionsReady]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
   // --- Person Snapshot (Guarded) ---
   const personRef = useMemo(() => 
-    db && entityId && employee?.personId && canReadPersons && !membershipLoading 
+    db && entityId && employee?.personId && canReadPersons && permissionsReady 
       ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) 
       : null,
-  [db, entityId, employee?.personId, canReadPersons, membershipLoading]);
+  [db, entityId, employee?.personId, canReadPersons, permissionsReady]);
   const { data: person } = useDoc<Person>(personRef);
 
   // --- Compliance Context (Guarded) ---
   const cpiRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI && !membershipLoading 
+    db && entityId && employee?.sourceOfferId && canReadCPI && permissionsReady 
       ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) 
       : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI, membershipLoading]);
+  [db, entityId, employee?.sourceOfferId, canReadCPI, permissionsReady]);
   const { data: cpi } = useDoc<EmploymentRequest>(cpiRef);
 
   const communicationsQuery = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI && !membershipLoading 
+    db && entityId && employee?.sourceOfferId && canReadCPI && permissionsReady 
       ? (query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>) 
       : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI, membershipLoading]);
+  [db, entityId, employee?.sourceOfferId, canReadCPI, permissionsReady]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   
   // --- Contract History (STRICTLY Guarded) ---
   const contractsQuery = useMemo(() => {
-    // SECURITY: Never query contracts if permissions are still loading or explicitly missing
-    if (!db || !entityId || !employeeId || !canReadContracts || membershipLoading) return null;
+    if (!db || !entityId || !employeeId || !canReadContracts || !permissionsReady) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
       where("employeeId", "==", employeeId),
       orderBy("createdAt", "desc")
     ) as Query<Contract>;
-  }, [db, entityId, employeeId, canReadContracts, membershipLoading]);
+  }, [db, entityId, employeeId, canReadContracts, permissionsReady]);
   const { data: allContracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery);
 
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
@@ -152,14 +157,13 @@ export default function Employee360HubPage() {
 
   // --- Documents Context (STRICTLY Guarded) ---
   const docsQuery = useMemo(() => {
-    // SECURITY: Never query documents if permissions are still loading or explicitly missing
-    if (!db || !entityId || !employeeId || !canReadDocs || membershipLoading) return null;
+    if (!db || !entityId || !employeeId || !canReadDocs || !permissionsReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
       where("employeeId", "==", employeeId),
       orderBy("uploadedAt", "desc")
     ) as Query<HRDocument>;
-  }, [db, entityId, employeeId, canReadDocs, membershipLoading]);
+  }, [db, entityId, employeeId, canReadDocs, permissionsReady]);
   const { data: allDocs, loading: loadingDocs } = useCollection<HRDocument>(docsQuery);
 
   // --- Handlers ---
@@ -175,7 +179,7 @@ export default function Employee360HubPage() {
     }
   };
 
-  if (membershipLoading || loadingEmployee) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+  if (membershipLoading || loadingEmployee || !permissionsReady) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!employee) {
     return (
@@ -579,7 +583,9 @@ export default function Employee360HubPage() {
         {/* --- Tab 6: History (Timeline) --- */}
         <TabsContent value="timeline" className="mt-0 animate-in fade-in slide-in-from-bottom-2">
            <div className="max-w-3xl mx-auto py-8">
-              {!canReadPersons ? (
+              {!permissionsReady ? (
+                 <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
+              ) : !canReadPersons ? (
                 <AccessDeniedSection permission="persons.read" />
               ) : (
                 <PersonTimeline entityId={entityId} personId={employee.personId} />
