@@ -6,7 +6,8 @@ import {
   CheckCircle2, AlertTriangle, Building2, ListTodo, FileText,
   RefreshCw, Info, Users, FolderOpen, ChevronDown, Fingerprint,
   CheckCircle,
-  FileCheck
+  FileCheck,
+  Database
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { useFirebase, useUser, useCollection } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
-import { repairEntityDataLinkage } from "@/services/admin-repair.service";
+import { repairEntityDataLinkageAction } from "./actions";
 import { Entity } from "@/types/entity";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
@@ -32,7 +33,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function RepairRegistryPage() {
-  const { db } = useFirebase();
+  const { db, auth } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   
@@ -50,16 +51,25 @@ export default function RepairRegistryPage() {
     setLoading(true);
     setResult(null);
     try {
-      const res = await repairEntityDataLinkage(
-        selectedEntityId, 
-        user.uid, 
-        dryRun, 
-        canonicalEmployeeId.trim() || undefined
-      );
-      setResult({ ...res, dryRun });
+      // PROVE SUPER ADMIN RIGHTS VIA ID TOKEN (SERVER-SIDE VERIFICATION)
+      const idToken = await auth?.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Impossible de récupérer le jeton de session.");
+
+      const response = await repairEntityDataLinkageAction({
+        entityId: selectedEntityId,
+        dryRun,
+        canonicalEmployeeId: canonicalEmployeeId.trim() || undefined,
+        idToken
+      });
+
+      if (!response.success) {
+        throw new Error(response.error);
+      }
+
+      setResult(response.results);
       toast({ title: dryRun ? "Simulation terminée" : "Réparation terminée" });
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
+      toast({ variant: "destructive", title: "Erreur de réparation", description: err.message });
     } finally {
       setLoading(false);
     }
@@ -72,24 +82,27 @@ export default function RepairRegistryPage() {
           <Button variant="ghost" size="icon"><ArrowLeft className="w-5 h-5" /></Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-black text-primary">Réparation du Registre</h1>
-          <p className="text-muted-foreground">Synchronisation globale des liens EmployeeId manquants.</p>
+          <div className="flex items-center gap-2 mb-1">
+            <h1 className="text-3xl font-black text-primary tracking-tight">Réparation du Registre</h1>
+            <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 uppercase font-black text-[9px] h-5">Mode Admin SDK</Badge>
+          </div>
+          <p className="text-muted-foreground text-sm font-medium">Synchronisation des liens EmployeeId par scan déterministe côté serveur.</p>
         </div>
       </div>
 
       <div className="grid gap-8">
-        <Card className="border-primary/10 shadow-lg">
-          <CardHeader className="bg-primary/5 border-b">
-             <CardTitle className="text-sm font-bold flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-primary" /> Paramètres de réparation
+        <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden">
+          <CardHeader className="bg-primary/5 border-b py-6 px-8">
+             <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                <Database className="w-4 h-4" /> Configuration du Scan
              </CardTitle>
           </CardHeader>
-          <CardContent className="pt-6 space-y-6">
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <CardContent className="p-8 space-y-8">
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="space-y-2">
-                  <Label>Entreprise cible</Label>
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Entreprise cible</Label>
                   <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
-                    <SelectTrigger className="h-12">
+                    <SelectTrigger className="h-12 rounded-xl">
                         <SelectValue placeholder={loadingEntities ? "Chargement..." : "Choisir une entreprise"} />
                     </SelectTrigger>
                     <SelectContent>
@@ -102,130 +115,164 @@ export default function RepairRegistryPage() {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                     <Label>ID Employé Canonique (Forçage)</Label>
-                     <Info className="h-3 w-3 text-muted-foreground cursor-help" title="Bypasse les conflits de personId pour lier les records à cet ID spécifique via un scan déterministe." />
+                     <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">ID Employé Canonique (Forçage)</Label>
+                     <Info className="h-3.5 w-3.5 text-primary/40 cursor-help" title="Bypasse les conflits de personId pour lier les records à cet ID spécifique via un scan serveur." />
                   </div>
                   <Input 
                     placeholder="Ex: ERDNxeNE9q..." 
-                    className="h-12" 
+                    className="h-12 rounded-xl font-mono" 
                     value={canonicalEmployeeId}
                     onChange={(e) => setCanonicalEmployeeId(e.target.value)}
                   />
                 </div>
              </div>
 
-             <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl space-y-2">
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase text-orange-800 tracking-wider">
-                   <ShieldAlert className="w-4 h-4" />
-                   Scan Déterministe & Sécurité
+             <Alert className="bg-orange-50/50 border-orange-200 rounded-2xl">
+                <ShieldAlert className="h-5 w-5 text-orange-600" />
+                <div>
+                   <AlertTitle className="text-xs font-black uppercase tracking-widest text-orange-800">Scan Déterministe & Sécurité Serveur</AlertTitle>
+                   <AlertDescription className="text-[11px] text-orange-700 leading-relaxed mt-1 font-medium">
+                      Cette action s'exécute côté serveur via le <strong>Firebase Admin SDK</strong>. Elle ignore les limitations des règles de sécurité client pour scanner intégralement les collections de l'entité et rétablir les liens de données rompus lors du recrutement ou des migrations.
+                   </AlertDescription>
                 </div>
-                <ul className="text-[10px] text-orange-700 font-medium list-disc pl-5 space-y-1">
-                   <li><strong>Scan Intégral</strong> : En mode forçage, le système scanne tous les contrats/documents de l'entité.</li>
-                   <li><strong>Casing-Aware</strong> : La correspondance est faite en ignorant la casse (BB... match bb...).</li>
-                   <li><strong>Normalization</strong> : Le personId des records réparés sera aligné sur le format de l'employé.</li>
-                   <li>Seuls les records ayant <code>employeeId == null</code> sont impactés.</li>
-                </ul>
-             </div>
+             </Alert>
 
-             <div className="grid grid-cols-2 gap-4">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
                 <Button 
                   variant="outline" 
-                  className="h-12 rounded-xl font-bold gap-2"
+                  className="h-14 rounded-2xl font-black gap-2 border-2 border-dashed hover:bg-slate-50 transition-all uppercase tracking-widest text-xs"
                   onClick={() => handleRun(true)}
                   disabled={loading || !selectedEntityId}
                 >
-                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-5 h-5" />}
                    Lancer Simulation (Dry Run)
                 </Button>
                 <Button 
-                  className="h-12 rounded-xl font-black gap-2 bg-red-600 hover:bg-red-700 shadow-lg shadow-red-100 text-white"
+                  className="h-14 rounded-2xl font-black gap-2 bg-red-600 hover:bg-red-700 shadow-xl shadow-red-100 text-white uppercase tracking-widest text-xs"
                   onClick={() => handleRun(false)}
                   disabled={loading || !selectedEntityId}
                 >
-                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-                   Appliquer Réparation
+                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
+                   Appliquer Réparation (Live)
                 </Button>
              </div>
           </CardContent>
         </Card>
 
         {result && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-top-4">
-             <Alert className={result.dryRun ? "bg-blue-50 border-blue-200" : "bg-green-50 border-green-200"}>
-                {result.dryRun ? <Info className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                <AlertTitle className="font-bold">{result.dryRun ? "Rapport de simulation" : "Action effectuée avec succès"}</AlertTitle>
-                <AlertDescription className="text-xs">
-                  {result.dryRun ? "Scan déterministe terminé. Aucune donnée n'a été modifiée." : "Les enregistrements ont été normalisés et liés dans le registre."}
-                  {result.exactIdentityIds && (
-                    <div className="mt-2 p-2 bg-white/50 rounded-lg space-y-1">
-                       <p className="text-[9px] font-black uppercase text-muted-foreground">Identity IDs analysés :</p>
-                       <div className="flex flex-wrap gap-1">
-                          {result.exactIdentityIds.map((id: string) => (
-                            <Badge key={id} variant="outline" className="text-[8px] h-4 font-mono">{id}</Badge>
-                          ))}
-                       </div>
-                    </div>
-                  )}
-                </AlertDescription>
+          <div className="space-y-8 animate-in fade-in slide-in-from-top-4">
+             <Alert className={cn("rounded-2xl border-2", result.dryRun ? "bg-blue-50 border-blue-200" : "bg-green-50 border-green-200")}>
+                {result.dryRun ? <Info className="h-5 w-5 text-blue-600" /> : <CheckCircle2 className="h-5 w-5 text-green-600" />}
+                <div className="ml-2">
+                   <AlertTitle className="font-black uppercase text-xs tracking-widest">{result.dryRun ? "Rapport de simulation" : "Réparation effectuée"}</AlertTitle>
+                   <AlertDescription className="text-xs font-bold mt-1">
+                     {result.dryRun ? "Scan serveur terminé. Aucune modification n'a été persistée." : "Les enregistrements ont été normalisés et liés à l'employé cible."}
+                     <div className="mt-3 flex items-center gap-4 text-[10px] uppercase tracking-tighter opacity-70">
+                        <span className="flex items-center gap-1"><Database className="w-3 h-3" /> {result.totalContractsScanned} contrats analysés</span>
+                        <span className="flex items-center gap-1"><Database className="w-3 h-3" /> {result.totalDocumentsScanned} documents analysés</span>
+                     </div>
+                   </AlertDescription>
+                </div>
              </Alert>
 
-             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <ResultCard label="Employés analysés" value={result.employeesScanned} icon={Users} />
+             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <ResultCard label="ID Analysés" value={result.employeesAnalyzed} icon={Users} />
                 <ResultCard label="Contrats matchés" value={result.contractsRepaired} icon={FileText} color="orange" />
                 <ResultCard label="Documents matchés" value={result.documentsRepaired} icon={FolderOpen} color="indigo" />
-                <ResultCard label="Pointeurs Fixed" value={result.employeePointersFixed} icon={RefreshCw} color="teal" />
+                <ResultCard label="Pointeurs Fixés" value={result.employeePointersUpdated} icon={RefreshCw} color="teal" />
              </div>
 
-             {/* Detailed Matched Records List */}
-             {(result.matchedContracts.length > 0 || result.matchedDocuments.length > 0) && (
-               <Card className="border-primary/5">
-                 <CardHeader className="py-3 bg-secondary/10 border-b">
-                    <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70">Détail des correspondances trouvées</CardTitle>
-                 </CardHeader>
-                 <CardContent className="p-0">
-                    <ScrollArea className="h-[300px]">
-                       <div className="divide-y">
-                          {result.matchedContracts.map((c: any) => (
-                             <div key={c.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                                <div className="flex items-center gap-3">
-                                   <div className="bg-orange-100 p-1.5 rounded-lg text-orange-600"><FileText className="w-3.5 h-3.5" /></div>
-                                   <div>
-                                      <p className="text-[10px] font-bold text-slate-800">Contrat: {c.id}</p>
-                                      <p className="text-[9px] text-muted-foreground font-mono">PersonId: {c.personId}</p>
-                                   </div>
+             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Detailed Matched Records List */}
+                {(result.matchedContractIds?.length > 0 || result.matchedDocumentIds?.length > 0) && (
+                  <Card className="border-primary/10 rounded-[2rem] overflow-hidden shadow-lg">
+                    <CardHeader className="py-4 px-6 bg-secondary/20 border-b">
+                        <CardTitle className="text-[10px] font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                           <ListTodo className="w-4 h-4" /> Détail des correspondances
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                        <ScrollArea className="h-[300px]">
+                          <div className="divide-y divide-slate-100">
+                              {result.matchedContractIds?.map((id: string) => (
+                                <div key={id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                    <div className="flex items-center gap-4">
+                                      <div className="bg-orange-100 p-2 rounded-xl text-orange-600 shadow-sm"><FileText className="w-4 h-4" /></div>
+                                      <div>
+                                          <p className="text-[10px] font-black text-slate-800">Contrat: {id}</p>
+                                          <p className="text-[9px] font-bold text-orange-500 uppercase tracking-tighter mt-0.5">Link pending</p>
+                                      </div>
+                                    </div>
+                                    <Badge variant="outline" className="text-[8px] font-black bg-white border-orange-100">REPAIR</Badge>
                                 </div>
-                                <Badge variant="secondary" className="text-[8px] h-4">Link Pending</Badge>
-                             </div>
-                          ))}
-                          {result.matchedDocuments.map((d: any) => (
-                             <div key={d.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                                <div className="flex items-center gap-3">
-                                   <div className="bg-indigo-100 p-1.5 rounded-lg text-indigo-600"><FolderOpen className="w-3.5 h-3.5" /></div>
-                                   <div>
-                                      <p className="text-[10px] font-bold text-slate-800">Document: {d.id}</p>
-                                      <p className="text-[9px] text-muted-foreground font-mono">P: {d.personId || '-'} | C: {d.candidateId || '-'}</p>
-                                   </div>
+                              ))}
+                              {result.matchedDocumentIds?.map((id: string) => (
+                                <div key={id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                    <div className="flex items-center gap-4">
+                                      <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600 shadow-sm"><FolderOpen className="w-4 h-4" /></div>
+                                      <div>
+                                          <p className="text-[10px] font-black text-slate-800">Document: {id}</p>
+                                          <p className="text-[9px] font-bold text-indigo-500 uppercase tracking-tighter mt-0.5">Link pending</p>
+                                      </div>
+                                    </div>
+                                    <Badge variant="outline" className="text-[8px] font-black bg-white border-indigo-100">REPAIR</Badge>
                                 </div>
-                                <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 text-[8px] h-4">Link Pending</Badge>
-                             </div>
-                          ))}
-                       </div>
-                    </ScrollArea>
-                 </CardContent>
-               </Card>
-             )}
+                              ))}
+                          </div>
+                        </ScrollArea>
+                    </CardContent>
+                  </Card>
+                )}
 
-             {result.conflicts && result.conflicts.length > 0 && (
-               <Card className="border-red-100 bg-red-50/50">
-                  <CardHeader className="py-3 px-6 border-b border-red-100">
-                    <CardTitle className="text-xs font-bold uppercase text-red-600 flex items-center gap-2">
-                       <AlertTriangle className="w-3 h-3" /> Conflits / Alertes détectées
+                {/* Identity Info Panel */}
+                {result.exactIdentityIds && result.exactIdentityIds.length > 0 && (
+                   <Card className="border-primary/10 rounded-[2rem] bg-secondary/5 overflow-hidden">
+                      <CardHeader className="py-4 px-6 border-b bg-white/50">
+                        <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                           <Fingerprint className="w-4 h-4" /> Empreintes d'identité
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-6 space-y-4">
+                         <div className="space-y-2">
+                            <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">ID Identifiés (Scan multi-variantes)</p>
+                            <div className="flex flex-wrap gap-2">
+                               {result.exactIdentityIds.map((id: string) => (
+                                 <Badge key={id} variant="secondary" className="font-mono text-[9px] bg-white border-primary/5 py-1 px-2">{id}</Badge>
+                               ))}
+                            </div>
+                         </div>
+                         <Separator className="opacity-30" />
+                         <div className="space-y-2">
+                            <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">Clés de hachage (Casing-aware)</p>
+                            <div className="flex flex-wrap gap-2">
+                               {result.identityKeys.map((key: string) => (
+                                 <Badge key={key} variant="outline" className="font-mono text-[8px] border-primary/5">{key}</Badge>
+                               ))}
+                            </div>
+                         </div>
+                      </CardContent>
+                   </Card>
+                )}
+             </div>
+
+             {result.skippedConflicts && result.skippedConflicts.length > 0 && (
+               <Card className="border-red-100 bg-red-50/20 rounded-3xl overflow-hidden">
+                  <CardHeader className="py-4 px-6 border-b border-red-100 bg-red-100/30">
+                    <CardTitle className="text-xs font-black uppercase text-red-700 flex items-center gap-2 tracking-widest">
+                       <AlertTriangle className="w-4 h-4" /> Conflits / Alertes de sécurité
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-6">
-                     <ul className="text-xs space-y-2 list-disc pl-5 text-red-700 font-medium">
-                        {result.conflicts.map((c: string, i: number) => <li key={i}>{c}</li>)}
-                     </ul>
+                     <ScrollArea className="max-h-[150px]">
+                        <ul className="text-[11px] space-y-2 list-none text-red-800 font-bold">
+                           {result.skippedConflicts.map((c: string, i: number) => (
+                             <li key={i} className="flex items-start gap-2">
+                                <span className="mt-1 flex h-1 w-1 shrink-0 rounded-full bg-red-600" />
+                                {c}
+                             </li>
+                           ))}
+                        </ul>
+                     </ScrollArea>
                   </CardContent>
                </Card>
              )}
@@ -244,12 +291,12 @@ function ResultCard({ label, value, icon: Icon, color = "blue" }: any) {
     teal: "bg-teal-50 text-teal-600 border-teal-100"
   };
   return (
-    <Card className="border-primary/5 shadow-sm rounded-2xl bg-white">
-      <CardContent className="p-4 flex items-center gap-4">
-        <div className={cn("p-2.5 rounded-xl border", colors[color])}><Icon className="w-4 h-4" /></div>
-        <div>
-           <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
-           <p className="text-xl font-black text-primary">{value}</p>
+    <Card className="border-primary/5 shadow-lg rounded-3xl bg-white group hover:shadow-xl transition-all">
+      <CardContent className="p-5 flex items-center gap-4">
+        <div className={cn("p-3 rounded-2xl border transition-colors", colors[color])}><Icon className="w-5 h-5" /></div>
+        <div className="min-w-0">
+           <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest truncate">{label}</p>
+           <p className="text-2xl font-black text-primary leading-tight">{value}</p>
         </div>
       </CardContent>
     </Card>
