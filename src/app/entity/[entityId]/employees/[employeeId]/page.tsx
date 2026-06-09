@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
@@ -124,7 +123,7 @@ export default function Employee360HubPage() {
   // --- Compliance Context (Guarded) ---
   const cpiRef = useMemo(() => 
     db && entityId && employee?.sourceOfferId && canReadCPI && !membershipLoading 
-      ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<EmploymentRequest>) 
+      ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) 
       : null,
   [db, entityId, employee?.sourceOfferId, canReadCPI, membershipLoading]);
   const { data: cpi } = useDoc<EmploymentRequest>(cpiRef);
@@ -136,8 +135,9 @@ export default function Employee360HubPage() {
   [db, entityId, employee?.sourceOfferId, canReadCPI, membershipLoading]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   
-  // --- Contract History (Guarded) ---
+  // --- Contract History (STRICTLY Guarded) ---
   const contractsQuery = useMemo(() => {
+    // SECURITY: Never query contracts if permissions are still loading or explicitly missing
     if (!db || !entityId || !employeeId || !canReadContracts || membershipLoading) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
@@ -150,8 +150,9 @@ export default function Employee360HubPage() {
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
-  // --- Documents Context (Guarded) ---
+  // --- Documents Context (STRICTLY Guarded) ---
   const docsQuery = useMemo(() => {
+    // SECURITY: Never query documents if permissions are still loading or explicitly missing
     if (!db || !entityId || !employeeId || !canReadDocs || membershipLoading) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
@@ -290,7 +291,9 @@ export default function Employee360HubPage() {
                     </CardTitle>
                  </CardHeader>
                  <CardContent className="px-8 pb-8 space-y-4">
-                    {activeContract?.endDate ? (
+                    {!canReadContracts ? (
+                       <p className="text-xs italic text-muted-foreground">Accès restreint aux dates contractuelles.</p>
+                    ) : activeContract?.endDate ? (
                        <div className="p-4 bg-white rounded-2xl border shadow-sm flex items-center gap-3">
                           <div className="bg-orange-100 p-2 rounded-xl text-orange-600"><Calendar className="w-4 h-4" /></div>
                           <div>
@@ -548,7 +551,7 @@ export default function Employee360HubPage() {
            </div>
            
            <Card className="border-dashed border-2 bg-secondary/5 rounded-[2.5rem] py-12">
-              <div className="text-center max-w-sm mx-auto space-y-3">
+              <div className="text-center max-sm mx-auto space-y-3">
                  <Info className="w-10 h-10 text-muted-foreground/20 mx-auto" />
                  <h3 className="font-bold text-primary">Dossier de Compliance</h3>
                  <p className="text-xs text-muted-foreground leading-relaxed">
