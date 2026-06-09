@@ -4,7 +4,9 @@ import { useState, useMemo } from "react";
 import { 
   ShieldAlert, Loader2, PlayCircle, Search, ArrowLeft, 
   CheckCircle2, AlertTriangle, Building2, ListTodo, FileText,
-  RefreshCw, Info, Users, FolderOpen, ChevronDown, Fingerprint
+  RefreshCw, Info, Users, FolderOpen, ChevronDown, Fingerprint,
+  CheckCircle,
+  FileCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +28,8 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function RepairRegistryPage() {
   const { db } = useFirebase();
@@ -62,7 +66,7 @@ export default function RepairRegistryPage() {
   };
 
   return (
-    <div className="p-8 max-w-4xl mx-auto pb-32">
+    <div className="p-8 max-w-5xl mx-auto pb-32">
       <div className="mb-8 flex items-center gap-4">
         <Link href="/super-admin">
           <Button variant="ghost" size="icon"><ArrowLeft className="w-5 h-5" /></Button>
@@ -98,8 +102,8 @@ export default function RepairRegistryPage() {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                     <Label>ID Employé Canonique (Force)</Label>
-                     <Info className="h-3 w-3 text-muted-foreground cursor-help" title="Bypasse les conflits de personId pour lier les records à cet ID spécifique." />
+                     <Label>ID Employé Canonique (Forçage)</Label>
+                     <Info className="h-3 w-3 text-muted-foreground cursor-help" title="Bypasse les conflits de personId pour lier les records à cet ID spécifique via un scan déterministe." />
                   </div>
                   <Input 
                     placeholder="Ex: ERDNxeNE9q..." 
@@ -113,13 +117,13 @@ export default function RepairRegistryPage() {
              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl space-y-2">
                 <div className="flex items-center gap-2 text-[10px] font-black uppercase text-orange-800 tracking-wider">
                    <ShieldAlert className="w-4 h-4" />
-                   Règles de sécurité & Casing
+                   Scan Déterministe & Sécurité
                 </div>
                 <ul className="text-[10px] text-orange-700 font-medium list-disc pl-5 space-y-1">
-                   <li>Les liens existants ne sont jamais écrasés.</li>
-                   <li><strong>Casing-Aware</strong> : La recherche inclut désormais les personId/candidateId avec variations de casse.</li>
-                   <li><strong>Normalisation</strong> : Les IDs dans les records réparés seront alignés sur le format de l'employé.</li>
-                   <li>Sans ID canonique, les doublons d'identité sont ignorés pour votre sécurité.</li>
+                   <li><strong>Scan Intégral</strong> : En mode forçage, le système scanne tous les contrats/documents de l'entité.</li>
+                   <li><strong>Casing-Aware</strong> : La correspondance est faite en ignorant la casse (BB... match bb...).</li>
+                   <li><strong>Normalization</strong> : Le personId des records réparés sera aligné sur le format de l'employé.</li>
+                   <li>Seuls les records ayant <code>employeeId == null</code> sont impactés.</li>
                 </ul>
              </div>
 
@@ -151,12 +155,12 @@ export default function RepairRegistryPage() {
                 {result.dryRun ? <Info className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                 <AlertTitle className="font-bold">{result.dryRun ? "Rapport de simulation" : "Action effectuée avec succès"}</AlertTitle>
                 <AlertDescription className="text-xs">
-                  {result.dryRun ? "Aucune donnée n'a été modifiée." : "Les enregistrements ont été mis à jour dans le registre."}
-                  {result.identityIdsUsed && result.identityIdsUsed.length > 0 && (
+                  {result.dryRun ? "Scan déterministe terminé. Aucune donnée n'a été modifiée." : "Les enregistrements ont été normalisés et liés dans le registre."}
+                  {result.exactIdentityIds && (
                     <div className="mt-2 p-2 bg-white/50 rounded-lg space-y-1">
-                       <p className="text-[9px] font-black uppercase text-muted-foreground">Identity IDs analysés (casing-aware) :</p>
+                       <p className="text-[9px] font-black uppercase text-muted-foreground">Identity IDs analysés :</p>
                        <div className="flex flex-wrap gap-1">
-                          {result.identityIdsUsed.map((id: string) => (
+                          {result.exactIdentityIds.map((id: string) => (
                             <Badge key={id} variant="outline" className="text-[8px] h-4 font-mono">{id}</Badge>
                           ))}
                        </div>
@@ -167,12 +171,51 @@ export default function RepairRegistryPage() {
 
              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <ResultCard label="Employés analysés" value={result.employeesScanned} icon={Users} />
-                <ResultCard label="Contrats à réparer" value={result.contractsRepaired} icon={FileText} color="orange" />
-                <ResultCard label="Documents à réparer" value={result.documentsRepaired} icon={FolderOpen} color="indigo" />
-                <ResultCard label="Pointeurs Employee" value={result.employeePointersFixed} icon={RefreshCw} color="teal" />
+                <ResultCard label="Contrats matchés" value={result.contractsRepaired} icon={FileText} color="orange" />
+                <ResultCard label="Documents matchés" value={result.documentsRepaired} icon={FolderOpen} color="indigo" />
+                <ResultCard label="Pointeurs Fixed" value={result.employeePointersFixed} icon={RefreshCw} color="teal" />
              </div>
 
-             {result.conflicts.length > 0 && (
+             {/* Detailed Matched Records List */}
+             {(result.matchedContracts.length > 0 || result.matchedDocuments.length > 0) && (
+               <Card className="border-primary/5">
+                 <CardHeader className="py-3 bg-secondary/10 border-b">
+                    <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70">Détail des correspondances trouvées</CardTitle>
+                 </CardHeader>
+                 <CardContent className="p-0">
+                    <ScrollArea className="h-[300px]">
+                       <div className="divide-y">
+                          {result.matchedContracts.map((c: any) => (
+                             <div key={c.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                <div className="flex items-center gap-3">
+                                   <div className="bg-orange-100 p-1.5 rounded-lg text-orange-600"><FileText className="w-3.5 h-3.5" /></div>
+                                   <div>
+                                      <p className="text-[10px] font-bold text-slate-800">Contrat: {c.id}</p>
+                                      <p className="text-[9px] text-muted-foreground font-mono">PersonId: {c.personId}</p>
+                                   </div>
+                                </div>
+                                <Badge variant="secondary" className="text-[8px] h-4">Link Pending</Badge>
+                             </div>
+                          ))}
+                          {result.matchedDocuments.map((d: any) => (
+                             <div key={d.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                <div className="flex items-center gap-3">
+                                   <div className="bg-indigo-100 p-1.5 rounded-lg text-indigo-600"><FolderOpen className="w-3.5 h-3.5" /></div>
+                                   <div>
+                                      <p className="text-[10px] font-bold text-slate-800">Document: {d.id}</p>
+                                      <p className="text-[9px] text-muted-foreground font-mono">P: {d.personId || '-'} | C: {d.candidateId || '-'}</p>
+                                   </div>
+                                </div>
+                                <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 text-[8px] h-4">Link Pending</Badge>
+                             </div>
+                          ))}
+                       </div>
+                    </ScrollArea>
+                 </CardContent>
+               </Card>
+             )}
+
+             {result.conflicts && result.conflicts.length > 0 && (
                <Card className="border-red-100 bg-red-50/50">
                   <CardHeader className="py-3 px-6 border-b border-red-100">
                     <CardTitle className="text-xs font-bold uppercase text-red-600 flex items-center gap-2">
