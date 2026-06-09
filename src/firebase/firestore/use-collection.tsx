@@ -37,8 +37,15 @@ export function useCollection<T = DocumentData>(query: Query<any> | CollectionRe
       async (err) => {
         if (!isMounted) return;
         
-        // Safe access to path for error context
         const path = (query as any)._query?.path?.toString() || 'unknown';
+        
+        // Detailed console log for tracing the exact source of unauthorized queries
+        if (err.code === 'permission-denied') {
+          console.error(`[Firestore:PermissionDenied] path: ${path}`, {
+            error: err,
+            query: query
+          });
+        }
         
         const permissionError = new FirestorePermissionError({
           path,

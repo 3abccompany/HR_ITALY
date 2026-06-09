@@ -39,7 +39,10 @@ export default function EmployeesManagementPage() {
   const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
+
+  // Permission Readiness Guard
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
 
   // UX State
   const [filters, setFilters] = useState<Filters>(initialFilters);
@@ -49,9 +52,9 @@ export default function EmployeesManagementPage() {
 
   // Query - Minimal list using 'employees' directly for basic implementation
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !canRead || !permissionsReady) return null;
     return query(collection(db, `entities/${entityId}/employees`), orderBy("hireDate", "desc"));
-  }, [db, entityId, canRead]);
+  }, [db, entityId, canRead, permissionsReady]);
 
   const { data: employees, loading: loadingEmployees } = useCollection<Employee>(employeesQuery);
 
@@ -92,7 +95,7 @@ export default function EmployeesManagementPage() {
     setPagination(p => ({ ...p, page: 1 }));
   };
 
-  if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (membershipLoading || !permissionsReady) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-24">

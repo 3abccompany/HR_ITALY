@@ -36,6 +36,13 @@ export function useDoc<T = DocumentData>(ref: DocumentReference<T> | null) {
       async (err) => {
         if (!isMounted) return;
         
+        if (err.code === 'permission-denied') {
+          console.error(`[Firestore:PermissionDenied] path: ${ref.path}`, {
+            error: err,
+            ref: ref
+          });
+        }
+
         const permissionError = new FirestorePermissionError({
           path: ref.path,
           operation: 'get',
