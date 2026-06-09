@@ -39,22 +39,25 @@ export default function EntityDashboardPage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
-  const { loading: membershipLoading, hasPermission, entity } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
+
+  // Guard to ensure membership context matches the current route entity
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
 
   const contractsQuery = useMemo(() => {
-    if (!db || !entityId || !hasPermission("contracts.read")) return null;
+    if (!db || !entityId || !permissionsReady || !hasPermission("contracts.read")) return null;
     return query(collection(db, `entities/${entityId}/contracts`));
-  }, [db, entityId, hasPermission]);
+  }, [db, entityId, permissionsReady, hasPermission]);
 
   const docsQuery = useMemo(() => {
-    if (!db || !entityId || !hasPermission("documents.read")) return null;
+    if (!db || !entityId || !permissionsReady || !hasPermission("documents.read")) return null;
     return query(collection(db, `entities/${entityId}/documents`));
-  }, [db, entityId, hasPermission]);
+  }, [db, entityId, permissionsReady, hasPermission]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !hasPermission("employees.read")) return null;
+    if (!db || !entityId || !permissionsReady || !hasPermission("employees.read")) return null;
     return query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active"));
-  }, [db, entityId, hasPermission]);
+  }, [db, entityId, permissionsReady, hasPermission]);
 
   const { data: contracts, loading: loadingContracts } = useCollection<any>(contractsQuery);
   const { data: documents, loading: loadingDocs } = useCollection<any>(docsQuery);
@@ -99,7 +102,7 @@ export default function EntityDashboardPage() {
     return s;
   }, [contracts, documents, employees]);
 
-  if (membershipLoading) {
+  if (membershipLoading || !permissionsReady) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />

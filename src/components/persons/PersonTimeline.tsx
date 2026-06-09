@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useActiveMembership } from "@/hooks/use-active-membership";
 
 interface PersonTimelineProps {
   entityId: string;
@@ -18,19 +19,23 @@ interface PersonTimelineProps {
 
 export function PersonTimeline({ entityId, personId }: PersonTimelineProps) {
   const { db } = useFirebase();
+  const { membership, loading: membershipLoading } = useActiveMembership(entityId);
+
+  // Guard to ensure the active membership context matches the entityId requested
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
 
   const timelineQuery = useMemo(() => {
-    if (!db || !entityId || !personId) return null;
+    if (!db || !entityId || !personId || !permissionsReady) return null;
     return query(
       collection(db, `entities/${entityId}/personTimeline`),
       where("personId", "==", personId),
       orderBy("createdAt", "desc")
     );
-  }, [db, entityId, personId]);
+  }, [db, entityId, personId, permissionsReady]);
 
   const { data: events, loading } = useCollection<any>(timelineQuery);
 
-  if (loading) {
+  if (loading || !permissionsReady) {
     return (
       <div className="py-12 flex justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-primary opacity-20" />
