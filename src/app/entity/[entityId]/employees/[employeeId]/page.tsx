@@ -83,6 +83,11 @@ export default function Employee360HubPage() {
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
+  // --- Permission Guards ---
+  const canReadDocs = hasPermission("documents.read");
+  const canReadContracts = hasPermission("contracts.read");
+  const canReadCPI = hasPermission("employmentRequests.read");
+
   // --- Core Employee & Person Data ---
   const employeeRef = useMemo(() => 
     db && entityId && employeeId ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
@@ -100,13 +105,18 @@ export default function Employee360HubPage() {
   [db, entityId, employee?.sourceOfferId]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
+  // --- Compliance Context ---
   const cpiRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<EmploymentRequest>) : null,
-  [db, entityId, employee?.sourceOfferId]);
+    db && entityId && employee?.sourceOfferId && canReadCPI ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<EmploymentRequest>) : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI]);
   const { data: cpi } = useDoc<EmploymentRequest>(cpiRef);
 
+  const communicationsQuery = useMemo(() => 
+    db && employee?.sourceOfferId && canReadCPI ? query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any> : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI]);
+  const { data: communications } = useCollection<any>(communicationsQuery);
+  
   // --- Contract History ---
-  const canReadContracts = hasPermission("contracts.read");
   const contractsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadContracts) return null;
     return query(
@@ -121,7 +131,6 @@ export default function Employee360HubPage() {
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
   // --- Documents Context ---
-  const canReadDocs = hasPermission("documents.read");
   const docsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadDocs) return null;
     return query(
@@ -208,23 +217,23 @@ export default function Employee360HubPage() {
            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               <OverviewCard 
                 title="Contrat Actif" 
-                value={activeContract ? activeContract.contractType : "Aucun contrat actif"} 
-                subtitle={activeContract ? `Depuis le ${formatDateSafe(activeContract.startDate)}` : "Dossier incomplet"}
+                value={!canReadContracts ? "Accès restreint" : (activeContract ? activeContract.contractType : "Aucun contrat actif")} 
+                subtitle={!canReadContracts ? "Permission requise" : (activeContract ? `Depuis le ${formatDateSafe(activeContract.startDate)}` : "Dossier incomplet")}
                 icon={FileText}
                 color="blue"
               />
               <OverviewCard 
                 title="Status CPI / UniLav" 
-                value={cpi ? (STATUS_LABELS_CPI[cpi.status] || cpi.status) : "Non requis"} 
-                subtitle={cpi?.protocolCode ? `Prot: ${cpi.protocolCode}` : "En attente"}
+                value={!canReadCPI ? "Accès restreint" : (cpi ? (STATUS_LABELS_CPI[cpi.status] || cpi.status) : "Non requis")} 
+                subtitle={!canReadCPI ? "Permission requise" : (cpi?.protocolCode ? `Prot: ${cpi.protocolCode}` : "En attente")}
                 icon={ShieldCheck}
                 color="orange"
                 status={cpi?.status}
               />
               <OverviewCard 
                 title="Documents GED" 
-                value={allDocs?.length || 0} 
-                subtitle="Fichiers archivés"
+                value={!canReadDocs ? "—" : (allDocs?.length || 0)} 
+                subtitle={!canReadDocs ? "Accès restreint" : "Fichiers archivés"}
                 icon={FolderOpen}
                 color="indigo"
               />
@@ -384,7 +393,7 @@ export default function Employee360HubPage() {
            )}
         </TabsContent>
 
-        {/* --- Tab 3: Recruitment & Onboarding --- */}
+        {/* --- Tab 3: Recrutement & Onboarding --- */}
         <TabsContent value="recruitment" className="mt-0 space-y-8 animate-in fade-in slide-in-from-bottom-2">
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <Card className="border-primary/5 rounded-[2.5rem] shadow-xl shadow-primary/5 overflow-hidden bg-white">
@@ -441,7 +450,7 @@ export default function Employee360HubPage() {
                  </CardContent>
               </Card>
 
-              {!hasPermission("employmentRequests.read") ? (
+              {!canReadCPI ? (
                 <AccessDeniedSection permission="employmentRequests.read" />
               ) : (
                 <Card className="border-primary/5 rounded-[2.5rem] shadow-xl shadow-primary/5 overflow-hidden bg-white">
@@ -475,7 +484,7 @@ export default function Employee360HubPage() {
                                 </div>
                              </div>
 
-                             {cpi.receiptDocumentId && (
+                             {cpi.receiptDocumentId && canReadDocs && (
                                 <Button variant="secondary" className="w-full h-11 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 gap-2" onClick={() => {
                                    const docItem = allDocs?.find(d => d.id === cpi.receiptDocumentId);
                                    if (docItem) handleOpenDoc(docItem.storagePath, docItem.id);
