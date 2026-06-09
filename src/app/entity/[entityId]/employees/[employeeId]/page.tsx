@@ -85,8 +85,8 @@ export default function Employee360HubPage() {
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
-  // --- Permission & Race Condition Guard ---
-  // Ensures we don't query with stale membership data during entity navigation
+  // --- 1. Permission Safety Fix (Part A) ---
+  // permissionsReady ensures we only query if membership matches route and loading is finished.
   const permissionsReady = useMemo(() => 
     !membershipLoading && !!membership && membership.entityId === entityId,
   [membershipLoading, membership, entityId]);
@@ -97,13 +97,23 @@ export default function Employee360HubPage() {
   const canReadPersons = permissionsReady && hasPermission("persons.read");
   const canReadCandidates = permissionsReady && hasPermission("candidates.read");
 
-  // --- Core Employee Data ---
+  // --- 2. Aggregate Queries with Strict Guards ---
+  
+  // Core Employee Data
   const employeeRef = useMemo(() => 
     db && entityId && employeeId && permissionsReady ? (doc(db, `entities/${entityId}/employees`, employeeId) as DocumentReference<Employee>) : null,
   [db, entityId, employeeId, permissionsReady]);
   const { data: employee, loading: loadingEmployee } = useDoc<Employee>(employeeRef);
 
-  // --- Recruitment Context (Guarded) ---
+  // Identity Snapshot
+  const personRef = useMemo(() => 
+    db && entityId && employee?.personId && canReadPersons && permissionsReady 
+      ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) 
+      : null,
+  [db, entityId, employee?.personId, canReadPersons, permissionsReady]);
+  const { data: person } = useDoc<Person>(personRef);
+
+  // Recruitment Context
   const candidateRef = useMemo(() => 
     db && entityId && employee?.sourceCandidateId && canReadCandidates && permissionsReady 
       ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) 
@@ -118,15 +128,7 @@ export default function Employee360HubPage() {
   [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates, permissionsReady]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
-  // --- Person Snapshot (Guarded) ---
-  const personRef = useMemo(() => 
-    db && entityId && employee?.personId && canReadPersons && permissionsReady 
-      ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) 
-      : null,
-  [db, entityId, employee?.personId, canReadPersons, permissionsReady]);
-  const { data: person } = useDoc<Person>(personRef);
-
-  // --- Compliance Context (Guarded) ---
+  // Compliance Context
   const cpiRef = useMemo(() => 
     db && entityId && employee?.sourceOfferId && canReadCPI && permissionsReady 
       ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) 
@@ -141,7 +143,7 @@ export default function Employee360HubPage() {
   [db, entityId, employee?.sourceOfferId, canReadCPI, permissionsReady]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   
-  // --- Contract History (STRICTLY Guarded) ---
+  // Contract History
   const contractsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadContracts || !permissionsReady) return null;
     return query(
@@ -150,12 +152,12 @@ export default function Employee360HubPage() {
       orderBy("createdAt", "desc")
     ) as Query<Contract>;
   }, [db, entityId, employeeId, canReadContracts, permissionsReady]);
-  const { data: allContracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery);
+  const { data: allContracts } = useCollection<Contract>(contractsQuery);
 
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
-  // --- Documents Context (STRICTLY Guarded) ---
+  // Documents Context
   const docsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadDocs || !permissionsReady) return null;
     return query(
@@ -164,7 +166,7 @@ export default function Employee360HubPage() {
       orderBy("uploadedAt", "desc")
     ) as Query<HRDocument>;
   }, [db, entityId, employeeId, canReadDocs, permissionsReady]);
-  const { data: allDocs, loading: loadingDocs } = useCollection<HRDocument>(docsQuery);
+  const { data: allDocs } = useCollection<HRDocument>(docsQuery);
 
   // --- Handlers ---
   const handleOpenDoc = async (storagePath: string, id: string) => {
@@ -179,9 +181,9 @@ export default function Employee360HubPage() {
     }
   };
 
-  if (membershipLoading || loadingEmployee || !permissionsReady) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+  if (membershipLoading || !permissionsReady) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
-  if (!employee) {
+  if (!employee && !loadingEmployee) {
     return (
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><User className="w-10 h-10 text-muted-foreground" /></div>
@@ -191,6 +193,8 @@ export default function Employee360HubPage() {
     );
   }
 
+  if (loadingEmployee) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
       {/* 360 Header */}
@@ -198,18 +202,18 @@ export default function Employee360HubPage() {
         <div className="flex items-center gap-6">
           <div className="relative">
              <div className="bg-primary text-white w-20 h-20 rounded-[2rem] flex items-center justify-center text-3xl font-black shadow-xl shadow-primary/20">
-               {employee.firstName[0]}{employee.lastName[0]}
+               {employee!.firstName[0]}{employee!.lastName[0]}
              </div>
              <div className="absolute -bottom-1 -right-1 ring-4 ring-background rounded-full">
-                {getStatusBadge(employee.status)}
+                {getStatusBadge(employee!.status)}
              </div>
           </div>
           <div>
-            <h1 className="text-4xl font-black text-primary tracking-tight">{employee.displayName}</h1>
+            <h1 className="text-4xl font-black text-primary tracking-tight">{employee!.displayName}</h1>
             <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-muted-foreground uppercase tracking-widest mt-2">
-              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Fingerprint className="w-3.5 h-3.5" /> {employee.employeeCode}</span>
-              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Briefcase className="w-3.5 h-3.5" /> {employee.jobTitle}</span>
-              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Embauché le {formatDateSafe(employee.hireDate)}</span>
+              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Fingerprint className="w-3.5 h-3.5" /> {employee!.employeeCode}</span>
+              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Briefcase className="w-3.5 h-3.5" /> {employee!.jobTitle}</span>
+              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Embauché le {formatDateSafe(employee!.hireDate)}</span>
             </div>
           </div>
         </div>
@@ -264,7 +268,7 @@ export default function Employee360HubPage() {
               />
               <OverviewCard 
                 title="Dernière mutation" 
-                value={formatDateSafe(employee.updatedAt)} 
+                value={formatDateSafe(employee!.updatedAt)} 
                 subtitle="Mise à jour dossier"
                 icon={RefreshCcw}
                 color="teal"
@@ -279,12 +283,12 @@ export default function Employee360HubPage() {
                     </CardTitle>
                  </CardHeader>
                  <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
-                    <DetailItem label="Email professionnel" value={employee.email} icon={Mail} />
-                    <DetailItem label="Téléphone" value={employee.phone} icon={Phone} />
-                    <DetailItem label="Département" value={employee.departmentName} icon={Building2} />
-                    <DetailItem label="Site de rattachement" value={employee.worksiteName} icon={MapPin} />
-                    <DetailItem label="Identifiant Fiscal" value={employee.taxCode} icon={Fingerprint} className="font-mono uppercase" />
-                    <DetailItem label="Poste source" value={employee.jobTitle} icon={Briefcase} />
+                    <DetailItem label="Email professionnel" value={employee!.email} icon={Mail} />
+                    <DetailItem label="Téléphone" value={employee!.phone} icon={Phone} />
+                    <DetailItem label="Département" value={employee!.departmentName} icon={Building2} />
+                    <DetailItem label="Site de rattachement" value={employee!.worksiteName} icon={MapPin} />
+                    <DetailItem label="Identifiant Fiscal" value={employee!.taxCode} icon={Fingerprint} className="font-mono uppercase" />
+                    <DetailItem label="Poste source" value={employee!.jobTitle} icon={Briefcase} />
                  </CardContent>
               </Card>
 
@@ -391,7 +395,7 @@ export default function Employee360HubPage() {
                            </TableRow>
                         </TableHeader>
                         <TableBody>
-                           {contractHistory.length === 0 ? (
+                           {!contractHistory || contractHistory.length === 0 ? (
                              <TableRow><TableCell colSpan={4} className="text-center py-10 text-xs italic text-muted-foreground">Aucun historique contractuel.</TableCell></TableRow>
                            ) : (
                              contractHistory.map(c => (
@@ -580,7 +584,7 @@ export default function Employee360HubPage() {
            )}
         </TabsContent>
 
-        {/* --- Tab 6: History (Timeline) --- */}
+        {/* --- Tab 6: Historique (Timeline) --- */}
         <TabsContent value="timeline" className="mt-0 animate-in fade-in slide-in-from-bottom-2">
            <div className="max-w-3xl mx-auto py-8">
               {!permissionsReady ? (
@@ -588,7 +592,7 @@ export default function Employee360HubPage() {
               ) : !canReadPersons ? (
                 <AccessDeniedSection permission="persons.read" />
               ) : (
-                <PersonTimeline entityId={entityId} personId={employee.personId} />
+                <PersonTimeline entityId={entityId} personId={employee!.personId} />
               )}
            </div>
         </TabsContent>
@@ -721,7 +725,7 @@ function DocumentsTable({ docs, loadingId, onOpen }: { docs: HRDocument[], loadi
         </TableRow>
       </TableHeader>
       <TableBody>
-        {docs.length === 0 ? (
+        {!docs || docs.length === 0 ? (
           <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document rattaché.</TableCell></TableRow>
         ) : docs.map(d => {
           const isLoading = loadingId === d.id;

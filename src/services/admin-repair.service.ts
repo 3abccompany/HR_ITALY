@@ -9,12 +9,15 @@ import {
   collection,
   query,
   where,
-  getDocs
+  getDocs,
+  writeBatch
 } from "firebase/firestore";
 import { Candidate } from "@/types/candidate";
 import { Person } from "@/types/person";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { Employee } from "@/types/employee";
+import { HRDocument } from "@/types/hr-document";
+import { Contract } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
 
 /**
@@ -210,4 +213,146 @@ export async function repairCpiLink(entityId: string, offerId: string, actorUid:
     });
     return res;
   });
+}
+
+/**
+ * GLOBAL REPAIR: Fixes data linkage for all employees in an entity.
+ * Backfills employeeId into contracts and documents linked only by personId/candidateId.
+ */
+export async function repairEntityDataLinkage(entityId: string, actorUid: string, dryRun: boolean = true) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const results = {
+    employeesScanned: 0,
+    contractsRepaired: 0,
+    documentsRepaired: 0,
+    employeePointersFixed: 0,
+    conflicts: [] as string[],
+    skipped: [] as string[]
+  };
+
+  // 1. Get all employees
+  const empSnap = await getDocs(collection(db, `entities/${entityId}/employees`));
+  const employees = empSnap.docs.map(d => d.data() as Employee);
+  results.employeesScanned = employees.length;
+
+  const personIdToEmployeeCount = new Map<string, number>();
+  employees.forEach(e => {
+    personIdToEmployeeCount.set(e.personId, (personIdToEmployeeCount.get(e.personId) || 0) + 1);
+  });
+
+  const batch = writeBatch(db);
+  let batchCount = 0;
+
+  for (const emp of employees) {
+    // Safety check: multiple employees per person in one entity is a conflict
+    if ((personIdToEmployeeCount.get(emp.personId) || 0) > 1) {
+       results.conflicts.push(`Multiple employees for person ${emp.personId}. Skipping.`);
+       continue;
+    }
+
+    // --- CONTRACTS REPAIR ---
+    const contractQ = query(
+      collection(db, `entities/${entityId}/contracts`), 
+      where("personId", "==", emp.personId)
+    );
+    const contractsSnap = await getDocs(contractQ);
+    let activeContractId: string | null = null;
+
+    contractsSnap.docs.forEach(cDoc => {
+       const c = cDoc.data() as Contract;
+       if (!c.employeeId || c.employeeId === "") {
+          if (!dryRun) {
+            batch.update(cDoc.ref, {
+              employeeId: emp.employeeId,
+              updatedAt: serverTimestamp(),
+              updatedBy: actorUid
+            });
+          }
+          results.contractsRepaired++;
+          batchCount++;
+       }
+       if (c.status === 'active') activeContractId = cDoc.id;
+    });
+
+    // Update activeContractId pointer if missing
+    if (activeContractId && emp.activeContractId !== activeContractId) {
+       if (!dryRun) {
+         batch.update(doc(db, `entities/${entityId}/employees`, emp.employeeId), {
+           activeContractId,
+           updatedAt: serverTimestamp()
+         });
+       }
+       results.employeePointersFixed++;
+       batchCount++;
+    }
+
+    // --- DOCUMENTS REPAIR ---
+    // Match by personId
+    const docQ = query(
+      collection(db, `entities/${entityId}/documents`),
+      where("personId", "==", emp.personId)
+    );
+    const docsSnap = await getDocs(docQ);
+    docsSnap.docs.forEach(dDoc => {
+       const d = dDoc.data() as HRDocument;
+       if (!d.employeeId) {
+          if (!dryRun) {
+            batch.update(dDoc.ref, {
+              employeeId: emp.employeeId,
+              employeeDisplayName: emp.displayName,
+              updatedAt: serverTimestamp(),
+              updatedBy: actorUid
+            });
+          }
+          results.documentsRepaired++;
+          batchCount++;
+       }
+    });
+
+    // Match by candidateId (if different from personId path)
+    if (emp.sourceCandidateId) {
+      const docQCand = query(
+        collection(db, `entities/${entityId}/documents`),
+        where("candidateId", "==", emp.sourceCandidateId)
+      );
+      const docsCandSnap = await getDocs(docQCand);
+      docsCandSnap.docs.forEach(dDoc => {
+        const d = dDoc.data() as HRDocument;
+        if (!d.employeeId) {
+           if (!dryRun) {
+             batch.update(dDoc.ref, {
+               employeeId: emp.employeeId,
+               employeeDisplayName: emp.displayName,
+               updatedAt: serverTimestamp(),
+               updatedBy: actorUid
+             });
+           }
+           results.documentsRepaired++;
+           batchCount++;
+        }
+      });
+    }
+
+    // Firestore batch limit is 500. Commit if needed.
+    if (!dryRun && batchCount > 400) {
+      await batch.commit();
+      batchCount = 0;
+    }
+  }
+
+  if (!dryRun && batchCount > 0) {
+    await batch.commit();
+  }
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: `admin.repair_entity_linkage`,
+    resourceType: "entity",
+    resourceId: entityId,
+    details: { dryRun, results }
+  });
+
+  return results;
 }
