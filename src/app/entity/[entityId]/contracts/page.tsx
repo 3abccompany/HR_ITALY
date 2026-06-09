@@ -51,21 +51,21 @@ export default function ContractsRegistryPage() {
   const canRead = hasPermission("contracts.read");
   const canReadEmployees = hasPermission("employees.read");
 
-  // Main real-time query - Order by createdAt desc, fallback to startDate
+  // Main real-time query
   const contractsQuery = useMemo(() => {
     if (!db || !entityId || !canRead || !permissionsReady) return null;
     return query(collection(db, `entities/${entityId}/contracts`), orderBy("createdAt", "desc")) as Query<Contract>;
   }, [db, entityId, canRead, permissionsReady]);
 
-  const { data: contracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery);
+  const { data: contracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery, "contracts.registry");
 
-  // Fallback Employee lookup query - Lightweight
+  // Fallback Employee lookup query
   const employeesQuery = useMemo(() => {
     if (!db || !entityId || !canReadEmployees || !permissionsReady) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
   }, [db, entityId, canReadEmployees, permissionsReady]);
 
-  const { data: employees } = useCollection<Employee>(employeesQuery);
+  const { data: employees } = useCollection<Employee>(employeesQuery, "contracts.employees_lookup");
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -83,7 +83,6 @@ export default function ContractsRegistryPage() {
     if (!contracts) return [];
     
     return contracts.filter(c => {
-      // Robust name/code resolution for search
       const emp = employeesMap.get(c.employeeId);
       const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "");
       const code = c.employeeCode || (emp ? emp.employeeCode : "");

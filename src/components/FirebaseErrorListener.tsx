@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useEffect } from 'react';
@@ -14,7 +13,15 @@ export function FirebaseErrorListener() {
       toast({
         variant: 'destructive',
         title: 'Permission Firestore refusée',
-        description: `Action: ${error.context.operation} sur ${error.context.path}`,
+        description: (
+          <div className="space-y-1">
+            <p>Accès non autorisé aux données.</p>
+            <div className="text-[10px] font-mono bg-black/10 p-1 rounded">
+              <p>Source: {error.context.debugLabel || 'Inconnue'}</p>
+              <p>Path: {error.context.path}</p>
+            </div>
+          </div>
+        ),
       });
     };
 

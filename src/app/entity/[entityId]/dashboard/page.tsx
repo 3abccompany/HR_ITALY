@@ -59,9 +59,9 @@ export default function EntityDashboardPage() {
     return query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active"));
   }, [db, entityId, permissionsReady, hasPermission]);
 
-  const { data: contracts, loading: loadingContracts } = useCollection<any>(contractsQuery);
-  const { data: documents, loading: loadingDocs } = useCollection<any>(docsQuery);
-  const { data: employees, loading: loadingEmployees } = useCollection<any>(employeesQuery);
+  const { data: contracts, loading: loadingContracts } = useCollection<any>(contractsQuery, "dashboard.contracts");
+  const { data: documents, loading: loadingDocs } = useCollection<any>(docsQuery, "dashboard.documents");
+  const { data: employees, loading: loadingEmployees } = useCollection<any>(employeesQuery, "dashboard.employees");
 
   const stats = useMemo(() => {
     const today = startOfDay(new Date());

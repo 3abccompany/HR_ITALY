@@ -10,10 +10,15 @@ import {
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '../errors';
 
-export function useDoc<T = DocumentData>(ref: DocumentReference<T> | null) {
+export function useDoc<T = DocumentData>(
+  ref: DocumentReference<T> | null,
+  debugLabel?: string
+) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  const label = debugLabel || "UNKNOWN_CALLER";
 
   useEffect(() => {
     if (!ref) {
@@ -37,15 +42,18 @@ export function useDoc<T = DocumentData>(ref: DocumentReference<T> | null) {
         if (!isMounted) return;
         
         if (err.code === 'permission-denied') {
-          console.error(`[Firestore:PermissionDenied] path: ${ref.path}`, {
+          console.error(`[Firestore:PermissionDenied] Source: ${label} | Path: ${ref.path}`, {
             error: err,
-            ref: ref
+            ref: ref,
+            pathname: typeof window !== 'undefined' ? window.location.pathname : 'server'
           });
+          console.trace();
         }
 
         const permissionError = new FirestorePermissionError({
           path: ref.path,
           operation: 'get',
+          debugLabel: label,
         } satisfies SecurityRuleContext);
 
         errorEmitter.emit('permission-error', permissionError);
@@ -58,7 +66,7 @@ export function useDoc<T = DocumentData>(ref: DocumentReference<T> | null) {
       isMounted = false;
       unsubscribe();
     };
-  }, [ref]);
+  }, [ref, label]);
 
   return { data, loading, error };
 }

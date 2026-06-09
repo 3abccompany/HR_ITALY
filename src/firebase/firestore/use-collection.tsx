@@ -11,10 +11,15 @@ import {
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '../errors';
 
-export function useCollection<T = DocumentData>(query: Query<any> | CollectionReference<any> | null) {
+export function useCollection<T = DocumentData>(
+  query: Query<any> | CollectionReference<any> | null,
+  debugLabel?: string
+) {
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  const label = debugLabel || "UNKNOWN_CALLER";
 
   useEffect(() => {
     if (!query) {
@@ -39,17 +44,19 @@ export function useCollection<T = DocumentData>(query: Query<any> | CollectionRe
         
         const path = (query as any)._query?.path?.toString() || 'unknown';
         
-        // Detailed console log for tracing the exact source of unauthorized queries
         if (err.code === 'permission-denied') {
-          console.error(`[Firestore:PermissionDenied] path: ${path}`, {
+          console.error(`[Firestore:PermissionDenied] Source: ${label} | Path: ${path}`, {
             error: err,
-            query: query
+            query: query,
+            pathname: typeof window !== 'undefined' ? window.location.pathname : 'server'
           });
+          console.trace();
         }
         
         const permissionError = new FirestorePermissionError({
           path,
           operation: 'list',
+          debugLabel: label,
         } satisfies SecurityRuleContext);
 
         errorEmitter.emit('permission-error', permissionError);
@@ -62,7 +69,7 @@ export function useCollection<T = DocumentData>(query: Query<any> | CollectionRe
       isMounted = false;
       unsubscribe();
     };
-  }, [query]);
+  }, [query, label]);
 
   return { data, loading, error };
 }
