@@ -116,7 +116,9 @@ export default function RepairRegistryPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                      <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">ID Employé Canonique (Forçage)</Label>
-                     <Info className="h-3.5 w-3.5 text-primary/40 cursor-help" title="Bypasse les conflits de personId pour lier les records à cet ID spécifique via un scan serveur." />
+                     <span title="Bypasse les conflits de personId pour lier les records à cet ID spécifique via un scan serveur.">
+                        <Info className="h-3.5 w-3.5 text-primary/40 cursor-help" />
+                     </span>
                   </div>
                   <Input 
                     placeholder="Ex: ERDNxeNE9q..." 
