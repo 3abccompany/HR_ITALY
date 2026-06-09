@@ -33,11 +33,12 @@ export default function RepairRegistryPage() {
   const { toast } = useToast();
   
   const [selectedEntityId, setSelectedEntityId] = useState("");
+  const [canonicalEmployeeId, setCanonicalEmployeeId] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
 
   const entitiesQuery = useMemo(() => db ? query(collection(db, "entities"), orderBy("nomEntreprise", "asc")) : null, [db]);
-  const { data: entities, loading: loadingEntities } = useCollection<Entity>(entitiesQuery);
+  const { data: entities, loading: loadingEntities } = useCollection<Entity>(entitiesQuery, "repair.entities");
 
   const handleRun = async (dryRun: boolean) => {
     if (!user || !selectedEntityId) return;
@@ -45,7 +46,12 @@ export default function RepairRegistryPage() {
     setLoading(true);
     setResult(null);
     try {
-      const res = await repairEntityDataLinkage(selectedEntityId, user.uid, dryRun);
+      const res = await repairEntityDataLinkage(
+        selectedEntityId, 
+        user.uid, 
+        dryRun, 
+        canonicalEmployeeId.trim() || undefined
+      );
       setResult({ ...res, dryRun });
       toast({ title: dryRun ? "Simulation terminée" : "Réparation terminée" });
     } catch (err: any) {
@@ -71,22 +77,49 @@ export default function RepairRegistryPage() {
         <Card className="border-primary/10 shadow-lg">
           <CardHeader className="bg-primary/5 border-b">
              <CardTitle className="text-sm font-bold flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-primary" /> Sélection de l'entité
+                <Building2 className="w-4 h-4 text-primary" /> Paramètres de réparation
              </CardTitle>
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
-             <div className="space-y-2">
-                <Label>Entreprise cible</Label>
-                <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
-                   <SelectTrigger className="h-12">
-                      <SelectValue placeholder={loadingEntities ? "Chargement..." : "Choisir une entreprise"} />
-                   </SelectTrigger>
-                   <SelectContent>
-                      {entities?.filter(e => e.status === 'active').map(e => (
-                        <SelectItem key={e.entityId} value={e.entityId}>{e.nomEntreprise || e.name}</SelectItem>
-                      ))}
-                   </SelectContent>
-                </Select>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label>Entreprise cible</Label>
+                  <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
+                    <SelectTrigger className="h-12">
+                        <SelectValue placeholder={loadingEntities ? "Chargement..." : "Choisir une entreprise"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {entities?.filter(e => e.status === 'active').map(e => (
+                          <SelectItem key={e.entityId} value={e.entityId}>{e.nomEntreprise || e.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                     <Label>ID Employé Canonique (Optionnel)</Label>
+                     <Info className="h-3 w-3 text-muted-foreground" title="Force le lien pour cet ID même si personId est partagé." />
+                  </div>
+                  <Input 
+                    placeholder="Ex: ERDNxeNE9q..." 
+                    className="h-12" 
+                    value={canonicalEmployeeId}
+                    onChange={(e) => setCanonicalEmployeeId(e.target.value)}
+                  />
+                </div>
+             </div>
+
+             <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase text-orange-800 tracking-wider">
+                   <ShieldAlert className="w-4 h-4" />
+                   Règles de sécurité
+                </div>
+                <ul className="text-[10px] text-orange-700 font-medium list-disc pl-5 space-y-1">
+                   <li>Les liens existants ne sont jamais écrasés.</li>
+                   <li>Sans ID canonique, les doublons d'identité (plusieurs employés pour 1 personne) sont ignorés.</li>
+                   <li>Avec un ID canonique, les documents orphelins sont rattachés de force à cet employé.</li>
+                </ul>
              </div>
 
              <div className="grid grid-cols-2 gap-4">
@@ -118,6 +151,7 @@ export default function RepairRegistryPage() {
                 <AlertTitle className="font-bold">{result.dryRun ? "Rapport de simulation" : "Action effectuée avec succès"}</AlertTitle>
                 <AlertDescription className="text-xs">
                   {result.dryRun ? "Aucune donnée n'a été modifiée." : "Les enregistrements ont été mis à jour dans le registre."}
+                  {result.targetEmployeeId && <span className="block mt-1 font-bold">Réparation ciblée sur l'employé: {result.targetEmployeeId}</span>}
                 </AlertDescription>
              </Alert>
 
@@ -130,9 +164,9 @@ export default function RepairRegistryPage() {
 
              {result.conflicts.length > 0 && (
                <Card className="border-red-100 bg-red-50/50">
-                  <CardHeader><CardTitle className="text-xs font-bold uppercase text-red-600">Conflits / Alertes détectées</CardTitle></CardHeader>
-                  <CardContent>
-                     <ul className="text-xs space-y-1 list-disc pl-5 text-red-700 font-medium">
+                  <CardHeader className="py-3 px-6 border-b border-red-100"><CardTitle className="text-xs font-bold uppercase text-red-600">Conflits / Alertes détectées</CardTitle></CardHeader>
+                  <CardContent className="p-6">
+                     <ul className="text-xs space-y-2 list-disc pl-5 text-red-700 font-medium">
                         {result.conflicts.map((c: string, i: number) => <li key={i}>{c}</li>)}
                      </ul>
                   </CardContent>

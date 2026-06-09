@@ -115,7 +115,7 @@ export async function repairCandidateEmployeeRecord(entityId: string, candidateI
     }
 
     // 7. View Update
-    const viewRef = doc(db, `entities/${entityId}/employeeViews`, employeeId);
+    const viewRef = doc(db, `entities/${entityId}/candidateViews`, employeeId);
     transaction.set(viewRef, {
       id: employeeId,
       employeeId,
@@ -218,8 +218,9 @@ export async function repairCpiLink(entityId: string, offerId: string, actorUid:
 /**
  * GLOBAL REPAIR: Fixes data linkage for all employees in an entity.
  * Backfills employeeId into contracts and documents linked only by personId/candidateId.
+ * Supports targeted repair for a specific canonical employee to bypass conflict filters.
  */
-export async function repairEntityDataLinkage(entityId: string, actorUid: string, dryRun: boolean = true) {
+export async function repairEntityDataLinkage(entityId: string, actorUid: string, dryRun: boolean = true, targetEmployeeId?: string) {
   if (!db) throw new Error("Firestore not initialized");
 
   const results = {
@@ -231,23 +232,37 @@ export async function repairEntityDataLinkage(entityId: string, actorUid: string
     skipped: [] as string[]
   };
 
-  // 1. Get all employees
-  const empSnap = await getDocs(collection(db, `entities/${entityId}/employees`));
-  const employees = empSnap.docs.map(d => d.data() as Employee);
-  results.employeesScanned = employees.length;
-
+  // 1. Get employees
+  let employeesToScan: Employee[] = [];
+  
+  const allEmpSnap = await getDocs(collection(db, `entities/${entityId}/employees`));
+  const allEmployees = allEmpSnap.docs.map(d => d.data() as Employee);
+  
+  // Create mapping to detect personId duplicates across entity
   const personIdToEmployeeCount = new Map<string, number>();
-  employees.forEach(e => {
+  allEmployees.forEach(e => {
     personIdToEmployeeCount.set(e.personId, (personIdToEmployeeCount.get(e.personId) || 0) + 1);
   });
+
+  if (targetEmployeeId) {
+    const target = allEmployees.find(e => e.employeeId === targetEmployeeId);
+    if (!target) throw new Error(`Target employee ${targetEmployeeId} not found in entity.`);
+    employeesToScan = [target];
+  } else {
+    employeesToScan = allEmployees;
+  }
+
+  results.employeesScanned = employeesToScan.length;
 
   const batch = writeBatch(db);
   let batchCount = 0;
 
-  for (const emp of employees) {
+  for (const emp of employeesToScan) {
     // Safety check: multiple employees per person in one entity is a conflict
-    if ((personIdToEmployeeCount.get(emp.personId) || 0) > 1) {
-       results.conflicts.push(`Multiple employees for person ${emp.personId}. Skipping.`);
+    // If targetEmployeeId is provided, we bypass this filter for THAT specific employee
+    const conflictCount = personIdToEmployeeCount.get(emp.personId) || 0;
+    if (!targetEmployeeId && conflictCount > 1) {
+       results.conflicts.push(`Conflict: Person ${emp.personId} shared by ${conflictCount} employees. Skipping.`);
        continue;
     }
 
@@ -258,10 +273,12 @@ export async function repairEntityDataLinkage(entityId: string, actorUid: string
     );
     const contractsSnap = await getDocs(contractQ);
     let activeContractId: string | null = null;
+    let activeCount = 0;
 
     contractsSnap.docs.forEach(cDoc => {
        const c = cDoc.data() as Contract;
-       if (!c.employeeId || c.employeeId === "") {
+       // Only repair if missing/null or if it's the target employee and we want to enforce canonical link
+       if (!c.employeeId) {
           if (!dryRun) {
             batch.update(cDoc.ref, {
               employeeId: emp.employeeId,
@@ -272,11 +289,16 @@ export async function repairEntityDataLinkage(entityId: string, actorUid: string
           results.contractsRepaired++;
           batchCount++;
        }
-       if (c.status === 'active') activeContractId = cDoc.id;
+       
+       const effectiveEmpId = c.employeeId || emp.employeeId;
+       if (c.status === 'active' && effectiveEmpId === emp.employeeId) {
+         activeContractId = cDoc.id;
+         activeCount++;
+       }
     });
 
-    // Update activeContractId pointer if missing
-    if (activeContractId && emp.activeContractId !== activeContractId) {
+    // Update activeContractId pointer if exactly one active contract exists for this employee
+    if (activeCount === 1 && activeContractId && emp.activeContractId !== activeContractId) {
        if (!dryRun) {
          batch.update(doc(db, `entities/${entityId}/employees`, emp.employeeId), {
            activeContractId,
@@ -351,7 +373,7 @@ export async function repairEntityDataLinkage(entityId: string, actorUid: string
     action: `admin.repair_entity_linkage`,
     resourceType: "entity",
     resourceId: entityId,
-    details: { dryRun, results }
+    details: { dryRun, targetEmployeeId, results }
   });
 
   return results;
