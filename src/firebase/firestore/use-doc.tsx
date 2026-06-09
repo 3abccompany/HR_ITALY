@@ -38,7 +38,7 @@ export function useDoc<T = DocumentData>(
         setLoading(false);
         setError(null);
       },
-      async (err) => {
+      async (err: any) => {
         if (!isMounted) return;
         
         if (err.code === 'permission-denied') {
@@ -48,15 +48,18 @@ export function useDoc<T = DocumentData>(
             pathname: typeof window !== 'undefined' ? window.location.pathname : 'server'
           });
           console.trace();
+
+          const permissionError = new FirestorePermissionError({
+            path: ref.path,
+            operation: 'get',
+            debugLabel: label,
+          } satisfies SecurityRuleContext);
+
+          errorEmitter.emit('permission-error', permissionError);
+        } else {
+          console.error(`[Firestore:Error] Source: ${label} | Code: ${err.code} | Path: ${ref.path}`, err);
         }
 
-        const permissionError = new FirestorePermissionError({
-          path: ref.path,
-          operation: 'get',
-          debugLabel: label,
-        } satisfies SecurityRuleContext);
-
-        errorEmitter.emit('permission-error', permissionError);
         setError(err);
         setLoading(false);
       }

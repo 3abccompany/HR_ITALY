@@ -39,7 +39,7 @@ export function useCollection<T = DocumentData>(
         setLoading(false);
         setError(null);
       },
-      async (err) => {
+      async (err: any) => {
         if (!isMounted) return;
         
         const path = (query as any)._query?.path?.toString() || 'unknown';
@@ -51,15 +51,25 @@ export function useCollection<T = DocumentData>(
             pathname: typeof window !== 'undefined' ? window.location.pathname : 'server'
           });
           console.trace();
+
+          const permissionError = new FirestorePermissionError({
+            path,
+            operation: 'list',
+            debugLabel: label,
+          } satisfies SecurityRuleContext);
+
+          errorEmitter.emit('permission-error', permissionError);
+        } else if (err.code === 'failed-precondition') {
+          console.error(`[Firestore:MissingIndex] Source: ${label} | Path: ${path}`, {
+            error: err,
+            query: query,
+            message: err.message,
+            hint: "Check the Firebase console or the URL in the error message to create the required composite index."
+          });
+        } else {
+          console.error(`[Firestore:Error] Source: ${label} | Code: ${err.code} | Path: ${path}`, err);
         }
         
-        const permissionError = new FirestorePermissionError({
-          path,
-          operation: 'list',
-          debugLabel: label,
-        } satisfies SecurityRuleContext);
-
-        errorEmitter.emit('permission-error', permissionError);
         setError(err);
         setLoading(false);
       }
