@@ -1,19 +1,20 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
   Mail, Phone, Fingerprint, Calendar,
   Briefcase, Building2, MapPin, FileSignature,
-  Info, Euro, Clock, History, ExternalLink,
-  ShieldCheck, GraduationCap, CheckCircle2,
-  FileText, AlertTriangle, FolderOpen, ShieldAlert,
-  Download, Eye, Lock, FileBadge, ListTodo,
-  ChevronDown, RefreshCcw, Save, X, Plus, Upload,
-  FileCode, Ban, ArrowRight, LayoutDashboard,
-  Stethoscope, Shield, Search, Edit, MoreVertical,
-  UserPlus, Globe, ChevronRight
+  Info, Euro, Clock, History, 
+  ShieldCheck, 
+  FileText, AlertTriangle, FolderOpen, 
+  Download, Eye, Lock,
+  ChevronDown, RefreshCcw,
+  Plus, 
+  LayoutDashboard,
+  Stethoscope, Shield, Edit, MoreVertical,
+  ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -28,7 +29,7 @@ import {
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useFirebase, useDoc, useCollection, useUser, useAuth } from "@/firebase";
+import { useFirebase, useDoc, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, query, collection, where, Query, orderBy } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
@@ -41,7 +42,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { format, isBefore, differenceInDays, startOfDay, addDays } from "date-fns";
+import { format, isBefore, startOfDay } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { Person } from "@/types/person";
@@ -85,7 +86,7 @@ export default function Employee360HubPage() {
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
-  // --- 1. Permission Safety Fix ---
+  // --- 1. Permission Readiness Guard (Race condition fix) ---
   const permissionsReady = useMemo(() => 
     !membershipLoading && !!membership && membership.entityId === entityId,
   [membershipLoading, membership, entityId]);
@@ -104,51 +105,51 @@ export default function Employee360HubPage() {
   const { data: employee, loading: loadingEmployee } = useDoc<Employee>(employeeRef, "employee360.core");
 
   const personRef = useMemo(() => 
-    db && entityId && employee?.personId && canReadPersons ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) : null,
-  [db, entityId, employee?.personId, canReadPersons]);
+    db && entityId && employee?.personId && canReadPersons && permissionsReady ? (doc(db, `entities/${entityId}/persons`, employee.personId) as DocumentReference<Person>) : null,
+  [db, entityId, employee?.personId, canReadPersons, permissionsReady]);
   const { data: person } = useDoc<Person>(personRef, "employee360.person");
 
   const candidateRef = useMemo(() => 
-    db && entityId && employee?.sourceCandidateId && canReadCandidates ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) : null,
-  [db, entityId, employee?.sourceCandidateId, canReadCandidates]);
+    db && entityId && employee?.sourceCandidateId && canReadCandidates && permissionsReady ? (doc(db, `entities/${entityId}/candidates`, employee.sourceCandidateId) as DocumentReference<Candidate>) : null,
+  [db, entityId, employee?.sourceCandidateId, canReadCandidates, permissionsReady]);
   const { data: candidate } = useDoc<Candidate>(candidateRef, "employee360.candidate");
 
   const offerRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && (canReadContracts || canReadCandidates) ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates]);
+    db && entityId && employee?.sourceOfferId && (canReadContracts || canReadCandidates) && permissionsReady ? (doc(db, `entities/${entityId}/employmentOffers`, employee.sourceOfferId) as DocumentReference<EmploymentOffer>) : null,
+  [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates, permissionsReady]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef, "employee360.offer");
 
   const cpiRef = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI]);
+    db && entityId && employee?.sourceOfferId && canReadCPI && permissionsReady ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI, permissionsReady]);
   const { data: cpi } = useDoc<EmploymentRequest>(cpiRef, "employee360.employmentRequest");
 
   const communicationsQuery = useMemo(() => 
-    db && entityId && employee?.sourceOfferId && canReadCPI ? (query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>) : null,
-  [db, entityId, employee?.sourceOfferId, canReadCPI]);
+    db && entityId && employee?.sourceOfferId && canReadCPI && permissionsReady ? (query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", employee.sourceOfferId)) as Query<any>) : null,
+  [db, entityId, employee?.sourceOfferId, canReadCPI, permissionsReady]);
   const { data: communications } = useCollection<any>(communicationsQuery, "employee360.communications");
   
   const contractsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !canReadContracts) return null;
+    if (!db || !entityId || !employeeId || !canReadContracts || !permissionsReady || !employee) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
       where("employeeId", "==", employeeId),
       orderBy("createdAt", "desc")
     ) as Query<Contract>;
-  }, [db, entityId, employeeId, canReadContracts]);
+  }, [db, entityId, employeeId, canReadContracts, permissionsReady, employee]);
   const { data: allContracts } = useCollection<Contract>(contractsQuery, "employee360.contracts");
 
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
   const docsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !canReadDocs) return null;
+    if (!db || !entityId || !employeeId || !canReadDocs || !permissionsReady || !employee) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
       where("employeeId", "==", employeeId),
       orderBy("uploadedAt", "desc")
     ) as Query<HRDocument>;
-  }, [db, entityId, employeeId, canReadDocs]);
+  }, [db, entityId, employeeId, canReadDocs, permissionsReady, employee]);
   const { data: allDocs } = useCollection<HRDocument>(docsQuery, "employee360.documents");
 
   // --- Handlers ---
@@ -164,13 +165,39 @@ export default function Employee360HubPage() {
     }
   };
 
-  if (membershipLoading || !permissionsReady) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+  // --- Safe Initials Logic ---
+  const initials = useMemo(() => {
+    if (!employee) return "??";
+    const f = employee.firstName?.[0] || "";
+    const l = employee.lastName?.[0] || "";
+    return `${f}${l}`.toUpperCase() || "??";
+  }, [employee]);
 
-  if (!employee && !loadingEmployee) {
+  // Loading States
+  if (membershipLoading || !permissionsReady) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
+        <p className="text-muted-foreground font-medium animate-pulse">Vérification des accès...</p>
+      </div>
+    );
+  }
+
+  if (loadingEmployee) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
+        <p className="text-muted-foreground font-medium animate-pulse">Chargement du dossier collaborateur...</p>
+      </div>
+    );
+  }
+
+  if (!employee) {
     return (
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><User className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Employé introuvable</h2>
+        <p className="text-muted-foreground mt-2">Le document n'existe pas ou a été supprimé.</p>
         <Button onClick={() => router.push(`/entity/${entityId}/employees`)} className="mt-8">Retour au registre</Button>
       </div>
     );
@@ -183,18 +210,18 @@ export default function Employee360HubPage() {
         <div className="flex items-center gap-6">
           <div className="relative">
              <div className="bg-primary text-white w-20 h-20 rounded-[2rem] flex items-center justify-center text-3xl font-black shadow-xl shadow-primary/20">
-               {employee!.firstName[0]}{employee!.lastName[0]}
+               {initials}
              </div>
              <div className="absolute -bottom-1 -right-1 ring-4 ring-background rounded-full">
-                {getStatusBadge(employee!.status)}
+                {getStatusBadge(employee.status)}
              </div>
           </div>
           <div>
-            <h1 className="text-4xl font-black text-primary tracking-tight">{employee!.displayName}</h1>
+            <h1 className="text-4xl font-black text-primary tracking-tight">{employee.displayName}</h1>
             <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-muted-foreground uppercase tracking-widest mt-2">
-              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Fingerprint className="w-3.5 h-3.5" /> {employee!.employeeCode}</span>
-              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Briefcase className="w-3.5 h-3.5" /> {employee!.jobTitle}</span>
-              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Embauché le {formatDateSafe(employee!.hireDate)}</span>
+              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Fingerprint className="w-3.5 h-3.5" /> {employee.employeeCode}</span>
+              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Briefcase className="w-3.5 h-3.5" /> {employee.jobTitle}</span>
+              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Embauché le {formatDateSafe(employee.hireDate)}</span>
             </div>
           </div>
         </div>
@@ -248,7 +275,7 @@ export default function Employee360HubPage() {
               />
               <OverviewCard 
                 title="Dernière mutation" 
-                value={formatDateSafe(employee!.updatedAt)} 
+                value={formatDateSafe(employee.updatedAt)} 
                 subtitle="Mise à jour dossier"
                 icon={RefreshCcw}
                 color="teal"
@@ -263,12 +290,12 @@ export default function Employee360HubPage() {
                     </CardTitle>
                  </CardHeader>
                  <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
-                    <DetailItem label="Email professionnel" value={employee!.email} icon={Mail} />
-                    <DetailItem label="Téléphone" value={employee!.phone} icon={Phone} />
-                    <DetailItem label="Département" value={employee!.departmentName} icon={Building2} />
-                    <DetailItem label="Site de rattachement" value={employee!.worksiteName} icon={MapPin} />
-                    <DetailItem label="Identifiant Fiscal" value={employee!.taxCode} icon={Fingerprint} className="font-mono uppercase" />
-                    <DetailItem label="Poste source" value={employee!.jobTitle} icon={Briefcase} />
+                    <DetailItem label="Email professionnel" value={employee.email} icon={Mail} />
+                    <DetailItem label="Téléphone" value={employee.phone} icon={Phone} />
+                    <DetailItem label="Département" value={employee.departmentName} icon={Building2} />
+                    <DetailItem label="Site de rattachement" value={employee.worksiteName} icon={MapPin} />
+                    <DetailItem label="Identifiant Fiscal" value={employee.taxCode} icon={Fingerprint} className="font-mono uppercase" />
+                    <DetailItem label="Poste source" value={employee.jobTitle} icon={Briefcase} />
                  </CardContent>
               </Card>
 
@@ -436,7 +463,7 @@ export default function Employee360HubPage() {
                                       <p className="text-[10px] text-muted-foreground font-medium">{candidate.email}</p>
                                    </div>
                                 </div>
-                                <p className="text-[10px] font-bold text-muted-foreground text-right italic">Soumis le {formatDateSafe(candidate.createdAt)}</p>
+                                <p className="text-[10px] font-bold text-muted-foreground text-right italic">Soumis le {formatDateTime(candidate.createdAt)}</p>
                              </div>
                           </div>
                         )}
@@ -567,7 +594,7 @@ export default function Employee360HubPage() {
               ) : !canReadPersons ? (
                 <AccessDeniedSection permission="persons.read" />
               ) : (
-                <PersonTimeline entityId={entityId} personId={employee!.personId} />
+                <PersonTimeline entityId={entityId} personId={employee.personId} />
               )}
            </div>
         </TabsContent>
@@ -732,4 +759,44 @@ function DocumentsTable({ docs, loadingId, onOpen }: { docs: HRDocument[], loadi
       </TableBody>
     </Table>
   );
+}
+
+/**
+ * Robust date formatter that handles Firestore Timestamps (Client & Admin),
+ * regular Date objects, and serialized timestamp maps.
+ */
+function formatDateTime(val: any): string {
+  if (!val) return "Date non disponible";
+  
+  // Detect invalid map ({}) from corrupted storage
+  if (typeof val === 'object' && !val.seconds && !val._seconds && !(val instanceof Date) && typeof val.toDate !== 'function') {
+    return "Date non disponible";
+  }
+
+  try {
+    let date: Date | null = null;
+
+    if (val instanceof Date) {
+      date = val;
+    } else if (typeof val.toDate === 'function') {
+      date = val.toDate();
+    } else if (val.seconds !== undefined) {
+      date = new Date(val.seconds * 1000);
+    } else if (val._seconds !== undefined) {
+      date = new Date(val._seconds * 1000);
+    } else if (typeof val === 'string') {
+      const parsed = new Date(val);
+      if (!isNaN(parsed.getTime())) date = parsed;
+    }
+
+    if (!date || isNaN(date.getTime())) return "Date non disponible";
+    
+    return date.toLocaleDateString('fr-FR', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric' 
+    });
+  } catch (e) {
+    return "Date non disponible";
+  }
 }
