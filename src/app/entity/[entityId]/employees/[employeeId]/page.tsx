@@ -278,6 +278,18 @@ export default function Employee360HubPage() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
+      {/* Navigation */}
+            <div className="mb-6 flex items-center justify-between">
+            <Button
+            type="button"
+            variant="ghost"
+            onClick={() => router.push(`/entity/${entityId}/employees`)}
+            className="gap-2 rounded-xl font-bold text-primary hover:bg-primary/5"
+            >
+            <ArrowLeft className="h-4 w-4" />
+            Retour aux employés
+            </Button>
+         </div>
       {/* 360 Header */}
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-6 border-b pb-8">
         <div className="flex items-center gap-6">

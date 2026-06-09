@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { 
   ShieldAlert, Loader2, PlayCircle, Search, ArrowLeft, 
   CheckCircle2, AlertTriangle, Building2, ListTodo, FileText,
-  RefreshCw, Info, Users, FolderOpen, ChevronDown
+  RefreshCw, Info, Users, FolderOpen, ChevronDown, Fingerprint
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,8 +98,8 @@ export default function RepairRegistryPage() {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                     <Label>ID Employé Canonique (Optionnel)</Label>
-                     <Info className="h-3 w-3 text-muted-foreground" title="Force le lien pour cet ID même si personId est partagé." />
+                     <Label>ID Employé Canonique (Force)</Label>
+                     <Info className="h-3 w-3 text-muted-foreground cursor-help" title="Bypasse les conflits de personId pour lier les records à cet ID spécifique." />
                   </div>
                   <Input 
                     placeholder="Ex: ERDNxeNE9q..." 
@@ -113,12 +113,13 @@ export default function RepairRegistryPage() {
              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl space-y-2">
                 <div className="flex items-center gap-2 text-[10px] font-black uppercase text-orange-800 tracking-wider">
                    <ShieldAlert className="w-4 h-4" />
-                   Règles de sécurité
+                   Règles de sécurité & Casing
                 </div>
                 <ul className="text-[10px] text-orange-700 font-medium list-disc pl-5 space-y-1">
                    <li>Les liens existants ne sont jamais écrasés.</li>
-                   <li>Sans ID canonique, les doublons d'identité (plusieurs employés pour 1 personne) sont ignorés.</li>
-                   <li>Avec un ID canonique, les documents orphelins sont rattachés de force à cet employé.</li>
+                   <li><strong>Casing-Aware</strong> : La recherche inclut désormais les personId/candidateId avec variations de casse.</li>
+                   <li><strong>Normalisation</strong> : Les IDs dans les records réparés seront alignés sur le format de l'employé.</li>
+                   <li>Sans ID canonique, les doublons d'identité sont ignorés pour votre sécurité.</li>
                 </ul>
              </div>
 
@@ -151,7 +152,16 @@ export default function RepairRegistryPage() {
                 <AlertTitle className="font-bold">{result.dryRun ? "Rapport de simulation" : "Action effectuée avec succès"}</AlertTitle>
                 <AlertDescription className="text-xs">
                   {result.dryRun ? "Aucune donnée n'a été modifiée." : "Les enregistrements ont été mis à jour dans le registre."}
-                  {result.targetEmployeeId && <span className="block mt-1 font-bold">Réparation ciblée sur l'employé: {result.targetEmployeeId}</span>}
+                  {result.identityIdsUsed && result.identityIdsUsed.length > 0 && (
+                    <div className="mt-2 p-2 bg-white/50 rounded-lg space-y-1">
+                       <p className="text-[9px] font-black uppercase text-muted-foreground">Identity IDs analysés (casing-aware) :</p>
+                       <div className="flex flex-wrap gap-1">
+                          {result.identityIdsUsed.map((id: string) => (
+                            <Badge key={id} variant="outline" className="text-[8px] h-4 font-mono">{id}</Badge>
+                          ))}
+                       </div>
+                    </div>
+                  )}
                 </AlertDescription>
              </Alert>
 
@@ -164,7 +174,11 @@ export default function RepairRegistryPage() {
 
              {result.conflicts.length > 0 && (
                <Card className="border-red-100 bg-red-50/50">
-                  <CardHeader className="py-3 px-6 border-b border-red-100"><CardTitle className="text-xs font-bold uppercase text-red-600">Conflits / Alertes détectées</CardTitle></CardHeader>
+                  <CardHeader className="py-3 px-6 border-b border-red-100">
+                    <CardTitle className="text-xs font-bold uppercase text-red-600 flex items-center gap-2">
+                       <AlertTriangle className="w-3 h-3" /> Conflits / Alertes détectées
+                    </CardTitle>
+                  </CardHeader>
                   <CardContent className="p-6">
                      <ul className="text-xs space-y-2 list-disc pl-5 text-red-700 font-medium">
                         {result.conflicts.map((c: string, i: number) => <li key={i}>{c}</li>)}

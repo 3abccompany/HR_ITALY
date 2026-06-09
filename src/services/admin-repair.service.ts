@@ -219,6 +219,7 @@ export async function repairCpiLink(entityId: string, offerId: string, actorUid:
  * GLOBAL REPAIR: Fixes data linkage for all employees in an entity.
  * Backfills employeeId into contracts and documents linked only by personId/candidateId.
  * Supports targeted repair for a specific canonical employee to bypass conflict filters.
+ * Updated: Casing-aware search for personId and sourceCandidateId.
  */
 export async function repairEntityDataLinkage(entityId: string, actorUid: string, dryRun: boolean = true, targetEmployeeId?: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -229,12 +230,11 @@ export async function repairEntityDataLinkage(entityId: string, actorUid: string
     documentsRepaired: 0,
     employeePointersFixed: 0,
     conflicts: [] as string[],
-    skipped: [] as string[]
+    skipped: [] as string[],
+    identityIdsUsed: [] as string[]
   };
 
   // 1. Get employees
-  let employeesToScan: Employee[] = [];
-  
   const allEmpSnap = await getDocs(collection(db, `entities/${entityId}/employees`));
   const allEmployees = allEmpSnap.docs.map(d => d.data() as Employee);
   
@@ -244,6 +244,7 @@ export async function repairEntityDataLinkage(entityId: string, actorUid: string
     personIdToEmployeeCount.set(e.personId, (personIdToEmployeeCount.get(e.personId) || 0) + 1);
   });
 
+  let employeesToScan: Employee[] = [];
   if (targetEmployeeId) {
     const target = allEmployees.find(e => e.employeeId === targetEmployeeId);
     if (!target) throw new Error(`Target employee ${targetEmployeeId} not found in entity.`);
@@ -266,82 +267,105 @@ export async function repairEntityDataLinkage(entityId: string, actorUid: string
        continue;
     }
 
+    // Build identity aliases for casing-aware searching
+    const identityIds = Array.from(new Set([
+      emp.personId, 
+      emp.sourceCandidateId,
+      (emp as any).personId?.toLowerCase(),
+      (emp as any).personId?.toUpperCase(),
+      (emp as any).sourceCandidateId?.toLowerCase(),
+      (emp as any).sourceCandidateId?.toUpperCase()
+    ].filter(Boolean) as string[]));
+
+    if (targetEmployeeId) {
+      results.identityIdsUsed = identityIds;
+    }
+
     // --- CONTRACTS REPAIR ---
-    const contractQ = query(
-      collection(db, `entities/${entityId}/contracts`), 
-      where("personId", "==", emp.personId)
-    );
-    const contractsSnap = await getDocs(contractQ);
-    let activeContractId: string | null = null;
-    let activeCount = 0;
+    for (const idVariant of identityIds) {
+      const contractQ = query(
+        collection(db, `entities/${entityId}/contracts`), 
+        where("personId", "==", idVariant)
+      );
+      const contractsSnap = await getDocs(contractQ);
+      
+      let activeContractId: string | null = null;
+      let activeCount = 0;
 
-    contractsSnap.docs.forEach(cDoc => {
-       const c = cDoc.data() as Contract;
-       // Only repair if missing/null or if it's the target employee and we want to enforce canonical link
-       if (!c.employeeId) {
-          if (!dryRun) {
-            batch.update(cDoc.ref, {
-              employeeId: emp.employeeId,
-              updatedAt: serverTimestamp(),
-              updatedBy: actorUid
-            });
-          }
-          results.contractsRepaired++;
-          batchCount++;
-       }
-       
-       const effectiveEmpId = c.employeeId || emp.employeeId;
-       if (c.status === 'active' && effectiveEmpId === emp.employeeId) {
-         activeContractId = cDoc.id;
-         activeCount++;
-       }
-    });
+      contractsSnap.docs.forEach(cDoc => {
+        const c = cDoc.data() as Contract;
+        
+        // Only repair if employeeId is missing/null and it hasn't been assigned to someone else
+        if (!c.employeeId || c.employeeId === null) {
+            if (!dryRun) {
+              batch.update(cDoc.ref, {
+                employeeId: emp.employeeId,
+                personId: emp.personId, // Normalize to the ID in the employee record
+                updatedAt: serverTimestamp(),
+                updatedBy: actorUid
+              });
+            }
+            results.contractsRepaired++;
+            batchCount++;
+        } else if (c.employeeId !== emp.employeeId) {
+            results.conflicts.push(`Contract ${cDoc.id} already linked to another employee: ${c.employeeId}`);
+        }
+        
+        const effectiveEmpId = c.employeeId || emp.employeeId;
+        if (c.status === 'active' && effectiveEmpId === emp.employeeId) {
+          activeContractId = cDoc.id;
+          activeCount++;
+        }
+      });
 
-    // Update activeContractId pointer if exactly one active contract exists for this employee
-    if (activeCount === 1 && activeContractId && emp.activeContractId !== activeContractId) {
-       if (!dryRun) {
-         batch.update(doc(db, `entities/${entityId}/employees`, emp.employeeId), {
-           activeContractId,
-           updatedAt: serverTimestamp()
-         });
-       }
-       results.employeePointersFixed++;
-       batchCount++;
+      // Update activeContractId pointer if exactly one active contract exists for this employee
+      if (activeCount === 1 && activeContractId && emp.activeContractId !== activeContractId) {
+         if (!dryRun) {
+           batch.update(doc(db, `entities/${entityId}/employees`, emp.employeeId), {
+             activeContractId,
+             updatedAt: serverTimestamp()
+           });
+         }
+         results.employeePointersFixed++;
+         batchCount++;
+      }
     }
 
     // --- DOCUMENTS REPAIR ---
-    // Match by personId
-    const docQ = query(
-      collection(db, `entities/${entityId}/documents`),
-      where("personId", "==", emp.personId)
-    );
-    const docsSnap = await getDocs(docQ);
-    docsSnap.docs.forEach(dDoc => {
-       const d = dDoc.data() as HRDocument;
-       if (!d.employeeId) {
-          if (!dryRun) {
-            batch.update(dDoc.ref, {
-              employeeId: emp.employeeId,
-              employeeDisplayName: emp.displayName,
-              updatedAt: serverTimestamp(),
-              updatedBy: actorUid
-            });
-          }
-          results.documentsRepaired++;
-          batchCount++;
-       }
-    });
-
-    // Match by candidateId (if different from personId path)
-    if (emp.sourceCandidateId) {
-      const docQCand = query(
+    // Search documents linked by ANY of the identity variants in either personId or candidateId fields
+    for (const idVariant of identityIds) {
+      // A. Search by personId
+      const docQByPerson = query(
         collection(db, `entities/${entityId}/documents`),
-        where("candidateId", "==", emp.sourceCandidateId)
+        where("personId", "==", idVariant)
       );
-      const docsCandSnap = await getDocs(docQCand);
+      const docsPersonSnap = await getDocs(docQByPerson);
+      docsPersonSnap.docs.forEach(dDoc => {
+         const d = dDoc.data() as HRDocument;
+         if (!d.employeeId || d.employeeId === null) {
+            if (!dryRun) {
+              batch.update(dDoc.ref, {
+                employeeId: emp.employeeId,
+                personId: emp.personId, // Normalize
+                employeeDisplayName: emp.displayName,
+                updatedAt: serverTimestamp(),
+                updatedBy: actorUid
+              });
+            }
+            results.documentsRepaired++;
+            batchCount++;
+         }
+      });
+
+      // B. Search by candidateId
+      const docQByCand = query(
+        collection(db, `entities/${entityId}/documents`),
+        where("candidateId", "==", idVariant)
+      );
+      const docsCandSnap = await getDocs(docQByCand);
       docsCandSnap.docs.forEach(dDoc => {
         const d = dDoc.data() as HRDocument;
-        if (!d.employeeId) {
+        if (!d.employeeId || d.employeeId === null) {
            if (!dryRun) {
              batch.update(dDoc.ref, {
                employeeId: emp.employeeId,
