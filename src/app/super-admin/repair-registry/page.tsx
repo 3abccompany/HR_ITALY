@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { 
   ShieldAlert, Loader2, PlayCircle, Search, ArrowLeft, 
   CheckCircle2, AlertTriangle, Building2, ListTodo, FileText,
-  RefreshCw, Info
+  RefreshCw, Info, Users, FolderOpen, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,14 @@ import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
 
 export default function RepairRegistryPage() {
   const { db } = useFirebase();
@@ -28,7 +36,7 @@ export default function RepairRegistryPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
 
-  const entitiesQuery = useMemo(() => db ? query(collection(db, "entities"), orderBy("name", "asc")) : null, [db]);
+  const entitiesQuery = useMemo(() => db ? query(collection(db, "entities"), orderBy("nomEntreprise", "asc")) : null, [db]);
   const { data: entities, loading: loadingEntities } = useCollection<Entity>(entitiesQuery);
 
   const handleRun = async (dryRun: boolean) => {
@@ -92,7 +100,7 @@ export default function RepairRegistryPage() {
                    Lancer Simulation (Dry Run)
                 </Button>
                 <Button 
-                  className="h-12 rounded-xl font-black gap-2 bg-red-600 hover:bg-red-700 shadow-lg shadow-red-100"
+                  className="h-12 rounded-xl font-black gap-2 bg-red-600 hover:bg-red-700 shadow-lg shadow-red-100 text-white"
                   onClick={() => handleRun(false)}
                   disabled={loading || !selectedEntityId}
                 >
@@ -136,30 +144,6 @@ export default function RepairRegistryPage() {
     </div>
   );
 }
-
-function Select({ children, value, onValueChange }: any) {
-  return (
-    <div className="relative">
-       <select 
-         value={value} 
-         onChange={(e) => onValueChange(e.target.value)}
-         className="flex h-12 w-full items-center justify-between rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 appearance-none"
-       >
-         <option value="">Sélectionner une entité...</option>
-         {children}
-       </select>
-       <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-50"><ChevronDown className="h-4 w-4" /></div>
-    </div>
-  );
-}
-
-function SelectItem({ value, children }: any) {
-  return <option value={value}>{children}</option>;
-}
-
-function SelectTrigger({ children, className }: any) { return <div className={className}>{children}</div>; }
-function SelectValue({ placeholder }: any) { return <span>{placeholder}</span>; }
-function SelectContent({ children }: any) { return <>{children}</>; }
 
 function ResultCard({ label, value, icon: Icon, color = "blue" }: any) {
   const colors: any = {
