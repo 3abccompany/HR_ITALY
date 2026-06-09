@@ -56,6 +56,8 @@ export function useDoc<T = DocumentData>(
           } satisfies SecurityRuleContext);
 
           errorEmitter.emit('permission-error', permissionError);
+        } else if (err.code === 'failed-precondition') {
+          console.warn(`[Firestore:FailedPrecondition] Source: ${label} | Path: ${ref.path}`, err);
         } else {
           console.error(`[Firestore:Error] Source: ${label} | Code: ${err.code} | Path: ${ref.path}`, err);
         }

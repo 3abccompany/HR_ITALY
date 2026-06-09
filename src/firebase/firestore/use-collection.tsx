@@ -60,7 +60,8 @@ export function useCollection<T = DocumentData>(
 
           errorEmitter.emit('permission-error', permissionError);
         } else if (err.code === 'failed-precondition') {
-          console.error(`[Firestore:MissingIndex] Source: ${label} | Path: ${path}`, {
+          // Use warn instead of error to avoid blocking Next.js dev overlay
+          console.warn(`[Firestore:MissingIndex] Source: ${label} | Path: ${path}`, {
             error: err,
             query: query,
             message: err.message,
