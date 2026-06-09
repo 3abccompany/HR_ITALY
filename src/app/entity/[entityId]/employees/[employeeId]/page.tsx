@@ -13,7 +13,8 @@ import {
   Download, Eye, Lock, FileBadge, ListTodo,
   ChevronDown, RefreshCcw, Save, X, Plus, Upload,
   FileCode, Ban, ArrowRight, LayoutDashboard,
-  Stethoscope, Shield, Search
+  Stethoscope, Shield, Search, Edit, MoreVertical,
+  UserPlus, Globe, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -38,7 +39,6 @@ import { EmploymentRequest } from "@/types/employment-request";
 import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
 import { getDocumentDownloadUrl } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
