@@ -54,6 +54,13 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -212,12 +219,12 @@ export default function EmploymentRequestDetailPage() {
         }
       });
 
-      if (!result.success) throw new Error(result.error || "Impossible de générer l'aperçu.");
+      if (!result.success) throw new Error((result as any).error || "Impossible de générer l'aperçu.");
 
       setEmailPreview({
         to: consultantForm.email,
-        subject: result.preview.subject,
-        html: result.preview.html
+        subject: result.preview!.subject,
+        html: result.preview!.html
       });
       setIsPreviewOpen(true);
     } catch (err: any) {
