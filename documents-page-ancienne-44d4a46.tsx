@@ -7,8 +7,7 @@ import {
   Download, Archive, Eye, User, FileBadge, 
   Calendar, AlertCircle, Filter, X, ChevronRight,
   ShieldAlert, Clock, Building2, ListFilter,
-  FileCheck, ShieldCheck, AlertTriangle, Info,
-  RefreshCcw, Upload
+  FileCheck, ShieldCheck, AlertTriangle, Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,24 +29,14 @@ import {
 import { 
   uploadHRDocument, 
   archiveHRDocument, 
-  getDocumentDownloadUrl,
-  replaceHRDocument
+  getDocumentDownloadUrl 
 } from "@/services/document.service";
 import { useToast } from "@/hooks/use-toast";
 import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogFooter, 
-  DialogDescription 
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
 } from "@/components/ui/dialog";
 import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from "@/components/ui/select";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { format, isBefore, addDays, startOfDay, differenceInDays } from "date-fns";
@@ -73,34 +62,6 @@ const initialFilters: Filters = {
 
 const ALLOWED_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-
-/**
- * Robust date parser for mixed Firestore/Admin/Corrupted formats.
- */
-function parseSafeDate(val: any): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
-  
-  if (typeof val === 'object') {
-    if (typeof val.toDate === 'function') return val.toDate();
-    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
-    return null;
-  }
-  
-  if (typeof val === 'string' || typeof val === 'number') {
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  
-  return null;
-}
-
-function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
-  const date = parseSafeDate(val);
-  if (!date) return "-";
-  return format(date, formatStr, { locale: fr });
-}
 
 export default function DocumentsRegistryPage() {
   const params = useParams();
@@ -128,13 +89,6 @@ export default function DocumentsRegistryPage() {
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-
-  // Renewal / Replacement State
-  const [selectedDocForReplacement, setSelectedDocForReplacement] = useState<HRDocument | null>(null);
-  const [replacementFile, setReplacementFile] = useState<File | null>(null);
-  const [replacementReason, setReplacementReason] = useState("");
-  const [replacementExpiresAt, setReplacementExpiresAt] = useState("");
-  const [isReplacing, setIsReplacing] = useState(false);
 
   // Permissions
   const canRead = hasPermission("documents.read");
@@ -182,9 +136,8 @@ export default function DocumentsRegistryPage() {
     return documents.reduce((acc, d) => {
       acc.total++;
       if (d.isSensitive) acc.sensitive++;
-      
-      const expiry = parseSafeDate(d.expiresAt);
-      if (expiry) {
+      if (d.expiresAt) {
+        const expiry = new Date(d.expiresAt);
         if (isBefore(expiry, today)) {
           acc.expired++;
         } else if (differenceInDays(expiry, today) <= 30) {
@@ -238,11 +191,11 @@ export default function DocumentsRegistryPage() {
     };
 
     filteredDocs.forEach(d => {
-      const expiry = parseSafeDate(d.expiresAt);
-      if (!expiry) {
+      if (!d.expiresAt) {
         groups.no_expiry.push(d);
         return;
       }
+      const expiry = new Date(d.expiresAt);
       const daysLeft = differenceInDays(expiry, today);
 
       if (isBefore(expiry, today)) {
@@ -318,34 +271,6 @@ export default function DocumentsRegistryPage() {
       toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
     } finally {
       setUploading(false);
-    }
-  };
-
-  const handleExecuteReplacement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !selectedDocForReplacement || !replacementFile || !replacementExpiresAt) return;
-
-    setIsReplacing(true);
-    try {
-      await replaceHRDocument(
-        entityId,
-        selectedDocForReplacement.id,
-        replacementFile,
-        user.uid,
-        replacementReason,
-        { expiresAt: replacementExpiresAt },
-        membership?.userDisplayName || undefined
-      );
-
-      toast({ title: "Document renouvelé", description: "La nouvelle version a été enregistrée avec la nouvelle échéance." });
-      setSelectedDocForReplacement(null);
-      setReplacementFile(null);
-      setReplacementReason("");
-      setReplacementExpiresAt("");
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur de renouvellement", description: err.message });
-    } finally {
-      setIsReplacing(false);
     }
   };
 
@@ -476,7 +401,6 @@ export default function DocumentsRegistryPage() {
                     loadingId={loadingAction} 
                     onOpen={handleOpenDoc} 
                     onArchive={handleArchive}
-                    onReplace={setSelectedDocForReplacement}
                     onViewDetails={setSelectedDocForDetails}
                     canArchive={canArchive}
                   />
@@ -496,7 +420,6 @@ export default function DocumentsRegistryPage() {
                         loadingId={loadingAction} 
                         onOpen={handleOpenDoc} 
                         onArchive={handleArchive}
-                        onReplace={setSelectedDocForReplacement}
                         onViewDetails={setSelectedDocForDetails}
                         canArchive={canArchive}
                         compact
@@ -521,7 +444,6 @@ export default function DocumentsRegistryPage() {
                         loadingId={loadingAction} 
                         onOpen={handleOpenDoc} 
                         onArchive={handleArchive}
-                        onReplace={setSelectedDocForReplacement}
                         onViewDetails={setSelectedDocForDetails}
                         canArchive={canArchive}
                         compact
@@ -533,16 +455,16 @@ export default function DocumentsRegistryPage() {
 
             <TabsContent value="expiry" className="mt-0 space-y-8">
                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <ExpirySection title="Expirés" docs={docsByExpiry.expired} variant="danger" onOpen={handleOpenDoc} onArchive={handleArchive} onReplace={setSelectedDocForReplacement} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
-                  <ExpirySection title="Sous 30 jours" docs={docsByExpiry.due_30} variant="warning" onOpen={handleOpenDoc} onArchive={handleArchive} onReplace={setSelectedDocForReplacement} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
-                  <ExpirySection title="Sous 60 jours" docs={docsByExpiry.due_60} variant="info" onOpen={handleOpenDoc} onArchive={handleArchive} onReplace={setSelectedDocForReplacement} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
-                  <ExpirySection title="Sous 90 jours" docs={docsByExpiry.due_90} variant="secondary" onOpen={handleOpenDoc} onArchive={handleArchive} onReplace={setSelectedDocForReplacement} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
+                  <ExpirySection title="Expirés" docs={docsByExpiry.expired} variant="danger" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
+                  <ExpirySection title="Sous 30 jours" docs={docsByExpiry.due_30} variant="warning" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
+                  <ExpirySection title="Sous 60 jours" docs={docsByExpiry.due_60} variant="info" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
+                  <ExpirySection title="Sous 90 jours" docs={docsByExpiry.due_90} variant="secondary" onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} />
                </div>
                {docsByExpiry.no_expiry.length > 0 && (
                  <div className="pt-8">
                     <h3 className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1 mb-4">Autres documents (Sans échéance)</h3>
                     <Card className="rounded-3xl overflow-hidden opacity-80 border-primary/5 bg-white">
-                       <DocumentsTable docs={docsByExpiry.no_expiry} onOpen={handleOpenDoc} onArchive={handleArchive} onReplace={setSelectedDocForReplacement} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} canArchive={canArchive} compact />
+                       <DocumentsTable docs={docsByExpiry.no_expiry} onOpen={handleOpenDoc} onArchive={handleArchive} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} canArchive={canArchive} compact />
                     </Card>
                  </div>
                )}
@@ -575,10 +497,10 @@ export default function DocumentsRegistryPage() {
                    <DetailItem label="Statut" value={<Badge variant="outline" className="h-5 uppercase text-[9px] font-black bg-slate-50">{STATUS_LABELS[selectedDocForDetails.status]}</Badge>} />
                    <DetailItem label="Employé" value={selectedDocForDetails.employeeDisplayName || "Non lié"} />
                    <DetailItem label="Nom du fichier" value={selectedDocForDetails.fileName} code />
-                   <DetailItem label="Taille" value={selectedDocForDetails.sizeBytes ? `${(selectedDocForDetails.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "-"} />
-                   <DetailItem label="Téléversé le" value={formatDateSafe(selectedDocForDetails.uploadedAt, "dd/MM/yyyy HH:mm")} />
+                   <DetailItem label="Taille" value={`${(selectedDocForDetails.sizeBytes / 1024 / 1024).toFixed(2)} MB`} />
+                   <DetailItem label="Téléversé le" value={format(new Date((selectedDocForDetails.uploadedAt as any).seconds * 1000), "dd/MM/yyyy HH:mm")} />
                    <DetailItem label="Par" value={selectedDocForDetails.uploadedByDisplayName || "Système"} />
-                   {selectedDocForDetails.expiresAt && <DetailItem label="Expiration" value={<span className={cn("font-black", isBefore(parseSafeDate(selectedDocForDetails.expiresAt) || new Date(), startOfDay(new Date())) ? "text-red-600" : "text-slate-800")}>{formatDateSafe(selectedDocForDetails.expiresAt)}</span>} />}
+                   {selectedDocForDetails.expiresAt && <DetailItem label="Expiration" value={<span className={cn("font-black", isBefore(new Date(selectedDocForDetails.expiresAt), new Date()) ? "text-red-600" : "text-slate-800")}>{format(new Date(selectedDocForDetails.expiresAt), "dd/MM/yyyy")}</span>} />}
                    {selectedDocForDetails.isSensitive && <DetailItem label="Confidentialité" value={<Badge variant="destructive" className="h-5 text-[8px] uppercase font-black">Sensible</Badge>} />}
                 </div>
 
@@ -709,93 +631,6 @@ export default function DocumentsRegistryPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* Replacement / Renewal Dialog */}
-      <Dialog open={!!selectedDocForReplacement} onOpenChange={(open) => !open && setSelectedDocForReplacement(null)}>
-        <DialogContent className="sm:max-w-[500px] rounded-[2.5rem]">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-black text-primary flex items-center gap-2">
-              <RefreshCcw className="w-6 h-6 text-accent" />
-              Renouveler le document
-            </DialogTitle>
-            <DialogDescription>
-              Vous remplacez : <span className="font-bold text-slate-900">{selectedDocForReplacement?.title}</span>
-            </DialogDescription>
-          </DialogHeader>
-
-          <form onSubmit={handleExecuteReplacement} className="space-y-6 py-4">
-            <div className="space-y-4">
-              {selectedDocForReplacement?.expiresAt && (
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3">
-                   <Clock className="w-4 h-4 text-muted-foreground" />
-                   <p className="text-xs text-muted-foreground font-medium">Échéance actuelle : <span className="font-bold text-slate-700">{formatDateSafe(selectedDocForReplacement.expiresAt)}</span></p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Nouveau fichier (PDF, PNG, JPG)</Label>
-                <div className={cn(
-                  "border-2 border-dashed rounded-2xl p-8 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
-                  replacementFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
-                )}>
-                   <Input 
-                     type="file" 
-                     accept=".pdf,.png,.jpg,.jpeg" 
-                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                     onChange={(e) => setReplacementFile(e.target.files?.[0] || null)}
-                     required
-                   />
-                   {replacementFile ? (
-                      <>
-                        <div className="bg-green-100 p-2 rounded-xl text-green-600 mb-1"><FileCheck className="w-5 h-5" /></div>
-                        <p className="text-xs font-bold text-green-800">{replacementFile.name}</p>
-                        <p className="text-[10px] text-green-600 font-bold uppercase">Cliquer pour changer</p>
-                      </>
-                   ) : (
-                      <>
-                        <Upload className="w-6 h-6 text-slate-300 mb-1" />
-                        <p className="text-xs font-bold text-slate-600">Cliquez ou glissez le nouveau document</p>
-                      </>
-                   )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Nouvelle date d'expiration (Requis)</Label>
-                <Input 
-                  type="date"
-                  value={replacementExpiresAt}
-                  onChange={(e) => setReplacementExpiresAt(e.target.value)}
-                  required
-                  className="rounded-xl h-11"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Motif du renouvellement (Optionnel)</Label>
-                <Textarea 
-                  placeholder="Ex: Document arrivé à échéance, mise à jour annuelle..."
-                  value={replacementReason}
-                  onChange={(e) => setReplacementReason(e.target.value)}
-                  className="rounded-xl min-h-[80px]"
-                />
-              </div>
-            </div>
-
-            <DialogFooter className="pt-4 border-t">
-              <Button type="button" variant="ghost" onClick={() => setSelectedDocForReplacement(null)} disabled={isReplacing}>Annuler</Button>
-              <Button 
-                type="submit" 
-                disabled={isReplacing || !replacementFile || !replacementExpiresAt}
-                className="rounded-xl px-8 font-black shadow-lg"
-              >
-                {isReplacing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
-                Remplacer le document
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -828,7 +663,6 @@ function DocumentsTable({
   loadingId, 
   onOpen, 
   onArchive, 
-  onReplace,
   onViewDetails,
   canArchive,
   compact = false 
@@ -837,7 +671,6 @@ function DocumentsTable({
   loadingId: string | null, 
   onOpen: any, 
   onArchive: any, 
-  onReplace?: (doc: HRDocument) => void,
   onViewDetails: (doc: HRDocument) => void,
   canArchive?: boolean,
   compact?: boolean 
@@ -859,14 +692,8 @@ function DocumentsTable({
           <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document dans cette vue.</TableCell></TableRow>
         ) : docs.map(d => {
           const isLoading = loadingId === d.id;
-          const expiry = parseSafeDate(d.expiresAt);
-          const today = startOfDay(new Date());
-          const isExpired = expiry && isBefore(expiry, today);
-          const isExpiringSoon = expiry && !isExpired && differenceInDays(expiry, today) <= 60;
+          const isExpired = d.expiresAt && isBefore(new Date(d.expiresAt), startOfDay(new Date()));
           
-          // Renewal rule: valid status + has expiry + (expired OR within 60 days)
-          const canRenew = onReplace && d.status === 'valid' && expiry && (isExpired || isExpiringSoon);
-
           return (
             <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
               <TableCell>
@@ -878,7 +705,7 @@ function DocumentsTable({
               </TableCell>
               <TableCell className="hidden md:table-cell text-center">
                 <div className="text-[9px] font-mono text-muted-foreground truncate max-w-[120px] mx-auto mb-0.5">{d.fileName}</div>
-                <div className="text-[8px] uppercase font-bold text-muted-foreground/40">{d.sizeBytes ? `${(d.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "-"}</div>
+                <div className="text-[8px] uppercase font-bold text-muted-foreground/40">{(d.sizeBytes / 1024 / 1024).toFixed(2)} MB</div>
               </TableCell>
               <TableCell className="hidden lg:table-cell">
                 {d.employeeDisplayName ? (
@@ -890,9 +717,9 @@ function DocumentsTable({
                 )}
               </TableCell>
               <TableCell>
-                {expiry ? (
-                  <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
-                    {format(expiry, "dd/MM/yyyy")}
+                {d.expiresAt ? (
+                  <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-slate-600")}>
+                    {format(new Date(d.expiresAt), "dd/MM/yyyy")}
                     {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                   </div>
                 ) : (
@@ -903,18 +730,12 @@ function DocumentsTable({
                  <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5", 
                    d.status === 'valid' ? "bg-green-50 text-green-700 border-green-100" : 
                    d.status === 'archived' ? "bg-slate-50 text-slate-400 border-slate-100" : 
-                   d.status === 'replaced' ? "bg-slate-100 text-slate-500 border-slate-200" :
                    d.status === 'expired' || isExpired ? "bg-red-50 text-red-700 border-red-100" : "bg-orange-50 text-orange-700 border-orange-100")}>
                    {isExpired ? "Expiré" : STATUS_LABELS[d.status]}
                  </Badge>
               </TableCell>
               <TableCell className="text-right">
                  <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {canRenew && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-accent" onClick={() => onReplace!(d)} title="Renouveler">
-                         <RefreshCcw className="w-4 h-4" />
-                      </Button>
-                    )}
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onViewDetails(d)} title="Détails">
                        <Eye className="w-4 h-4" />
                     </Button>
@@ -936,7 +757,7 @@ function DocumentsTable({
   );
 }
 
-function ExpirySection({ title, docs, variant, onOpen, onArchive, onReplace, onViewDetails, loadingId }: any) {
+function ExpirySection({ title, docs, variant, onOpen, onArchive, onViewDetails, loadingId }: any) {
   const colorClass = variant === 'danger' ? "text-red-700 bg-red-50 border-red-100" : 
                      variant === 'warning' ? "text-orange-700 bg-orange-50 border-orange-100" :
                      variant === 'info' ? "text-blue-700 bg-blue-50 border-blue-100" : "text-slate-700 bg-slate-50 border-slate-100";
@@ -966,15 +787,12 @@ function ExpirySection({ title, docs, variant, onOpen, onArchive, onReplace, onV
                           </p>
                           <span className="text-slate-200 text-[10px]">•</span>
                           <p className={cn("text-[9px] font-black uppercase tracking-tighter", variant === 'danger' ? "text-red-600" : "text-slate-500")}>
-                             {d.expiresAt ? `Exp: ${formatDateSafe(d.expiresAt)}` : "Pas d'échéance"}
+                             {d.expiresAt ? `Exp: ${format(new Date(d.expiresAt), "dd MMM yy")}` : "Pas d'échéance"}
                           </p>
                        </div>
                     </div>
                  </div>
                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {onReplace && d.status === 'valid' && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-accent" onClick={() => onReplace(d)}><RefreshCcw className="w-3.5 h-3.5" /></Button>
-                    )}
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewDetails(d)}><Eye className="w-3.5 h-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(d.id)} disabled={!!loadingId}><Archive className="w-3.5 h-3.5" /></Button>
                  </div>
