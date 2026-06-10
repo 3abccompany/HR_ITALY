@@ -12,12 +12,11 @@ import {
   Upload, Download, FileCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { useFirebase, useDoc, useUser, useCollection } from "@/firebase";
 import { doc, DocumentReference, collection, query, orderBy } from "firebase/firestore";
 import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";

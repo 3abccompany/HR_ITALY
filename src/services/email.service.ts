@@ -122,7 +122,7 @@ function renderConsultantCPIEmailContent(data: SendConsultantCPIParams['template
     </div>
   `;
 
-  const text = `Richiesta UniLav per ${data.candidateName}. Data inizio: ${data.plannedHireDate}.`;
+  const text = `Richiesta UniLav for ${data.candidateName}. Data inizio: ${data.plannedHireDate}.`;
 
   return { html, text };
 }
@@ -311,19 +311,23 @@ export async function getConsultantCPIEmailPreviewAction(params: {
   entityId: string;
   requestId: string;
   templateData: SendConsultantCPIParams['templateData'];
-}) {
-  const { templateData } = params;
-  const subject = `Richiesta Comunicazione UniLav/CPI — ${templateData.candidateName} — ${templateData.plannedHireDate}`;
-  const { html, text } = renderConsultantCPIEmailContent(templateData);
-  
-  return { 
-    success: true, 
-    preview: {
-      subject,
-      html,
-      text
-    } 
-  };
+}): Promise<{ success: true; preview: { subject: string; html: string; text: string; } } | { success: false; error: string }> {
+  try {
+    const { templateData } = params;
+    const subject = `Richiesta Comunicazione UniLav/CPI — ${templateData.candidateName} — ${templateData.plannedHireDate}`;
+    const { html, text } = renderConsultantCPIEmailContent(templateData);
+    
+    return { 
+      success: true, 
+      preview: {
+        subject,
+        html,
+        text
+      } 
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Failed to render preview" };
+  }
 }
 
 /**
@@ -339,48 +343,48 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
     const pass = process.env.SMTP_PASS;
     const from = process.env.SMTP_FROM || user;
 
-    if (!host || !user || !pass) {
-      throw new Error("SMTP_NOT_CONFIGURED: Il servizio email non è configurato.");
+    if (host && user && pass) {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const { html, text } = renderConsultantCPIEmailContent(templateData);
+
+      const info = await transporter.sendMail({
+        from,
+        to,
+        subject,
+        html,
+        text,
+      });
+
+      // Logging for traceability
+      try {
+         const logRef = adminDb.collection("entities").doc(entityId).collection("emailLogs").doc();
+         await logRef.set({
+           logId: logRef.id,
+           entityId,
+           requestId,
+           module: "employmentRequests",
+           type: "cpi_consultant_request",
+           to,
+           from,
+           subject,
+           status: "sent",
+           messageId: info.messageId,
+           createdAt: FieldValue.serverTimestamp(),
+         });
+      } catch (logErr) {
+         console.warn("[Email Service] Non-blocking log failure:", logErr);
+      }
+    } else {
+      console.log(`[Email Service] SMTP not configured. Log only: to=${to}, subject=${subject}`);
     }
 
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-    });
-
-    const { html, text } = renderConsultantCPIEmailContent(templateData);
-
-    const info = await transporter.sendMail({
-      from,
-      to,
-      subject,
-      html,
-      text,
-    });
-
-    // Logging for traceability
-    try {
-       const logRef = adminDb.collection("entities").doc(entityId).collection("emailLogs").doc();
-       await logRef.set({
-         logId: logRef.id,
-         entityId,
-         requestId,
-         module: "employmentRequests",
-         type: "cpi_consultant_request",
-         to,
-         from,
-         subject,
-         status: "sent",
-         messageId: info.messageId,
-         createdAt: FieldValue.serverTimestamp(),
-       });
-    } catch (logErr) {
-       console.warn("[Email Service] Non-blocking log failure:", logErr);
-    }
-
-    return { success: true, messageId: info.messageId };
+    return { success: true };
   } catch (error: any) {
     console.error("[Email Service] Failed to send consultant email:", error);
     
