@@ -111,6 +111,8 @@ export default function DocumentsRegistryPage() {
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
 
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
+
   // Registry State
   const [viewMode, setViewMode] = useState("all");
   const [filters, setFilters] = useState<Filters>(initialFilters);
@@ -144,19 +146,17 @@ export default function DocumentsRegistryPage() {
 
   // Queries
   const docsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !canRead || !permissionsReady) return null;
     return query(collection(db, `entities/${entityId}/documents`), orderBy("uploadedAt", "desc")) as Query<HRDocument>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, canRead, permissionsReady]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !canRead || !permissionsReady) return null;
     return query(collection(db, `entities/${entityId}/employees`), orderBy("displayName", "asc")) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, canRead, permissionsReady]);
 
-  const { data: documents, loading: loadingDocs } = useCollection<HRDocument>(docsQuery);
-  const { data: employees } = useCollection<Employee>(employeesQuery);
-
-  // --- Filtering & Sorting ---
+  const { data: documents, loading: loadingDocs } = useCollection<HRDocument>(docsQuery, "documents.registry");
+  const { data: employees } = useCollection<Employee>(employeesQuery, "documents.employees_lookup");
 
   const filteredDocs = useMemo(() => {
     if (!documents) return [];
@@ -174,27 +174,6 @@ export default function DocumentsRegistryPage() {
       return true;
     });
   }, [documents, filters]);
-
-  // --- Summary Statistics ---
-  const stats = useMemo(() => {
-    if (!documents) return { total: 0, sensitive: 0, expired: 0, due30: 0 };
-    const today = startOfDay(new Date());
-    
-    return documents.reduce((acc, d) => {
-      acc.total++;
-      if (d.isSensitive) acc.sensitive++;
-      
-      const expiry = parseSafeDate(d.expiresAt);
-      if (expiry) {
-        if (isBefore(expiry, today)) {
-          acc.expired++;
-        } else if (differenceInDays(expiry, today) <= 30) {
-          acc.due30++;
-        }
-      }
-      return acc;
-    }, { total: 0, sensitive: 0, expired: 0, due30: 0 });
-  }, [documents]);
 
   // --- Grouping Logic ---
 
@@ -261,6 +240,27 @@ export default function DocumentsRegistryPage() {
 
     return groups;
   }, [filteredDocs]);
+
+  // --- Summary Statistics ---
+  const stats = useMemo(() => {
+    if (!documents) return { total: 0, sensitive: 0, expired: 0, due30: 0 };
+    const today = startOfDay(new Date());
+    
+    return documents.reduce((acc, d) => {
+      acc.total++;
+      if (d.isSensitive) acc.sensitive++;
+      
+      const expiry = parseSafeDate(d.expiresAt);
+      if (expiry) {
+        if (isBefore(expiry, today)) {
+          acc.expired++;
+        } else if (differenceInDays(expiry, today) <= 30) {
+          acc.due30++;
+        }
+      }
+      return acc;
+    }, { total: 0, sensitive: 0, expired: 0, due30: 0 });
+  }, [documents]);
 
   // --- Handlers ---
 
@@ -1048,7 +1048,7 @@ function DocRow({
                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
             </Button>
             {canArchive && doc.status !== 'archived' && !isHistory && (
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(doc.id)} disabled={loadingId === doc.id} title="Archiver">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(doc.id)} disabled={loadingId === d.id} title="Archiver">
                  <Archive className="w-4 h-4" />
               </Button>
             )}
