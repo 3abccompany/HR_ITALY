@@ -306,15 +306,6 @@ export default function Employee360HubPage() {
             </div>
           </div>
         </div>
-
-        <div className="flex items-center gap-3">
-           <Button variant="outline" className="bg-white rounded-xl font-bold gap-2">
-              <Edit className="w-4 h-4" /> Modifier profil
-           </Button>
-           <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground">
-              <MoreVertical className="w-5 h-5" />
-           </Button>
-        </div>
       </header>
 
       <Tabs defaultValue="overview" className="space-y-8">
