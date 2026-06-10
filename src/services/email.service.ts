@@ -122,7 +122,27 @@ function renderConsultantCPIEmailContent(data: SendConsultantCPIParams['template
     </div>
   `;
 
-  const text = `Richiesta UniLav for ${data.candidateName}. Data inizio: ${data.plannedHireDate}.`;
+  const text = `Gentile ${data.consultantName || 'Consulente'},
+
+con la presente si richiede la predisposizione della comunicazione obbligatoria (UniLav) per l'assunzione del seguente candidato:
+
+Dettagli Candidato:
+- Nome: ${data.candidateName}
+- Email: ${data.candidateEmail || '-'}
+- Telefono: ${data.candidatePhone || '-'}
+
+Dettagli Contrattuali:
+- Posizione: ${data.jobTitle}
+- Azienda: ${data.companyName}
+- Tipo contratto: ${data.contractType}
+- Data inizio prevista: ${data.plannedHireDate}
+
+Vi preghiamo gentilmente di procedere con l'invio e di trasmetterci non appena disponibili il codice di protocollo UniLav, la data effettiva e il file PDF del récépissé ufficiale.
+
+Riferimento interno pratica: ${data.requestId}
+
+Cordiali saluti,
+Ufficio Risorse Umane — ${data.companyName}`;
 
   return { html, text };
 }
@@ -278,7 +298,7 @@ export async function sendDocumentRequestEmailAction(params: SendDocumentRequest
       <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white;">
         <p>Buongiorno <strong>${params.candidateName}</strong>,</p>
         <p>Siamo lieti di procedere con la tua assunzione per la posizione di <strong>${params.jobTitle}</strong> presso <strong>${params.companyName}</strong>.</p>
-        <p>Per poter predisporre il contratto e le comunicazioni obbligatorie, ti chiediamo gentilmente di inviarci i seguenti documenti:</p>
+        <p>Per poter predisporre il contrat e le comunicazioni obbligatorie, ti chiediamo gentilmente di inviarci i seguenti documenti:</p>
         <ul style="background: #F8FAFC; padding: 20px 40px; border-radius: 12px; list-style-type: square; color: #334155;">
           ${docList}
         </ul>
@@ -332,9 +352,13 @@ export async function getConsultantCPIEmailPreviewAction(params: {
 
 /**
  * Sends the official request for UniLav / CPI communication to the Labor Consultant.
+ * Supports subject and body overrides from the preview/edit step.
  */
-export async function sendConsultantCPIRequestAction(params: SendConsultantCPIParams) {
-  const { entityId, requestId, to, subject, templateData } = params;
+export async function sendConsultantCPIRequestAction(params: SendConsultantCPIParams & {
+  subjectOverride?: string;
+  bodyOverride?: string;
+}) {
+  const { entityId, requestId, to, subject, templateData, subjectOverride, bodyOverride } = params;
 
   try {
     const host = process.env.SMTP_HOST;
@@ -342,6 +366,27 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
     const user = process.env.SMTP_USER;
     const pass = process.env.SMTP_PASS;
     const from = process.env.SMTP_FROM || user;
+
+    const finalSubject = subjectOverride?.trim() || subject;
+    let finalHtml: string;
+    let finalText: string;
+
+    if (bodyOverride?.trim()) {
+      finalText = bodyOverride.trim();
+      // Basic text to HTML conversion with entity escaping for safety
+      const escapedText = finalText
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+      
+      finalHtml = `<div style="font-family: sans-serif; white-space: pre-wrap; line-height: 1.5; color: #1F1F66;">${escapedText.replace(/\n/g, '<br>')}</div>`;
+    } else {
+      const { html, text } = renderConsultantCPIEmailContent(templateData);
+      finalHtml = html;
+      finalText = text;
+    }
 
     if (host && user && pass) {
       const transporter = nodemailer.createTransport({
@@ -351,14 +396,12 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
         auth: { user, pass },
       });
 
-      const { html, text } = renderConsultantCPIEmailContent(templateData);
-
       const info = await transporter.sendMail({
         from,
         to,
-        subject,
-        html,
-        text,
+        subject: finalSubject,
+        html: finalHtml,
+        text: finalText,
       });
 
       // Logging for traceability
@@ -372,7 +415,8 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
            type: "cpi_consultant_request",
            to,
            from,
-           subject,
+           subject: finalSubject,
+           body: finalText,
            status: "sent",
            messageId: info.messageId,
            createdAt: FieldValue.serverTimestamp(),
@@ -381,7 +425,7 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
          console.warn("[Email Service] Non-blocking log failure:", logErr);
       }
     } else {
-      console.log(`[Email Service] SMTP not configured. Log only: to=${to}, subject=${subject}`);
+      console.log(`[Email Service] SMTP not configured. Log only: to=${to}, subject=${finalSubject}`);
     }
 
     return { success: true };
@@ -398,7 +442,7 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
          module: "employmentRequests",
          type: "cpi_consultant_request",
          to,
-         subject,
+         subject: subjectOverride || subject,
          status: "failed",
          error: error.message,
          createdAt: FieldValue.serverTimestamp(),

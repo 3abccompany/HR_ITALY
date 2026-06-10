@@ -113,9 +113,11 @@ export default function EmploymentRequestDetailPage() {
   const [loadingFile, setLoadingFile] = useState(false);
   const [isRegistryConfirmOpen, setIsRegistryConfirmOpen] = useState(false);
 
-  // --- Preview State ---
+  // --- Preview & Edit State ---
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [emailPreview, setEmailPreview] = useState<{ to: string, subject: string, html: string } | null>(null);
+  const [editableSubject, setEditableSubject] = useState("");
+  const [editableBody, setEditableBody] = useState("");
 
   useEffect(() => {
     if (request) {
@@ -197,7 +199,7 @@ export default function EmploymentRequestDetailPage() {
   };
 
   /**
-   * Triggers the fetch for the email preview and opens the dialog.
+   * Triggers the fetch for the email preview and opens the edit dialog.
    */
   const handleSendViaEmail = async () => {
     if (!user || !entityId || !requestId || !request) return;
@@ -226,6 +228,8 @@ export default function EmploymentRequestDetailPage() {
 
       if (!result.success) throw new Error((result as any).error || "Impossible de générer l'aperçu.");
 
+      setEditableSubject(result.preview!.subject);
+      setEditableBody(result.preview!.text);
       setEmailPreview({
         to: consultantForm.email,
         subject: result.preview!.subject,
@@ -240,7 +244,7 @@ export default function EmploymentRequestDetailPage() {
   };
 
   /**
-   * Final confirmation and real SMTP dispatch.
+   * Final confirmation and real SMTP dispatch using edited content.
    */
   const confirmAndSendEmail = async () => {
     if (!user || !entityId || !requestId || !request || !emailPreview) return;
@@ -252,6 +256,8 @@ export default function EmploymentRequestDetailPage() {
         requestId,
         to: emailPreview.to,
         subject: emailPreview.subject,
+        subjectOverride: editableSubject,
+        bodyOverride: editableBody,
         templateData: {
           consultantName: consultantForm.name || "Consulente",
           candidateName: request.candidateDisplayName || "Candidato",
@@ -691,7 +697,7 @@ export default function EmploymentRequestDetailPage() {
                       canComplete ? "bg-white text-green-700 hover:bg-slate-100" : "bg-slate-100 text-slate-400"
                     )}
                    >
-                      {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                       Clôturer le dossier CPI
                    </Button>
                    {!canComplete && (
@@ -741,42 +747,48 @@ export default function EmploymentRequestDetailPage() {
         </div>
       </div>
 
-      {/* CPI Email Preview Dialog */}
+      {/* CPI Email Preview & Edit Dialog */}
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
         <DialogContent className="sm:max-w-[650px] rounded-[2.5rem]">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
-              <Mail className="w-6 h-6" /> Aperçu de l'email consultant
+              <Mail className="w-6 h-6" /> Préparer l'email au consultant
             </DialogTitle>
-            <DialogDescription>Vérifiez le contenu avant l'envoi officiel au consultant.</DialogDescription>
+            <DialogDescription>Modifiez le contenu si nécessaire avant l'envoi officiel.</DialogDescription>
           </DialogHeader>
           
-          <div className="py-4 space-y-4">
+          <div className="py-4 space-y-6">
             <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-muted-foreground">Destinataire</p>
-              <p className="text-sm font-bold text-slate-800">{emailPreview?.to}</p>
+              <p className="text-[10px] font-black uppercase text-muted-foreground">Destinataire (Lecture seule)</p>
+              <p className="text-sm font-bold text-slate-800 bg-secondary/20 p-2 rounded-lg">{emailPreview?.to}</p>
             </div>
+            
             <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-muted-foreground">Objet</p>
-              <p className="text-sm font-bold text-slate-800">{emailPreview?.subject}</p>
+              <p className="text-[10px] font-black uppercase text-muted-foreground">Objet de l'email</p>
+              <Input 
+                value={editableSubject} 
+                onChange={(e) => setEditableSubject(e.target.value)}
+                placeholder="Objet..."
+                className="rounded-xl h-11 border-primary/10"
+              />
             </div>
-            <Separator />
+
             <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-muted-foreground mb-2">Contenu du message</p>
-              <ScrollArea className="h-[350px] w-full rounded-xl border bg-slate-50 p-4">
-                 <div 
-                   className="text-xs leading-relaxed" 
-                   dangerouslySetInnerHTML={{ __html: emailPreview?.html || '' }} 
-                 />
-              </ScrollArea>
+              <p className="text-[10px] font-black uppercase text-muted-foreground mb-2">Corps du message (Texte)</p>
+              <Textarea 
+                value={editableBody} 
+                onChange={(e) => setEditableBody(e.target.value)}
+                className="min-h-[350px] w-full rounded-xl border bg-slate-50 p-4 text-xs leading-relaxed font-sans"
+                placeholder="Votre message..."
+              />
             </div>
           </div>
 
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsPreviewOpen(false)} disabled={processing}>Annuler</Button>
+          <DialogFooter className="flex gap-2">
+            <Button variant="ghost" onClick={() => setIsPreviewOpen(false)} disabled={processing} className="rounded-xl font-bold">Annuler</Button>
             <Button 
               onClick={confirmAndSendEmail} 
-              disabled={processing}
+              disabled={processing || !editableSubject.trim() || !editableBody.trim()}
               className="rounded-xl px-8 font-black shadow-lg"
             >
               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
