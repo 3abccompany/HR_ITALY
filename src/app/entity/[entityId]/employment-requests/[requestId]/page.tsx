@@ -9,7 +9,11 @@ import {
   Hash, Mail, Save, Send,
   History, AlertCircle, Eye,
   RefreshCcw, CheckCircle2,
-  Upload, Download, FileCheck
+  Upload, Download, FileCheck,
+  ChevronRight,
+  MoreVertical,
+  XCircle,
+  MessageSquare
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,8 +21,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { useFirebase, useDoc, useUser, useCollection } from "@/firebase";
-import { doc, DocumentReference, collection, query, orderBy } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, orderBy, updateDoc, serverTimestamp, getDoc, Timestamp } from "firebase/firestore";
 import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
 import { Consultant } from "@/types/consultant";
 import { HRDocument } from "@/types/hr-document";
@@ -72,7 +77,7 @@ export default function EmploymentRequestDetailPage() {
   const entityId = params?.entityId as string;
   const requestId = params?.requestId as string;
   
-  const { db } = useFirebase();
+  const { db, auth } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
