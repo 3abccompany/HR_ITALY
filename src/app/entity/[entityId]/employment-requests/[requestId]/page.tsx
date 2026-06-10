@@ -47,9 +47,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { sendConsultantCPIRequestAction } from "@/services/email.service";
+import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
 
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
@@ -92,6 +101,10 @@ export default function EmploymentRequestDetailPage() {
   const [processing, setProcessing] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [isRegistryConfirmOpen, setIsRegistryConfirmOpen] = useState(false);
+
+  // --- Preview State ---
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [emailPreview, setEmailPreview] = useState<{ to: string, subject: string, html: string } | null>(null);
 
   useEffect(() => {
     if (request) {
@@ -172,6 +185,9 @@ export default function EmploymentRequestDetailPage() {
     }
   };
 
+  /**
+   * Triggers the fetch for the email preview and opens the dialog.
+   */
   const handleSendViaEmail = async () => {
     if (!user || !entityId || !requestId || !request) return;
     if (!consultantForm.email) {
@@ -181,11 +197,50 @@ export default function EmploymentRequestDetailPage() {
 
     setProcessing(true);
     try {
+      const result = await getConsultantCPIEmailPreviewAction({
+        entityId,
+        requestId,
+        templateData: {
+          consultantName: consultantForm.name || "Consulente",
+          candidateName: request.candidateDisplayName || "Candidato",
+          candidateEmail: request.candidateEmail || undefined,
+          candidatePhone: request.candidatePhone || undefined,
+          jobTitle: request.jobRoleId || "da definire",
+          companyName: entity?.nomEntreprise || "la nostra azienda",
+          plannedHireDate: request.plannedHireDate || "da definire",
+          contractType: request.contractType || "da definire",
+          requestId: requestId
+        }
+      });
+
+      if (!result.success) throw new Error(result.error || "Impossible de générer l'aperçu.");
+
+      setEmailPreview({
+        to: consultantForm.email,
+        subject: result.preview.subject,
+        html: result.preview.html
+      });
+      setIsPreviewOpen(true);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'aperçu", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  /**
+   * Final confirmation and real SMTP dispatch.
+   */
+  const confirmAndSendEmail = async () => {
+    if (!user || !entityId || !requestId || !request || !emailPreview) return;
+
+    setProcessing(true);
+    try {
       const result = await sendConsultantCPIRequestAction({
         entityId,
         requestId,
-        to: consultantForm.email,
-        subject: `Richiesta Comunicazione UniLav/CPI — ${request.candidateDisplayName || 'Candidato'} — ${request.plannedHireDate || 'da definire'}`,
+        to: emailPreview.to,
+        subject: emailPreview.subject,
         templateData: {
           consultantName: consultantForm.name || "Consulente",
           candidateName: request.candidateDisplayName || "Candidato",
@@ -209,6 +264,7 @@ export default function EmploymentRequestDetailPage() {
       });
 
       toast({ title: "Email envoyé", description: "Le dossier a été transmis au consultant." });
+      setIsPreviewOpen(false);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
     } finally {
@@ -673,6 +729,51 @@ export default function EmploymentRequestDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* CPI Email Preview Dialog */}
+      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <DialogContent className="sm:max-w-[650px] rounded-[2.5rem]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+              <Mail className="w-6 h-6" /> Aperçu de l'email consultant
+            </DialogTitle>
+            <DialogDescription>Vérifiez le contenu avant l'envoi officiel au consultant.</DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4 space-y-4">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-muted-foreground">Destinataire</p>
+              <p className="text-sm font-bold text-slate-800">{emailPreview?.to}</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-muted-foreground">Objet</p>
+              <p className="text-sm font-bold text-slate-800">{emailPreview?.subject}</p>
+            </div>
+            <Separator />
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-muted-foreground mb-2">Contenu du message</p>
+              <ScrollArea className="h-[350px] w-full rounded-xl border bg-slate-50 p-4">
+                 <div 
+                   className="text-xs leading-relaxed" 
+                   dangerouslySetInnerHTML={{ __html: emailPreview?.html || '' }} 
+                 />
+              </ScrollArea>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsPreviewOpen(false)} disabled={processing}>Annuler</Button>
+            <Button 
+              onClick={confirmAndSendEmail} 
+              disabled={processing}
+              className="rounded-xl px-8 font-black shadow-lg"
+            >
+              {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+              Confirmer et envoyer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={isRegistryConfirmOpen} onOpenChange={setIsRegistryConfirmOpen}>
         <AlertDialogContent className="rounded-[2.5rem]">

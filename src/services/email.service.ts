@@ -75,6 +75,59 @@ function renderTemplate(template: string, data: Record<string, string>): string 
 }
 
 /**
+ * Internal helper to render the CPI email content based on common template data.
+ */
+function renderConsultantCPIEmailContent(data: SendConsultantCPIParams['templateData']) {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.5;">
+      <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 20px;">Richiesta Comunicazione Obbligatoria (UniLav)</h1>
+      </div>
+      <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
+        <p>Gentile <strong>${data.consultantName || 'Consulente'}</strong>,</p>
+        <p>con la presente si richiede la predisposizione della comunicazione obbligatoria (UniLav) per l'assunzione del seguente candidato:</p>
+        
+        <div style="background: #F8FAFC; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #E2E8F0;">
+          <p style="margin: 0 0 10px 0;"><strong>Dettagli Candidato:</strong></p>
+          <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+            <li>Nome: ${data.candidateName}</li>
+            <li>Email: ${data.candidateEmail || '-'}</li>
+            <li>Telefono: ${data.candidatePhone || '-'}</li>
+          </ul>
+          <p style="margin: 15px 0 10px 0;"><strong>Dettagli Contrattuali:</strong></p>
+          <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+            <li>Posizione: ${data.jobTitle}</li>
+            <li>Azienda: ${data.companyName}</li>
+            <li>Tipo contratto: ${data.contractType}</li>
+            <li>Data inizio prevista: <strong>${data.plannedHireDate}</strong></li>
+          </ul>
+        </div>
+
+        <p>Vi preghiamo gentilmente di procedere con l'invio e di trasmetterci non appena disponibili:</p>
+        <ul style="font-size: 14px; color: #475569;">
+          <li>Il <strong>codice di protocollo</strong> UniLav.</li>
+          <li>La <strong>data effettiva</strong> di comunicazione.</li>
+          <li>Il <strong>file PDF del récépissé</strong> ufficiale.</li>
+        </ul>
+
+        <p style="margin-top: 30px; font-size: 13px; color: #94A3B8;">
+          Riferimento interno pratica: ${data.requestId}
+        </p>
+        
+        <p style="border-top: 1px solid #EEEFF7; padding-top: 20px; font-size: 14px; font-weight: bold;">
+          Cordiali saluti,<br>
+          Ufficio Risorse Umane — ${data.companyName}
+        </p>
+      </div>
+    </div>
+  `;
+
+  const text = `Richiesta UniLav per ${data.candidateName}. Data inizio: ${data.plannedHireDate}.`;
+
+  return { html, text };
+}
+
+/**
  * Server Action to send an interview notification.
  */
 export async function sendInterviewEmailAction(params: SendInterviewEmailParams) {
@@ -138,7 +191,6 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
 
 /**
  * Sends the formal employment offer link to the candidate.
- * 7K-D: Returns error if no provider is configured.
  */
 export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
   const host = process.env.SMTP_HOST;
@@ -253,6 +305,28 @@ export async function sendDocumentRequestEmailAction(params: SendDocumentRequest
 }
 
 /**
+ * Server Action to get a preview of the consultant CPI email.
+ */
+export async function getConsultantCPIEmailPreviewAction(params: {
+  entityId: string;
+  requestId: string;
+  templateData: SendConsultantCPIParams['templateData'];
+}) {
+  const { templateData } = params;
+  const subject = `Richiesta Comunicazione UniLav/CPI — ${templateData.candidateName} — ${templateData.plannedHireDate}`;
+  const { html, text } = renderConsultantCPIEmailContent(templateData);
+  
+  return { 
+    success: true, 
+    preview: {
+      subject,
+      html,
+      text
+    } 
+  };
+}
+
+/**
  * Sends the official request for UniLav / CPI communication to the Labor Consultant.
  */
 export async function sendConsultantCPIRequestAction(params: SendConsultantCPIParams) {
@@ -276,56 +350,14 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
       auth: { user, pass },
     });
 
-    const html = `
-      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.5;">
-        <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
-          <h1 style="color: white; margin: 0; font-size: 20px;">Richiesta Comunicazione Obbligatoria (UniLav)</h1>
-        </div>
-        <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
-          <p>Gentile <strong>${templateData.consultantName || 'Consulente'}</strong>,</p>
-          <p>con la presente si richiede la predisposizione della comunicazione obbligatoria (UniLav) per l'assunzione del seguente candidato:</p>
-          
-          <div style="background: #F8FAFC; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #E2E8F0;">
-            <p style="margin: 0 0 10px 0;"><strong>Dettagli Candidato:</strong></p>
-            <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
-              <li>Nome: ${templateData.candidateName}</li>
-              <li>Email: ${templateData.candidateEmail || '-'}</li>
-              <li>Telefono: ${templateData.candidatePhone || '-'}</li>
-            </ul>
-            <p style="margin: 15px 0 10px 0;"><strong>Dettagli Contrattuali:</strong></p>
-            <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
-              <li>Posizione: ${templateData.jobTitle}</li>
-              <li>Azienda: ${templateData.companyName}</li>
-              <li>Tipo contratto: ${templateData.contractType}</li>
-              <li>Data inizio prevista: <strong>${templateData.plannedHireDate}</strong></li>
-            </ul>
-          </div>
-
-          <p>Vi preghiamo gentilmente di procedere con l'invio e di trasmetterci non appena disponibili:</p>
-          <ul style="font-size: 14px; color: #475569;">
-            <li>Il <strong>codice di protocollo</strong> UniLav.</li>
-            <li>La <strong>data effettiva</strong> di comunicazione.</li>
-            <li>Il <strong>file PDF del récépissé</strong> ufficiale.</li>
-          </ul>
-
-          <p style="margin-top: 30px; font-size: 13px; color: #94A3B8;">
-            Riferimento interno pratica: ${templateData.requestId}
-          </p>
-          
-          <p style="border-top: 1px solid #EEEFF7; padding-top: 20px; font-size: 14px; font-weight: bold;">
-            Cordiali saluti,<br>
-            Ufficio Risorse Umane — ${templateData.companyName}
-          </p>
-        </div>
-      </div>
-    `;
+    const { html, text } = renderConsultantCPIEmailContent(templateData);
 
     const info = await transporter.sendMail({
       from,
       to,
       subject,
       html,
-      text: `Richiesta UniLav per ${templateData.candidateName}. Data inizio: ${templateData.plannedHireDate}.`,
+      text,
     });
 
     // Logging for traceability
