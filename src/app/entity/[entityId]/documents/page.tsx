@@ -880,12 +880,9 @@ function DocumentsTable({
     });
 
     return Object.values(groups).map(group => {
-      // Find current: status valid && !replacedById
-      // If multiple, highest version.
-      // If none, highest version.
       const sorted = [...group].sort((a, b) => (b.version || 1) - (a.version || 1));
       let current = sorted.find(d => d.status === 'valid' && !d.replacedById);
-      if (!current) current = sorted[0]; // Fallback to latest
+      if (!current) current = sorted[0]; 
 
       const history = sorted.filter(d => d.id !== current!.id);
       
@@ -977,7 +974,6 @@ function DocRow({
   const isExpired = expiryDate && isBefore(expiryDate, today);
   const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
   
-  // Only current valid docs with expiry can be renewed
   const isRenewable = !isHistory && doc.status === 'valid' && !doc.replacedById && expiryDate && (isExpired || isExpiringSoon);
 
   return (
@@ -1056,28 +1052,5 @@ function DetailItem({ label, value, code = false }: { label: string, value: any,
           {value}
        </div>
     </div>
-  );
-}
-
-function StatCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600 border-blue-100",
-    orange: "bg-orange-50 text-orange-600 border-orange-100",
-    red: "bg-red-50 text-red-600 border-red-100",
-    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
-  };
-
-  return (
-    <Card className="border-primary/5 shadow-sm rounded-2xl">
-      <CardContent className="p-4 flex items-center gap-4">
-        <div className={cn("p-3 rounded-2xl border", colors[color] || colors.blue)}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{title}</p>
-          <p className="text-2xl font-black text-primary">{value}</p>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
