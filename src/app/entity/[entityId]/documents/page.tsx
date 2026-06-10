@@ -871,8 +871,7 @@ function DocumentsTable({
     });
   };
 
-  // Version history is based on rootDocumentId/replacesId/replacedById only. 
-  // No fake V1/V2 grouping.
+  // Build document version chains: group by rootDocumentId || id
   const docChains = useMemo(() => {
     const groups: Record<string, HRDocument[]> = {};
     docs.forEach(d => {
@@ -884,13 +883,10 @@ function DocumentsTable({
     return Object.values(groups).map(group => {
       const sorted = [...group].sort((a, b) => (b.version || 1) - (a.version || 1));
       
-      // Current document detection: status === "valid" and replacedById is missing/null/empty
+      // Current document rule: status === "valid" and replacedById is missing/null/empty
+      // Fallback: If multiple valid exist, use highest version. If none valid, use newest overall.
       let current = sorted.find(d => d.status === 'valid' && !d.replacedById);
-      
-      // Fallback: use newest version if no "valid current" found in current view
-      if (!current) {
-        current = sorted[0]; 
-      }
+      if (!current) current = sorted[0];
 
       const history = sorted.filter(d => d.id !== current!.id);
       
@@ -987,7 +983,7 @@ function DocRow({
   const isExpired = expiryDate && isBefore(expiryDate, today);
   const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
   
-  // Replacement is only allowed on current valid documents
+  // UI replacement rule: Only allow renewal/replacement on current documents (not historical versions)
   const isRenewable = !isHistory && doc.status === 'valid' && !doc.replacedById && expiryDate && (isExpired || isExpiringSoon);
 
   return (
@@ -1048,7 +1044,7 @@ function DocRow({
                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
             </Button>
             {canArchive && doc.status !== 'archived' && !isHistory && (
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(doc.id)} disabled={loadingId === d.id} title="Archiver">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(doc.id)} disabled={loadingId === doc.id} title="Archiver">
                  <Archive className="w-4 h-4" />
               </Button>
             )}
