@@ -14,7 +14,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection } from "@/firebase";
-import { collection, query, orderBy, Query } from "firebase/firestore";
+import { collection, query, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
@@ -34,6 +34,25 @@ const initialFilters: Filters = {
   type: "all",
 };
 
+/**
+ * Robust date parser for mixed formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
 export default function ContractsRegistryPage() {
   const params = useParams();
   const router = useRouter();
@@ -52,9 +71,10 @@ export default function ContractsRegistryPage() {
   const canReadEmployees = hasPermission("employees.read");
 
   // Main real-time query
+  // Hardening: Removed Firestore-side orderBy to prevent document exclusion when createdAt is missing
   const contractsQuery = useMemo(() => {
     if (!db || !entityId || !canRead || !permissionsReady) return null;
-    return query(collection(db, `entities/${entityId}/contracts`), orderBy("createdAt", "desc")) as Query<Contract>;
+    return query(collection(db, `entities/${entityId}/contracts`)) as Query<Contract>;
   }, [db, entityId, canRead, permissionsReady]);
 
   const { data: contracts, loading: loadingContracts } = useCollection<Contract>(contractsQuery, "contracts.registry");
@@ -78,7 +98,7 @@ export default function ContractsRegistryPage() {
     Array.from(new Set(contracts?.map(c => c.contractType) || [])).sort(), 
   [contracts]);
 
-  // Filtering Logic
+  // Filtering & Sorting Logic
   const filteredContracts = useMemo(() => {
     if (!contracts) return [];
     
@@ -98,6 +118,11 @@ export default function ContractsRegistryPage() {
       if (filters.status !== "all" && c.status !== filters.status) return false;
       if (filters.type !== "all" && c.contractType !== filters.type) return false;
       return true;
+    }).sort((a, b) => {
+      // Frontend sorting with safe date fallbacks
+      const dateA = parseSafeDate(a.createdAt || a.updatedAt || a.startDate || a.endDate)?.getTime() || 0;
+      const dateB = parseSafeDate(b.createdAt || b.updatedAt || b.startDate || b.endDate)?.getTime() || 0;
+      return dateB - dateA;
     });
   }, [contracts, filters, employeesMap]);
 
