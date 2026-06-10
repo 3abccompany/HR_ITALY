@@ -8,7 +8,7 @@ import {
   Loader2, CheckCircle2, XCircle, Clock, 
   FileCode, MoreVertical, Globe, Lock, Copy, ExternalLink,
   Filter, X, Calendar as CalendarIcon, Briefcase, Building2,
-  ListFilter, ChevronDown, LayoutDashboard
+  ListFilter, ChevronDown, LayoutDashboard, ChevronUp, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -130,7 +130,8 @@ export default function ApplicationFormsPage() {
   // Queries
   const formsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/applicationForms`), orderBy("createdAt", "desc"));
+    // Hardening: Removed Firestore-side orderBy to ensure all records are visible
+    return query(collection(db, `entities/${entityId}/applicationForms`));
   }, [db, entityId, canRead]);
 
   const { data: forms, loading: loadingForms } = useCollection<ApplicationForm>(formsQuery);
@@ -154,11 +155,11 @@ export default function ApplicationFormsPage() {
     return Array.from(needsMap.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [forms]);
 
-  // Filtering Logic
+  // Filtering & Sorting Logic
   const filteredForms = useMemo(() => {
     if (!forms) return [];
     
-    return forms.filter(f => {
+    const result = forms.filter(f => {
       // 1. Search
       if (filters.search) {
         const term = filters.search.toLowerCase();
@@ -201,6 +202,15 @@ export default function ApplicationFormsPage() {
 
       return true;
     });
+
+    // Hardening: Chronological Frontend Sorting
+    result.sort((a, b) => {
+      const dateA = parseSafeDate(a.createdAt || a.updatedAt || a.publishedAt || 0)?.getTime() || 0;
+      const dateB = parseSafeDate(b.createdAt || b.updatedAt || b.publishedAt || 0)?.getTime() || 0;
+      return dateB - dateA;
+    });
+
+    return result;
   }, [forms, filters]);
 
   // Grouping Logic for "Tous" view
@@ -630,6 +640,15 @@ function FormsTable({
           ))}
         </TableBody>
       </Table>
+      
+      {/* Simple Pagination Footer for flat view */}
+      {forms.length > 25 && (
+        <div className="border-t bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
+          <span className="text-[10px] font-bold text-muted-foreground uppercase">
+             Total: {forms.length} formulaires
+          </span>
+        </div>
+      )}
     </Card>
   );
 }
@@ -675,4 +694,3 @@ function getStatusBadge(status: string) {
     default: return <Badge variant="outline">Inconnu</Badge>;
   }
 }
-

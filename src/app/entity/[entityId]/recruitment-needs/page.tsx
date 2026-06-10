@@ -109,7 +109,8 @@ export default function RecruitmentNeedsPage() {
   // Queries
   const needsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/recruitmentNeeds`), orderBy("createdAt", "desc"));
+    // Hardening: Removed Firestore-side orderBy to ensure records missing createdAt are visible
+    return query(collection(db, `entities/${entityId}/recruitmentNeeds`));
   }, [db, entityId, canRead]);
 
   const { data: needs, loading: loadingNeeds } = useCollection<RecruitmentNeed>(needsQuery);
@@ -136,7 +137,7 @@ export default function RecruitmentNeedsPage() {
   const filteredNeeds = useMemo(() => {
     if (!needs) return [];
     
-    return needs.filter(n => {
+    const result = needs.filter(n => {
       // 1. Search
       if (filters.search) {
         const term = filters.search.toLowerCase();
@@ -193,6 +194,15 @@ export default function RecruitmentNeedsPage() {
 
       return true;
     });
+
+    // Hardening: Chronological Frontend Sorting
+    result.sort((a, b) => {
+      const dateA = parseSafeDate(a.createdAt || a.updatedAt || a.issueDate || 0)?.getTime() || 0;
+      const dateB = parseSafeDate(b.createdAt || b.updatedAt || b.issueDate || 0)?.getTime() || 0;
+      return dateB - dateA;
+    });
+
+    return result;
   }, [needs, filters]);
 
   const updateFilter = (key: keyof Filters, value: string) => {
@@ -435,7 +445,7 @@ export default function RecruitmentNeedsPage() {
                       <TableCell>
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                            <Calendar className="w-3 h-3" /> Émis: {n.issueDate || "N/A"}
+                            <Calendar className="w-3 h-3" /> Émis: {formatDate(n.createdAt)}
                           </div>
                           <div className="flex items-center gap-1.5 text-[10px] font-semibold text-primary">
                             <Clock className="w-3 h-3" /> Dispo: {n.desiredAvailabilityDate || "N/A"}
@@ -495,6 +505,55 @@ export default function RecruitmentNeedsPage() {
               )}
             </TableBody>
           </Table>
+
+          {/* Pagination Footer */}
+          {!loadingNeeds && filteredNeeds.length > 0 && (
+            <div className="border-t bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Lignes par page:</span>
+                  <Select 
+                    value={String(pagination.pageSize)} 
+                    onValueChange={(v) => { setPagination(p => ({ ...p, pageSize: Number(v), page: 1 })); }}
+                  >
+                    <SelectTrigger className="h-7 w-20 text-[10px] font-bold">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                  Page {pagination.page} sur {Math.max(1, totalPages)}
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  className="h-8 w-8" 
+                  onClick={() => setPagination(p => ({ ...p, page: p.page - 1 }))}
+                  disabled={pagination.page <= 1}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  className="h-8 w-8" 
+                  onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
+                  disabled={pagination.page >= totalPages}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -554,4 +613,10 @@ function FilterDropdown({
       </SelectContent>
     </Select>
   );
+}
+
+function formatDate(val: any) {
+  const d = parseSafeDate(val);
+  if (!d) return "—";
+  return format(d, "dd/MM/yyyy", { locale: fr });
 }

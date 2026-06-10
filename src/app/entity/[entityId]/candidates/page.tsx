@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -75,72 +76,6 @@ const initialForm = {
   notes: ""
 };
 
-type GroupByType = 'none' | 'status' | 'job' | 'department' | 'worksite' | 'status_then_job';
-
-interface Filters {
-  status: string;
-  job: string;
-  department: string;
-  worksite: string;
-  source: string;
-  search: string;
-  dateRange: { from: Date | undefined; to: Date | undefined };
-}
-
-const initialFilters: Filters = {
-  status: 'all',
-  job: 'all',
-  department: 'all',
-  worksite: 'all',
-  source: 'all',
-  search: '',
-  dateRange: { from: undefined, to: undefined }
-};
-
-type SortConfig = {
-  field: keyof Candidate | 'displayName';
-  direction: 'asc' | 'desc' | null;
-};
-
-const STATUS_ORDER: CandidateStatus[] = [
-  "new",
-  "under_review",
-  "shortlisted",
-  "interview_to_schedule",
-  "interview_scheduled",
-  "interview_completed",
-  "accepted",
-  "hired",
-  "rejected",
-  "archived",
-  "inactive"
-];
-
-/**
- * Robust date parser for mixed formats.
- */
-function parseSafeDate(val: any): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
-  if (typeof val === 'object') {
-    if (typeof val.toDate === 'function') return val.toDate();
-    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
-    return null;
-  }
-  if (typeof val === 'string') {
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  return null;
-}
-
-function formatDateDisplay(val: any): string {
-  const d = parseSafeDate(val);
-  if (!d) return "Date non disponible";
-  return format(d, "dd/MM/yyyy", { locale: fr });
-}
-
 export default function CandidatesManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -182,7 +117,8 @@ export default function CandidatesManagementPage() {
   // Main real-time candidates query
   const candidatesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/candidates`), orderBy("createdAt", "desc")) as Query<Candidate>;
+    // Hardening: Removed Firestore-side orderBy to ensure all records are visible
+    return query(collection(db, `entities/${entityId}/candidates`)) as Query<Candidate>;
   }, [db, entityId, canRead]);
 
   const { data: candidates, loading: loadingCandidates } = useCollection<Candidate>(candidatesQuery);
@@ -750,7 +686,7 @@ export default function CandidatesManagementPage() {
                       <CandidateTable 
                         candidates={group} 
                         selectedId={selectedCandidate?.candidateId} 
-                        onSelect={setSelectedCandidate}
+                        onSelect={onSelectCandidate}
                         canUpdate={canUpdate}
                         onEdit={handleEdit}
                         onDisable={setDisablingId}
@@ -769,7 +705,7 @@ export default function CandidatesManagementPage() {
               <CandidateTable 
                 candidates={paginatedCandidates} 
                 selectedId={selectedCandidate?.candidateId} 
-                onSelect={setSelectedCandidate}
+                onSelect={onSelectCandidate}
                 canUpdate={canUpdate}
                 onEdit={handleEdit}
                 onDisable={setDisablingId}
@@ -808,7 +744,7 @@ export default function CandidatesManagementPage() {
                                   <CandidateTable 
                                     candidates={candidatesList} 
                                     selectedId={selectedCandidate?.candidateId} 
-                                    onSelect={setSelectedCandidate}
+                                    onSelect={onSelectCandidate}
                                     canUpdate={canUpdate}
                                     onEdit={handleEdit}
                                     onDisable={setDisablingId}
@@ -825,7 +761,7 @@ export default function CandidatesManagementPage() {
                           <CandidateTable 
                             candidates={content as any[]} 
                             selectedId={selectedCandidate?.candidateId} 
-                            onSelect={setSelectedCandidate}
+                            onSelect={onSelectCandidate}
                             canUpdate={canUpdate}
                             onEdit={handleEdit}
                             onDisable={setDisablingId}
@@ -1063,6 +999,10 @@ export default function CandidatesManagementPage() {
       </AlertDialog>
     </div>
   );
+
+  function onSelectCandidate(c: Candidate) {
+    setSelectedCandidate(c);
+  }
 }
 
 function FilterDropdown({ label, value, onValueChange, options }: { label: string, value: string, onValueChange: (v: string) => void, options: { label: string, value: string }[] }) {
@@ -1236,3 +1176,44 @@ function SortableHeader({ label, field, currentSort, onSort }: { label: string, 
     </button>
   );
 }
+
+interface SortConfig {
+  field: keyof Candidate | 'displayName';
+  direction: 'asc' | 'desc' | null;
+}
+
+interface Filters {
+  status: string;
+  job: string;
+  department: string;
+  worksite: string;
+  source: string;
+  search: string;
+  dateRange: { from: Date | undefined; to: Date | undefined };
+}
+
+const initialFilters: Filters = {
+  status: 'all',
+  job: 'all',
+  department: 'all',
+  worksite: 'all',
+  source: 'all',
+  search: '',
+  dateRange: { from: undefined, to: undefined }
+};
+
+type GroupByType = 'none' | 'status' | 'job' | 'department' | 'worksite' | 'status_then_job';
+
+const STATUS_ORDER: CandidateStatus[] = [
+  "new",
+  "under_review",
+  "shortlisted",
+  "interview_to_schedule",
+  "interview_scheduled",
+  "interview_completed",
+  "accepted",
+  "hired",
+  "rejected",
+  "archived",
+  "inactive"
+];
