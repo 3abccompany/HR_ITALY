@@ -146,6 +146,84 @@ export default function DocumentsRegistryPage() {
     });
   }, [documents, filters]);
 
+  const docsGroupedByEmployee = useMemo(() => {
+    const groups = new Map<string, { employeeId: string; employeeName: string; docs: HRDocument[] }>();
+  
+    filteredDocs.forEach((doc) => {
+      const employeeId = doc.employeeId || "none";
+  
+      const employeeName =
+        doc.employeeDisplayName ||
+        employees?.find((e) => e.employeeId === doc.employeeId)?.displayName ||
+        "Sans employé lié";
+  
+      if (!groups.has(employeeId)) {
+        groups.set(employeeId, {
+          employeeId,
+          employeeName,
+          docs: [],
+        });
+      }
+  
+      groups.get(employeeId)!.docs.push(doc);
+    });
+  
+    return Array.from(groups.values()).sort((a, b) =>
+      a.employeeName.localeCompare(b.employeeName, "fr")
+    );
+  }, [filteredDocs, employees]);
+
+  const docsGroupedByType = useMemo(() => {
+    const groups = new Map<string, HRDocument[]>();
+    filteredDocs.forEach((doc) => {
+      const type = doc.documentType || "other";
+      if (!groups.has(type)) groups.set(type, []);
+      groups.get(type)!.push(doc);
+    });
+    return Array.from(groups.entries()).sort((a, b) => {
+      const labelA = DOCUMENT_TYPE_LABELS[a[0] as HRDocumentType] || a[0];
+      const labelB = DOCUMENT_TYPE_LABELS[b[0] as HRDocumentType] || b[0];
+      return labelA.localeCompare(labelB, "fr");
+    });
+  }, [filteredDocs]);
+
+  const docsGroupedByExpiry = useMemo(() => {
+    const today = startOfDay(new Date());
+    const thirtyDays = addDays(today, 30);
+    const sixtyDays = addDays(today, 60);
+
+    const buckets = {
+      expired: [] as HRDocument[],
+      soon30: [] as HRDocument[],
+      soon60: [] as HRDocument[],
+    };
+
+    filteredDocs.forEach((doc) => {
+      const expiry = parseSafeDate(doc.expiresAt);
+      if (!expiry) return;
+
+      if (isBefore(expiry, today)) {
+        buckets.expired.push(doc);
+      } else if (isBefore(expiry, thirtyDays)) {
+        buckets.soon30.push(doc);
+      } else if (isBefore(expiry, sixtyDays)) {
+        buckets.soon60.push(doc);
+      }
+    });
+
+    const sortFn = (a: HRDocument, b: HRDocument) => {
+      const da = parseSafeDate(a.expiresAt)?.getTime() || 0;
+      const db = parseSafeDate(b.expiresAt)?.getTime() || 0;
+      return da - db;
+    };
+
+    return {
+      expired: buckets.expired.sort(sortFn),
+      soon30: buckets.soon30.sort(sortFn),
+      soon60: buckets.soon60.sort(sortFn),
+    };
+  }, [filteredDocs]);
+
   const stats = useMemo(() => {
     if (!documents) return { total: 0, sensitive: 0, expired: 0, due30: 0 };
     const today = startOfDay(new Date());
@@ -295,6 +373,7 @@ export default function DocumentsRegistryPage() {
               <TabsTrigger value="all" className="rounded-lg font-bold px-6">Tous</TabsTrigger>
               <TabsTrigger value="employee" className="rounded-lg font-bold px-6">Par employé</TabsTrigger>
               <TabsTrigger value="type" className="rounded-lg font-bold px-6">Par type</TabsTrigger>
+              <TabsTrigger value="expiry" className="rounded-lg font-bold px-6">Échéances</TabsTrigger>
             </TabsList>
             <TabsContent value="all" className="mt-0">
                <Card className="rounded-[2rem] border-primary/10 overflow-hidden shadow-xl shadow-primary/5 bg-white">
@@ -308,6 +387,108 @@ export default function DocumentsRegistryPage() {
                   />
                </Card>
             </TabsContent>
+            <TabsContent value="employee" className="mt-0 space-y-6">
+            {docsGroupedByEmployee.length === 0 ? (
+              <Card className="border-dashed border-2 rounded-[2rem] py-16 bg-secondary/5">
+                <div className="text-center max-w-sm mx-auto space-y-3">
+                  <User className="w-10 h-10 mx-auto text-muted-foreground/30" />
+                  <h3 className="font-bold text-primary">Aucun document par employé</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Aucun document lié à un employé ne correspond aux filtres actuels.
+                  </p>
+                </div>
+              </Card>
+            ) : (
+              docsGroupedByEmployee.map((group) => (
+                <Card
+                  key={group.employeeId}
+                  className="rounded-[2rem] border-primary/10 overflow-hidden shadow-xl shadow-primary/5 bg-white"
+                >
+                  <CardHeader className="bg-secondary/10 border-b">
+                    <CardTitle className="flex items-center justify-between text-sm font-black text-primary">
+                      <span className="flex items-center gap-2">
+                        <User className="w-4 h-4" />
+                        {group.employeeName}
+                      </span>
+                      <Badge variant="secondary" className="font-black">
+                        {group.docs.length} document{group.docs.length > 1 ? "s" : ""}
+                      </Badge>
+                    </CardTitle>
+                  </CardHeader>
+
+                  <CardContent className="p-0">
+                    <DocumentsTable
+                      docs={group.docs}
+                      loadingId={loadingAction}
+                      onOpen={handleOpenDoc}
+                      onArchive={handleArchive}
+                      onViewDetails={setSelectedDocForDetails}
+                      canArchive={canArchive}
+                    />
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </TabsContent>
+          <TabsContent value="type" className="mt-0 space-y-6">
+            {docsGroupedByType.map(([type, docs]) => (
+              <Card key={type} className="rounded-[2rem] border-primary/10 overflow-hidden shadow-xl shadow-primary/5 bg-white">
+                <CardHeader className="bg-secondary/10 border-b">
+                  <CardTitle className="flex items-center justify-between text-sm font-black text-primary">
+                    <span className="flex items-center gap-2">
+                      <FileBadge className="w-4 h-4" />
+                      {DOCUMENT_TYPE_LABELS[type as HRDocumentType] || type}
+                    </span>
+                    <Badge variant="secondary" className="font-black">
+                      {docs.length} document{docs.length > 1 ? "s" : ""}
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <DocumentsTable
+                    docs={docs}
+                    loadingId={loadingAction}
+                    onOpen={handleOpenDoc}
+                    onArchive={handleArchive}
+                    onViewDetails={setSelectedDocForDetails}
+                    canArchive={canArchive}
+                  />
+                </CardContent>
+              </Card>
+            ))}
+          </TabsContent>
+          <TabsContent value="expiry" className="mt-0 space-y-8">
+            <ExpirySection 
+              title="Documents Expirés" 
+              docs={docsGroupedByExpiry.expired} 
+              variant="expired"
+              loadingId={loadingAction}
+              onOpen={handleOpenDoc}
+              onArchive={handleArchive}
+              onViewDetails={setSelectedDocForDetails}
+              canArchive={canArchive}
+            />
+            <ExpirySection 
+              title="Échéance sous 30 jours" 
+              docs={docsGroupedByExpiry.soon30} 
+              variant="soon30"
+              loadingId={loadingAction}
+              onOpen={handleOpenDoc}
+              onArchive={handleArchive}
+              onViewDetails={setSelectedDocForDetails}
+              canArchive={canArchive}
+            />
+            <ExpirySection 
+              title="Échéance sous 60 jours" 
+              docs={docsGroupedByExpiry.soon60} 
+              variant="soon60"
+              loadingId={loadingAction}
+              onOpen={handleOpenDoc}
+              onArchive={handleArchive}
+              onViewDetails={setSelectedDocForDetails}
+              canArchive={canArchive}
+            />
+          </TabsContent>
           </Tabs>
         )}
       </div>
@@ -356,6 +537,38 @@ function StatCard({ title, value, icon: Icon, color }: { title: string, value: n
   );
 }
 
+function ExpirySection({ title, docs, variant, loadingId, onOpen, onArchive, onViewDetails, canArchive }: any) {
+  if (docs.length === 0) return null;
+
+  const config: any = {
+    expired: { color: "text-red-700", icon: AlertTriangle, bg: "bg-red-50" },
+    soon30: { color: "text-orange-700", icon: Clock, bg: "bg-orange-50" },
+    soon60: { color: "text-indigo-700", icon: Calendar, bg: "bg-indigo-50" },
+  };
+
+  const { color, icon: Icon, bg } = config[variant];
+
+  return (
+    <div className="space-y-4">
+      <div className={cn("flex items-center gap-3 px-6 py-3 rounded-2xl border border-primary/5 shadow-sm bg-white")}>
+        <div className={cn("p-2 rounded-xl", bg, color)}><Icon className="w-4 h-4" /></div>
+        <h3 className={cn("font-black uppercase text-xs tracking-widest", color)}>{title}</h3>
+        <Badge variant="outline" className={cn("ml-auto border-none font-black", bg, color)}>{docs.length}</Badge>
+      </div>
+      <Card className="rounded-[2rem] border-primary/10 overflow-hidden shadow-xl shadow-primary/5 bg-white">
+        <DocumentsTable 
+          docs={docs} 
+          loadingId={loadingId} 
+          onOpen={onOpen} 
+          onArchive={onArchive} 
+          onViewDetails={onViewDetails} 
+          canArchive={canArchive}
+        />
+      </Card>
+    </div>
+  );
+}
+
 interface DocumentsTableProps {
   docs: HRDocument[];
   loadingId: string | null;
@@ -369,19 +582,56 @@ function DocumentsTable({ docs, loadingId, onOpen, onArchive, onViewDetails, can
   return (
     <Table>
       <TableHeader className="bg-secondary/10">
-        <TableRow><TableHead>Titre & Type</TableHead><TableHead>Statut</TableHead><TableHead className="text-right">Actions</TableHead></TableRow>
+        <TableRow>
+          <TableHead className="pl-6">Titre & Type</TableHead>
+          <TableHead>Employé</TableHead>
+          <TableHead>Échéance</TableHead>
+          <TableHead>Statut</TableHead>
+          <TableHead className="text-right pr-6">Actions</TableHead>
+        </TableRow>
       </TableHeader>
       <TableBody>
         {docs.length === 0 ? (
-          <TableRow><TableCell colSpan={3} className="text-center py-12 text-muted-foreground italic">Aucun document.</TableCell></TableRow>
+          <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic">Aucun document.</TableCell></TableRow>
         ) : docs.map((d: HRDocument) => (
-          <TableRow key={d.id}>
-            <TableCell><div className="font-bold text-primary">{d.title}</div><div className="text-[9px] uppercase">{DOCUMENT_TYPE_LABELS[d.documentType]}</div></TableCell>
-            <TableCell><Badge variant="outline" className={d.status === 'valid' ? "bg-green-50 text-green-700" : ""}>{STATUS_LABELS[d.status]}</Badge></TableCell>
-            <TableCell className="text-right"><Button variant="ghost" size="icon" onClick={() => onOpen(d.storagePath, d.id)} disabled={loadingId === d.id}>{loadingId === d.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}</Button></TableCell>
+          <TableRow key={d.id} className="hover:bg-muted/50 transition-colors">
+            <TableCell className="pl-6">
+              <div className="font-bold text-primary">{d.title}</div>
+              <div className="text-[9px] uppercase text-muted-foreground">{DOCUMENT_TYPE_LABELS[d.documentType] || d.documentType}</div>
+            </TableCell>
+            <TableCell>
+              <div className="flex items-center gap-2 text-xs font-medium">
+                <User className="w-3 h-3 text-muted-foreground" />
+                {d.employeeDisplayName || "—"}
+              </div>
+            </TableCell>
+            <TableCell>
+              <div className="flex items-center gap-1.5 text-xs">
+                <Calendar className="w-3 h-3 text-muted-foreground" />
+                {formatDateSafe(d.expiresAt)}
+              </div>
+            </TableCell>
+            <TableCell>
+              <Badge variant="outline" className={cn("text-[10px] font-bold", d.status === 'valid' ? "bg-green-50 text-green-700 border-green-200" : "")}>
+                {STATUS_LABELS[d.status]}
+              </Badge>
+            </TableCell>
+            <TableCell className="text-right pr-6">
+              <div className="flex justify-end gap-1">
+                <Button variant="ghost" size="icon" onClick={() => onOpen(d.storagePath, d.id)} disabled={loadingId === d.id}>
+                  {loadingId === d.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4 text-primary" />}
+                </Button>
+                {canArchive && d.status !== 'archived' && (
+                  <Button variant="ghost" size="icon" className="text-destructive" onClick={() => onArchive(d.id)} disabled={loadingId === d.id}>
+                    <Archive className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+            </TableCell>
           </TableRow>
         ))}
       </TableBody>
     </Table>
   );
 }
+

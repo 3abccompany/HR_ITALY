@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFirebase, useDoc, useCollection, useAuth } from "@/firebase";
-import { doc, DocumentReference, query, collection, where, Query, orderBy } from "firebase/firestore";
+import { doc, DocumentReference, query, collection, where, Query } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
 import { EmploymentOffer } from "@/types/employment-offer";
@@ -147,8 +147,7 @@ export default function Employee360HubPage() {
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
-      where("employeeId", "==", employeeId),
-      orderBy("createdAt", "desc")
+      where("employeeId", "==", employeeId)
     ) as Query<Contract>;
   }, [db, entityId, employeeId, permissionsReady, canReadContracts, employee]);
 
@@ -184,8 +183,7 @@ export default function Employee360HubPage() {
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
-      where("employeeId", "==", employeeId),
-      orderBy("uploadedAt", "desc")
+      where("employeeId", "==", employeeId)
     ) as Query<HRDocument>;
   }, [db, entityId, employeeId, permissionsReady, canReadDocs, employee, membership?.entityId]);
 
@@ -194,8 +192,7 @@ export default function Employee360HubPage() {
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
-      where("personId", "==", employee.personId),
-      orderBy("uploadedAt", "desc")
+      where("personId", "==", employee.personId)
     ) as Query<HRDocument>;
   }, [db, entityId, employee?.personId, permissionsReady, canReadDocs]);
 
@@ -204,8 +201,7 @@ export default function Employee360HubPage() {
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
-      where("candidateId", "==", employee.sourceCandidateId),
-      orderBy("uploadedAt", "desc")
+      where("candidateId", "==", employee.sourceCandidateId)
     ) as Query<HRDocument>;
   }, [db, entityId, employee?.sourceCandidateId, permissionsReady, canReadDocs]);
 
