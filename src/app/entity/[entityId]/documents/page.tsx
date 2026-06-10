@@ -8,7 +8,7 @@ import {
   Calendar, AlertCircle, Filter, X, ChevronRight,
   ShieldAlert, Clock, Building2, ListFilter,
   FileCheck, ShieldCheck, AlertTriangle, Info,
-  RefreshCcw, Upload
+  RefreshCcw, Upload, ChevronDown, ChevronUp
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Employee } from "@/types/employee";
 import { Separator } from "@/components/ui/separator";
+import React from "react";
 
 interface Filters {
   search: string;
@@ -359,21 +360,7 @@ export default function DocumentsRegistryPage() {
     return null;
   };
 
-  if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
-
-  if (!canRead) {
-    return (
-      <div className="p-8">
-        <Card className="bg-destructive/5 border-destructive/20 rounded-3xl">
-          <CardContent className="flex flex-col items-center py-12 text-center">
-            <ShieldAlert className="w-12 h-12 text-destructive mb-4" />
-            <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
-            <p className="text-muted-foreground">Vous n'avez pas la permission de consulter la gestion documentaire.</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  if (membershipLoading || !canRead) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   const isFormValid = uploadForm.title.trim() !== "" && uploadForm.documentType !== "" && selectedFile !== null;
 
@@ -450,7 +437,7 @@ export default function DocumentsRegistryPage() {
                 <div className="space-y-1">
                    <h3 className="font-bold text-primary">Aucun document</h3>
                    <p className="text-sm text-muted-foreground leading-relaxed">
-                     Commencez par ajouter un document RH : pièce d’identité, contrat signé, reçu UniLav ou document administratif.
+                     Commencez par ajouter un document RH.
                    </p>
                 </div>
                 {canUpload && (
@@ -575,17 +562,15 @@ export default function DocumentsRegistryPage() {
                    <DetailItem label="Statut" value={<Badge variant="outline" className="h-5 uppercase text-[9px] font-black bg-slate-50">{STATUS_LABELS[selectedDocForDetails.status]}</Badge>} />
                    <DetailItem label="Employé" value={selectedDocForDetails.employeeDisplayName || "Non lié"} />
                    <DetailItem label="Nom du fichier" value={selectedDocForDetails.fileName} code />
-                   <DetailItem label="Taille" value={selectedDocForDetails.sizeBytes ? `${(selectedDocForDetails.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "-"} />
+                   <DetailItem label="Version" value={`V${selectedDocForDetails.version || 1}`} />
                    <DetailItem label="Téléversé le" value={formatDateSafe(selectedDocForDetails.uploadedAt, "dd/MM/yyyy HH:mm")} />
-                   <DetailItem label="Par" value={selectedDocForDetails.uploadedByDisplayName || "Système"} />
                    {selectedDocForDetails.expiresAt && <DetailItem label="Expiration" value={<span className={cn("font-black", isBefore(parseSafeDate(selectedDocForDetails.expiresAt) || new Date(), startOfDay(new Date())) ? "text-red-600" : "text-slate-800")}>{formatDateSafe(selectedDocForDetails.expiresAt)}</span>} />}
-                   {selectedDocForDetails.isSensitive && <DetailItem label="Confidentialité" value={<Badge variant="destructive" className="h-5 text-[8px] uppercase font-black">Sensible</Badge>} />}
                 </div>
 
-                {selectedDocForDetails.description && (
+                {selectedDocForDetails.replacementReason && (
                   <div className="space-y-1">
-                     <p className="text-[9px] font-black uppercase text-muted-foreground">Description / Notes</p>
-                     <p className="text-xs text-slate-600 bg-secondary/20 p-3 rounded-xl border border-dashed">{selectedDocForDetails.description}</p>
+                     <p className="text-[9px] font-black uppercase text-muted-foreground">Motif du renouvellement</p>
+                     <p className="text-xs text-slate-600 bg-secondary/20 p-3 rounded-xl border border-dashed italic">"{selectedDocForDetails.replacementReason}"</p>
                   </div>
                 )}
              </div>
@@ -661,7 +646,7 @@ export default function DocumentsRegistryPage() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] uppercase font-black text-muted-foreground">Fichier (PDF, Images - Max 10Mo)</Label>
+              <Label className="text-[10px] uppercase font-black text-muted-foreground">Fichier (PDF, PNG, JPG - Max 10Mo)</Label>
               <div className={cn(
                 "border-2 border-dashed rounded-2xl p-6 transition-all relative flex flex-col items-center justify-center gap-2 text-center",
                 selectedFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
@@ -699,13 +684,13 @@ export default function DocumentsRegistryPage() {
               </div>
             </div>
 
-            <DialogFooter className="pt-4 border-t">
+            <div className="DialogFooter pt-4 border-t flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setIsUploadOpen(false)} disabled={uploading}>Annuler</Button>
               <Button type="submit" disabled={uploading || !isFormValid} className="rounded-xl px-8 font-black shadow-lg shadow-primary/10">
                 {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                 Importer le document
               </Button>
-            </DialogFooter>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
@@ -719,7 +704,7 @@ export default function DocumentsRegistryPage() {
               Renouveler le document
             </DialogTitle>
             <DialogDescription>
-              Vous remplacez : <span className="font-bold text-slate-900">{selectedDocForReplacement?.title}</span>
+              Vous remplacez : <span className="font-bold text-slate-900">{selectedDocForReplacement?.title}</span> (V{selectedDocForReplacement?.version || 1})
             </DialogDescription>
           </DialogHeader>
 
@@ -772,21 +757,22 @@ export default function DocumentsRegistryPage() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Motif du renouvellement (Optionnel)</Label>
+                <Label className="text-[10px] uppercase font-black">Motif du renouvellement (Requis)</Label>
                 <Textarea 
                   placeholder="Ex: Document arrivé à échéance, mise à jour annuelle..."
                   value={replacementReason}
                   onChange={(e) => setReplacementReason(e.target.value)}
+                  required
                   className="rounded-xl min-h-[80px]"
                 />
               </div>
             </div>
 
-            <DialogFooter className="pt-4 border-t">
+            <DialogFooter className="pt-4 border-t flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setSelectedDocForReplacement(null)} disabled={isReplacing}>Annuler</Button>
               <Button 
                 type="submit" 
-                disabled={isReplacing || !replacementFile || !replacementExpiresAt}
+                disabled={isReplacing || !replacementFile || !replacementExpiresAt || !replacementReason.trim()}
                 className="rounded-xl px-8 font-black shadow-lg"
               >
                 {isReplacing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
@@ -823,119 +809,6 @@ function StatCard({ title, value, icon: Icon, color }: { title: string, value: n
   );
 }
 
-function DocumentsTable({ 
-  docs, 
-  loadingId, 
-  onOpen, 
-  onArchive, 
-  onReplace,
-  onViewDetails,
-  canArchive,
-  compact = false 
-}: { 
-  docs: HRDocument[], 
-  loadingId: string | null, 
-  onOpen: any, 
-  onArchive: any, 
-  onReplace?: (doc: HRDocument) => void,
-  onViewDetails: (doc: HRDocument) => void,
-  canArchive?: boolean,
-  compact?: boolean 
-}) {
-  return (
-    <Table>
-      <TableHeader className={cn("bg-secondary/10", compact && "hidden")}>
-        <TableRow>
-          <TableHead className="text-[10px] font-black uppercase tracking-widest">Titre & Type</TableHead>
-          <TableHead className="hidden md:table-cell text-[10px] font-black uppercase tracking-widest text-center">Fichier</TableHead>
-          <TableHead className="hidden lg:table-cell text-[10px] font-black uppercase tracking-widest">Propriétaire</TableHead>
-          <TableHead className="text-[10px] font-black uppercase tracking-widest">Expiration</TableHead>
-          <TableHead className="text-[10px] font-black uppercase tracking-widest">Statut</TableHead>
-          <TableHead className="text-right text-[10px] font-black uppercase tracking-widest">Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {docs.length === 0 ? (
-          <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document dans cette vue.</TableCell></TableRow>
-        ) : docs.map(d => {
-          const isLoading = loadingId === d.id;
-          const expiry = parseSafeDate(d.expiresAt);
-          const today = startOfDay(new Date());
-          const isExpired = expiry && isBefore(expiry, today);
-          const isExpiringSoon = expiry && !isExpired && differenceInDays(expiry, today) <= 60;
-          
-          // Renewal rule: valid status + has expiry + (expired OR within 60 days)
-          const canRenew = onReplace && d.status === 'valid' && expiry && (isExpired || isExpiringSoon);
-
-          return (
-            <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
-              <TableCell>
-                <div className="font-bold text-primary truncate max-w-[200px]">{d.title}</div>
-                <div className="flex items-center gap-2 mt-1">
-                   <div className="text-[9px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[d.documentType]}</div>
-                   {d.isSensitive && <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[8px] h-4 px-1 uppercase font-black border-none">Sensible</Badge>}
-                </div>
-              </TableCell>
-              <TableCell className="hidden md:table-cell text-center">
-                <div className="text-[9px] font-mono text-muted-foreground truncate max-w-[120px] mx-auto mb-0.5">{d.fileName}</div>
-                <div className="text-[8px] uppercase font-bold text-muted-foreground/40">{d.sizeBytes ? `${(d.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "-"}</div>
-              </TableCell>
-              <TableCell className="hidden lg:table-cell">
-                {d.employeeDisplayName ? (
-                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                    <User className="w-3 h-3 text-primary/30" /> {d.employeeDisplayName}
-                  </div>
-                ) : (
-                  <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest italic opacity-40">Général</span>
-                )}
-              </TableCell>
-              <TableCell>
-                {expiry ? (
-                  <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
-                    {format(expiry, "dd/MM/yyyy")}
-                    {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
-                  </div>
-                ) : (
-                  <span className="text-[10px] text-muted-foreground/30">—</span>
-                )}
-              </TableCell>
-              <TableCell>
-                 <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5", 
-                   d.status === 'valid' ? "bg-green-50 text-green-700 border-green-100" : 
-                   d.status === 'archived' ? "bg-slate-50 text-slate-400 border-slate-100" : 
-                   d.status === 'replaced' ? "bg-slate-100 text-slate-500 border-slate-200" :
-                   d.status === 'expired' || isExpired ? "bg-red-50 text-red-700 border-red-100" : "bg-orange-50 text-orange-700 border-orange-100")}>
-                   {isExpired ? "Expiré" : STATUS_LABELS[d.status]}
-                 </Badge>
-              </TableCell>
-              <TableCell className="text-right">
-                 <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {canRenew && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-accent" onClick={() => onReplace!(d)} title="Renouveler">
-                         <RefreshCcw className="w-4 h-4" />
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onViewDetails(d)} title="Détails">
-                       <Eye className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId} title="Ouvrir">
-                       {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
-                    </Button>
-                    {canArchive && d.status !== 'archived' && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(d.id)} disabled={!!loadingId} title="Archiver">
-                         <Archive className="w-4 h-4" />
-                      </Button>
-                    )}
-                 </div>
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
-  );
-}
-
 function ExpirySection({ title, docs, variant, onOpen, onArchive, onReplace, onViewDetails, loadingId }: any) {
   const colorClass = variant === 'danger' ? "text-red-700 bg-red-50 border-red-100" : 
                      variant === 'warning' ? "text-orange-700 bg-orange-50 border-orange-100" :
@@ -951,39 +824,227 @@ function ExpirySection({ title, docs, variant, onOpen, onArchive, onReplace, onV
         {docs.length === 0 ? (
           <div className="p-8 text-center text-[10px] font-bold text-muted-foreground uppercase italic tracking-widest">Vide</div>
         ) : (
-          <div className="divide-y divide-slate-50">
-            {docs.map((d: HRDocument) => (
-              <div key={d.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors group">
-                 <div className="flex items-center gap-4 min-w-0">
-                    <div className={cn("p-2 rounded-xl border shrink-0", colorClass)}>
-                      <Clock className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                       <p className="font-bold text-sm text-slate-800 truncate">{d.title}</p>
-                       <div className="flex items-center gap-2 mt-0.5">
-                          <p className="text-[9px] text-muted-foreground uppercase font-black truncate">
-                            {d.employeeDisplayName || "Général"}
-                          </p>
-                          <span className="text-slate-200 text-[10px]">•</span>
-                          <p className={cn("text-[9px] font-black uppercase tracking-tighter", variant === 'danger' ? "text-red-600" : "text-slate-500")}>
-                             {d.expiresAt ? `Exp: ${formatDateSafe(d.expiresAt)}` : "Pas d'échéance"}
-                          </p>
-                       </div>
-                    </div>
-                 </div>
-                 <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {onReplace && d.status === 'valid' && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-accent" onClick={() => onReplace(d)}><RefreshCcw className="w-3.5 h-3.5" /></Button>
-                    )}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewDetails(d)}><Eye className="w-3.5 h-3.5" /></Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(d.id)} disabled={!!loadingId}><Archive className="w-3.5 h-3.5" /></Button>
-                 </div>
-              </div>
-            ))}
-          </div>
+          <DocumentsTable 
+            docs={docs} 
+            onOpen={onOpen} 
+            onArchive={onArchive} 
+            onReplace={onReplace} 
+            onViewDetails={onViewDetails} 
+            loadingId={loadingId} 
+            compact 
+          />
         )}
       </Card>
     </div>
+  );
+}
+
+interface DocumentsTableProps {
+  docs: HRDocument[];
+  loadingId: string | null;
+  onOpen: (path: string, id: string) => void;
+  onArchive: (id: string) => void;
+  onReplace?: (doc: HRDocument) => void;
+  onViewDetails: (doc: HRDocument) => void;
+  canArchive?: boolean;
+  compact?: boolean;
+}
+
+function DocumentsTable({ 
+  docs, 
+  loadingId, 
+  onOpen, 
+  onArchive, 
+  onReplace, 
+  onViewDetails, 
+  canArchive, 
+  compact 
+}: DocumentsTableProps) {
+  const [expandedRoots, setExpandedRoots] = useState<Set<string>>(new Set());
+
+  const toggleRoot = (id: string) => {
+    setExpandedRoots(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const docChains = useMemo(() => {
+    const groups: Record<string, HRDocument[]> = {};
+    docs.forEach(d => {
+      const rootId = d.rootDocumentId || d.id;
+      if (!groups[rootId]) groups[rootId] = [];
+      groups[rootId].push(d);
+    });
+
+    return Object.values(groups).map(group => {
+      // Find current: status valid && !replacedById
+      // If multiple, highest version.
+      // If none, highest version.
+      const sorted = [...group].sort((a, b) => (b.version || 1) - (a.version || 1));
+      let current = sorted.find(d => d.status === 'valid' && !d.replacedById);
+      if (!current) current = sorted[0]; // Fallback to latest
+
+      const history = sorted.filter(d => d.id !== current!.id);
+      
+      return { current, history, rootId: current.rootDocumentId || current.id };
+    }).sort((a, b) => {
+       const dateA = parseSafeDate(a.current.uploadedAt || a.current.createdAt || 0)?.getTime() || 0;
+       const dateB = parseSafeDate(b.current.uploadedAt || b.current.createdAt || 0)?.getTime() || 0;
+       return dateB - dateA;
+    });
+  }, [docs]);
+
+  return (
+    <Table>
+      {!compact && (
+        <TableHeader className="bg-secondary/10">
+          <TableRow>
+            <TableHead className="w-[40px]"></TableHead>
+            <TableHead className="pl-2 text-[10px] font-black uppercase tracking-widest">Titre & Type</TableHead>
+            <TableHead className="text-[10px] font-black uppercase tracking-widest">Échéance</TableHead>
+            <TableHead className="text-[10px] font-black uppercase tracking-widest">Statut</TableHead>
+            <TableHead className="text-right pr-6 text-[10px] font-black uppercase tracking-widest">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+      )}
+      <TableBody>
+        {docChains.length === 0 ? (
+          <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document.</TableCell></TableRow>
+        ) : docChains.map(({ current, history, rootId }) => (
+          <React.Fragment key={current.id}>
+            <DocRow 
+              doc={current} 
+              onOpen={onOpen} 
+              onArchive={onArchive} 
+              onReplace={onReplace} 
+              onViewDetails={onViewDetails} 
+              loadingId={loadingId} 
+              canArchive={canArchive}
+              hasHistory={history.length > 0}
+              isExpanded={expandedRoots.has(rootId)}
+              onToggleHistory={() => toggleRoot(rootId)}
+            />
+            {history.length > 0 && expandedRoots.has(rootId) && history.map(h => (
+              <DocRow 
+                key={h.id} 
+                doc={h} 
+                onOpen={onOpen} 
+                onArchive={onArchive} 
+                onReplace={onReplace} 
+                onViewDetails={onViewDetails} 
+                loadingId={loadingId} 
+                canArchive={canArchive}
+                isHistory
+              />
+            ))}
+          </React.Fragment>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function DocRow({ 
+  doc, 
+  onOpen, 
+  onArchive, 
+  onReplace, 
+  onViewDetails, 
+  loadingId, 
+  canArchive,
+  isHistory = false,
+  hasHistory = false,
+  isExpanded = false,
+  onToggleHistory
+}: { 
+  doc: HRDocument, 
+  onOpen: any, 
+  onArchive: any, 
+  onReplace?: any, 
+  onViewDetails: any, 
+  loadingId: string | null, 
+  canArchive?: boolean,
+  isHistory?: boolean,
+  hasHistory?: boolean,
+  isExpanded?: boolean,
+  onToggleHistory?: () => void
+}) {
+  const expiryDate = parseSafeDate(doc.expiresAt);
+  const today = startOfDay(new Date());
+  const isExpired = expiryDate && isBefore(expiryDate, today);
+  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
+  
+  // Only current valid docs with expiry can be renewed
+  const isRenewable = !isHistory && doc.status === 'valid' && !doc.replacedById && expiryDate && (isExpired || isExpiringSoon);
+
+  return (
+    <TableRow className={cn(
+      "hover:bg-muted/50 transition-colors group",
+      isHistory && "bg-slate-50/50 border-l-4 border-l-muted"
+    )}>
+      <TableCell className="w-[40px] text-center">
+        {hasHistory && !isHistory && (
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onToggleHistory}>
+            {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        )}
+      </TableCell>
+      <TableCell className={cn("py-3", isHistory && "pl-8")}>
+        <div className="flex items-center gap-2">
+           <div className="font-bold text-primary text-sm truncate max-w-[200px]">{doc.title}</div>
+           <Badge variant="outline" className="text-[8px] h-4 px-1 font-black bg-slate-50">V{doc.version || 1}</Badge>
+           {isHistory && <Badge variant="secondary" className="text-[8px] h-4 px-1 font-bold uppercase opacity-70">Ancienne version</Badge>}
+        </div>
+        <div className="flex items-center gap-2 mt-0.5">
+           <div className="text-[9px] uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[doc.documentType] || doc.documentType}</div>
+           <span className="text-[8px] text-muted-foreground/30">•</span>
+           <div className="text-[9px] text-muted-foreground font-medium">{doc.employeeDisplayName || "Général"}</div>
+        </div>
+      </TableCell>
+      <TableCell>
+        {expiryDate ? (
+          <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+            {formatDateSafe(doc.expiresAt)}
+            {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
+          </div>
+        ) : (
+          <span className="text-[10px] text-muted-foreground/30">—</span>
+        )}
+      </TableCell>
+      <TableCell>
+         <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/5", 
+           doc.status === 'valid' ? "bg-green-50 text-green-700" : 
+           doc.status === 'replaced' ? "bg-slate-100 text-slate-500" : "bg-slate-50")}>
+           {STATUS_LABELS[doc.status]}
+         </Badge>
+         {isHistory && doc.replacedAt && (
+           <p className="text-[8px] text-muted-foreground mt-0.5 italic">Remplacé le {formatDateSafe(doc.replacedAt)}</p>
+         )}
+      </TableCell>
+      <TableCell className="text-right pr-6">
+         <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {isRenewable && onReplace && (
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-accent" onClick={() => onReplace(doc)} title="Renouveler">
+                 <RefreshCcw className="w-4 h-4" />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onViewDetails(doc)} title="Détails">
+               <Eye className="w-4 h-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(doc.storagePath, doc.id)} disabled={loadingId === doc.id} title="Ouvrir">
+               {loadingId === doc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
+            </Button>
+            {canArchive && doc.status !== 'archived' && (
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onArchive(doc.id)} disabled={loadingId === doc.id} title="Archiver">
+                 <Archive className="w-4 h-4" />
+              </Button>
+            )}
+         </div>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -995,5 +1056,28 @@ function DetailItem({ label, value, code = false }: { label: string, value: any,
           {value}
        </div>
     </div>
+  );
+}
+
+function StatCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
+  const colors: Record<string, string> = {
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    red: "bg-red-50 text-red-600 border-red-100",
+    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
+  };
+
+  return (
+    <Card className="border-primary/5 shadow-sm rounded-2xl">
+      <CardContent className="p-4 flex items-center gap-4">
+        <div className={cn("p-3 rounded-2xl border", colors[color] || colors.blue)}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div>
+          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{title}</p>
+          <p className="text-2xl font-black text-primary">{value}</p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
