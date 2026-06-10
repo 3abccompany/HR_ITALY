@@ -7,7 +7,8 @@ import {
   Download, Archive, Eye, User, FileBadge, 
   Calendar, AlertCircle, Filter, X, ChevronRight,
   ShieldAlert, Clock, Building2, ListFilter,
-  FileCheck, ShieldCheck, AlertTriangle, Info
+  FileCheck, ShieldCheck, AlertTriangle, Info,
+  RefreshCcw, Upload
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,14 +30,24 @@ import {
 import { 
   uploadHRDocument, 
   archiveHRDocument, 
-  getDocumentDownloadUrl 
+  getDocumentDownloadUrl,
+  replaceHRDocument
 } from "@/services/document.service";
 import { useToast } from "@/hooks/use-toast";
 import { 
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogFooter, 
+  DialogDescription 
 } from "@/components/ui/dialog";
 import { 
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
 } from "@/components/ui/select";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { format, isBefore, addDays, startOfDay, differenceInDays } from "date-fns";
@@ -100,6 +111,7 @@ export default function DocumentsRegistryPage() {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [selectedDocForDetails, setSelectedDocForDetails] = useState<HRDocument | null>(null);
 
+  // Upload State
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [uploadForm, setUploadForm] = useState({
     title: "",
@@ -111,6 +123,12 @@ export default function DocumentsRegistryPage() {
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  // Renewal/Replacement State
+  const [selectedDocForReplacement, setSelectedDocForReplacement] = useState<HRDocument | null>(null);
+  const [replacementFile, setReplacementFile] = useState<File | null>(null);
+  const [replacementReason, setReplacementReason] = useState("");
+  const [isReplacing, setIsReplacing] = useState(false);
 
   const canRead = hasPermission("documents.read");
   const canUpload = hasPermission("documents.upload");
@@ -291,6 +309,32 @@ export default function DocumentsRegistryPage() {
     }
   };
 
+  const handleExecuteReplacement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !selectedDocForReplacement || !replacementFile) return;
+
+    setIsReplacing(true);
+    try {
+      await replaceHRDocument(
+        entityId,
+        selectedDocForReplacement.id,
+        replacementFile,
+        user.uid,
+        replacementReason,
+        {},
+        membership?.userDisplayName || undefined
+      );
+      toast({ title: "Document renouvelé", description: "Une nouvelle version a été créée." });
+      setSelectedDocForReplacement(null);
+      setReplacementFile(null);
+      setReplacementReason("");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setIsReplacing(false);
+    }
+  };
+
   if (membershipLoading || !permissionsReady) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   return (
@@ -382,8 +426,10 @@ export default function DocumentsRegistryPage() {
                     loadingId={loadingAction} 
                     onOpen={handleOpenDoc} 
                     onArchive={handleArchive}
+                    onReplace={setSelectedDocForReplacement}
                     onViewDetails={setSelectedDocForDetails}
                     canArchive={canArchive}
+                    viewMode={viewMode}
                   />
                </Card>
             </TabsContent>
@@ -422,8 +468,10 @@ export default function DocumentsRegistryPage() {
                       loadingId={loadingAction}
                       onOpen={handleOpenDoc}
                       onArchive={handleArchive}
+                      onReplace={setSelectedDocForReplacement}
                       onViewDetails={setSelectedDocForDetails}
                       canArchive={canArchive}
+                      viewMode={viewMode}
                     />
                   </CardContent>
                 </Card>
@@ -450,8 +498,10 @@ export default function DocumentsRegistryPage() {
                     loadingId={loadingAction}
                     onOpen={handleOpenDoc}
                     onArchive={handleArchive}
+                    onReplace={setSelectedDocForReplacement}
                     onViewDetails={setSelectedDocForDetails}
                     canArchive={canArchive}
+                    viewMode={viewMode}
                   />
                 </CardContent>
               </Card>
@@ -465,6 +515,7 @@ export default function DocumentsRegistryPage() {
               loadingId={loadingAction}
               onOpen={handleOpenDoc}
               onArchive={handleArchive}
+              onReplace={setSelectedDocForReplacement}
               onViewDetails={setSelectedDocForDetails}
               canArchive={canArchive}
             />
@@ -475,6 +526,7 @@ export default function DocumentsRegistryPage() {
               loadingId={loadingAction}
               onOpen={handleOpenDoc}
               onArchive={handleArchive}
+              onReplace={setSelectedDocForReplacement}
               onViewDetails={setSelectedDocForDetails}
               canArchive={canArchive}
             />
@@ -485,6 +537,7 @@ export default function DocumentsRegistryPage() {
               loadingId={loadingAction}
               onOpen={handleOpenDoc}
               onArchive={handleArchive}
+              onReplace={setSelectedDocForReplacement}
               onViewDetails={setSelectedDocForDetails}
               canArchive={canArchive}
             />
@@ -521,6 +574,74 @@ export default function DocumentsRegistryPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!selectedDocForReplacement} onOpenChange={(open) => !open && setSelectedDocForReplacement(null)}>
+        <DialogContent className="sm:max-w-[500px] rounded-[2.5rem]">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-black text-primary flex items-center gap-2">
+              <RefreshCcw className="w-6 h-6 text-accent" />
+              Renouveler le document
+            </DialogTitle>
+            <DialogDescription>
+              Vous remplacez : <span className="font-bold text-slate-900">{selectedDocForReplacement?.title}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleExecuteReplacement} className="space-y-6 py-4">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black">Nouveau fichier (PDF, PNG, JPG)</Label>
+                <div className={cn(
+                  "border-2 border-dashed rounded-2xl p-8 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
+                  replacementFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                )}>
+                   <Input 
+                     type="file" 
+                     accept=".pdf,.png,.jpg,.jpeg" 
+                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                     onChange={(e) => setReplacementFile(e.target.files?.[0] || null)}
+                     required
+                   />
+                   {replacementFile ? (
+                      <>
+                        <div className="bg-green-100 p-2 rounded-xl text-green-600 mb-1"><FileCheck className="w-5 h-5" /></div>
+                        <p className="text-xs font-bold text-green-800">{replacementFile.name}</p>
+                      </>
+                   ) : (
+                      <>
+                        <Upload className="w-6 h-6 text-slate-300 mb-1" />
+                        <p className="text-xs font-bold text-slate-600">Cliquez ou glissez le nouveau document</p>
+                      </>
+                   )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black">Motif du renouvellement</Label>
+                <Textarea 
+                  placeholder="Ex: Document arrivé à échéance, mise à jour annuelle..."
+                  value={replacementReason}
+                  onChange={(e) => setReplacementReason(e.target.value)}
+                  required
+                  className="rounded-xl min-h-[100px]"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="pt-4 border-t">
+              <Button type="button" variant="ghost" onClick={() => setSelectedDocForReplacement(null)} disabled={isReplacing}>Annuler</Button>
+              <Button 
+                type="submit" 
+                disabled={isReplacing || !replacementFile || !replacementReason.trim()}
+                className="rounded-xl px-8 font-black shadow-lg"
+              >
+                {isReplacing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
+                Remplacer le document
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -537,7 +658,7 @@ function StatCard({ title, value, icon: Icon, color }: { title: string, value: n
   );
 }
 
-function ExpirySection({ title, docs, variant, loadingId, onOpen, onArchive, onViewDetails, canArchive }: any) {
+function ExpirySection({ title, docs, variant, loadingId, onOpen, onArchive, onReplace, onViewDetails, canArchive }: any) {
   if (docs.length === 0) return null;
 
   const config: any = {
@@ -561,8 +682,10 @@ function ExpirySection({ title, docs, variant, loadingId, onOpen, onArchive, onV
           loadingId={loadingId} 
           onOpen={onOpen} 
           onArchive={onArchive} 
+          onReplace={onReplace}
           onViewDetails={onViewDetails} 
           canArchive={canArchive}
+          viewMode="expiry"
         />
       </Card>
     </div>
@@ -574,11 +697,13 @@ interface DocumentsTableProps {
   loadingId: string | null;
   onOpen: (path: string, id: string) => void;
   onArchive: (id: string) => void;
+  onReplace?: (doc: HRDocument) => void;
   onViewDetails: (doc: HRDocument) => void;
   canArchive: boolean;
+  viewMode?: string;
 }
 
-function DocumentsTable({ docs, loadingId, onOpen, onArchive, onViewDetails, canArchive }: DocumentsTableProps) {
+function DocumentsTable({ docs, loadingId, onOpen, onArchive, onReplace, onViewDetails, canArchive, viewMode }: DocumentsTableProps) {
   return (
     <Table>
       <TableHeader className="bg-secondary/10">
@@ -593,45 +718,63 @@ function DocumentsTable({ docs, loadingId, onOpen, onArchive, onViewDetails, can
       <TableBody>
         {docs.length === 0 ? (
           <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic">Aucun document.</TableCell></TableRow>
-        ) : docs.map((d: HRDocument) => (
-          <TableRow key={d.id} className="hover:bg-muted/50 transition-colors">
-            <TableCell className="pl-6">
-              <div className="font-bold text-primary">{d.title}</div>
-              <div className="text-[9px] uppercase text-muted-foreground">{DOCUMENT_TYPE_LABELS[d.documentType] || d.documentType}</div>
-            </TableCell>
-            <TableCell>
-              <div className="flex items-center gap-2 text-xs font-medium">
-                <User className="w-3 h-3 text-muted-foreground" />
-                {d.employeeDisplayName || "—"}
-              </div>
-            </TableCell>
-            <TableCell>
-              <div className="flex items-center gap-1.5 text-xs">
-                <Calendar className="w-3 h-3 text-muted-foreground" />
-                {formatDateSafe(d.expiresAt)}
-              </div>
-            </TableCell>
-            <TableCell>
-              <Badge variant="outline" className={cn("text-[10px] font-bold", d.status === 'valid' ? "bg-green-50 text-green-700 border-green-200" : "")}>
-                {STATUS_LABELS[d.status]}
-              </Badge>
-            </TableCell>
-            <TableCell className="text-right pr-6">
-              <div className="flex justify-end gap-1">
-                <Button variant="ghost" size="icon" onClick={() => onOpen(d.storagePath, d.id)} disabled={loadingId === d.id}>
-                  {loadingId === d.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4 text-primary" />}
-                </Button>
-                {canArchive && d.status !== 'archived' && (
-                  <Button variant="ghost" size="icon" className="text-destructive" onClick={() => onArchive(d.id)} disabled={loadingId === d.id}>
-                    <Archive className="w-4 h-4" />
+        ) : docs.map((d: HRDocument) => {
+          const expiryDate = parseSafeDate(d.expiresAt);
+          const today = startOfDay(new Date());
+          const isExpired = expiryDate && isBefore(expiryDate, today);
+          const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
+          const canRenew = onReplace && d.status === 'valid' && (isExpired || isExpiringSoon || viewMode === 'expiry') && !!expiryDate;
+
+          return (
+            <TableRow key={d.id} className="hover:bg-muted/50 transition-colors">
+              <TableCell className="pl-6">
+                <div className="font-bold text-primary">{d.title}</div>
+                <div className="text-[9px] uppercase text-muted-foreground">{DOCUMENT_TYPE_LABELS[d.documentType] || d.documentType}</div>
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2 text-xs font-medium">
+                  <User className="w-3 h-3 text-muted-foreground" />
+                  {d.employeeDisplayName || "—"}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-1.5 text-xs">
+                  <Calendar className="w-3 h-3 text-muted-foreground" />
+                  {formatDateSafe(d.expiresAt)}
+                </div>
+              </TableCell>
+              <TableCell>
+                <Badge variant="outline" className={cn("text-[10px] font-bold", d.status === 'valid' ? "bg-green-50 text-green-700 border-green-200" : "")}>
+                  {STATUS_LABELS[d.status]}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-right pr-6">
+                <div className="flex justify-end gap-1">
+                  {canRenew && (
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-accent" 
+                      onClick={() => onReplace!(d)} 
+                      title="Renouveler"
+                    >
+                      <RefreshCcw className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button variant="ghost" size="icon" onClick={() => onOpen(d.storagePath, d.id)} disabled={loadingId === d.id}>
+                    {loadingId === d.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4 text-primary" />}
                   </Button>
-                )}
-              </div>
-            </TableCell>
-          </TableRow>
-        ))}
+                  {canArchive && d.status !== 'archived' && (
+                    <Button variant="ghost" size="icon" className="text-destructive" onClick={() => onArchive(d.id)} disabled={loadingId === d.id}>
+                      <Archive className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );
 }
-
