@@ -1118,14 +1118,3 @@ function DocRow({
     </TableRow>
   );
 }
-
-function DetailItem({ label, value, code = false }: { label: string, value: any, code?: boolean }) {
-  return (
-    <div className="space-y-1">
-       <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
-       <div className={cn("text-xs font-bold text-slate-800 truncate", code && "font-mono text-[10px]")}>
-          {value}
-       </div>
-    </div>
-  );
-}
