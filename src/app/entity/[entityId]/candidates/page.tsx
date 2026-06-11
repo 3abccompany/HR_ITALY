@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -61,6 +60,34 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
+
+/**
+ * Robust date parser for mixed Firestore/Admin/Corrupted formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  
+  return null;
+}
+
+function formatDateDisplay(val: any): string {
+  const d = parseSafeDate(val);
+  if (!d) return "N/A";
+  return format(d, "dd/MM/yyyy", { locale: fr });
+}
 
 const initialForm = {
   personId: "",
