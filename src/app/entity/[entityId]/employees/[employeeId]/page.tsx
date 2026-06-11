@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -773,6 +772,7 @@ function getContractStatusBadge(status: string) {
     case 'draft': return <Badge variant="secondary" className="text-[8px] h-4 bg-slate-100 text-slate-500 uppercase font-black px-2">Brouillon</Badge>;
     case 'pending_signature': return <Badge variant="secondary" className="text-[8px] h-4 bg-orange-50 text-orange-600 border-orange-200 uppercase font-black px-2">Signature</Badge>;
     case 'active': return <Badge className="text-[8px] h-4 bg-green-500 text-white border-none uppercase font-black px-2">Actif</Badge>;
+    case 'renewed': return <Badge variant="secondary" className="text-[8px] h-4 bg-blue-50 text-blue-600 border-blue-200 uppercase font-black px-2">Renouvelé</Badge>;
     case 'terminated': return <Badge variant="destructive" className="text-[8px] h-4 bg-red-50 text-red-700 border-red-200 uppercase font-black px-2">Terminé</Badge>;
     default: return <Badge variant="outline" className="text-[8px] h-4 uppercase font-black px-2">{status}</Badge>;
   }

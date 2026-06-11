@@ -135,7 +135,7 @@ export default function ContractDetailPage() {
 
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
-  const [signedDocForm, setSignedDocForm] = useState({ title: "", url: "", reference: "", replacementReason: "" });
+  const [signedDocForm, setSignedDocForm] = useState({ title: "", url: "", reference: "" });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Termination State
@@ -482,12 +482,6 @@ export default function ContractDetailPage() {
   const handleSaveSignedDocRef = async () => {
     if (!user || !contract || !signedDocForm.title) return;
     
-    const hasExisting = !!(contract.signedDocumentTitle || contract.signedDocumentUrl || contract.signedDocumentId || contract.signedDocumentStoragePath);
-    if (hasExisting && !signedDocForm.replacementReason) {
-       toast({ variant: "destructive", title: "Motif requis", description: "Veuillez indiquer la raison du remplacement." });
-       return;
-    }
-
     setProcessing(true);
     try {
       let url = signedDocForm.url;
@@ -515,12 +509,11 @@ export default function ContractDetailPage() {
         reference: signedDocForm.reference,
         fileName,
         storagePath,
-        mimeType: selectedFile ? "application/pdf" : null,
-        replacementReason: signedDocForm.replacementReason
+        mimeType: selectedFile ? "application/pdf" : null
       }, user.uid);
       
       setIsSignedDocModalOpen(false);
-      setSignedDocForm({ title: "", url: "", reference: "", replacementReason: "" });
+      setSignedDocForm({ title: "", url: "", reference: "" });
       setSelectedFile(null);
       toast({ title: "Référence enregistrée", description: "Le document signé est maintenant lié au dossier." });
     } catch (err: any) {
@@ -868,8 +861,7 @@ export default function ContractDetailPage() {
                           setSignedDocForm({
                             title: contract.signedDocumentTitle || "",
                             url: contract.signedDocumentUrl || "",
-                            reference: contract.signedDocumentId || "",
-                            replacementReason: ""
+                            reference: contract.signedDocumentId || ""
                           });
                           setIsSignedDocModalOpen(true);
                         }}
@@ -1166,9 +1158,7 @@ export default function ContractDetailPage() {
       <Dialog open={isSignedDocModalOpen} onOpenChange={setIsSignedDocModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-black text-primary">
-              {hasSignedDoc ? "Remplacer le contrat signé" : "Enregistrer le contrat signé"}
-            </DialogTitle>
+            <DialogTitle className="text-xl font-black text-primary">Enregistrer le contrat signé</DialogTitle>
             <DialogDescription>Veuillez renseigner les détails du document physique ou numérique signé par les parties.</DialogDescription>
           </DialogHeader>
           <div className="py-6 space-y-6">
@@ -1209,28 +1199,12 @@ export default function ContractDetailPage() {
                   </div>
                </div>
             </div>
-
-            {hasSignedDoc && (
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black text-muted-foreground text-orange-600">Motif du remplacement (Requis)</Label>
-                  <Textarea 
-                    value={signedDocForm.replacementReason} 
-                    onChange={(e) => setSignedDocForm(p => ({...p, replacementReason: e.target.value}))}
-                    placeholder="Ex: Signature manquante sur la page 2, erreur de version..."
-                    className="min-h-[100px] rounded-xl border-orange-200 focus:ring-orange-100"
-                  />
-               </div>
-            )}
           </div>
           <DialogFooter>
              <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)} disabled={processing}>Annuler</Button>
-             <Button 
-               onClick={handleSaveSignedDocRef} 
-               disabled={processing || !signedDocForm.title || (hasSignedDoc && !signedDocForm.replacementReason)}
-               className="bg-primary text-white font-black rounded-xl px-8"
-             >
+             <Button onClick={handleSaveSignedDocRef} disabled={processing || !signedDocForm.title} className="bg-primary text-white font-black rounded-xl px-8">
                {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-               {hasSignedDoc ? "Remplacer la référence" : "Enregistrer la référence"}
+               Enregistrer la référence
              </Button>
           </DialogFooter>
         </DialogContent>
@@ -1577,6 +1551,7 @@ function getStatusBadge(status: ContractStatus) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 uppercase font-black text-[9px] px-2">Brouillon</Badge>;
     case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 uppercase font-black text-[9px] px-2">En signature</Badge>;
     case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white uppercase font-black text-[9px] px-2">Actif</Badge>;
+    case 'renewed': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase font-black text-[9px] px-2">Renouvelé</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Terminé</Badge>;
     case 'suspended': return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 uppercase font-black text-[9px] px-2">Suspendu</Badge>;
     case 'archived': return <Badge variant="outline" className="text-muted-foreground uppercase font-black text-[9px] px-2">Archivé</Badge>;
