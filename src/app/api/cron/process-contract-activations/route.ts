@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
-import { executeRenewalActivationServerTransaction } from "@/services/contract.server";
+import { executeRenewalActivationServerTransaction, processContractExpirationsServer } from "@/services/contract.server";
 import { Timestamp } from "firebase-admin/firestore";
 
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/cron/process-contract-activations
- * Automatically activates signed CDD renewals on their start date.
+ * Automated contract lifecycle management:
+ * 1. Step 1: Scan and mark expired CDDs (endDate < today)
+ * 2. Step 2: Activate signed CDD renewals on their start date (startDate <= today)
+ * 
  * Default: Dry-run. Use ?execute=1 for live writes.
  */
 export async function GET(request: NextRequest) {
@@ -16,7 +19,7 @@ export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
 
   if (!cronSecret) {
-    console.error("[Cron:ContractActivation] CRON_SECRET not configured in environment.");
+    console.error("[Cron:Global] CRON_SECRET not configured in environment.");
     return NextResponse.json({ error: "Configuration error" }, { status: 500 });
   }
 
@@ -27,23 +30,30 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const execute = searchParams.get("execute") === "1";
   const mode = execute ? "execute" : "dryRun";
-
-  const summary = {
-    ok: true,
-    mode,
-    scanned: 0,
-    eligible: 0,
-    activated: 0,
-    skipped: 0,
-    failed: 0,
-    results: [] as any[]
-  };
+  const today = new Date();
 
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // 2. Step 1: Process Expirations
+    const expirationResults = await processContractExpirationsServer({
+      actorUid: "system:cron",
+      execute,
+      today
+    });
 
-    // 2. Discover Entities
+    // 3. Step 2: Discover and Process Activations
+    const activationResults = {
+      scanned: 0,
+      eligible: 0,
+      activated: 0,
+      skipped: 0,
+      failed: 0,
+      results: [] as any[]
+    };
+
+    const todayStart = new Date(today);
+    todayStart.setHours(0, 0, 0, 0);
+
+    // Discover Entities
     const entitiesSnap = await adminDb.collection("entities").get();
     
     for (const entityDoc of entitiesSnap.docs) {
@@ -52,7 +62,7 @@ export async function GET(request: NextRequest) {
       
       if (entityData.status !== "active") continue;
 
-      // 3. Find candidates for activation
+      // Find candidates for activation
       const contractsSnap = await adminDb
         .collection("entities")
         .doc(entityId)
@@ -60,13 +70,13 @@ export async function GET(request: NextRequest) {
         .where("status", "==", "pending_activation")
         .get();
 
-      summary.scanned += contractsSnap.size;
+      activationResults.scanned += contractsSnap.size;
 
       for (const contractDoc of contractsSnap.docs) {
         const contractId = contractDoc.id;
         const contract = contractDoc.data();
 
-        // 4. Date Filtering
+        // Date Filtering
         const startDateVal = contract.startDate;
         let startDate: Date | null = null;
 
@@ -77,24 +87,24 @@ export async function GET(request: NextRequest) {
         }
 
         if (!startDate || isNaN(startDate.getTime())) {
-          summary.skipped++;
-          summary.results.push({ entityId, contractId, status: "skipped", reason: "Invalid or missing startDate" });
+          activationResults.skipped++;
+          activationResults.results.push({ entityId, contractId, status: "skipped", reason: "Invalid or missing startDate" });
           continue;
         }
 
         const startCompare = new Date(startDate);
         startCompare.setHours(0, 0, 0, 0);
 
-        if (startCompare > today) {
+        if (startCompare > todayStart) {
           // Future contract, wait
           continue;
         }
 
-        summary.eligible++;
+        activationResults.eligible++;
 
-        // 5. Execution
+        // Execution
         if (!execute) {
-          summary.results.push({ entityId, contractId, employeeId: contract.employeeId, status: "eligible", reason: "Dry run: ready for activation" });
+          activationResults.results.push({ entityId, contractId, employeeId: contract.employeeId, status: "eligible", reason: "Dry run: ready for activation" });
           continue;
         }
 
@@ -105,20 +115,39 @@ export async function GET(request: NextRequest) {
             actorUid: "system:cron"
           });
           
-          summary.activated++;
-          summary.results.push({ entityId, contractId, employeeId: contract.employeeId, status: "activated" });
+          activationResults.activated++;
+          activationResults.results.push({ entityId, contractId, employeeId: contract.employeeId, status: "activated" });
         } catch (err: any) {
-          summary.failed++;
-          console.error(`[Cron:ContractActivation] Failed for ${contractId}:`, err.message);
-          summary.results.push({ entityId, contractId, employeeId: contract.employeeId, status: "failed", reason: err.message });
+          activationResults.failed++;
+          console.error(`[Cron:Activation] Failed for ${contractId}:`, err.message);
+          activationResults.results.push({ entityId, contractId, employeeId: contract.employeeId, status: "failed", reason: err.message });
         }
       }
     }
 
-    return NextResponse.json(summary);
+    // 4. Combined Response
+    return NextResponse.json({
+      ok: true,
+      mode,
+      expirations: {
+        scanned: expirationResults.scanned,
+        eligible: expirationResults.eligible,
+        expired: expirationResults.expired,
+        skipped: expirationResults.skipped,
+        failed: expirationResults.failed,
+        results: expirationResults.results
+      },
+      activations: activationResults,
+      summary: {
+        totalScanned: expirationResults.scanned + activationResults.scanned,
+        totalEligible: expirationResults.eligible + activationResults.eligible,
+        totalWrites: expirationResults.expired + activationResults.activated,
+        totalFailed: expirationResults.failed + activationResults.failed
+      }
+    });
 
   } catch (err: any) {
-    console.error("[Cron:ContractActivation] Global Error:", err);
+    console.error("[Cron:Global] Error:", err);
     return NextResponse.json({ 
       ok: false, 
       error: "Global execution error",
