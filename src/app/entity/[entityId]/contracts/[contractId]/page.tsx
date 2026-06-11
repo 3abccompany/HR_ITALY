@@ -294,6 +294,14 @@ export default function ContractDetailPage() {
     };
   }, [contract, entity, employee, person, offer, mandatoryCommunication]);
 
+  // Renewal Overlap Calculation (Memoized at top level)
+  const isRenewalOverlap = useMemo(() => {
+    if (!contract?.endDate || !renewalForm.newStartDate) return false;
+    const oldEnd = parseSafeDate(contract.endDate);
+    const newStart = new Date(renewalForm.newStartDate);
+    return !!(oldEnd && newStart <= oldEnd);
+  }, [contract?.endDate, renewalForm.newStartDate]);
+
   // Set default renewal start date
   useEffect(() => {
     if (contract && contract.endDate) {
@@ -657,13 +665,6 @@ export default function ContractDetailPage() {
     !contract.pendingRenewalContractId && 
     canUpdate;
 
-  const isRenewalOverlap = useMemo(() => {
-    if (!contract?.endDate || !renewalForm.newStartDate) return false;
-    const oldEnd = parseSafeDate(contract.endDate);
-    const newStart = new Date(renewalForm.newStartDate);
-    return oldEnd && newStart <= oldEnd;
-  }, [contract, renewalForm.newStartDate]);
-
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
@@ -874,7 +875,7 @@ export default function ContractDetailPage() {
                          <AlertTriangle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
                          <div>
                             <p className="text-sm font-bold text-orange-800">PDF du contratto non généré</p>
-                            <p className="text-xs text-orange-700">Vous devez générer la version préparée du contrat avant de pouvoir l'envoyer en signature.</p>
+                            <p className="text-xs text-orange-700">Vous devez générer the version préparée du contrat avant de pouvoir l'envoyer en signature.</p>
                          </div>
                       </div>
                       <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing || isTerminated || isRenewed} className="w-full h-12 rounded-xl font-black gap-2">
