@@ -103,6 +103,36 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
   return format(date, formatStr, { locale: fr });
 }
 
+/**
+ * Renders the contract lifecycle context (Active/Future/Historical) for a document.
+ */
+function renderContractContext(doc: HRDocument, employee?: Employee) {
+  const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType);
+  if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
+  if (!doc.contractId) return null;
+
+  let label = doc.contractType || "Contrat";
+  let color = "bg-slate-50 text-slate-500 border-slate-200";
+
+  if (employee) {
+    if (employee.activeContractId === doc.contractId) {
+      label = "Contrat actif";
+      color = "bg-blue-50 text-blue-700 border-blue-200";
+    } else if (employee.pendingContractId === doc.contractId) {
+      label = "Contrat futur";
+      color = "bg-teal-50 text-teal-700 border-teal-200";
+    } else {
+      label = "Contrat précédent";
+    }
+  }
+
+  return (
+    <Badge variant="outline" className={cn("text-[8px] h-4 px-1.5 font-black uppercase", color)}>
+       {label}
+    </Badge>
+  );
+}
+
 export default function DocumentsRegistryPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -157,6 +187,12 @@ export default function DocumentsRegistryPage() {
 
   const { data: documents, loading: loadingDocs } = useCollection<HRDocument>(docsQuery, "documents.registry");
   const { data: employees } = useCollection<Employee>(employeesQuery, "documents.employees_lookup");
+
+  const employeesMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    employees?.forEach(e => map.set(e.employeeId, e));
+    return map;
+  }, [employees]);
 
   const filteredDocs = useMemo(() => {
     if (!documents) return [];
@@ -449,7 +485,7 @@ export default function DocumentsRegistryPage() {
           </Card>
         ) : (
           <Tabs value={viewMode} onValueChange={setViewMode} className="space-y-6">
-            <TabsList className="bg-white border p-1 h-11 rounded-xl shadow-sm">
+            <TabsList className="bg-white border p-1 h-12 rounded-xl shadow-sm">
               <TabsTrigger value="all" className="rounded-lg font-bold px-6">Tous</TabsTrigger>
               <TabsTrigger value="employee" className="rounded-lg font-bold px-6">Par employé</TabsTrigger>
               <TabsTrigger value="type" className="rounded-lg font-bold px-6">Par type</TabsTrigger>
@@ -460,6 +496,7 @@ export default function DocumentsRegistryPage() {
                <Card className="rounded-[2rem] border-primary/10 overflow-hidden shadow-xl shadow-primary/5 bg-white">
                   <DocumentsTable 
                     docs={filteredDocs} 
+                    employeesMap={employeesMap}
                     loadingId={loadingAction} 
                     onOpen={handleOpenDoc} 
                     onArchive={handleArchive}
@@ -480,6 +517,7 @@ export default function DocumentsRegistryPage() {
                    <Card className="rounded-3xl border-primary/5 overflow-hidden shadow-sm bg-white">
                       <DocumentsTable 
                         docs={group.docs} 
+                        employeesMap={employeesMap}
                         loadingId={loadingAction} 
                         onOpen={handleOpenDoc} 
                         onArchive={handleArchive}
@@ -505,6 +543,7 @@ export default function DocumentsRegistryPage() {
                    <Card className="rounded-3xl border-primary/5 overflow-hidden shadow-sm bg-white">
                       <DocumentsTable 
                         docs={docs} 
+                        employeesMap={employeesMap}
                         loadingId={loadingAction} 
                         onOpen={handleOpenDoc} 
                         onArchive={handleArchive}
@@ -529,7 +568,7 @@ export default function DocumentsRegistryPage() {
                  <div className="pt-8">
                     <h3 className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1 mb-4">Autres documents (Sans échéance)</h3>
                     <Card className="rounded-3xl overflow-hidden opacity-80 border-primary/5 bg-white">
-                       <DocumentsTable docs={docsByExpiry.no_expiry} onOpen={handleOpenDoc} onArchive={handleArchive} onReplace={setSelectedDocForReplacement} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} canArchive={canArchive} compact />
+                       <DocumentsTable docs={docsByExpiry.no_expiry} employeesMap={employeesMap} onOpen={handleOpenDoc} onArchive={handleArchive} onReplace={setSelectedDocForReplacement} onViewDetails={setSelectedDocForDetails} loadingId={loadingAction} canArchive={canArchive} compact />
                     </Card>
                  </div>
                )}
@@ -841,6 +880,7 @@ function ExpirySection({ title, docs, variant, onOpen, onArchive, onReplace, onV
 
 interface DocumentsTableProps {
   docs: HRDocument[];
+  employeesMap?: Map<string, Employee>;
   loadingId: string | null;
   onOpen: (path: string, id: string) => void;
   onArchive: (id: string) => void;
@@ -852,6 +892,7 @@ interface DocumentsTableProps {
 
 function DocumentsTable({ 
   docs, 
+  employeesMap,
   loadingId, 
   onOpen, 
   onArchive, 
@@ -931,6 +972,7 @@ function DocumentsTable({
               hasHistory={history.length > 0}
               isExpanded={expandedRoots.has(rootId)}
               onToggleHistory={() => toggleRoot(rootId)}
+              employee={current.employeeId ? employeesMap?.get(current.employeeId) : undefined}
             />
             {history.length > 0 && expandedRoots.has(rootId) && history.map(h => (
               <DocRow 
@@ -943,6 +985,7 @@ function DocumentsTable({
                 loadingId={loadingId} 
                 canArchive={canArchive}
                 isHistory
+                employee={h.employeeId ? employeesMap?.get(h.employeeId) : undefined}
               />
             ))}
           </React.Fragment>
@@ -963,7 +1006,8 @@ function DocRow({
   isHistory = false,
   hasHistory = false,
   isExpanded = false,
-  onToggleHistory
+  onToggleHistory,
+  employee
 }: { 
   doc: HRDocument, 
   onOpen: any, 
@@ -975,7 +1019,8 @@ function DocRow({
   isHistory?: boolean,
   hasHistory?: boolean,
   isExpanded?: boolean,
-  onToggleHistory?: () => void
+  onToggleHistory?: () => void,
+  employee?: Employee
 }) {
   const isLoading = loadingId === doc.id;
   const expiryDate = parseSafeDate(doc.expiresAt);
@@ -1001,12 +1046,21 @@ function DocRow({
       <TableCell className={cn("py-3", isHistory && "pl-8")}>
         <div className="flex items-center gap-2">
            <div className="font-bold text-primary text-sm truncate max-w-[200px]">{doc.title}</div>
+           {renderContractContext(doc, employee)}
            <Badge variant="outline" className="text-[8px] h-4 px-1 font-black bg-slate-50">V{doc.version || 1}</Badge>
            {isHistory && <Badge variant="secondary" className="text-[8px] h-4 px-1 font-bold uppercase opacity-70">Ancienne version</Badge>}
         </div>
         <div className="flex items-center gap-2 mt-0.5">
            <div className="text-[9px] uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[doc.documentType] || doc.documentType}</div>
-           <span className="text-[8px] text-muted-foreground/30">•</span>
+           {doc.contractStartDate && (
+             <>
+               <span className="text-slate-200 text-[8px]">•</span>
+               <span className="text-[9px] font-bold text-muted-foreground/60 italic">
+                 Période: {formatDateSafe(doc.contractStartDate)} {doc.contractEndDate ? `- ${formatDateSafe(doc.contractEndDate)}` : ''}
+               </span>
+             </>
+           )}
+           <span className="text-slate-200 text-[8px]">•</span>
            <div className="text-[9px] text-muted-foreground font-medium">{doc.employeeDisplayName || "Général"}</div>
         </div>
       </TableCell>
@@ -1062,5 +1116,44 @@ function DetailItem({ label, value, code = false }: { label: string, value: any,
           {value}
        </div>
     </div>
+  );
+}
+
+function StatItem({ label, value, icon: Icon, color }: { label: string, value: number, icon: any, color: string }) {
+  const colors: Record<string, string> = {
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    red: "bg-red-50 text-red-600 border-red-100",
+    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
+  };
+
+  return (
+    <div className="flex items-center gap-3">
+       <div className={cn("p-2 rounded-lg border", colors[color])}><Icon className="w-4 h-4" /></div>
+       <div><p className="text-[8px] font-black uppercase text-muted-foreground">{label}</p><p className="text-sm font-black text-primary">{value}</p></div>
+    </div>
+  );
+}
+
+function StatCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
+  const colors: Record<string, string> = {
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    red: "bg-red-50 text-red-600 border-red-100",
+    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
+  };
+
+  return (
+    <Card className="border-primary/5 shadow-sm rounded-2xl">
+      <CardContent className="p-4 flex items-center gap-4">
+        <div className={cn("p-3 rounded-2xl border", colors[color] || colors.blue)}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div>
+          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{title}</p>
+          <p className="text-2xl font-black text-primary">{value}</p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

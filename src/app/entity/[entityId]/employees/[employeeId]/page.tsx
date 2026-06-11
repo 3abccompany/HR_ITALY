@@ -78,6 +78,36 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
   return format(date, formatStr, { locale: fr });
 }
 
+/**
+ * Renders the contract lifecycle context for a document.
+ */
+function renderContractContext(doc: HRDocument, employee?: Employee) {
+  const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType);
+  if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
+  if (!doc.contractId) return null;
+
+  let label = doc.contractType || "Contrat";
+  let color = "bg-slate-50 text-slate-500 border-slate-200";
+
+  if (employee) {
+    if (employee.activeContractId === doc.contractId) {
+      label = "Contrat actif";
+      color = "bg-blue-50 text-blue-700 border-blue-200";
+    } else if (employee.pendingContractId === doc.contractId) {
+      label = "Contrat futur";
+      color = "bg-teal-50 text-teal-700 border-teal-100";
+    } else {
+      label = "Contrat précédent";
+    }
+  }
+
+  return (
+    <Badge variant="outline" className={cn("text-[8px] h-4 px-1.5 font-black uppercase", color)}>
+       {label}
+    </Badge>
+  );
+}
+
 export default function Employee360HubPage() {
   const params = useParams();
   const router = useRouter();
@@ -169,22 +199,12 @@ export default function Employee360HubPage() {
   const docsByEmployeeQuery = useMemo(() => {
     const isReady = !!db && !!entityId && !!employeeId && permissionsReady && canReadDocs && !!employee;
     
-    console.debug(`[Trace:employee360.documents.byEmployeeId]`, { 
-      debugLabel: "employee360.documents.byEmployeeId",
-      permissionsReady, 
-      canReadDocs, 
-      membershipEntity: membership?.entityId, 
-      routeEntity: entityId, 
-      employeeId, 
-      queryCreated: isReady 
-    });
-
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
       where("employeeId", "==", employeeId)
     ) as Query<HRDocument>;
-  }, [db, entityId, employeeId, permissionsReady, canReadDocs, employee, membership?.entityId]);
+  }, [db, entityId, employeeId, permissionsReady, canReadDocs, employee]);
 
   const docsByPersonQuery = useMemo(() => {
     const isReady = !!db && !!entityId && !!employee?.personId && permissionsReady && canReadDocs;
@@ -286,7 +306,7 @@ export default function Employee360HubPage() {
             </Button>
          </div>
       {/* 360 Header */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-6 border-b pb-8">
+      <header className="flex items-center justify-between mb-8 gap-6 border-b pb-8">
         <div className="flex items-center gap-6">
           <div className="relative">
              <div className="bg-primary text-white w-20 h-20 rounded-[2rem] flex items-center justify-center text-3xl font-black shadow-xl shadow-primary/20">
@@ -653,6 +673,7 @@ export default function Employee360HubPage() {
                   docs={allDocs || []} 
                   loadingId={loadingActionId} 
                   onOpen={handleOpenDoc}
+                  employee={employee}
                 />
              </Card>
            )}
@@ -788,7 +809,7 @@ const STATUS_LABELS_CPI: Record<string, string> = {
   cancelled: "Annulé"
 };
 
-function DocumentsTable({ docs, loadingId, onOpen }: { docs: HRDocument[], loadingId: string | null, onOpen: any }) {
+function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocument[], loadingId: string | null, onOpen: any, employee?: Employee }) {
   return (
     <Table>
       <TableHeader className="bg-secondary/10">
@@ -807,12 +828,22 @@ function DocumentsTable({ docs, loadingId, onOpen }: { docs: HRDocument[], loadi
           const isLoading = loadingId === d.id;
           return (
             <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
-              <TableCell className="pl-8">
-                <div className="font-bold text-slate-800 text-sm truncate max-w-[250px]">{d.title}</div>
+              <TableCell className="pl-8 py-4">
+                <div className="flex items-center gap-2">
+                   <div className="font-bold text-slate-800 text-sm truncate max-w-[250px]">{d.title}</div>
+                   {renderContractContext(d, employee)}
+                </div>
                 <div className="text-[9px] text-muted-foreground font-mono mt-0.5">{d.fileName}</div>
               </TableCell>
               <TableCell>
-                 <span className="text-[10px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[d.documentType] || d.documentType}</span>
+                 <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[d.documentType] || d.documentType}</span>
+                    {d.contractStartDate && (
+                       <span className="text-[9px] font-bold text-muted-foreground/50 italic">
+                         Période: {formatDateSafe(d.contractStartDate)} {d.contractEndDate ? `- ${formatDateSafe(d.contractEndDate)}` : ''}
+                       </span>
+                    )}
+                 </div>
               </TableCell>
               <TableCell>
                  <Badge variant="outline" className={cn("text-[8px] uppercase font-black h-4", d.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50")}>
