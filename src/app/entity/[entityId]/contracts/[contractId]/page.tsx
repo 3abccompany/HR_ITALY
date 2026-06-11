@@ -11,7 +11,7 @@ import {
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
-  ChevronDown, FolderOpen, FileCheck,
+  ChevronDown, ChevronRight, FolderOpen, FileCheck,
   Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
