@@ -15,9 +15,6 @@ import {
   Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -145,6 +142,13 @@ export default function ContractDetailPage() {
   [db, entityId, contractId]);
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
+  const isRenewalOverlap = useMemo(() => {
+    if (!contract?.endDate || !formData.startDate) return false;
+    const oldEnd = parseSafeDate(contract.endDate);
+    const newStart = parseSafeDate(formData.startDate);
+    return !!(oldEnd && newStart && newStart <= oldEnd);
+  }, [contract?.endDate, formData.startDate]);
+
   // Renewal State
   const [isRenewalModalOpen, setIsRenewalModalOpen] = useState(false);
   const [renewalForm, setRenewalForm] = useState({
@@ -152,13 +156,6 @@ export default function ContractDetailPage() {
     newEndDate: "",
     renewalReason: ""
   });
-
-  const isRenewalOverlap = useMemo(() => {
-    if (!contract?.endDate || !renewalForm.newStartDate) return false;
-    const oldEnd = parseSafeDate(contract.endDate);
-    const newStart = new Date(renewalForm.newStartDate);
-    return !!(oldEnd && newStart <= oldEnd);
-  }, [contract?.endDate, renewalForm.newStartDate]);
 
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
@@ -1915,6 +1912,7 @@ function getStatusBadge(status: ContractStatus) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 uppercase font-black text-[9px] px-2">Brouillon</Badge>;
     case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 uppercase font-black text-[9px] px-2">En signature</Badge>;
+    case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 uppercase font-black text-[9px] px-2">En attente d'activation</Badge>;
     case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white uppercase font-black text-[9px] px-2">Actif</Badge>;
     case 'renewed': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase font-black text-[9px] px-2">Renouvelé</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Terminé</Badge>;

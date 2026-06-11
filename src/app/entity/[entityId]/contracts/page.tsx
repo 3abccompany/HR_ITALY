@@ -183,6 +183,7 @@ export default function ContractsRegistryPage() {
                 options={[
                   { label: "Brouillon", value: "draft" },
                   { label: "En attente signature", value: "pending_signature" },
+                  { label: "En attente d'activation", value: "pending_activation" },
                   { label: "Actif", value: "active" },
                   { label: "Renouvelé", value: "renewed" },
                   { label: "Suspendu", value: "suspended" },
@@ -352,6 +353,7 @@ function getStatusBadge(status: ContractStatus) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 text-[10px] h-5">Brouillon</Badge>;
     case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] h-5">En signature</Badge>;
+    case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] h-5">En attente d'activation</Badge>;
     case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white text-[10px] h-5">Actif</Badge>;
     case 'renewed': return <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] h-5">Renouvelé</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px] h-5">Terminé</Badge>;

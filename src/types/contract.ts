@@ -1,6 +1,6 @@
 import { FieldValue } from "firebase/firestore";
 
-export type ContractStatus = "draft" | "pending_signature" | "active" | "suspended" | "terminated" | "archived" | "renewed";
+export type ContractStatus = "draft" | "pending_signature" | "pending_activation" | "active" | "suspended" | "terminated" | "archived" | "renewed";
 
 export interface Contract {
   contractId: string;
