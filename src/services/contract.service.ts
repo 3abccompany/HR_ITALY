@@ -266,7 +266,10 @@ export async function recordSignedDocumentReference(
     action: isReplacement ? "contract.signed_document_replaced" : "contract.signed_document_recorded",
     resourceType: "contract",
     resourceId: contractId,
-    details: { title: data.title, replacementReason: data.replacementReason }
+    details: sanitizePayload({ 
+      title: data.title, 
+      replacementReason: data.replacementReason 
+    })
   });
 }
 
@@ -738,4 +741,3 @@ export async function prepareContractRenewalAction(
 
   return result;
 }
-
