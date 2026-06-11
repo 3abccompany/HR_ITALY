@@ -99,7 +99,7 @@ export async function executeRenewalActivationServerTransaction(params: {
     if (!oldSnap.exists) throw new Error("Previous contract not found.");
     const oldContract = oldSnap.data()!;
 
-    // Support 'active' or 'expired' old contracts (Phase 4C Support)
+    // Phase 4C: Support both 'active' and 'expired' previous statuses
     if (!["active", "expired"].includes(oldContract.status)) {
       throw new Error(`Previous contract status is ${oldContract.status}. Expected active or expired.`);
     }
@@ -111,7 +111,7 @@ export async function executeRenewalActivationServerTransaction(params: {
     if (!empSnap.exists) throw new Error("Employee not found.");
     const employee = empSnap.data()!;
 
-    // Pointer validation rules
+    // Pointer validation rules (Phase 4C Logic)
     if (oldContract.status === "active") {
       // If the old contract is still active, the employee pointer MUST point to it
       if (employee.activeContractId !== newContract.previousContractId) {
@@ -201,4 +201,192 @@ export async function executeRenewalActivationServerTransaction(params: {
       status: "activated" as const
     };
   });
+}
+
+/**
+ * Scans and marks active fixed-term contracts (CDD) as expired if their end date has passed.
+ * Clears the activeContractId on the employee record if it matches.
+ */
+export async function processContractExpirationsServer(params?: {
+  actorUid?: string;
+  execute?: boolean;
+  today?: Date;
+}): Promise<{
+  mode: "dryRun" | "execute";
+  scanned: number;
+  eligible: number;
+  expired: number;
+  skipped: number;
+  failed: number;
+  results: Array<{
+    entityId: string;
+    contractId: string;
+    employeeId?: string;
+    status: "eligible" | "expired" | "skipped" | "failed";
+    reason: string;
+  }>;
+}> {
+  const execute = params?.execute === true;
+  const actorUid = params?.actorUid || "system:expiration";
+  const now = params?.today || new Date();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+
+  const summary = {
+    mode: (execute ? "execute" : "dryRun") as "execute" | "dryRun",
+    scanned: 0,
+    eligible: 0,
+    expired: 0,
+    skipped: 0,
+    failed: 0,
+    results: [] as any[]
+  };
+
+  try {
+    const entitiesSnap = await adminDb.collection("entities").get();
+    
+    for (const entityDoc of entitiesSnap.docs) {
+      const entityId = entityDoc.id;
+      if (entityDoc.data().status !== "active") continue;
+
+      const activeContractsSnap = await adminDb
+        .collection("entities")
+        .doc(entityId)
+        .collection("contracts")
+        .where("status", "==", "active")
+        .get();
+
+      summary.scanned += activeContractsSnap.size;
+
+      for (const contractDoc of activeContractsSnap.docs) {
+        const contractId = contractDoc.id;
+        const contract = contractDoc.data();
+
+        // 1. Discover Eligibility (Filter in code to avoid index requirement)
+        const typeStr = String(contract.contractType || "").toLowerCase();
+        const isCDD = ["fixed_term", "cdd", "tempo determinato"].some(l => typeStr.includes(l.toLowerCase()));
+        
+        const endDate = parseSafeDate(contract.endDate);
+        if (!isCDD || !endDate || !contract.employeeId) {
+          summary.skipped++;
+          continue;
+        }
+
+        const endCompare = new Date(endDate);
+        endCompare.setHours(0, 0, 0, 0);
+
+        if (endCompare >= todayStart) {
+          // Still valid (active until the end of today)
+          continue;
+        }
+
+        summary.eligible++;
+
+        if (!execute) {
+          summary.results.push({
+            entityId,
+            contractId,
+            employeeId: contract.employeeId,
+            status: "eligible",
+            reason: `End date ${contract.endDate} has passed.`
+          });
+          continue;
+        }
+
+        // 2. Perform Expiration in a Transaction
+        try {
+          await adminDb.runTransaction(async (transaction) => {
+            const cRef = adminDb.collection("entities").doc(entityId).collection("contracts").doc(contractId);
+            const cSnap = await transaction.get(cRef);
+            
+            if (!cSnap.exists || cSnap.data()?.status !== "active") {
+              throw new Error("Contract record is no longer active.");
+            }
+
+            const cData = cSnap.data()!;
+            const updateTime = FieldValue.serverTimestamp();
+
+            // A. Update Contract
+            transaction.update(cRef, {
+              status: "expired",
+              expiredAt: updateTime,
+              expiredBy: actorUid,
+              updatedAt: updateTime,
+              updatedBy: actorUid
+            });
+
+            // B. Update Employee Pointer (Safe clearing)
+            if (cData.employeeId) {
+              const eRef = adminDb.collection("entities").doc(entityId).collection("employees").doc(cData.employeeId);
+              const eSnap = await transaction.get(eRef);
+              
+              if (eSnap.exists) {
+                const eData = eSnap.data();
+                if (eData.activeContractId === contractId) {
+                  transaction.update(eRef, {
+                    activeContractId: null,
+                    updatedAt: updateTime
+                  });
+                }
+              }
+            }
+
+            // C. Timeline Entry
+            if (cData.personId) {
+              const tRef = adminDb.collection("entities").doc(entityId).collection("personTimeline").doc();
+              transaction.set(tRef, sanitize({
+                eventId: tRef.id,
+                entityId,
+                personId: cData.personId,
+                employeeId: cData.employeeId,
+                contractId,
+                type: "contract.expired",
+                label: "Contrat expiré",
+                description: `Fin de contrat à durée déterminée atteinte le ${cData.endDate}.`,
+                sourceCollection: "contracts",
+                sourceId: contractId,
+                createdAt: updateTime,
+                createdBy: actorUid
+              }));
+            }
+
+            // D. Audit Log
+            const aRef = adminDb.collection("auditLogs").doc();
+            transaction.set(aRef, sanitize({
+              userId: actorUid,
+              entityId,
+              action: "contract.auto_expiration_executed",
+              resourceType: "contract",
+              resourceId: contractId,
+              details: { employeeId: cData.employeeId, endDate: cData.endDate },
+              timestamp: updateTime
+            }));
+          });
+
+          summary.expired++;
+          summary.results.push({
+            entityId,
+            contractId,
+            employeeId: contract.employeeId,
+            status: "expired",
+            reason: "Status set to expired and pointer cleared."
+          });
+        } catch (err: any) {
+          summary.failed++;
+          summary.results.push({
+            entityId,
+            contractId,
+            employeeId: contract.employeeId,
+            status: "failed",
+            reason: err.message
+          });
+        }
+      }
+    }
+
+    return summary as any;
+  } catch (err: any) {
+    console.error("[Expiration Service] Critical Failure:", err);
+    throw err;
+  }
 }
