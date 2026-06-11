@@ -92,6 +92,15 @@ export interface Contract {
   terminationDocumentId?: string;
   terminationDocumentUrl?: string;
 
+  // --- Renewal Metadata (Phase 1) ---
+  previousContractId?: string;
+  renewedByContractId?: string;
+  pendingRenewalContractId?: string;
+  renewalReason?: string;
+  isRenewal?: boolean;
+  renewalDraftCreatedAt?: Date | FieldValue;
+  renewalDraftCreatedBy?: string;
+
   // --- Lifecycle & Audit ---
   status: ContractStatus;
   notes?: string;

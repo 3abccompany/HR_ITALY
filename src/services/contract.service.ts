@@ -76,7 +76,8 @@ export async function updateContract(entityId: string, contractId: string, data:
       'signedDocumentUploadedAt', 'signedDocumentUploadedBy', 'signedDocumentReplacedAt',
       'signedDocumentReplacedBy', 'signedDocumentReplacementReason', 'signedDocumentPreviousReferences',
       'actualEndDate', 'terminationReason', 'terminationNotes', 'terminationDocumentId', 'terminationDocumentUrl',
-      'terminatedBy'
+      'terminatedBy', 'previousContractId', 'renewedByContractId', 'pendingRenewalContractId', 'isRenewal',
+      'renewalDraftCreatedAt', 'renewalDraftCreatedBy'
     ];
 
     let hasContentChanges = false;
@@ -580,3 +581,161 @@ export async function archiveContractAction(entityId: string, contractId: string
     resourceId: contractId,
   });
 }
+
+/**
+ * Phase 1: Prepares a renewal draft for a fixed-term contract (CDD).
+ * Creates a new contract linked to the old one.
+ */
+export async function prepareContractRenewalAction(
+  entityId: string, 
+  oldContractId: string, 
+  payload: { 
+    newStartDate: string, 
+    newEndDate: string, 
+    renewalReason?: string, 
+    actorUid: string 
+  }
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  const { newStartDate, newEndDate, renewalReason, actorUid } = payload;
+
+  const oldContractRef = doc(db, `entities/${entityId}/contracts`, oldContractId);
+  const newContractRef = doc(collection(db, `entities/${entityId}/contracts`));
+  const newContractId = newContractRef.id;
+
+  const result = await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(oldContractRef);
+    if (!snap.exists()) throw new Error("Contrat d'origine introuvable.");
+    const old = snap.data() as Contract;
+
+    // 1. Validations
+    if (old.entityId !== entityId) throw new Error("Incohérence d'entité.");
+    if (!old.employeeId) throw new Error("ID Employé manquant sur le contrat d'origine.");
+
+    // Detect CDD / Fixed term
+    const cddLabels = ["fixed_term", "Tempo determinato", "CDD"];
+    const isCDD = cddLabels.some(l => old.contractType?.toLowerCase().includes(l.toLowerCase()));
+    if (!isCDD) throw new Error("Seul un contrat à durée déterminée (CDD) peut être renouvelé.");
+
+    if (old.renewedByContractId || old.pendingRenewalContractId) {
+      throw new Error("Une demande de renouvellement existe déjà pour ce contrat.");
+    }
+
+    if (!newStartDate || !newEndDate) throw new Error("Dates de début et de fin requises.");
+    if (new Date(newEndDate) <= new Date(newStartDate)) {
+      throw new Error("La date de fin doit être postérieure à la date de début.");
+    }
+
+    // 2. Prepare New Contract (Cloning core snapshots)
+    const newContractData: any = {
+      contractId: newContractId,
+      entityId,
+      personId: old.personId,
+      employeeId: old.employeeId,
+      sourceOfferId: old.sourceOfferId || null,
+      employeeDisplayName: old.employeeDisplayName,
+      employeeCode: old.employeeCode,
+      
+      // Legal Employer Snapshot
+      entityName: old.entityName,
+      entityLegalName: old.entityLegalName,
+      entityVatNumber: old.entityVatNumber,
+      companyAddressSnapshot: old.companyAddressSnapshot,
+      legalRepresentativeName: old.legalRepresentativeName,
+      legalRepresentativeTitle: old.legalRepresentativeTitle,
+      
+      // Legal Employee Snapshot
+      taxCode: old.taxCode,
+      employeeAddressSnapshot: old.employeeAddressSnapshot,
+      dateOfBirth: old.dateOfBirth,
+      placeOfBirth: old.placeOfBirth,
+      
+      // Job & Workplace
+      jobTitleName: old.jobTitleName,
+      departmentName: old.departmentName,
+      worksiteName: old.worksiteName,
+      missionsSnapshot: old.missionsSnapshot || [],
+      
+      // Contractual Parameters
+      contractType: old.contractType,
+      weeklyHours: old.weeklyHours,
+      isPartTime: old.isPartTime ?? null,
+      workingScheduleNotes: old.workingScheduleNotes || null,
+      
+      // Classification
+      ccnlName: old.ccnlName,
+      levelCode: old.levelCode,
+      levelLabel: old.levelLabel,
+      qualificationCategory: old.qualificationCategory,
+      
+      // Remuneration
+      grossMonthly: old.grossMonthly,
+      grossAnnual: old.grossAnnual,
+      monthlyPayments: old.monthlyPayments,
+
+      // Renewal specific
+      status: "draft",
+      previousContractId: oldContractId,
+      isRenewal: true,
+      renewalReason: renewalReason || null,
+      startDate: newStartDate,
+      endDate: newEndDate,
+      
+      // Audit
+      createdAt: serverTimestamp(),
+      createdBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    };
+
+    // 3. Perform Writes
+    transaction.set(newContractRef, sanitizePayload(newContractData));
+    
+    transaction.update(oldContractRef, {
+      pendingRenewalContractId: newContractId,
+      renewalDraftCreatedAt: serverTimestamp(),
+      renewalDraftCreatedBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
+
+    // 4. Timeline Event
+    if (old.personId) {
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(timelineRef, sanitizePayload({
+        eventId: timelineRef.id,
+        entityId,
+        personId: old.personId,
+        employeeId: old.employeeId,
+        contractId: newContractId,
+        type: "contract.renewal_prepared",
+        label: "Renouvellement CDD initié",
+        description: `Brouillon de renouvellement créé pour la période du ${newStartDate} au ${newEndDate}.`,
+        sourceCollection: "contracts",
+        sourceId: newContractId,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+      }));
+    }
+
+    return { 
+      newContractId, 
+      oldContractId, 
+      employeeId: old.employeeId, 
+      status: "draft" as ContractStatus 
+    };
+  });
+
+  // 5. Post-transaction Audit Log
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "contract.renewal_draft_created",
+    resourceType: "contract",
+    resourceId: newContractId,
+    details: { oldContractId, newStartDate, newEndDate }
+  });
+
+  return result;
+}
+
