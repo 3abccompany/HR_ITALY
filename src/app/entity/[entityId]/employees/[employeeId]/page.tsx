@@ -720,7 +720,7 @@ function DetailItemWhite({ label, value, icon: Icon }: { label: string, value: a
     <div className="space-y-1">
       <p className="text-[9px] font-black uppercase text-white/40 tracking-widest">{label}</p>
       <div className="flex items-center gap-2 text-xs font-black">
-         {Icon && <Icon className="w-3 h-3 opacity-40" />}
+         {Icon && <Icon className="w-3.5 h-3.5 opacity-40" />}
          <span className="truncate">{value || "-"}</span>
       </div>
     </div>
@@ -774,6 +774,7 @@ function getContractStatusBadge(status: string) {
     case 'pending_activation': return <Badge variant="secondary" className="text-[8px] h-4 bg-indigo-50 text-indigo-700 border-indigo-200 uppercase font-black px-2">Activation</Badge>;
     case 'active': return <Badge className="text-[8px] h-4 bg-green-500 text-white border-none uppercase font-black px-2">Actif</Badge>;
     case 'renewed': return <Badge variant="secondary" className="text-[8px] h-4 bg-blue-50 text-blue-700 border-blue-200 uppercase font-black px-2">Renouvelé</Badge>;
+    case 'expired': return <Badge variant="outline" className="text-[8px] h-4 bg-slate-100 text-slate-500 uppercase font-black px-2">Expiré</Badge>;
     case 'terminated': return <Badge variant="destructive" className="text-[8px] h-4 bg-red-50 text-red-700 border-red-200 uppercase font-black px-2">Terminé</Badge>;
     default: return <Badge variant="outline" className="text-[8px] h-4 uppercase font-black px-2">{status}</Badge>;
   }

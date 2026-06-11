@@ -564,7 +564,7 @@ export default function ContractDetailPage() {
     } catch (err: any) {
       let msg = err.message || "Une erreur est survenue.";
       if (err.message === "ALREADY_HAS_ACTIVE_CONTRACT") {
-        msg = "Un autre contrat actif existe déjà pour cet employé.";
+        msg = "Un altro contratto attivo esiste già per questo collaboratore.";
       }
       if (err.message === "MISSING_SIGNED_DOCUMENT") {
         msg = "Veuillez enregistrer le contrat signé avant l'activation.";
@@ -811,7 +811,7 @@ export default function ContractDetailPage() {
   // Renewal Logic
   const isFixedTermCDD = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
   const canShowRenewButton = isFixedTermCDD && 
-    ['active', 'terminated', 'suspended', 'pending_signature', 'pending_activation'].includes(contract.status) && 
+    ['active', 'terminated', 'suspended', 'pending_signature', 'pending_activation', 'expired'].includes(contract.status) && 
     !contract.renewedByContractId && 
     !contract.pendingRenewalContractId && 
     canUpdate;
@@ -1506,14 +1506,6 @@ export default function ContractDetailPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="py-6 space-y-6">
-            {isRenewalOverlap && (
-               <Alert className="bg-orange-50 border-orange-200 rounded-xl">
-                  <AlertTriangle className="h-4 w-4 text-orange-600" />
-                  <AlertDescription className="text-xs font-bold text-orange-700">
-                    Attention : La nouvelle date de début chevauche la période du contrat actuel.
-                  </AlertDescription>
-               </Alert>
-            )}
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -1960,6 +1952,7 @@ function getStatusBadge(status: ContractStatus) {
     case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 uppercase font-black text-[9px] px-2">En attente d'activation</Badge>;
     case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white uppercase font-black text-[9px] px-2">Actif</Badge>;
     case 'renewed': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase font-black text-[9px] px-2">Renouvelé</Badge>;
+    case 'expired': return <Badge variant="outline" className="bg-slate-100 text-slate-500 border-slate-200 uppercase font-black text-[9px] px-2">Expiré</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Terminé</Badge>;
     case 'suspended': return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 uppercase font-black text-[9px] px-2">Suspendu</Badge>;
     case 'archived': return <Badge variant="outline" className="text-muted-foreground uppercase font-black text-[9px] px-2">Archivé</Badge>;

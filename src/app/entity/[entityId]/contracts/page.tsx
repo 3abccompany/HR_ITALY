@@ -186,6 +186,7 @@ export default function ContractsRegistryPage() {
                   { label: "En attente d'activation", value: "pending_activation" },
                   { label: "Actif", value: "active" },
                   { label: "Renouvelé", value: "renewed" },
+                  { label: "Expiré", value: "expired" },
                   { label: "Suspendu", value: "suspended" },
                   { label: "Terminé", value: "terminated" },
                   { label: "Archivé", value: "archived" }
@@ -356,6 +357,7 @@ function getStatusBadge(status: ContractStatus) {
     case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] h-5">En attente d'activation</Badge>;
     case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white text-[10px] h-5">Actif</Badge>;
     case 'renewed': return <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] h-5">Renouvelé</Badge>;
+    case 'expired': return <Badge variant="outline" className="bg-slate-100 text-slate-500 border-slate-200 text-[10px] h-5">Expiré</Badge>;
     case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px] h-5">Terminé</Badge>;
     case 'suspended': return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 text-[10px] h-5">Suspendu</Badge>;
     case 'archived': return <Badge variant="outline" className="text-muted-foreground text-[10px] h-5">Archivé</Badge>;
