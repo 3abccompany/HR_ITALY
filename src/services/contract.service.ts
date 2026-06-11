@@ -9,7 +9,8 @@ import {
   setDoc,
   query,
   where,
-  getDocs
+  getDocs,
+  arrayUnion
 } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
@@ -201,8 +202,8 @@ export async function recordSignedDocumentReference(
     const contract = snap.data() as Contract;
     contractData = contract;
 
-    if (contract.status !== "pending_signature") {
-      throw new Error("L'enregistrement du document n'est possible qu'en phase de signature.");
+    if (contract.status !== "pending_signature" && contract.status !== "draft") {
+      throw new Error("L'enregistrement du document n'est possible qu'en phase de signature ou brouillon.");
     }
 
     const previousRefs = contract.signedDocumentPreviousReferences || [];
@@ -740,4 +741,235 @@ export async function prepareContractRenewalAction(
   });
 
   return result;
+}
+
+/**
+ * Validates a signed renewal contract and marks it as pending_activation.
+ */
+export async function markContractAsReadyForActivationAction(entityId: string, contractId: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  // Pre-check for existing pending activations for this employee
+  const tempRef = doc(db, `entities/${entityId}/contracts`, contractId);
+  const tempSnap = await getDoc(tempRef);
+  if (!tempSnap.exists()) throw new Error("Contrat introuvable.");
+  const contractData = tempSnap.data() as Contract;
+
+  const pendingQ = query(
+    collection(db, `entities/${entityId}/contracts`),
+    where("employeeId", "==", contractData.employeeId),
+    where("status", "==", "pending_activation")
+  );
+  const pendingSnap = await getDocs(pendingQ);
+  const others = pendingSnap.docs.filter(d => d.id !== contractId);
+  if (others.length > 0) {
+    throw new Error("Un autre contrat est déjà en attente d'activation pour ce collaborateur.");
+  }
+
+  return await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(tempRef);
+    const contract = snap.data() as Contract;
+
+    if (!contract.isRenewal || !contract.previousContractId) {
+      throw new Error("Ce contrat n'est pas un renouvellement valide.");
+    }
+
+    if (contract.status !== "draft" && contract.status !== "pending_signature") {
+      throw new Error("Action impossible pour le statut actuel (" + contract.status + ")");
+    }
+
+    const hasProof = !!(
+      contract.signedDocumentId || 
+      contract.signedDocumentUrl || 
+      contract.signedDocumentTitle || 
+      contract.signedDocumentFileName || 
+      contract.signedDocumentStoragePath
+    );
+
+    if (!hasProof) throw new Error("Veuillez enregistrer le contrat signé avant de le marquer comme prêt.");
+
+    if (!contract.startDate) throw new Error("Date de début manquante.");
+    
+    const isCDD = ["fixed_term", "Tempo determinato", "CDD"].some(l => 
+      contract.contractType?.toLowerCase().includes(l.toLowerCase())
+    );
+
+    if (isCDD) {
+      if (!contract.endDate) throw new Error("Date de fin manquante (requis pour CDD).");
+      if (new Date(contract.endDate) <= new Date(contract.startDate)) {
+        throw new Error("La date de fin doit être postérieure à la date de début.");
+      }
+    }
+
+    if (!contract.ccnlId && !contract.ccnlName) throw new Error("Informations CCNL manquantes.");
+    if (!contract.levelId && !contract.levelCode) throw new Error("Classification (Niveau) manquante.");
+    
+    if (contract.grossMonthly !== undefined && contract.grossMonthly < 0) throw new Error("Salaire brut mensuel invalide.");
+    if (contract.grossAnnual !== undefined && contract.grossAnnual < 0) throw new Error("Salaire brut annuel invalide.");
+
+    const oldContractRef = doc(db, `entities/${entityId}/contracts`, contract.previousContractId);
+    const oldSnap = await transaction.get(oldContractRef);
+    if (!oldSnap.exists()) throw new Error("Contrat d'origine introuvable.");
+    const old = oldSnap.data() as Contract;
+
+    if (old.status !== "active") {
+      throw new Error("Le contrat précédent doit être 'Actif' pour planifier un renouvellement.");
+    }
+
+    if (old.pendingRenewalContractId !== contractId) {
+      throw new Error("Incohérence de lien de renouvellement.");
+    }
+
+    const employeeRef = doc(db, `entities/${entityId}/employees`, contract.employeeId);
+    const empSnap = await transaction.get(employeeRef);
+    if (!empSnap.exists()) throw new Error("Employé introuvable.");
+    const emp = empSnap.data();
+
+    if (emp.activeContractId !== contract.previousContractId) {
+      throw new Error("L'employé possède un autre contrat actif qui bloque le renouvellement.");
+    }
+
+    const now = serverTimestamp();
+    transaction.update(tempRef, sanitizePayload({
+      status: "pending_activation",
+      readyForActivationAt: now,
+      readyForActivationBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid,
+    }));
+
+    if (contract.personId) {
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(timelineRef, sanitizePayload({
+        eventId: timelineRef.id,
+        entityId,
+        personId: contract.personId,
+        employeeId: contract.employeeId,
+        contractId,
+        type: "contract.ready_for_activation",
+        label: "Renouvellement validé",
+        description: `Le contrat de renouvellement a été signé et validé. Activation prévue le ${contract.startDate}.`,
+        sourceCollection: "contracts",
+        sourceId: contractId,
+        createdAt: now,
+        createdBy: actorUid,
+      }));
+    }
+
+    return { 
+      contractId, 
+      previousContractId: contract.previousContractId, 
+      employeeId: contract.employeeId, 
+      status: "pending_activation" 
+    };
+  }).then(async (res) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "contract.marked_ready",
+      resourceType: "contract",
+      resourceId: contractId,
+      details: { previousContractId: res.previousContractId }
+    });
+    return res;
+  });
+}
+
+/**
+ * Atomic transition from old active CDD to new active renewal contract.
+ * Reusable by cron or manual trigger.
+ */
+export async function executeContractTransitionTransaction(entityId: string, newContractId: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const newContractRef = doc(db, `entities/${entityId}/contracts`, newContractId);
+
+  return await runTransaction(db, async (transaction) => {
+    const newSnap = await transaction.get(newContractRef);
+    if (!newSnap.exists()) throw new Error("Nouveau contrat introuvable.");
+    const newContract = newSnap.data() as Contract;
+
+    if (newContract.status !== "pending_activation") {
+      throw new Error("Seul un contrat en attente d'activation peut être activé.");
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    if (newContract.startDate > today) {
+      throw new Error("Activation anticipée non autorisée (Date prévue: " + newContract.startDate + ")");
+    }
+
+    const oldContractRef = doc(db, `entities/${entityId}/contracts`, newContract.previousContractId!);
+    const oldSnap = await transaction.get(oldContractRef);
+    if (!oldSnap.exists()) throw new Error("Contrat d'origine introuvable.");
+    const oldContract = oldSnap.data() as Contract;
+
+    const employeeRef = doc(db, `entities/${entityId}/employees`, newContract.employeeId);
+    const empSnap = await transaction.get(employeeRef);
+    if (!empSnap.exists()) throw new Error("Employé introuvable.");
+    const empData = empSnap.data();
+
+    if (oldContract.status !== "active") {
+      throw new Error("L'ancien contrat n'est pas 'Actif' (Statut: " + oldContract.status + ")");
+    }
+
+    if (empData.activeContractId !== newContract.previousContractId) {
+      throw new Error("Désynchronisation de la chaîne : l'employé n'est pas sur le contrat attendu.");
+    }
+
+    const now = serverTimestamp();
+
+    // A. Terminate Old (Status Renewed)
+    transaction.update(oldContractRef, {
+      status: "renewed",
+      renewedByContractId: newContractId,
+      updatedAt: now,
+      updatedBy: actorUid
+    });
+
+    // B. Activate New
+    transaction.update(newContractRef, {
+      status: "active",
+      activatedAt: now,
+      activatedBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid
+    });
+
+    // C. Update Employee Pointer
+    transaction.update(employeeRef, {
+      activeContractId: newContractId,
+      updatedAt: now
+    });
+
+    // D. Timeline Event
+    if (newContract.personId) {
+      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      transaction.set(timelineRef, sanitizePayload({
+        eventId: timelineRef.id,
+        entityId,
+        personId: newContract.personId,
+        employeeId: newContract.employeeId,
+        contractId: newContractId,
+        type: "contract.auto_activated",
+        label: "Contrat de renouvellement activé",
+        description: `Le renouvellement ${newContract.employeeCode || newContractId} est désormais actif.`,
+        sourceCollection: "contracts",
+        sourceId: newContractId,
+        createdAt: now,
+        createdBy: actorUid,
+      }));
+    }
+
+    return { success: true, employeeId: newContract.employeeId, newContractId };
+  }).then(async (res) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "contract.transition_executed",
+      resourceType: "contract",
+      resourceId: newContractId,
+      details: { actor: actorUid }
+    });
+    return res;
+  });
 }
