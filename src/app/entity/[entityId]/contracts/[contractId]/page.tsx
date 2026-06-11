@@ -43,7 +43,8 @@ import {
   archiveContractAction,
   rollbackToDraft,
   updateContract,
-  recordSignedDocumentReference
+  recordSignedDocumentReference,
+  prepareContractRenewalAction
 } from "@/services/contract.service";
 import {
   Dialog,
@@ -132,6 +133,14 @@ export default function ContractDetailPage() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isValidationDialogOpen, setIsValidationDialogOpen] = useState(false);
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
+
+  // Renewal State
+  const [isRenewalModalOpen, setIsRenewalModalOpen] = useState(false);
+  const [renewalForm, setRenewalForm] = useState({
+    newStartDate: "",
+    newEndDate: "",
+    renewalReason: ""
+  });
 
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
@@ -284,6 +293,17 @@ export default function ContractDetailPage() {
       overtimeNote: getEffectiveValue('overtimeNote', ""),
     };
   }, [contract, entity, employee, person, offer, mandatoryCommunication]);
+
+  // Set default renewal start date
+  useEffect(() => {
+    if (contract && contract.endDate) {
+      const nextDay = addDays(parseSafeDate(contract.endDate) || new Date(), 1);
+      setRenewalForm(p => ({
+        ...p,
+        newStartDate: nextDay.toISOString().split('T')[0]
+      }));
+    }
+  }, [contract]);
 
   // Handle PDF Generation
   const handleGeneratePdf = async () => {
@@ -565,6 +585,32 @@ export default function ContractDetailPage() {
     }
   };
 
+  const handleCreateRenewal = async () => {
+    if (!user || !entityId || !contractId) return;
+    if (!renewalForm.newStartDate || !renewalForm.newEndDate) {
+      toast({ variant: "destructive", title: "Erreur", description: "Veuillez renseigner les dates du nouveau contrat." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const result = await prepareContractRenewalAction(entityId, contractId, {
+        newStartDate: renewalForm.newStartDate,
+        newEndDate: renewalForm.newEndDate,
+        renewalReason: renewalForm.renewalReason,
+        actorUid: user.uid
+      });
+
+      toast({ title: "Brouillon de renouvellement créé" });
+      setIsRenewalModalOpen(false);
+      router.push(`/entity/${entityId}/contracts/${result.newContractId}`);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
@@ -583,6 +629,7 @@ export default function ContractDetailPage() {
   const isPendingSignature = contract?.status === 'pending_signature';
   const isActive = contract?.status === 'active';
   const isTerminated = contract?.status === 'terminated';
+  const isRenewed = contract?.status === 'renewed';
   
   const hasSignedDoc = !!(
     contract.signedDocumentId || 
@@ -602,6 +649,21 @@ export default function ContractDetailPage() {
   const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
   const isContractExpiringSoon = isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30));
 
+  // Renewal Logic
+  const isFixedTermCDD = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
+  const canShowRenewButton = isFixedTermCDD && 
+    ['active', 'terminated', 'suspended', 'pending_signature'].includes(contract.status) && 
+    !contract.renewedByContractId && 
+    !contract.pendingRenewalContractId && 
+    canUpdate;
+
+  const isRenewalOverlap = useMemo(() => {
+    if (!contract?.endDate || !renewalForm.newStartDate) return false;
+    const oldEnd = parseSafeDate(contract.endDate);
+    const newStart = new Date(renewalForm.newStartDate);
+    return oldEnd && newStart <= oldEnd;
+  }, [contract, renewalForm.newStartDate]);
+
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
@@ -619,6 +681,17 @@ export default function ContractDetailPage() {
         </div>
 
         <div className="flex items-center gap-3">
+           {canShowRenewButton && !isEditing && (
+             <Button 
+               variant="outline" 
+               onClick={() => setIsRenewalModalOpen(true)} 
+               disabled={processing} 
+               className="gap-2 bg-white rounded-xl font-bold text-accent border-accent/20 hover:bg-accent/5"
+             >
+               <RefreshCcw className="w-4 h-4" /> Renouveler CDD
+             </Button>
+           )}
+
            {isDraft && !isEditing && (
              <Button variant="outline" onClick={handleEnterEditMode} className="gap-2 bg-white rounded-xl font-bold">
                 <Edit className="w-4 h-4" /> Éditer les informations
@@ -703,6 +776,38 @@ export default function ContractDetailPage() {
             </Alert>
           )}
 
+          {/* Renewal Banner if pending */}
+          {contract.pendingRenewalContractId && !isRenewed && (
+             <Alert className="rounded-2xl border-accent/20 bg-accent/5 shadow-md">
+                <RefreshCcw className="h-5 w-5 text-accent" />
+                <div className="ml-2">
+                   <AlertTitle className="font-bold text-accent-foreground">Renouvellement en cours</AlertTitle>
+                   <AlertDescription className="text-sm text-accent-foreground/70">
+                      Un brouillon de renouvellement pour ce contrat a été créé le {formatDateSafe(contract.renewalDraftCreatedAt)}.
+                      <Link href={`/entity/${entityId}/contracts/${contract.pendingRenewalContractId}`} className="ml-2 font-bold underline">
+                         Accéder au nouveau contrat <ChevronRight className="w-3 h-3 inline" />
+                      </Link>
+                   </AlertDescription>
+                </div>
+             </Alert>
+          )}
+
+          {/* Renewal Banner if finished */}
+          {isRenewed && contract.renewedByContractId && (
+             <Alert className="rounded-2xl border-blue-100 bg-blue-50/50 shadow-sm">
+                <CheckCircle2 className="h-5 w-5 text-blue-600" />
+                <div className="ml-2">
+                   <AlertTitle className="font-bold text-blue-800">Contrat Renouvelé</AlertTitle>
+                   <AlertDescription className="text-sm text-blue-700">
+                      Ce contrat a été prolongé. Le contrat actif prend le relais.
+                      <Link href={`/entity/${entityId}/contracts/${contract.renewedByContractId}`} className="ml-2 font-bold underline">
+                         Voir contrat suivant <ChevronRight className="w-3 h-3 inline" />
+                      </Link>
+                   </AlertDescription>
+                </div>
+             </Alert>
+          )}
+
           {/* Termination Info if terminated */}
           {isTerminated && (
             <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm">
@@ -772,7 +877,7 @@ export default function ContractDetailPage() {
                             <p className="text-xs text-orange-700">Vous devez générer la version préparée du contrat avant de pouvoir l'envoyer en signature.</p>
                          </div>
                       </div>
-                      <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing || isTerminated} className="w-full h-12 rounded-xl font-black gap-2">
+                      <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing || isTerminated || isRenewed} className="w-full h-12 rounded-xl font-black gap-2">
                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCode className="w-4 h-4" />}
                          Générer le PDF du contratto
                       </Button>
@@ -798,7 +903,7 @@ export default function ContractDetailPage() {
                          )}
                       </div>
 
-                      {isPdfOutdated && !isTerminated && (
+                      {isPdfOutdated && !isTerminated && !isRenewed && (
                         <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
                            <AlertTriangle className="h-4 w-4 text-orange-600" />
                            <AlertTitle className="text-sm font-bold text-orange-800">PDF obsolète</AlertTitle>
@@ -1120,6 +1225,12 @@ export default function ContractDetailPage() {
                 {contract.signedAt && <AuditRow label="Signé le" value={formatDateTime(contract.signedAt)} />}
                 {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
                 {contract.terminatedAt && <AuditRow label="Clôturé le" value={formatDateTime(contract.terminatedAt)} />}
+                {contract.previousContractId && (
+                  <div className="space-y-1">
+                    <AuditRow label="Origine" value="Renouvellement" />
+                    <p className="text-[8px] font-mono text-muted-foreground text-right">{contract.previousContractId}</p>
+                  </div>
+                )}
                 <Separator className="opacity-20" />
                 <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
                 <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
@@ -1150,6 +1261,73 @@ export default function ContractDetailPage() {
           </div>
           <DialogFooter>
              <Button onClick={() => setIsValidationDialogOpen(false)} className="w-full rounded-xl">Corriger les informations</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Renewal Modal */}
+      <Dialog open={isRenewalModalOpen} onOpenChange={setIsRenewalModalOpen}>
+        <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+              <RefreshCcw className="w-6 h-6 text-accent" /> Renouveler le contrat (CDD)
+            </DialogTitle>
+            <DialogDescription>
+              Créez un nouveau contrat draft pré-rempli à partir des conditions actuelles.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-6 space-y-6">
+            {isRenewalOverlap && (
+               <Alert className="bg-orange-50 border-orange-200 rounded-xl">
+                  <AlertTriangle className="h-4 w-4 text-orange-600" />
+                  <AlertDescription className="text-xs font-bold text-orange-700">
+                    Attention : La nouvelle date de début chevauche la période du contrat actuel.
+                  </AlertDescription>
+               </Alert>
+            )}
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Date de début (Nouveau)</Label>
+                  <Input 
+                    type="date"
+                    value={renewalForm.newStartDate}
+                    onChange={(e) => setRenewalForm(p => ({...p, newStartDate: e.target.value}))}
+                    className="h-11 rounded-xl"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Date de fin (Nouveau)</Label>
+                  <Input 
+                    type="date"
+                    value={renewalForm.newEndDate}
+                    onChange={(e) => setRenewalForm(p => ({...p, newEndDate: e.target.value}))}
+                    className="h-11 rounded-xl"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black">Motif du renouvellement (Optionnel)</Label>
+                <Textarea 
+                  value={renewalForm.renewalReason}
+                  onChange={(e) => setRenewalForm(p => ({...p, renewalReason: e.target.value}))}
+                  placeholder="Ex: Prolongation de la mission saisonnière..."
+                  className="min-h-[100px] rounded-xl"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+             <Button variant="ghost" onClick={() => setIsRenewalModalOpen(false)} disabled={processing}>Annuler</Button>
+             <Button 
+               onClick={handleCreateRenewal} 
+               disabled={processing || !renewalForm.newStartDate || !renewalForm.newEndDate}
+               className="bg-primary text-white font-black rounded-xl px-8 shadow-lg"
+             >
+               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
+               Créer le brouillon
+             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
