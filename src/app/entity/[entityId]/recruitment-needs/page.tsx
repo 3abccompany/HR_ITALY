@@ -1,14 +1,14 @@
-
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Plus, Search, Edit, PowerOff, Loader2, 
   Calendar, Building2, MapPin, Users,
   AlertCircle, MoreVertical, Archive, Eye,
   Clock, FileText, Briefcase, FileCode,
-  Filter, X, ListFilter, ChevronDown, CheckCircle2
+  Filter, X, ListFilter, ChevronDown, CheckCircle2,
+  ChevronLeft, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComp } from "@/components/ui/calendar";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { format, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isAfter } from "date-fns";
@@ -98,6 +100,9 @@ export default function RecruitmentNeedsPage() {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [statusChange, setStatusChange] = useState<{ id: string, action: 'cancel' | 'archive' } | null>(null);
+  
+  // Pagination State
+  const [pagination, setPagination] = useState({ page: 1, pageSize: 25 });
 
   // Permissions
   const canRead = hasPermission("recruitmentNeeds.read");
@@ -109,7 +114,7 @@ export default function RecruitmentNeedsPage() {
   // Queries
   const needsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    // Hardening: Removed Firestore-side orderBy to ensure records missing createdAt are visible
+    // Hardened: Removed Firestore-side orderBy to ensure visibility of records missing createdAt
     return query(collection(db, `entities/${entityId}/recruitmentNeeds`));
   }, [db, entityId, canRead]);
 
@@ -133,7 +138,7 @@ export default function RecruitmentNeedsPage() {
     Array.from(new Set(needs?.map(n => getResolvedSiteName(n)) || [])).sort(),
   [needs]);
 
-  // Filtering Logic
+  // Filtering & Sorting Logic
   const filteredNeeds = useMemo(() => {
     if (!needs) return [];
     
@@ -195,7 +200,7 @@ export default function RecruitmentNeedsPage() {
       return true;
     });
 
-    // Hardening: Chronological Frontend Sorting
+    // Hardened: Descending chronological sorting in memory
     result.sort((a, b) => {
       const dateA = parseSafeDate(a.createdAt || a.updatedAt || a.issueDate || 0)?.getTime() || 0;
       const dateB = parseSafeDate(b.createdAt || b.updatedAt || b.issueDate || 0)?.getTime() || 0;
@@ -204,6 +209,18 @@ export default function RecruitmentNeedsPage() {
 
     return result;
   }, [needs, filters]);
+
+  // Pagination Logic
+  const totalResults = filteredNeeds.length;
+  const totalPages = Math.ceil(totalResults / pagination.pageSize);
+  const paginatedNeeds = useMemo(() => {
+    const start = (pagination.page - 1) * pagination.pageSize;
+    return filteredNeeds.slice(start, start + pagination.pageSize);
+  }, [filteredNeeds, pagination]);
+
+  useEffect(() => {
+    setPagination(p => ({ ...p, page: 1 }));
+  }, [filters, pagination.pageSize]);
 
   const updateFilter = (key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -262,7 +279,7 @@ export default function RecruitmentNeedsPage() {
       </div>
 
       <div className="space-y-6">
-        {/* Advanced Filter Bar */}
+        {/* Filter Bar */}
         <div className="flex flex-col gap-4">
           <ScrollArea className="w-full whitespace-nowrap">
             <div className="flex w-max space-x-3 p-1">
@@ -403,7 +420,7 @@ export default function RecruitmentNeedsPage() {
             <TableBody>
               {loadingNeeds ? (
                 <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-              ) : filteredNeeds.length === 0 ? (
+              ) : paginatedNeeds.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-20">
                     <div className="flex flex-col items-center gap-3 text-muted-foreground">
@@ -414,7 +431,7 @@ export default function RecruitmentNeedsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredNeeds.map((n) => {
+                paginatedNeeds.map((n) => {
                   const progress = n.requestedHeadcount > 0 ? ((n.fulfilledHeadcount || 0) / n.requestedHeadcount) * 100 : 0;
                   const siteName = getResolvedSiteName(n);
                   
