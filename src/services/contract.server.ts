@@ -1,3 +1,5 @@
+'use server';
+
 /**
  * @fileOverview Server-only contract services using Firebase Admin SDK.
  * Bypasses client-side security rules for atomic system-level transitions.
@@ -109,7 +111,8 @@ export async function executeRenewalActivationServerTransaction(params: {
     }
 
     if (!empSnap.exists) throw new Error("Employee not found.");
-    const employee = empSnap.data()!;
+    const employee = empSnap.data();
+    if (!employee) throw new Error("Employee data is missing.");
 
     // Pointer validation rules (Phase 4C Logic)
     if (oldContract.status === "active") {
@@ -322,7 +325,7 @@ export async function processContractExpirationsServer(params?: {
               
               if (eSnap.exists) {
                 const eData = eSnap.data();
-                if (eData.activeContractId === contractId) {
+                if (eData && eData.activeContractId === contractId) {
                   transaction.update(eRef, {
                     activeContractId: null,
                     updatedAt: updateTime
