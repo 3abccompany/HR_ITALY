@@ -44,7 +44,9 @@ export interface Contract {
   isPartTime?: boolean;
   
   // --- Classification & Remuneration ---
+  ccnlId?: string;
   ccnlName?: string;
+  levelId?: string;
   levelCode?: string;
   levelLabel?: string;
   qualificationCategory?: string; // e.g. Impiegato, Operaio

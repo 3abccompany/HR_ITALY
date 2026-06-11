@@ -78,6 +78,7 @@ import {
 } from "@/components/ui/collapsible";
 import { format, isBefore, startOfDay, differenceInDays, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
+import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 
 const TERMINATION_REASONS = [
   { value: "resignation", label: "Démission" },
@@ -134,6 +135,16 @@ export default function ContractDetailPage() {
   const [isValidationDialogOpen, setIsValidationDialogOpen] = useState(false);
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
+  // Registry & Selection States
+  const [activeLevels, setActiveLevels] = useState<any[]>([]);
+  const [loadingLevels, setLoadingLevels] = useState(false);
+
+  // 1. Core Data
+  const contractRef = useMemo(() => 
+    db && entityId && contractId ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
+  [db, entityId, contractId]);
+  const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
+
   // Renewal State
   const [isRenewalModalOpen, setIsRenewalModalOpen] = useState(false);
   const [renewalForm, setRenewalForm] = useState({
@@ -141,6 +152,13 @@ export default function ContractDetailPage() {
     newEndDate: "",
     renewalReason: ""
   });
+
+  const isRenewalOverlap = useMemo(() => {
+    if (!contract?.endDate || !renewalForm.newStartDate) return false;
+    const oldEnd = parseSafeDate(contract.endDate);
+    const newStart = new Date(renewalForm.newStartDate);
+    return !!(oldEnd && newStart <= oldEnd);
+  }, [contract?.endDate, renewalForm.newStartDate]);
 
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
@@ -156,20 +174,6 @@ export default function ContractDetailPage() {
   });
   const [terminationFile, setTerminationFile] = useState<File | null>(null);
 
-  // 1. Core Data
-  const contractRef = useMemo(() => 
-    db && entityId && contractId ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
-  [db, entityId, contractId]);
-  const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
-
-  // Expiry Logic Hook Area
-  const isRenewalOverlap = useMemo(() => {
-    if (!contract?.endDate || !renewalForm.newStartDate) return false;
-    const oldEnd = parseSafeDate(contract.endDate);
-    const newStart = new Date(renewalForm.newStartDate);
-    return !!(oldEnd && newStart <= oldEnd);
-  }, [contract?.endDate, renewalForm.newStartDate]);
-
   // 2. Registry Documents
   const canReadDocs = hasPermission("documents.read");
   const docsQuery = useMemo(() => {
@@ -181,6 +185,13 @@ export default function ContractDetailPage() {
   }, [db, entityId, contractId, canReadDocs]);
 
   const { data: contractDocs } = useCollection<HRDocument>(docsQuery);
+
+  // 3. Masters Selection
+  const ccnlsQuery = useMemo(() => {
+    if (!db || !entityId || !isEditing || contract?.status !== 'draft') return null;
+    return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any>;
+  }, [db, entityId, isEditing, contract?.status]);
+  const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
 
   // Grouped Documents for Display
   const groupedDocs = useMemo(() => {
@@ -217,7 +228,7 @@ export default function ContractDetailPage() {
     return bundles;
   }, [contractDocs]);
 
-  // 3. Source Documents for fallbacks
+  // 4. Source Documents for fallbacks
   const employeeRef = useMemo(() => 
     db && contract?.employeeId ? doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee> : null,
   [db, entityId, contract?.employeeId]);
@@ -238,6 +249,40 @@ export default function ContractDetailPage() {
   [db, entityId, contract?.sourceOfferId]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   const mandatoryCommunication = communications?.find(c => c.type === "UNILAV_ASSUNZIONE");
+
+  // Load levels securely when CCNL changes during editing
+  useEffect(() => {
+    async function fetchLevels() {
+      const ccnlId = formData.ccnlId;
+      if (!ccnlId || !entityId || !user) {
+        setActiveLevels([]);
+        return;
+      }
+
+      setLoadingLevels(true);
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        if (!idToken) throw new Error("Auth token missing");
+        
+        const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
+        setActiveLevels(levels);
+
+        // Auto-link legacy name to ID if possible
+        if (!formData.ccnlId && formData.ccnlName && activeCcnls) {
+           const match = activeCcnls.find((c: any) => c.name === formData.ccnlName);
+           if (match) setFormData(p => ({...p, ccnlId: match.ccnlId}));
+        }
+      } catch (err: any) {
+        console.error("Error fetching levels:", err);
+      } finally {
+        setLoadingLevels(false);
+      }
+    }
+
+    if (isEditing && contract?.status === 'draft') {
+       fetchLevels();
+    }
+  }, [formData.ccnlId, isEditing, contract?.status, entityId, user, activeCcnls, auth.currentUser]);
 
   // Helper to build effective values with fallbacks
   const getEffectiveValue = (field: keyof Contract, fallback?: any) => {
@@ -281,7 +326,9 @@ export default function ContractDetailPage() {
       isPartTime: getEffectiveValue('isPartTime', offer?.workingTime?.toLowerCase().includes('part')),
 
       // Classification
+      ccnlId: getEffectiveValue('ccnlId', offer?.ccnlId),
       ccnlName: getEffectiveValue('ccnlName', offer?.ccnlName),
+      levelId: getEffectiveValue('levelId', offer?.levelId),
       levelCode: getEffectiveValue('levelCode', offer?.levelCode),
       levelLabel: getEffectiveValue('levelLabel', offer?.levelLabel),
       qualificationCategory: getEffectiveValue('qualificationCategory', offer?.qualificationLabel),
@@ -356,6 +403,55 @@ export default function ContractDetailPage() {
       });
       setIsEditing(true);
     }
+  };
+
+  const handleCcnlChange = (id: string) => {
+    if (id === "none_clear") {
+       setFormData(p => ({...p, ccnlId: "", ccnlName: "", levelId: "", levelCode: "", levelLabel: ""}));
+       return;
+    }
+    const ccnl = activeCcnls?.find((c: any) => c.ccnlId === id);
+    setFormData(p => ({
+      ...p,
+      ccnlId: id,
+      ccnlName: ccnl?.name || "",
+      levelId: "",
+      levelCode: "",
+      levelLabel: "",
+      monthlyPayments: ccnl?.monthlyPayments || p.monthlyPayments || 13
+    }));
+  };
+
+  const handleLevelChange = (id: string) => {
+    if (id === "none_clear") {
+       setFormData(p => ({...p, levelId: "", levelCode: "", levelLabel: "", qualificationCategory: ""}));
+       return;
+    }
+    const level = activeLevels?.find((l: any) => l.levelId === id);
+    if (!level) return;
+
+    setFormData(p => {
+       const monthly = level.minimumGrossMonthly || 0;
+       const payments = p.monthlyPayments || 13;
+       return {
+         ...p,
+         levelId: id,
+         levelCode: level.levelCode || "",
+         levelLabel: level.label || "",
+         qualificationCategory: level.qualificationLabel || "",
+         grossMonthly: monthly,
+         grossAnnual: monthly * payments
+       };
+    });
+  };
+
+  const handleMonthlySalaryChange = (val: string) => {
+    const amount = parseFloat(val) || 0;
+    setFormData(p => ({
+      ...p,
+      grossMonthly: amount,
+      grossAnnual: amount * (p.monthlyPayments || 13)
+    }));
   };
 
   const formatDate = (val: any) => {
@@ -509,6 +605,11 @@ export default function ContractDetailPage() {
           setProcessing(false);
           return;
        }
+       if (formData.monthlyPayments !== undefined && Number(formData.monthlyPayments) <= 0) {
+          toast({ variant: "destructive", title: "Mensualités invalides", description: "Le nombre de mensualités doit être positif." });
+          setProcessing(false);
+          return;
+       }
     }
 
     try {
@@ -527,7 +628,7 @@ export default function ContractDetailPage() {
       if (isDraftStatus) {
         allowedKeys.push(
           "startDate", "jobTitleName", "departmentName", "worksiteName",
-          "ccnlName", "levelCode", "grossMonthly", "grossAnnual", "weeklyHours",
+          "ccnlId", "ccnlName", "levelId", "levelCode", "grossMonthly", "grossAnnual", "weeklyHours",
           "isPartTime", "monthlyPayments"
         );
       }
@@ -1213,9 +1314,51 @@ export default function ContractDetailPage() {
                 <Separator className="bg-slate-100" />
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Convention Collective (CCNL)" value={effectiveData.ccnlName} editValue={formData.ccnlName} isEditing={isEditing} id="ccnlName" disabled={!isDraft} required onChange={(v) => setFormData(p => ({...p, ccnlName: v}))} />
-                   <DetailEditable label="Niveau" value={effectiveData.levelCode} editValue={formData.levelCode} isEditing={isEditing} id="levelCode" disabled={!isDraft} required onChange={(v) => setFormData(p => ({...p, levelCode: v}))} />
-                   <DetailEditable label="Qualification" value={effectiveData.qualificationCategory} editValue={formData.qualificationCategory} isEditing={isEditing} id="qualificationCategory" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, qualificationCategory: v}))} />
+                   <div className="space-y-1">
+                      <Label className="text-[10px] font-black uppercase tracking-tight opacity-70">Convention Collective (CCNL)</Label>
+                      {isEditing && isDraft ? (
+                        <Select value={formData.ccnlId} onValueChange={handleCcnlChange}>
+                          <SelectTrigger className="h-10 rounded-xl bg-white"><SelectValue placeholder="Sél. CCNL..." /></SelectTrigger>
+                          <SelectContent>
+                             <SelectItem value="none_clear">--- Aucun ---</SelectItem>
+                             {activeCcnls?.map((c: any) => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="text-sm font-bold text-slate-800">{effectiveData.ccnlName || "Non renseigné"}</div>
+                      )}
+                   </div>
+
+                   <div className="space-y-1">
+                      <Label className="text-[10px] font-black uppercase tracking-tight opacity-70">Niveau</Label>
+                      {isEditing && isDraft ? (
+                        <Select 
+                          value={formData.levelId} 
+                          onValueChange={handleLevelChange}
+                          disabled={!formData.ccnlId || loadingLevels}
+                        >
+                          <SelectTrigger className="h-10 rounded-xl bg-white">
+                            <SelectValue placeholder={loadingLevels ? "Chargement..." : "Sél. Niveau..."} />
+                          </SelectTrigger>
+                          <SelectContent>
+                             <SelectItem value="none_clear">--- Aucun ---</SelectItem>
+                             {activeLevels?.map((l: any) => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="text-sm font-bold text-slate-800">{effectiveData.levelCode || "Non renseigné"}</div>
+                      )}
+                   </div>
+
+                   <DetailEditable 
+                     label="Qualification" 
+                     value={effectiveData.qualificationCategory} 
+                     editValue={formData.qualificationCategory} 
+                     isEditing={isEditing} 
+                     id="qualificationCategory" 
+                     disabled={!isDraft} 
+                     onChange={(v) => setFormData(p => ({...p, qualificationCategory: v}))} 
+                   />
                 </div>
              </CardContent>
           </Card>
@@ -1229,7 +1372,7 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Brut Mensuel (€)" value={effectiveData.grossMonthly} editValue={formData.grossMonthly} isEditing={isEditing} id="grossMonthly" type="number" disabled={!isDraft} required onChange={(v) => setFormData(p => ({...p, grossMonthly: parseFloat(v) || 0}))} />
+                   <DetailEditable label="Brut Mensuel (€)" value={effectiveData.grossMonthly} editValue={formData.grossMonthly} isEditing={isEditing} id="grossMonthly" type="number" disabled={!isDraft} required onChange={(v) => handleMonthlySalaryChange(v)} />
                    <DetailEditable label="Brut Annuel / RAL (€)" value={effectiveData.grossAnnual} editValue={formData.grossAnnual} isEditing={isEditing} id="grossAnnual" type="number" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, grossAnnual: parseFloat(v) || 0}))} />
                    <DetailEditable label="Mensualités" value={effectiveData.monthlyPayments} editValue={formData.monthlyPayments} isEditing={isEditing} id="monthlyPayments" type="number" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, monthlyPayments: parseInt(v) || 13}))} />
                 </div>
