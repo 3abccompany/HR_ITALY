@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -136,19 +137,6 @@ export default function ContractDetailPage() {
   const [activeLevels, setActiveLevels] = useState<any[]>([]);
   const [loadingLevels, setLoadingLevels] = useState(false);
 
-  // 1. Core Data
-  const contractRef = useMemo(() => 
-    db && entityId && contractId ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
-  [db, entityId, contractId]);
-  const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
-
-  const isRenewalOverlap = useMemo(() => {
-    if (!contract?.endDate || !formData.startDate) return false;
-    const oldEnd = parseSafeDate(contract.endDate);
-    const newStart = parseSafeDate(formData.startDate);
-    return !!(oldEnd && newStart && newStart <= oldEnd);
-  }, [contract?.endDate, formData.startDate]);
-
   // Renewal State
   const [isRenewalModalOpen, setIsRenewalModalOpen] = useState(false);
   const [renewalForm, setRenewalForm] = useState({
@@ -170,6 +158,19 @@ export default function ContractDetailPage() {
     terminationNotes: ""
   });
   const [terminationFile, setTerminationFile] = useState<File | null>(null);
+
+  // 1. Core Data
+  const contractRef = useMemo(() => 
+    db && entityId && contractId ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
+  [db, entityId, contractId]);
+  const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
+
+  const isRenewalOverlap = useMemo(() => {
+    if (!contract?.endDate || !renewalForm.newStartDate) return false;
+    const oldEnd = parseSafeDate(contract.endDate);
+    const newStart = parseSafeDate(renewalForm.newStartDate);
+    return !!(oldEnd && newStart && newStart <= oldEnd);
+  }, [contract?.endDate, renewalForm.newStartDate]);
 
   // 2. Registry Documents
   const canReadDocs = hasPermission("documents.read");
@@ -1386,7 +1387,7 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Protocole UniLav" value={effectiveData.uniLavProtocolNumber} editValue={formData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, uniLavProtocolNumber: v}))} />
+                   <DetailEditable label="Protocole UniLav" value={effectiveData.uniLavProtocolNumber} editValue={formData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, status === "draft" ? "draft" : "pending_activation"}))} />
                    <DetailEditable label="Date Soumission" value={effectiveData.uniLavSubmissionDate} editValue={formData.uniLavSubmissionDate} isEditing={isEditing} id="uniLavSubmissionDate" type="date" onChange={(v) => setFormData(p => ({...p, uniLavSubmissionDate: v}))} />
                 </div>
              </CardContent>
