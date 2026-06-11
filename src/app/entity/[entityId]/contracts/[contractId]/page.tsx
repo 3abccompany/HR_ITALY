@@ -21,6 +21,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -1715,7 +1717,7 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
             loadingId={loadingId} 
             isMain 
             canReplace={false}
-            customLabel={doc.documentType === 'signed_contract' ? 'Contrat signé' : doc.documentType === 'termination_document' ? 'Document de clôture' : 'Dernier PDF généré'}
+            customLabel={doc.documentType === 'signed_contract' ? 'Contrat signé' : doc.documentType === 'termination_document' ? 'Document de clôture' : 'Dernier PDF de travail'}
           />
         )}
 
