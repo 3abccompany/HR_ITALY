@@ -44,7 +44,9 @@ import {
   rollbackToDraft,
   updateContract,
   recordSignedDocumentReference,
-  prepareContractRenewalAction
+  prepareContractRenewalAction,
+  markContractAsReadyForActivationAction,
+  executeContractTransitionTransaction
 } from "@/services/contract.service";
 import {
   Dialog,
@@ -187,13 +189,6 @@ export default function ContractDetailPage() {
 
   const { data: contractDocs } = useCollection<HRDocument>(docsQuery);
 
-  // 3. Masters Selection
-  const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId || !isEditing || contract?.status !== 'draft') return null;
-    return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any>;
-  }, [db, entityId, isEditing, contract?.status]);
-  const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
-
   // Grouped Documents for Display
   const groupedDocs = useMemo(() => {
     if (!contractDocs) return { signed: null, latestGenerated: null, history: [], termination: [], others: [] };
@@ -250,6 +245,13 @@ export default function ContractDetailPage() {
   [db, entityId, contract?.sourceOfferId]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   const mandatoryCommunication = communications?.find(c => c.type === "UNILAV_ASSUNZIONE");
+
+  // Load masters for editing
+  const ccnlsQuery = useMemo(() => {
+    if (!db || !entityId || !isEditing || contract?.status !== 'draft') return null;
+    return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any>;
+  }, [db, entityId, isEditing, contract?.status]);
+  const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
 
   // Load levels securely when CCNL changes during editing
   useEffect(() => {
@@ -548,7 +550,7 @@ export default function ContractDetailPage() {
       } catch (err: any) {
         toast({ variant: "destructive", title: "Erreur", description: err.message });
       } finally {
-        setProcessing(false);
+        setProcessing(processing);
       }
     }
   };
@@ -779,10 +781,16 @@ export default function ContractDetailPage() {
   const canUpdate = hasPermission("contracts.update");
   const isDraft = contract?.status === 'draft';
   const isPendingSignature = contract?.status === 'pending_signature';
+  const isPendingActivation = contract?.status === 'pending_activation';
   const isActive = contract?.status === 'active';
   const isTerminated = contract?.status === 'terminated';
   const isRenewed = contract?.status === 'renewed';
+  const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
   
+  const today = startOfDay(new Date());
+  const contractStartDate = parseSafeDate(contract?.startDate);
+  const isStartDateReached = contractStartDate ? !isBefore(today, contractStartDate) : false;
+
   const hasSignedDoc = !!(
     contract.signedDocumentId || 
     contract.signedDocumentUrl || 
@@ -797,14 +805,13 @@ export default function ContractDetailPage() {
 
   // Expiry Logic
   const contractExpiryDate = parseSafeDate(contract?.endDate);
-  const today = startOfDay(new Date());
   const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
   const isContractExpiringSoon = isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30));
 
   // Renewal Logic
   const isFixedTermCDD = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
   const canShowRenewButton = isFixedTermCDD && 
-    ['active', 'terminated', 'suspended', 'pending_signature'].includes(contract.status) && 
+    ['active', 'terminated', 'suspended', 'pending_signature', 'pending_activation'].includes(contract.status) && 
     !contract.renewedByContractId && 
     !contract.pendingRenewalContractId && 
     canUpdate;
@@ -837,7 +844,7 @@ export default function ContractDetailPage() {
              </Button>
            )}
 
-           {isDraft && !isEditing && (
+           {(isDraft || isPendingSignature) && !isEditing && (
              <Button variant="outline" onClick={handleEnterEditMode} className="gap-2 bg-white rounded-xl font-bold">
                 <Edit className="w-4 h-4" /> Éditer les informations
              </Button>
@@ -869,14 +876,48 @@ export default function ContractDetailPage() {
                <Button variant="outline" onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2 bg-white rounded-xl">
                  <RefreshCcw className="w-4 h-4" /> Brouillon
                </Button>
-               <Button 
-                onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")} 
-                disabled={processing || !contract.employeeId} 
-                className={cn("gap-2 text-white font-black rounded-xl", hasSignedDoc ? "bg-primary" : "bg-slate-300 opacity-70")}
-               >
-                 {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                 Confirmer signature et activer
+               {isRenewalContract ? (
+                 <Button 
+                   onClick={() => handleTransition(() => markContractAsReadyForActivationAction(entityId, contractId, user!.uid), "Contrat validé et mis en attente d'activation.")}
+                   disabled={processing || !hasSignedDoc}
+                   className={cn("gap-2 text-white font-black rounded-xl", hasSignedDoc ? "bg-accent" : "bg-slate-300 opacity-70")}
+                 >
+                   {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCheck className="w-4 h-4" />}
+                   Mettre en attente d'activation
+                 </Button>
+               ) : (
+                 <Button 
+                   onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")} 
+                   disabled={processing || !contract.employeeId} 
+                   className={cn("gap-2 text-white font-black rounded-xl", hasSignedDoc ? "bg-primary" : "bg-slate-300 opacity-70")}
+                 >
+                   {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                   Confirmer signature et activer
+                 </Button>
+               )}
+             </>
+           )}
+
+           {!isEditing && canUpdate && isPendingActivation && (
+             <>
+               <Button variant="outline" onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2 bg-white rounded-xl">
+                 <RefreshCcw className="w-4 h-4" /> Retour Brouillon
                </Button>
+               {isStartDateReached ? (
+                 <Button 
+                   onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Activation du renouvellement effectuée.")}
+                   disabled={processing}
+                   className="gap-2 bg-primary text-white font-black rounded-xl"
+                 >
+                   {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                   Activer maintenant
+                 </Button>
+               ) : (
+                 <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100 text-xs font-bold animate-in fade-in zoom-in-95">
+                    <Clock className="w-4 h-4" />
+                    Activation prévue le {formatDateSafe(contract.startDate)}
+                 </div>
+               )}
              </>
            )}
 
@@ -1070,7 +1111,7 @@ export default function ContractDetailPage() {
           </Card>
 
           {/* Signed Document Section */}
-          {(isPendingSignature || !isDraft) && (
+          {(isPendingSignature || isPendingActivation || !isDraft) && (
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-orange-100 bg-orange-50/5")}>
               <CardHeader className="py-4 border-b px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1104,7 +1145,7 @@ export default function ContractDetailPage() {
                       )}
                     </div>
                     
-                    {isPendingSignature && (
+                    {(isPendingSignature || isPendingActivation) && (
                        <Button 
                         variant="outline" 
                         onClick={() => {
@@ -1130,7 +1171,7 @@ export default function ContractDetailPage() {
                         Veuillez enregistrer la référence du contrat signé avant de pouvoir procéder à l'activation.
                       </AlertDescription>
                     </Alert>
-                    {isPendingSignature && (
+                    {(isPendingSignature || isPendingActivation) && (
                        <Button 
                          variant="outline" 
                          onClick={() => setIsSignedDocModalOpen(true)}
@@ -1923,5 +1964,35 @@ function getStatusBadge(status: ContractStatus) {
     case 'suspended': return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 uppercase font-black text-[9px] px-2">Suspendu</Badge>;
     case 'archived': return <Badge variant="outline" className="text-muted-foreground uppercase font-black text-[9px] px-2">Archivé</Badge>;
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
+  }
+}
+
+function formatDateTime(val: any): string {
+  if (!val) return "Date non disponible";
+
+  try {
+    let date: Date | null = null;
+
+    if (val instanceof Date) {
+      date = val;
+    } else if (typeof val.toDate === 'function') {
+      date = val.toDate();
+    } else if (val && typeof val === 'object') {
+      const s = val.seconds ?? val._seconds;
+      if (typeof s === 'number') {
+        date = new Date(s * 1000);
+      }
+    }
+
+    if (!date && (typeof val === 'string' || typeof val === 'number')) {
+      const parsed = new Date(val);
+      if (!isNaN(parsed.getTime())) date = parsed;
+    }
+
+    if (!date || isNaN(date.getTime())) return "Date non disponible";
+
+    return format(date, "dd/MM/yyyy", { locale: fr });
+  } catch (e) {
+    return "Date non disponible";
   }
 }
