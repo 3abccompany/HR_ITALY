@@ -825,6 +825,17 @@ export default function DocumentsRegistryPage() {
   );
 }
 
+function DetailItem({ label, value, code = false }: { label: string, value: any, code?: boolean }) {
+  return (
+    <div className="space-y-1">
+       <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
+       <div className={cn("text-xs font-bold text-slate-800 truncate", code && "font-mono text-[10px]")}>
+          {value}
+       </div>
+    </div>
+  );
+}
+
 function StatCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
   const colors: Record<string, string> = {
     blue: "bg-blue-50 text-blue-600 border-blue-100",
@@ -1116,44 +1127,5 @@ function DetailItem({ label, value, code = false }: { label: string, value: any,
           {value}
        </div>
     </div>
-  );
-}
-
-function StatItem({ label, value, icon: Icon, color }: { label: string, value: number, icon: any, color: string }) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600 border-blue-100",
-    orange: "bg-orange-50 text-orange-600 border-orange-100",
-    red: "bg-red-50 text-red-600 border-red-100",
-    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
-  };
-
-  return (
-    <div className="flex items-center gap-3">
-       <div className={cn("p-2 rounded-lg border", colors[color])}><Icon className="w-4 h-4" /></div>
-       <div><p className="text-[8px] font-black uppercase text-muted-foreground">{label}</p><p className="text-sm font-black text-primary">{value}</p></div>
-    </div>
-  );
-}
-
-function StatCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600 border-blue-100",
-    orange: "bg-orange-50 text-orange-600 border-orange-100",
-    red: "bg-red-50 text-red-600 border-red-100",
-    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
-  };
-
-  return (
-    <Card className="border-primary/5 shadow-sm rounded-2xl">
-      <CardContent className="p-4 flex items-center gap-4">
-        <div className={cn("p-3 rounded-2xl border", colors[color] || colors.blue)}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{title}</p>
-          <p className="text-2xl font-black text-primary">{value}</p>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
