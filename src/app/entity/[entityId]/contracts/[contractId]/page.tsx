@@ -165,6 +165,7 @@ export default function ContractDetailPage() {
   [db, entityId, contractId]);
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
+  // Relocated useMemo hook to the top level
   const isRenewalOverlap = useMemo(() => {
     if (!contract?.endDate || !renewalForm.newStartDate) return false;
     const oldEnd = parseSafeDate(contract.endDate);
@@ -1387,7 +1388,7 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Protocole UniLav" value={effectiveData.uniLavProtocolNumber} editValue={formData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, status === "draft" ? "draft" : "pending_activation"}))} />
+                   <DetailEditable label="Protocole UniLav" value={effectiveData.uniLavProtocolNumber} editValue={formData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, uniLavProtocolNumber: v}))} />
                    <DetailEditable label="Date Soumission" value={effectiveData.uniLavSubmissionDate} editValue={formData.uniLavSubmissionDate} isEditing={isEditing} id="uniLavSubmissionDate" type="date" onChange={(v) => setFormData(p => ({...p, uniLavSubmissionDate: v}))} />
                 </div>
              </CardContent>
