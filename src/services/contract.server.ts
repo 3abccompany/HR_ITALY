@@ -31,14 +31,20 @@ function sanitize(obj: any): any {
 }
 
 /**
- * Performs an atomic transition from an old active contract to a new renewal contract.
- * Validates integrity across three documents: Old Contract, New Contract, and Employee.
+ * Performs an atomic transition from an old active or expired contract to a new renewal contract.
+ * Validates integrity across multiple documents: Old Contract, New Contract, and Employee.
  */
 export async function executeRenewalActivationServerTransaction(params: {
   entityId: string;
   newContractId: string;
   actorUid: string;
-}) {
+}): Promise<{
+  entityId: string;
+  oldContractId: string;
+  newContractId: string;
+  employeeId: string;
+  status: "activated";
+}> {
   const { entityId, newContractId, actorUid } = params;
 
   const newContractRef = adminDb.collection("entities").doc(entityId).collection("contracts").doc(newContractId);
@@ -72,21 +78,30 @@ export async function executeRenewalActivationServerTransaction(params: {
       throw new Error("Activation blocked: signed document missing.");
     }
 
-    // 3. READ: Old Contract and Employee
+    // 3. READ: Old Contract, Employee, and check for unrelated active contracts
     const oldContractRef = adminDb.collection("entities").doc(entityId).collection("contracts").doc(newContract.previousContractId);
     const employeeRef = adminDb.collection("entities").doc(entityId).collection("employees").doc(newContract.employeeId);
     
-    const [oldSnap, empSnap] = await Promise.all([
+    // Safety check query: Find any contract for this employee with 'active' status
+    const otherActiveQuery = adminDb.collection("entities")
+      .doc(entityId)
+      .collection("contracts")
+      .where("employeeId", "==", newContract.employeeId)
+      .where("status", "==", "active");
+
+    const [oldSnap, empSnap, activeContractsSnap] = await Promise.all([
       transaction.get(oldContractRef),
-      transaction.get(employeeRef)
+      transaction.get(employeeRef),
+      transaction.get(otherActiveQuery)
     ]);
 
     // 4. VALIDATE: Chain Integrity
     if (!oldSnap.exists) throw new Error("Previous contract not found.");
     const oldContract = oldSnap.data()!;
 
-    if (oldContract.status !== "active") {
-      throw new Error(`Previous contract status is ${oldContract.status}. Expected active.`);
+    // Support 'active' or 'expired' old contracts (Phase 4C Support)
+    if (!["active", "expired"].includes(oldContract.status)) {
+      throw new Error(`Previous contract status is ${oldContract.status}. Expected active or expired.`);
     }
 
     if (oldContract.pendingRenewalContractId !== newContractId) {
@@ -96,8 +111,24 @@ export async function executeRenewalActivationServerTransaction(params: {
     if (!empSnap.exists) throw new Error("Employee not found.");
     const employee = empSnap.data()!;
 
-    if (employee.activeContractId !== newContract.previousContractId) {
-      throw new Error("Safety block: employee active pointer does not match the expected old contract.");
+    // Pointer validation rules
+    if (oldContract.status === "active") {
+      // If the old contract is still active, the employee pointer MUST point to it
+      if (employee.activeContractId !== newContract.previousContractId) {
+        throw new Error("Safety block: employee active pointer does not match the expected old active contract.");
+      }
+    } else {
+      // If the old contract has expired, the pointer may be null or still point to the old ID.
+      // But it MUST NOT point to an unrelated active contract.
+      if (employee.activeContractId && employee.activeContractId !== newContract.previousContractId) {
+        throw new Error("Safety block: employee already has an active contract that is not part of this renewal chain.");
+      }
+    }
+
+    // Unrelated active contract conflict prevention
+    const unrelatedActive = activeContractsSnap.docs.filter(d => d.id !== newContract.previousContractId);
+    if (unrelatedActive.length > 0) {
+      throw new Error(`Activation blocked: employee already has an unrelated active contract (${unrelatedActive[0].id}).`);
     }
 
     // 5. WRITE: Perform Atomic Swap
@@ -164,9 +195,9 @@ export async function executeRenewalActivationServerTransaction(params: {
 
     return {
       entityId,
-      oldContractId: newContract.previousContractId,
+      oldContractId: newContract.previousContractId as string,
       newContractId,
-      employeeId: newContract.employeeId,
+      employeeId: newContract.employeeId as string,
       status: "activated" as const
     };
   });
