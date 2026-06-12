@@ -1,11 +1,10 @@
-
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Mail, Save, ShieldCheck, AlertCircle, Info, Loader2, 
-  Server, User, CheckCircle2, Settings2, Lock, ArrowLeft
+  Server, User, CheckCircle2, Settings2, Lock, ArrowLeft, Clock
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,7 +25,6 @@ import {
 } from "@/services/email-settings.service";
 import { EntityEmailSettingsUI, EmailProvider } from "@/types/email-settings";
 import { cn } from "@/lib/utils";
-import { Clock } from "lucide-react";
 
 export default function EntityEmailSettingsPage() {
   const params = useParams();
@@ -56,10 +54,8 @@ export default function EntityEmailSettingsPage() {
 
   useEffect(() => {
     async function load() {
-      // Wait for membership to be resolved
       if (membershipLoading) return;
       
-      // If no ID or no permission, stop loading immediately
       if (!entityId || !canManage) {
         setLoading(false);
         return;
@@ -71,7 +67,7 @@ export default function EntityEmailSettingsPage() {
           setSettings(prev => ({
             ...prev,
             ...data,
-            password: "" // Always empty on load for security
+            password: "" 
           }));
         }
       } catch (err) {
@@ -107,7 +103,6 @@ export default function EntityEmailSettingsPage() {
       await saveEntityEmailSettings(entityId, settings as any, user.uid);
       toast({ title: "Paramètres enregistrés", description: "La configuration a été mise à jour." });
       
-      // Refresh local state to update status/hasPassword indicators
       const updated = await getEntityEmailSettingsForAdmin(entityId);
       if (updated) {
         setSettings(prev => ({ 
@@ -167,7 +162,7 @@ export default function EntityEmailSettingsPage() {
             Les contenus des emails restent inchangés. Cette configuration concerne uniquement l’adresse d’envoi et le serveur SMTP de l’entité.
             <br />
             <span className="font-bold mt-1 block italic text-blue-700">
-              Attention : cette configuration n’est pas encore utilisée pour l’envoi réel des emails tant que l’intégration transport n’est pas activée.
+              Cette configuration n’est pas encore utilisée pour l’envoi réel des emails tant que l’intégration transport n’est pas activée.
             </span>
           </AlertDescription>
         </div>
@@ -176,17 +171,19 @@ export default function EntityEmailSettingsPage() {
       <form onSubmit={handleSave} className="space-y-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-8">
-            {/* Sending Identity Section */}
             <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
               <CardHeader className="bg-primary/5 border-b py-6 px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                   <User className="w-4 h-4" /> Identité d’envoi
                 </CardTitle>
+                <CardDescription className="text-xs font-medium text-slate-500 mt-2">
+                  Cette page configure uniquement l’expéditeur des emails de cette entité. Le destinataire (À / TO) reste défini dans chaque module : candidat, consultant, employé ou dossier concerné.
+                </CardDescription>
               </CardHeader>
               <CardContent className="p-8 space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label htmlFor="fromName" className="text-[10px] font-black uppercase text-muted-foreground">Nom de l'expéditeur</Label>
+                    <Label htmlFor="fromName" className="text-[10px] font-black uppercase text-muted-foreground">Nom affiché de l’expéditeur</Label>
                     <Input 
                       id="fromName" 
                       placeholder="Ex: HR Nexus - Mon Entreprise" 
@@ -196,7 +193,7 @@ export default function EntityEmailSettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="fromEmail" className="text-[10px] font-black uppercase text-muted-foreground">Email d'expédition (From)</Label>
+                    <Label htmlFor="fromEmail" className="text-[10px] font-black uppercase text-muted-foreground">Adresse expéditeur (FROM)</Label>
                     <Input 
                       id="fromEmail" 
                       type="email"
@@ -205,9 +202,10 @@ export default function EntityEmailSettingsPage() {
                       onChange={(e) => setSettings(p => ({...p, fromEmail: e.target.value}))}
                       className="rounded-xl h-11"
                     />
+                    <p className="text-[10px] text-muted-foreground italic">Adresse utilisée comme expéditeur officiel des emails envoyés par cette entité.</p>
                   </div>
                   <div className="space-y-2 col-span-full">
-                    <Label htmlFor="replyToEmail" className="text-[10px] font-black uppercase text-muted-foreground">Email de réponse (Reply-To)</Label>
+                    <Label htmlFor="replyToEmail" className="text-[10px] font-black uppercase text-muted-foreground">Adresse de réception des réponses (REPLY-TO)</Label>
                     <Input 
                       id="replyToEmail" 
                       type="email"
@@ -216,12 +214,12 @@ export default function EntityEmailSettingsPage() {
                       onChange={(e) => setSettings(p => ({...p, replyToEmail: e.target.value}))}
                       className="rounded-xl h-11"
                     />
+                    <p className="text-[10px] text-muted-foreground italic">Lorsqu’un destinataire répond à un email, sa réponse sera envoyée à cette adresse. Ce n’est pas l’adresse du destinataire.</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            {/* SMTP Server Section */}
             <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
               <CardHeader className="bg-secondary/10 border-b py-6 px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
