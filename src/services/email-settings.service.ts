@@ -23,7 +23,6 @@ function getEncryptionKey() {
   if (!secret) {
     throw new Error("INTERNAL_ERROR: EMAIL_ENCRYPTION_SECRET is not configured on the server.");
   }
-  // Standard derivation using a fixed salt for the instance consistency
   return crypto.scryptSync(secret, 'hr-nexus-email-salt-v1', 32);
 }
 
@@ -31,7 +30,7 @@ function getEncryptionKey() {
  * Encrypts a string using AES-256-GCM.
  */
 function encrypt(text: string) {
-  const iv = crypto.randomBytes(12); // Standard GCM IV length
+  const iv = crypto.randomBytes(12);
   const key = getEncryptionKey();
   const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
   
@@ -92,15 +91,28 @@ function sanitizePayload(obj: any): any {
 }
 
 /**
+ * Strips sensitive encryption fields before sending settings to the UI.
+ */
+function sanitizeEmailSettingsForClient(settings: EntityEmailSettings): EntityEmailSettingsUI {
+  const { encryptedSmtpPassword, passwordIv, passwordAuthTag, ...safeData } = settings;
+  return safeData;
+}
+
+/**
  * Retrieves the email settings for an entity, sanitized for the UI.
  */
 export async function getEntityEmailSettingsForAdmin(entityId: string): Promise<EntityEmailSettingsUI | null> {
-  if (!db) return null;
-  const snap = await getDoc(doc(db, `entities/${entityId}/emailSettings`, "main"));
-  if (!snap.exists()) return null;
-  
-  const data = snap.data() as EntityEmailSettings;
-  return sanitizeEmailSettingsForClient(data);
+  if (!db || !entityId) return null;
+  try {
+    const snap = await getDoc(doc(db, `entities/${entityId}/emailSettings`, "main"));
+    if (!snap.exists()) return null;
+    
+    const data = snap.data() as EntityEmailSettings;
+    return sanitizeEmailSettingsForClient(data);
+  } catch (e) {
+    console.error(`[EmailSettingsService] Error loading for entity ${entityId}:`, e);
+    return null;
+  }
 }
 
 /**
@@ -133,7 +145,6 @@ export async function validateEmailSettingsInput(input: any) {
 
 /**
  * Saves or updates email settings for an entity.
- * Handles password encryption only when a new one is provided.
  */
 export async function saveEntityEmailSettings(
   entityId: string, 
@@ -160,7 +171,6 @@ export async function saveEntityEmailSettings(
     };
     hasPassword = true;
   } else if (existing?.encryptedSmtpPassword) {
-    // Preserve existing encrypted fields if no new password provided
     encryptionData = {
       encryptedSmtpPassword: existing.encryptedSmtpPassword,
       passwordIv: existing.passwordIv,
@@ -179,7 +189,7 @@ export async function saveEntityEmailSettings(
   if (!existing) {
     payload.createdAt = serverTimestamp();
     payload.createdBy = actorUid;
-    payload.status = payload.status || "not_configured";
+    payload.status = payload.status || "configured";
     await setDoc(docRef, payload);
   } else {
     await updateDoc(docRef, payload);
@@ -198,7 +208,6 @@ export async function saveEntityEmailSettings(
 
 /**
  * Internal server-only function to fetch full settings with decrypted password.
- * To be used by the email dispatch service.
  */
 export async function getEntityEmailTransportSettings(entityId: string): Promise<(EntityEmailSettings & { decryptedPassword?: string }) | null> {
   if (!db) return null;
@@ -216,18 +225,9 @@ export async function getEntityEmailTransportSettings(entityId: string): Promise
         settings.passwordAuthTag
       );
     } catch (err) {
-      console.error(`[Email Settings Service] Decryption failed for entity: ${entityId}. This often means the EMAIL_ENCRYPTION_SECRET changed.`);
+      console.error(`[Email Settings Service] Decryption failed for entity: ${entityId}`);
     }
   }
 
   return result;
-}
-
-/**
- * Strips sensitive encryption fields before sending settings to the UI.
- * Internal helper.
- */
-function sanitizeEmailSettingsForClient(settings: EntityEmailSettings): EntityEmailSettingsUI {
-  const { encryptedSmtpPassword, passwordIv, passwordAuthTag, ...safeData } = settings;
-  return safeData;
 }

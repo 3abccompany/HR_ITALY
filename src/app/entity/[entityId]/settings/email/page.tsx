@@ -45,36 +45,52 @@ export default function EntityEmailSettingsPage() {
     smtpPort: 587,
     smtpSecure: false,
     smtpUser: "",
-    password: ""
+    password: "",
+    status: "not_configured",
+    hasPassword: false
   });
 
   const canManage = hasPermission("settings.manage");
 
   useEffect(() => {
     async function load() {
-      if (!entityId || !canManage) return;
+      // Wait for membership to be resolved
+      if (membershipLoading) return;
+      
+      // If no ID or no permission, stop loading immediately
+      if (!entityId || !canManage) {
+        setLoading(false);
+        return;
+      }
+
       try {
         const data = await getEntityEmailSettingsForAdmin(entityId);
         if (data) {
-          setSettings({
+          setSettings(prev => ({
+            ...prev,
             ...data,
-            password: "" // Always empty on load
-          });
+            password: "" // Always empty on load for security
+          }));
         }
       } catch (err) {
-        console.error("Failed to load email settings:", err);
+        console.error("[EmailSettingsPage] Load failed:", err);
+        toast({ 
+          variant: "destructive", 
+          title: "Erreur de chargement", 
+          description: "Impossible de récupérer les paramètres email." 
+        });
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, [entityId, canManage]);
+  }, [entityId, canManage, membershipLoading, toast]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !entityId) return;
 
-    const validation = validateEmailSettingsInput(settings);
+    const validation = await validateEmailSettingsInput(settings);
     if (!validation.isValid) {
       toast({ 
         variant: "destructive", 
@@ -89,10 +105,14 @@ export default function EntityEmailSettingsPage() {
       await saveEntityEmailSettings(entityId, settings as any, user.uid);
       toast({ title: "Paramètres enregistrés", description: "La configuration a été mise à jour." });
       
-      // Refresh to get updated status/hasPassword
+      // Refresh local state to update status/hasPassword indicators
       const updated = await getEntityEmailSettingsForAdmin(entityId);
       if (updated) {
-        setSettings({ ...updated, password: "" });
+        setSettings(prev => ({ 
+          ...prev, 
+          ...updated, 
+          password: "" 
+        }));
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -103,8 +123,9 @@ export default function EntityEmailSettingsPage() {
 
   if (membershipLoading || loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Chargement...</p>
       </div>
     );
   }
@@ -112,7 +133,7 @@ export default function EntityEmailSettingsPage() {
   if (!canManage) {
     return (
       <div className="p-8">
-        <Alert variant="destructive" className="max-w-2xl mx-auto">
+        <Alert variant="destructive" className="max-w-2xl mx-auto rounded-[2rem]">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Accès Refusé</AlertTitle>
           <AlertDescription>Vous n'avez pas la permission de modifier les paramètres de l'entité.</AlertDescription>
@@ -123,7 +144,7 @@ export default function EntityEmailSettingsPage() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto pb-32 space-y-8">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
             <ArrowLeft className="w-5 h-5" />
@@ -167,7 +188,7 @@ export default function EntityEmailSettingsPage() {
                     <Input 
                       id="fromName" 
                       placeholder="Ex: HR Nexus - Mon Entreprise" 
-                      value={settings.fromName} 
+                      value={settings.fromName || ""} 
                       onChange={(e) => setSettings(p => ({...p, fromName: e.target.value}))}
                       className="rounded-xl h-11"
                     />
@@ -178,7 +199,7 @@ export default function EntityEmailSettingsPage() {
                       id="fromEmail" 
                       type="email"
                       placeholder="hr@entreprise.com" 
-                      value={settings.fromEmail} 
+                      value={settings.fromEmail || ""} 
                       onChange={(e) => setSettings(p => ({...p, fromEmail: e.target.value}))}
                       className="rounded-xl h-11"
                     />
@@ -189,7 +210,7 @@ export default function EntityEmailSettingsPage() {
                       id="replyToEmail" 
                       type="email"
                       placeholder="recrutement@entreprise.com" 
-                      value={settings.replyToEmail} 
+                      value={settings.replyToEmail || ""} 
                       onChange={(e) => setSettings(p => ({...p, replyToEmail: e.target.value}))}
                       className="rounded-xl h-11"
                     />
@@ -208,7 +229,7 @@ export default function EntityEmailSettingsPage() {
               <CardContent className="p-8 space-y-8">
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Fournisseur</Label>
-                  <Select value={settings.provider} onValueChange={(v) => setSettings(p => ({...p, provider: v as EmailProvider}))}>
+                  <Select value={settings.provider || "none"} onValueChange={(v) => setSettings(p => ({...p, provider: v as EmailProvider}))}>
                     <SelectTrigger className="h-11 rounded-xl">
                       <SelectValue placeholder="Choisir..." />
                     </SelectTrigger>
@@ -226,7 +247,7 @@ export default function EntityEmailSettingsPage() {
                       <Input 
                         id="smtpHost" 
                         placeholder="smtp.mailgun.org" 
-                        value={settings.smtpHost} 
+                        value={settings.smtpHost || ""} 
                         onChange={(e) => setSettings(p => ({...p, smtpHost: e.target.value}))}
                         className="rounded-xl h-11"
                       />
@@ -237,7 +258,7 @@ export default function EntityEmailSettingsPage() {
                         id="smtpPort" 
                         type="number"
                         placeholder="587" 
-                        value={settings.smtpPort} 
+                        value={settings.smtpPort || 587} 
                         onChange={(e) => setSettings(p => ({...p, smtpPort: parseInt(e.target.value) || 0}))}
                         className="rounded-xl h-11"
                       />
@@ -247,7 +268,7 @@ export default function EntityEmailSettingsPage() {
                       <Input 
                         id="smtpUser" 
                         placeholder="postmaster@domain.com" 
-                        value={settings.smtpUser} 
+                        value={settings.smtpUser || ""} 
                         onChange={(e) => setSettings(p => ({...p, smtpUser: e.target.value}))}
                         className="rounded-xl h-11"
                       />
@@ -258,7 +279,7 @@ export default function EntityEmailSettingsPage() {
                         id="password" 
                         type="password"
                         placeholder="••••••••" 
-                        value={settings.password} 
+                        value={settings.password || ""} 
                         onChange={(e) => setSettings(p => ({...p, password: e.target.value}))}
                         className="rounded-xl h-11"
                       />
@@ -267,7 +288,7 @@ export default function EntityEmailSettingsPage() {
                        <div className="flex items-center space-x-2">
                          <Switch 
                            id="smtpSecure" 
-                           checked={settings.smtpSecure} 
+                           checked={!!settings.smtpSecure} 
                            onCheckedChange={(v) => setSettings(p => ({...p, smtpSecure: v}))} 
                          />
                          <Label htmlFor="smtpSecure" className="text-xs font-bold cursor-pointer">SSL / TLS (Port 465)</Label>
@@ -310,25 +331,9 @@ export default function EntityEmailSettingsPage() {
                     </div>
                   </div>
 
-                  {settings.lastTestedAt && (
-                    <div className="space-y-1">
-                       <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">Dernier test</p>
-                       <p className="text-xs font-bold">{formatDateTime(settings.lastTestedAt)}</p>
-                       <Badge variant={settings.lastTestResult === 'success' ? 'secondary' : 'destructive'} className="text-[8px] h-4 uppercase font-black">
-                         {settings.lastTestResult}
-                       </Badge>
-                    </div>
-                  )}
-
-                  {settings.lastError && (
-                    <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-[10px] font-bold text-red-600 leading-tight">
-                       Dernière erreur : {settings.lastError}
-                    </div>
-                  )}
-
                   <Separator className="opacity-20" />
 
-                  <Button variant="outline" className="w-full h-11 rounded-xl font-bold gap-2 border-dashed border-2 opacity-50 cursor-not-allowed" disabled>
+                  <Button variant="outline" className="w-full h-11 rounded-xl font-bold gap-2 border-dashed border-2 opacity-50 cursor-not-allowed" disabled title="Bientôt disponible">
                      <Mail className="w-4 h-4" /> Envoyer email de test
                   </Button>
                   <p className="text-[8px] text-center text-muted-foreground uppercase font-black tracking-tighter">Disponible en phase Email D</p>
@@ -368,16 +373,8 @@ function getStatusBadge(status: string | undefined) {
     case 'verified': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white font-black text-[10px] h-6 px-3">VÉRIFIÉ</Badge>;
     case 'failed': return <Badge variant="destructive" className="font-black text-[10px] h-6 px-3">ÉCHEC</Badge>;
     case 'configured': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 font-black text-[10px] h-6 px-3">CONFIGURÉ</Badge>;
-    default: return <Badge variant="outline" className="font-black text-[10px] h-6 px-3">NON CONFIGURÉ</Badge>;
+    default: return <Badge variant="outline" className="font-black text-[10px] h-6 px-3 uppercase text-muted-foreground">{s.replace(/_/g, ' ')}</Badge>;
   }
-}
-
-function formatDateTime(val: any): string {
-  if (!val) return "-";
-  try {
-    const d = val.toDate ? val.toDate() : new Date(val);
-    return d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch (e) { return "-"; }
 }
 
 import { Clock } from "lucide-react";
