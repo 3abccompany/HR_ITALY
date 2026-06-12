@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Users, Search, UserCheck, Loader2, 
@@ -37,6 +36,21 @@ const initialFilters: Filters = {
   site: "all",
 };
 
+// --- Helpers ---
+const normalizeString = (value: unknown) => String(value ?? '').trim();
+const normalizeStatus = (value: unknown) => normalizeString(value).toLowerCase();
+
+const buildFilterOptions = (values: Array<string | undefined | null>) =>
+  Array.from(
+    new Set(
+      values
+        .map((v) => normalizeString(v))
+        .filter(Boolean)
+    )
+  )
+  .sort((a, b) => a.localeCompare(b))
+  .map((value) => ({ label: value, value }));
+
 export default function EmployeesManagementPage() {
   const params = useParams();
   const router = useRouter();
@@ -64,17 +78,17 @@ export default function EmployeesManagementPage() {
   // Dynamic Options for Filters
   const uniqueJobTitles = useMemo(() => {
     if (!employees) return [];
-    return Array.from(new Set(employees.map(e => e.jobTitle).filter(Boolean))).sort();
+    return buildFilterOptions(employees.map(e => e.jobTitle));
   }, [employees]);
 
   const uniqueSites = useMemo(() => {
     if (!employees) return [];
-    return Array.from(new Set(employees.map(e => e.worksiteName).filter(Boolean))).sort();
+    return buildFilterOptions(employees.map(e => e.worksiteName));
   }, [employees]);
 
   const uniqueStatuses = useMemo(() => {
     if (!employees) return [];
-    return Array.from(new Set(employees.map(e => e.status).filter(Boolean))).sort();
+    return buildFilterOptions(employees.map(e => e.status));
   }, [employees]);
 
   // Filtering Logic
@@ -116,8 +130,14 @@ export default function EmployeesManagementPage() {
     if (!employees) return { total: 0, active: 0, inactive: 0, sites: 0 };
     return {
       total: employees.length,
-      active: employees.filter(e => e.status === 'active' || e.status === 'ACTIVE' || e.status === 'actif').length,
-      inactive: employees.filter(e => e.status !== 'active' && e.status !== 'ACTIVE' && e.status !== 'actif').length,
+      active: employees.filter(e => {
+        const s = normalizeStatus(e.status);
+        return s === 'active' || s === 'actif';
+      }).length,
+      inactive: employees.filter(e => {
+        const s = normalizeStatus(e.status);
+        return ['suspended', 'terminated', 'archived', 'inactive', 'inactif', 'sorti', 'partie', 'parti'].includes(s);
+      }).length,
       sites: uniqueSites.length
     };
   }, [employees, uniqueSites]);
@@ -173,7 +193,7 @@ export default function EmployeesManagementPage() {
                 label="Poste" 
                 value={filters.jobTitle} 
                 onValueChange={(v) => handleUpdateFilter('jobTitle', v)}
-                options={uniqueJobTitles.map(t => ({ label: t, value: t }))}
+                options={uniqueJobTitles}
               />
 
               {/* Status Filter */}
@@ -181,7 +201,7 @@ export default function EmployeesManagementPage() {
                 label="Statut" 
                 value={filters.status} 
                 onValueChange={(v) => handleUpdateFilter('status', v)}
-                options={uniqueStatuses.map(s => ({ label: s.toUpperCase(), value: s }))}
+                options={uniqueStatuses}
               />
 
               {/* Site Filter */}
@@ -189,7 +209,7 @@ export default function EmployeesManagementPage() {
                 label="Site" 
                 value={filters.site} 
                 onValueChange={(v) => handleUpdateFilter('site', v)}
-                options={uniqueSites.map(s => ({ label: s, value: s }))}
+                options={uniqueSites}
               />
 
               <Button 
@@ -353,7 +373,7 @@ function FilterDropdown({
   label: string, 
   value: string, 
   onValueChange: (v: string) => void, 
-  options: { label: string, value: string }[] 
+  options: { label: string; value: string }[] 
 }) {
   return (
     <Select value={value} onValueChange={onValueChange}>
@@ -377,7 +397,7 @@ function FilterDropdown({
 }
 
 function getStatusBadge(status: string | undefined) {
-  const s = (status || "unknown").toLowerCase();
+  const s = normalizeStatus(status);
   
   if (['active', 'actif', 'active_contract'].includes(s)) {
     return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white text-[10px] h-5 uppercase font-black">ACTIF</Badge>;
@@ -387,9 +407,9 @@ function getStatusBadge(status: string | undefined) {
     return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] h-5 uppercase font-black">SUSPENDU</Badge>;
   }
   
-  if (['terminated', 'sorti', 'inactive', 'inactif'].includes(s)) {
+  if (['terminated', 'sorti', 'inactive', 'inactif', 'parti', 'partie', 'archived'].includes(s)) {
     return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px] h-5 uppercase font-black">SORTI</Badge>;
   }
 
-  return <Badge variant="outline" className="text-[10px] h-5 uppercase font-bold text-muted-foreground">{s}</Badge>;
+  return <Badge variant="outline" className="text-[10px] h-5 uppercase font-bold text-muted-foreground">{s || "Inconnu"}</Badge>;
 }

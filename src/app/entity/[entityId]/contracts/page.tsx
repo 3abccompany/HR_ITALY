@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -9,7 +8,8 @@ import {
   Calendar as CalendarIcon, Building2,
   Scale, Euro, Fingerprint, AlertCircle,
   Clock, CheckCircle2, AlertTriangle, ArrowUpRight,
-  RefreshCcw, ChevronLeft, ChevronRight
+  RefreshCcw, ChevronLeft, ChevronRight,
+  Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,6 +61,21 @@ function parseSafeDate(val: any): Date | null {
   }
   return null;
 }
+
+// --- Helpers ---
+const getNumberLikeField = (source: unknown, keys: string[]): number | null => {
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number(value.replace(',', '.'));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+};
 
 export default function ContractsRegistryPage() {
   const params = useParams();
@@ -145,7 +160,6 @@ export default function ContractsRegistryPage() {
     
     const today = startOfDay(new Date());
     const thirtyDaysOut = addDays(today, 30);
-    const sixtyDaysOut = addDays(today, 60);
 
     let result = contracts.filter(c => {
       const emp = employeesMap.get(c.employeeId);
@@ -242,7 +256,7 @@ export default function ContractsRegistryPage() {
          <StatCard title="Échéances critiques" value={stats.alert} icon={AlertTriangle} color="orange" alert={stats.alert > 0} />
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Filter Bar */}
         <div className="flex flex-col gap-4">
           <ScrollArea className="w-full whitespace-nowrap">
@@ -329,6 +343,7 @@ export default function ContractsRegistryPage() {
           </div>
         </div>
 
+        {/* Table Container */}
         <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem]">
           <Table>
             <TableHeader>
@@ -359,6 +374,9 @@ export default function ContractsRegistryPage() {
                   const emp = employeesMap.get(c.employeeId);
                   const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "Collaborateur inconnu");
                   const code = c.employeeCode || (emp ? emp.employeeCode : "N/A");
+
+                  const monthlyRem = getNumberLikeField(c, ['proposedGrossMonthly', 'grossMonthly', 'grossMonthlySalary', 'monthlyGross', 'monthlySalary', 'salaryMonthly', 'remunerationMonthly']) || 0;
+                  const annualRem = getNumberLikeField(c, ['proposedGrossAnnual', 'grossAnnual', 'grossAnnualSalary', 'annualGross', 'annualSalary', 'salaryAnnual', 'ral', 'ralAnnuel']) || 0;
 
                   return (
                     <TableRow key={c.contractId} className="group hover:bg-muted/50 transition-colors">
@@ -400,9 +418,9 @@ export default function ContractsRegistryPage() {
                       <TableCell>
                          <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-1 text-[11px] font-black text-accent">
-                               <Euro className="w-2.5 h-2.5" /> {Number(c.proposedGrossMonthly || c.grossMonthly || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} /mois
+                               <Euro className="w-2.5 h-2.5" /> {monthlyRem.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} /mois
                             </div>
-                            <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-tight">RAL: {Number(c.proposedGrossAnnual || c.grossAnnual || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €</div>
+                            <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-tight">RAL: {annualRem.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €</div>
                          </div>
                       </TableCell>
                       <TableCell className="text-right pr-6">
