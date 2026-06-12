@@ -810,6 +810,9 @@ const STATUS_LABELS_CPI: Record<string, string> = {
 };
 
 function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocument[], loadingId: string | null, onOpen: any, employee?: Employee }) {
+  const params = useParams();
+  const entityId = params?.entityId as string;
+
   return (
     <Table>
       <TableHeader className="bg-secondary/10">
@@ -826,6 +829,8 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
           <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document rattaché.</TableCell></TableRow>
         ) : docs.map(d => {
           const isLoading = loadingId === d.id;
+          const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(d.documentType) || d.relatedModule === 'contracts';
+          
           return (
             <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
               <TableCell className="pl-8 py-4">
@@ -854,9 +859,18 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                  {formatDateSafe(d.uploadedAt || d.createdAt)}
               </TableCell>
               <TableCell className="text-right pr-8">
-                 <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId}>
-                    {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
-                 </Button>
+                 <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {isContractDoc && d.contractId && (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
+                         <Link href={`/entity/${entityId}/contracts/${d.contractId}`}>
+                            <Briefcase className="w-4 h-4" />
+                         </Link>
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId} title="Ouvrir">
+                       {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
+                    </Button>
+                 </div>
               </TableCell>
             </TableRow>
           );

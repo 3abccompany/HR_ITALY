@@ -8,7 +8,8 @@ import {
   Calendar, AlertCircle, Filter, X, ChevronRight,
   ShieldAlert, Clock, Building2, ListFilter,
   FileCheck, ShieldCheck, AlertTriangle, Info,
-  RefreshCcw, Upload, ChevronDown, ChevronUp
+  RefreshCcw, Upload, ChevronDown, ChevronUp,
+  Briefcase
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +58,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Employee } from "@/types/employee";
 import { Separator } from "@/components/ui/separator";
 import React from "react";
+import Link from "next/link";
 
 interface Filters {
   search: string;
@@ -1033,14 +1035,18 @@ function DocRow({
   onToggleHistory?: () => void,
   employee?: Employee
 }) {
+  const params = useParams();
+  const entityId = params?.entityId as string;
   const isLoading = loadingId === doc.id;
   const expiryDate = parseSafeDate(doc.expiresAt);
   const today = startOfDay(new Date());
   const isExpired = expiryDate && isBefore(expiryDate, today);
   const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
   
-  // UI replacement rule: Only allow renewal/replacement on current documents (not historical versions)
-  const isRenewable = !isHistory && doc.status === 'valid' && !doc.replacedById && expiryDate && (isExpired || isExpiringSoon);
+  const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType) || doc.relatedModule === 'contracts';
+  
+  // UI replacement rule: Only allow renewal/replacement on current documents (not historical versions) AND NOT on contract docs
+  const isRenewable = !isHistory && !isContractDoc && doc.status === 'valid' && !doc.replacedById && expiryDate && (isExpired || isExpiringSoon);
 
   return (
     <TableRow className={cn(
@@ -1097,6 +1103,13 @@ function DocRow({
       </TableCell>
       <TableCell className="text-right pr-6">
          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {isContractDoc && doc.contractId && (
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
+                 <Link href={`/entity/${entityId}/contracts/${doc.contractId}`}>
+                    <Briefcase className="w-4 h-4" />
+                 </Link>
+              </Button>
+            )}
             {isRenewable && onReplace && (
               <Button variant="ghost" size="icon" className="h-8 w-8 text-accent" onClick={() => onReplace(doc)} title="Renouveler">
                  <RefreshCcw className="w-4 h-4" />
