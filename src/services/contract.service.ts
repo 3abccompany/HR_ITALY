@@ -49,6 +49,7 @@ function sanitizePayload(obj: any): any {
  * Updates contract data.
  * STRICT RULE: Only allowed if contract.status === "draft".
  * Implementation: Only bumps contentUpdatedAt if relevant content fields have changed.
+ * Phase 6B: Propagates taxCode changes to Person and Employee.
  */
 export async function updateContract(entityId: string, contractId: string, data: Partial<Contract>, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -112,6 +113,25 @@ export async function updateContract(entityId: string, contractId: string, data:
     // Only bump content threshold if a business-relevant field changed
     if (hasContentChanges) {
       updatePayload.contentUpdatedAt = serverTimestamp();
+    }
+
+    // --- PHASE 6B: Propagation logic for Identity Identifier ---
+    if (cleanData.taxCode && typeof cleanData.taxCode === 'string') {
+      const trimmedTaxCode = cleanData.taxCode.trim().toUpperCase();
+      if (trimmedTaxCode) {
+        updatePayload.taxCode = trimmedTaxCode;
+
+        // Propagate to Person
+        if (contract.personId) {
+          const pRef = doc(db, `entities/${entityId}/persons`, contract.personId);
+          transaction.update(pRef, { codiceFiscale: trimmedTaxCode, updatedAt: serverTimestamp() });
+        }
+        // Propagate to Employee
+        if (contract.employeeId) {
+          const eRef = doc(db, `entities/${entityId}/employees`, contract.employeeId);
+          transaction.update(eRef, { taxCode: trimmedTaxCode, updatedAt: serverTimestamp() });
+        }
+      }
     }
 
     transaction.update(contractRef, updatePayload);
@@ -455,7 +475,7 @@ export async function terminateContractAction(
 
     if (terminationDocMetadata) {
        if (terminationDocMetadata.entityId !== entityId || terminationDocMetadata.contractId !== contractId) {
-         throw new Error("Incohérence sur le document de clôture (entité/contrat).");
+         throw new Error("Incohérence sur le document de clôture (entité/contract).");
        }
     }
 
@@ -589,6 +609,7 @@ export async function archiveContractAction(entityId: string, contractId: string
 /**
  * Phase 1: Prepares a renewal draft for a fixed-term contract (CDD).
  * Creates a new contract linked to the old one.
+ * Phase 6B: Inherits identity identifier from canonical sources.
  */
 export async function prepareContractRenewalAction(
   entityId: string, 
@@ -630,6 +651,21 @@ export async function prepareContractRenewalAction(
       throw new Error("La date de fin doit être postérieure à la date de début.");
     }
 
+    // --- PHASE 6B: Identity Inheritance Logic ---
+    const personRef = old.personId ? doc(db, `entities/${entityId}/persons`, old.personId) : null;
+    const employeeRef = old.employeeId ? doc(db, `entities/${entityId}/employees`, old.employeeId) : null;
+    
+    let personSnap = null;
+    let employeeSnap = null;
+    if (personRef) personSnap = await transaction.get(personRef);
+    if (employeeRef) employeeSnap = await transaction.get(employeeRef);
+
+    const resolvedTaxCode = 
+      (personSnap?.exists() ? personSnap.data()?.codiceFiscale : null) || 
+      (employeeSnap?.exists() ? employeeSnap.data()?.taxCode : null) || 
+      old.taxCode || 
+      null;
+
     // 2. Prepare New Contract (Cloning core snapshots)
     const newContractData: any = {
       contractId: newContractId,
@@ -649,7 +685,7 @@ export async function prepareContractRenewalAction(
       legalRepresentativeTitle: old.legalRepresentativeTitle,
       
       // Legal Employee Snapshot
-      taxCode: old.taxCode,
+      taxCode: resolvedTaxCode,
       employeeAddressSnapshot: old.employeeAddressSnapshot,
       dateOfBirth: old.dateOfBirth,
       placeOfBirth: old.placeOfBirth,

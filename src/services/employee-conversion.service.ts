@@ -1,16 +1,26 @@
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { Person } from "@/types/person";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
 
 /**
+ * Normalization helper for identity identifier (Phase 6B).
+ */
+function getIdentifier(source: any): string | null {
+  if (!source) return null;
+  const val = source.codiceFiscale || source.taxCode || source.fiscalCode || source.codeFiscal || source.nationalId || source.fiscalId;
+  return typeof val === 'string' ? val.trim().toUpperCase() : null;
+}
+
+/**
  * Converts an employment offer to a formal employee record and a draft contract.
  * Automatically synchronizes candidate and person lifecycle documents.
  * Returns the created employeeId.
+ * Phase 6B: Hardened identity identifier (taxCode/codiceFiscale) synchronization.
  */
 export async function convertOfferToEmployeeAction(params: {
   entityId: string;
@@ -69,7 +79,7 @@ export async function convertOfferToEmployeeAction(params: {
 
       // UniLav/CPI Linkage
       const requestId = `unilav_${offerId}`;
-      const requestRef = adminDb.collection("entities").doc(entityId).collection("employmentRequests").doc(requestId);
+      const requestRef = adminDb.collection("entities").doc(tokenData.entityId).collection("employmentRequests").doc(requestId);
       const requestSnap = await transaction.get(requestRef);
 
       const needRef = offer.recruitmentNeedId 
@@ -105,6 +115,9 @@ export async function convertOfferToEmployeeAction(params: {
       if (!employeeId) employeeId = adminDb.collection("entities").doc(entityId).collection("employees").doc().id;
       if (!contractId) contractId = adminDb.collection("entities").doc(entityId).collection("contracts").doc().id;
 
+      // --- PHASE 6B: Resolve Canonical Identifier ---
+      const resolvedTaxCode = getIdentifier(personData) || getIdentifier(offer) || getIdentifier(candidateSnap.data()) || null;
+
       // --- PHASE 3: WRITES ---
 
       if (isNewEmployee) {
@@ -120,7 +133,7 @@ export async function convertOfferToEmployeeAction(params: {
           email: personData.email, 
           phone: personData.phone || "", 
           birthDate: personData.dateOfBirth || (personData as any).birthDate || "",
-          taxCode: personData.codiceFiscale || "", 
+          taxCode: resolvedTaxCode || "", 
           hireDate: offer.proposedStartDate, 
           departmentId: offer.departmentId || "", 
           departmentName: offer.departmentName || "",
@@ -141,7 +154,7 @@ export async function convertOfferToEmployeeAction(params: {
           employeeId, 
           sourceOfferId: offerId,
           employeeDisplayName: personData.displayName,
-          taxCode: personData.codiceFiscale || "",
+          taxCode: resolvedTaxCode || "",
           jobTitleName: offer.jobTitleName,
           departmentName: offer.departmentName || "",
           worksiteName: offer.worksiteName || "",
@@ -162,13 +175,24 @@ export async function convertOfferToEmployeeAction(params: {
 
       // Synchronize Lifecycle
       transaction.update(candidateRef, { status: "hired", employeeId, updatedAt: FieldValue.serverTimestamp() });
-      transaction.update(personRef, { currentLifecycleStatus: "employee", currentEmployeeId: employeeId, currentCandidateId: null, updatedAt: FieldValue.serverTimestamp() });
+      
+      const personUpdate: any = { 
+        currentLifecycleStatus: "employee", 
+        currentEmployeeId: employeeId, 
+        currentCandidateId: null, 
+        updatedAt: FieldValue.serverTimestamp() 
+      };
+      if (resolvedTaxCode) {
+        personUpdate.codiceFiscale = resolvedTaxCode;
+      }
+      transaction.update(personRef, personUpdate);
+      
       transaction.update(offerRef, { conversionStatus: "converted", employeeId, contractId, updatedAt: FieldValue.serverTimestamp() });
       
       if (!dossiersSnap.empty) transaction.update(dossiersSnap.docs[0].ref, { status: "converted_to_employee", employeeId, contractId, updatedAt: FieldValue.serverTimestamp() });
       if (requestSnap.exists) transaction.update(requestRef, { employeeId, updatedAt: FieldValue.serverTimestamp() });
 
-      // Backfill Registry Documents (Part C)
+      // Backfill Registry Documents
       const allDocsToFix = [...docsByPerson.docs];
       if (docsByCand) allDocsToFix.push(...docsByCand.docs);
       
