@@ -79,7 +79,7 @@ export async function convertOfferToEmployeeAction(params: {
 
       // UniLav/CPI Linkage
       const requestId = `unilav_${offerId}`;
-      const requestRef = adminDb.collection("entities").doc(tokenData.entityId).collection("employmentRequests").doc(requestId);
+      const requestRef = adminDb.collection("entities").doc(entityId).collection("employmentRequests").doc(requestId);
       const requestSnap = await transaction.get(requestRef);
 
       const needRef = offer.recruitmentNeedId 
