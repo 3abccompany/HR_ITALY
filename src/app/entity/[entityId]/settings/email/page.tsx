@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect } from "react";
@@ -25,6 +26,7 @@ import {
 } from "@/services/email-settings.service";
 import { EntityEmailSettingsUI, EmailProvider } from "@/types/email-settings";
 import { cn } from "@/lib/utils";
+import { Clock } from "lucide-react";
 
 export default function EntityEmailSettingsPage() {
   const params = useParams();
@@ -50,7 +52,7 @@ export default function EntityEmailSettingsPage() {
     hasPassword: false
   });
 
-  const canManage = hasPermission("settings.manage");
+  const canManage = hasPermission("settings.manage") || hasPermission("emailSettings.manage");
 
   useEffect(() => {
     async function load() {
@@ -124,7 +126,7 @@ export default function EntityEmailSettingsPage() {
   if (membershipLoading || loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
         <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Chargement...</p>
       </div>
     );
@@ -376,5 +378,3 @@ function getStatusBadge(status: string | undefined) {
     default: return <Badge variant="outline" className="font-black text-[10px] h-6 px-3 uppercase text-muted-foreground">{s.replace(/_/g, ' ')}</Badge>;
   }
 }
-
-import { Clock } from "lucide-react";

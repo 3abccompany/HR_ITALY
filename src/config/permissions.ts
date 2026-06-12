@@ -122,4 +122,7 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "consultants.create", module: "consultants", action: "create", label: "Ajouter un consultant", description: "Ajout d'un nouveau partenaire externe au registre.", scope: "entity" },
   { code: "consultants.update", module: "consultants", action: "update", label: "Modifier un consultant", description: "Mise à jour des coordonnées des consultants.", scope: "entity" },
   { code: "consultants.archive", module: "consultants", action: "archive", label: "Archiver un consultant", description: "Désactivation d'un partenaire consultant.", scope: "entity" },
+
+  // --- Email Settings ---
+  { code: "emailSettings.manage", module: "emailSettings", action: "manage", label: "Gérer les paramètres email", description: "Mise à jour de l'identité d'envoi et du SMTP.", scope: "entity" },
 ];
