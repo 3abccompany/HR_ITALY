@@ -106,7 +106,7 @@ export async function getEntityEmailSettingsForAdmin(entityId: string): Promise<
 /**
  * Validates the email settings input before saving or testing.
  */
-export function validateEmailSettingsInput(input: any) {
+export async function validateEmailSettingsInput(input: any) {
   const errors: string[] = [];
   
   if (input.provider === 'smtp') {
@@ -225,8 +225,9 @@ export async function getEntityEmailTransportSettings(entityId: string): Promise
 
 /**
  * Strips sensitive encryption fields before sending settings to the UI.
+ * Internal helper.
  */
-export function sanitizeEmailSettingsForClient(settings: EntityEmailSettings): EntityEmailSettingsUI {
+function sanitizeEmailSettingsForClient(settings: EntityEmailSettings): EntityEmailSettingsUI {
   const { encryptedSmtpPassword, passwordIv, passwordAuthTag, ...safeData } = settings;
   return safeData;
 }
