@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -10,6 +9,32 @@ import {
 } from "firebase/firestore";
 import { RecruitmentNeed, RecruitmentNeedStatus } from "@/types/recruitment-need";
 import { createAuditLog } from "./audit.service";
+
+/**
+ * Utility to remove undefined properties from an object to prevent Firestore errors.
+ * Preserves FieldValue and Timestamp instances to avoid stripping server directives.
+ */
+function sanitizePayload(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp'
+  ) {
+    return obj;
+  }
+
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  for (const key in obj) {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = typeof val === 'object' ? sanitizePayload(val) : val;
+    }
+  }
+  return newObj;
+}
 
 export async function createRecruitmentNeed(entityId: string, data: Partial<RecruitmentNeed>, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -33,7 +58,7 @@ export async function createRecruitmentNeed(entityId: string, data: Partial<Recr
     updatedBy: actorUid,
   };
 
-  await setDoc(needRef, needData);
+  await setDoc(needRef, sanitizePayload(needData));
 
   await createAuditLog({
     userId: actorUid,
@@ -77,7 +102,7 @@ export async function updateRecruitmentNeed(entityId: string, needId: string, da
     updatedBy: actorUid,
   };
 
-  await updateDoc(needRef, updatedData);
+  await updateDoc(needRef, sanitizePayload(updatedData));
 
   await createAuditLog({
     userId: actorUid,

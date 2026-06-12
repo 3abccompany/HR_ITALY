@@ -19,10 +19,29 @@ import { JobProfile } from "@/types/job-profile";
 import { createAuditLog } from "./audit.service";
 
 /**
- * Normalizes an object by removing undefined properties to satisfy Firestore.
+ * Utility to remove undefined properties from an object to prevent Firestore errors.
+ * Preserves FieldValue and Timestamp instances to avoid stripping server directives.
  */
-function sanitizePayload<T>(obj: T): T {
-  return JSON.parse(JSON.stringify(obj, (key, value) => (value === undefined ? null : value)));
+function sanitizePayload(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp'
+  ) {
+    return obj;
+  }
+
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  for (const key in obj) {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = typeof val === 'object' ? sanitizePayload(val) : val;
+    }
+  }
+  return newObj;
 }
 
 /**
@@ -166,7 +185,7 @@ export async function createEmploymentOfferDraft(params: {
       updatedBy: actorUid,
     };
 
-    transaction.set(offerRef, payload);
+    transaction.set(offerRef, sanitizePayload(payload));
 
     return { offerId };
   }).then(async (result) => {
