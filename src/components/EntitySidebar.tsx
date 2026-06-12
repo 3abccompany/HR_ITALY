@@ -78,7 +78,10 @@ export function EntitySidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {entityMenu.map((item) => {
-                if (!hasPermission(item.permission)) return null;
+                const permissions = Array.isArray(item.permission) ? item.permission : [item.permission];
+                const isVisible = permissions.some(p => hasPermission(p));
+                if (!isVisible) return null;
+                
                 const href = `/entity/${entityId}/${item.href}`;
                 const isActive = pathname === href;
 

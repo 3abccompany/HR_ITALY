@@ -28,7 +28,7 @@ import {
 export interface MenuItem {
   label: string;
   href: string;
-  permission: string;
+  permission: string | string[];
   icon: LucideIcon;
 }
 
@@ -54,5 +54,5 @@ export const entityMenu: MenuItem[] = [
   { label: "Sécurité / DPI", href: "safety", permission: "safety.read", icon: ShieldAlert },
   { label: "Visites médicales", href: "medical-visits", permission: "medicalVisits.read", icon: Stethoscope },
   { label: "Rapports", href: "reports", permission: "reports.read", icon: BarChart },
-  { label: "Paramètres", href: "settings", permission: "settings.read", icon: Settings },
+  { label: "Paramètres", href: "settings", permission: ["settings.manage", "emailSettings.manage"], icon: Settings },
 ];
