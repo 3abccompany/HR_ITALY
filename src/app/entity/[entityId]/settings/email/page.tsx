@@ -59,7 +59,10 @@ export default function EntityEmailSettingsPage() {
   const canManage = hasPermission("settings.manage") || hasPermission("emailSettings.manage");
 
   const loadSettings = async () => {
-    if (!entityId || !canManage) return;
+    if (!entityId || !canManage) {
+      setLoading(false);
+      return;
+    }
     try {
       const data = await getEntityEmailSettingsForAdmin(entityId);
       if (data) {
@@ -72,18 +75,16 @@ export default function EntityEmailSettingsPage() {
       setIsDirty(false);
     } catch (err) {
       console.error("[EmailSettingsPage] Load failed:", err);
+      toast({ variant: "destructive", title: "Erreur", description: "Impossible de charger les paramètres." });
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    async function init() {
-      if (membershipLoading) return;
-      if (canManage) {
-        await loadSettings();
-      }
-      setLoading(false);
+    if (!membershipLoading) {
+      loadSettings();
     }
-    init();
   }, [entityId, canManage, membershipLoading]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -187,10 +188,10 @@ export default function EntityEmailSettingsPage() {
         <div className="ml-2">
           <AlertTitle className="font-bold text-xs uppercase tracking-widest mb-1">Note d'intégration</AlertTitle>
           <AlertDescription className="text-sm leading-relaxed opacity-90">
-            Les contenus des emails restent inchangés. Cette configuration concerne uniquement l’adresse d’envoi et le serveur SMTP de l’entité.
+            Cette configuration gère uniquement l’identité de l’expéditeur (FROM) et le serveur de transport (SMTP).
             <br />
             <span className="font-bold mt-1 block italic text-blue-700">
-              Cette configuration n’est pas encore utilisée pour l’envoi réel des emails tant que l’intégration transport n’est pas activée.
+              Note : Les contenus des emails et le choix des destinataires restent gérés automatiquement par la plateforme.
             </span>
           </AlertDescription>
         </div>
@@ -202,10 +203,10 @@ export default function EntityEmailSettingsPage() {
             <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
               <CardHeader className="bg-primary/5 border-b py-6 px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                  <User className="w-4 h-4" /> Identité d’envoi
+                  <User className="w-4 h-4" /> Identité d’envoi (FROM)
                 </CardTitle>
-                <CardDescription className="text-xs font-medium text-slate-500 mt-2">
-                  Configurez l’expéditeur des emails. Le destinataire (À / TO) reste défini par les modules métier.
+                <CardDescription className="text-xs font-medium text-slate-500 mt-2 leading-relaxed">
+                  Cette page configure uniquement l’expéditeur des emails de cette entité. Le destinataire (À / TO) reste défini dans chaque module : candidat, consultant, employé ou dossier concerné.
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-8 space-y-6">
@@ -230,6 +231,7 @@ export default function EntityEmailSettingsPage() {
                       onChange={(e) => updateSettings({ fromEmail: e.target.value })}
                       className="rounded-xl h-11"
                     />
+                    <p className="text-[9px] text-muted-foreground italic">Adresse utilisée comme expéditeur officiel des emails envoyés par cette entité.</p>
                   </div>
                   <div className="space-y-2 col-span-full">
                     <Label htmlFor="replyToEmail" className="text-[10px] font-black uppercase text-muted-foreground">Adresse de réception des réponses (REPLY-TO)</Label>
@@ -241,6 +243,7 @@ export default function EntityEmailSettingsPage() {
                       onChange={(e) => updateSettings({ replyToEmail: e.target.value })}
                       className="rounded-xl h-11"
                     />
+                    <p className="text-[9px] text-muted-foreground italic">Lorsqu’un destinataire répond à un email, sa réponse sera envoyée à cette adresse. Ce n’est pas l’adresse du destinataire.</p>
                   </div>
                 </div>
               </CardContent>
@@ -254,14 +257,14 @@ export default function EntityEmailSettingsPage() {
               </CardHeader>
               <CardContent className="p-8 space-y-8">
                 <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Fournisseur</Label>
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Fournisseur / Transport</Label>
                   <Select value={settings.provider || "none"} onValueChange={(v) => updateSettings({ provider: v as EmailProvider })}>
                     <SelectTrigger className="h-11 rounded-xl">
                       <SelectValue placeholder="Choisir..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="smtp">Serveur SMTP Personnalisé</SelectItem>
-                      <SelectItem value="none">Aucun (Défaut plateforme)</SelectItem>
+                      <SelectItem value="smtp">Serveur SMTP personnalisé</SelectItem>
+                      <SelectItem value="none">Défaut plateforme — utiliser l’email global</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -324,17 +327,25 @@ export default function EntityEmailSettingsPage() {
                     {settings.hasPassword && !settings.password && (
                       <div className="col-span-full flex items-center gap-2 p-3 bg-green-50 text-green-700 rounded-xl border border-green-100 text-[10px] font-black uppercase tracking-tight">
                          <Lock className="w-3 h-3" />
-                         Mot de passe configuré — laisser vide pour conserver.
+                         Mot de passe configuré — laisser vide pour conserver le mot de passe actuel.
                       </div>
                     )}
                   </div>
                 )}
               </CardContent>
-              <CardFooter className="bg-slate-50 border-t p-8 flex justify-end">
-                <Button type="submit" disabled={saving || !isDirty} className="gap-2 rounded-xl px-8 font-black shadow-lg">
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Enregistrer la configuration
-                </Button>
+              <CardFooter className="bg-slate-50 border-t p-8 flex flex-col items-stretch gap-4">
+                <Alert className="bg-orange-50 border-orange-200 rounded-xl py-3">
+                  <AlertCircle className="h-4 w-4 text-orange-600" />
+                  <AlertDescription className="text-[10px] font-bold text-orange-800 uppercase tracking-tight leading-tight">
+                    Cette configuration n’est pas encore utilisée pour l’envoi réel des emails tant que l’intégration transport n’est pas activée.
+                  </AlertDescription>
+                </Alert>
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={saving || !isDirty} className="gap-2 rounded-xl px-8 font-black shadow-lg">
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Enregistrer la configuration
+                  </Button>
+                </div>
               </CardFooter>
             </Card>
           </form>
@@ -371,8 +382,8 @@ export default function EntityEmailSettingsPage() {
                       Envoyer le test
                     </Button>
                   </div>
-                  <p className="text-[10px] text-accent-foreground/50 italic">
-                    Cette adresse sert uniquement au test technique et n'est pas enregistrée dans le dossier.
+                  <p className="text-[10px] text-accent-foreground/50 italic leading-tight">
+                    Cette adresse sert uniquement à recevoir l’email de test. Les vrais destinataires restent ceux définis dans les modules métier.
                   </p>
                 </div>
 
@@ -408,15 +419,18 @@ export default function EntityEmailSettingsPage() {
                 </div>
 
                 {settings.lastTestedAt && (
-                   <div className="space-y-1 pt-2">
+                   <div className="space-y-1 pt-2 border-t border-dashed">
                       <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">Dernier test</p>
                       <p className="text-xs font-bold text-slate-700">{formatDateTime(settings.lastTestedAt)}</p>
+                      <Badge variant="outline" className={cn("mt-1 text-[8px] uppercase", settings.lastTestResult === 'success' ? "text-green-600" : "text-red-600")}>
+                        {settings.lastTestResult || "INCONNU"}
+                      </Badge>
                    </div>
                 )}
 
                 {settings.lastError && (
                   <div className="p-3 bg-red-50 border border-red-100 rounded-xl space-y-1">
-                     <p className="text-[8px] font-black text-red-700 uppercase">Dernière erreur</p>
+                     <p className="text-[8px] font-black text-red-700 uppercase">Détails technique erreur</p>
                      <p className="text-[10px] text-red-600 font-medium leading-tight">{settings.lastError}</p>
                   </div>
                 )}
@@ -426,17 +440,17 @@ export default function EntityEmailSettingsPage() {
           <Card className="border-primary/10 rounded-[2rem] shadow-lg overflow-hidden bg-primary/95 text-white">
              <CardHeader className="bg-white/10 py-6 border-b border-white/10 px-8">
                 <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                   <ShieldCheck className="w-4 h-4" /> Sécurité
+                   <ShieldCheck className="w-4 h-4" /> Sécurité des données
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 space-y-4">
                 <p className="text-xs leading-relaxed opacity-80">
-                  Vos identifiants SMTP sont chiffrés à l'aide de l'algorithme <strong>AES-256-GCM</strong>.
+                  Les identifiants SMTP de votre entreprise sont chiffrés côté serveur à l'aide de l'algorithme <strong>AES-256-GCM</strong>.
                 </p>
                 <Separator className="bg-white/10" />
                 <div className="flex items-center gap-3">
                    <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                   <p className="text-[10px] font-bold uppercase tracking-tight">Chiffrement actif</p>
+                   <p className="text-[10px] font-bold uppercase tracking-tight">Chiffrement AES Actif</p>
                 </div>
              </CardContent>
           </Card>
@@ -459,7 +473,7 @@ function getStatusBadge(status: string | undefined) {
 function formatDateTime(val: any): string {
   if (!val) return "Jamais";
   try {
-    const d = val.toDate ? val.toDate() : new Date(val);
+    const d = typeof val === 'string' ? new Date(val) : (val.toDate ? val.toDate() : new Date(val));
     return d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   } catch (e) { return "Date invalide"; }
 }
