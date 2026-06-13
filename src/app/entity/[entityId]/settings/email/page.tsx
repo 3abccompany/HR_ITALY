@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Mail, Save, ShieldCheck, AlertCircle, Info, Loader2, 
-  Server, User, CheckCircle2, Settings2, Lock, ArrowLeft, Clock
+  Server, User, CheckCircle2, Settings2, Lock, ArrowLeft, Clock,
+  Send, XCircle, RefreshCcw
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,7 +22,8 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   getEntityEmailSettingsForAdmin, 
   saveEntityEmailSettings,
-  validateEmailSettingsInput
+  validateEmailSettingsInput,
+  testEntityEmailSettingsAction
 } from "@/services/email-settings.service";
 import { EntityEmailSettingsUI, EmailProvider } from "@/types/email-settings";
 import { cn } from "@/lib/utils";
@@ -36,6 +38,10 @@ export default function EntityEmailSettingsPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [isDirty, setIsDirty] = useState(false);
+
   const [settings, setSettings] = useState<Partial<EntityEmailSettingsUI & { password?: string }>>({
     provider: "none",
     fromName: "",
@@ -52,70 +58,92 @@ export default function EntityEmailSettingsPage() {
 
   const canManage = hasPermission("settings.manage") || hasPermission("emailSettings.manage");
 
-  useEffect(() => {
-    async function load() {
-      if (membershipLoading) return;
-      
-      if (!entityId || !canManage) {
-        setLoading(false);
-        return;
+  const loadSettings = async () => {
+    if (!entityId || !canManage) return;
+    try {
+      const data = await getEntityEmailSettingsForAdmin(entityId);
+      if (data) {
+        setSettings(prev => ({
+          ...prev,
+          ...data,
+          password: "" 
+        }));
       }
-
-      try {
-        const data = await getEntityEmailSettingsForAdmin(entityId);
-        if (data) {
-          setSettings(prev => ({
-            ...prev,
-            ...data,
-            password: "" 
-          }));
-        }
-      } catch (err) {
-        console.error("[EmailSettingsPage] Load failed:", err);
-        toast({ 
-          variant: "destructive", 
-          title: "Erreur de chargement", 
-          description: "Impossible de récupérer les paramètres email." 
-        });
-      } finally {
-        setLoading(false);
-      }
+      setIsDirty(false);
+    } catch (err) {
+      console.error("[EmailSettingsPage] Load failed:", err);
     }
-    load();
-  }, [entityId, canManage, membershipLoading, toast]);
+  };
+
+  useEffect(() => {
+    async function init() {
+      if (membershipLoading) return;
+      if (canManage) {
+        await loadSettings();
+      }
+      setLoading(false);
+    }
+    init();
+  }, [entityId, canManage, membershipLoading]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !entityId) return;
 
-    const validation = await validateEmailSettingsInput(settings);
-    if (!validation.isValid) {
-      toast({ 
-        variant: "destructive", 
-        title: "Validation échouée", 
-        description: validation.errors[0] 
-      });
-      return;
-    }
-
     setSaving(true);
     try {
+      const validation = await validateEmailSettingsInput(settings);
+      if (!validation.isValid) {
+        toast({ 
+          variant: "destructive", 
+          title: "Validation échouée", 
+          description: validation.errors[0] 
+        });
+        setSaving(false);
+        return;
+      }
+
       await saveEntityEmailSettings(entityId, settings as any, user.uid);
       toast({ title: "Paramètres enregistrés", description: "La configuration a été mise à jour." });
-      
-      const updated = await getEntityEmailSettingsForAdmin(entityId);
-      if (updated) {
-        setSettings(prev => ({ 
-          ...prev, 
-          ...updated, 
-          password: "" 
-        }));
-      }
+      await loadSettings();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleTestConnection = async () => {
+    if (!user || !entityId || !testEmail) return;
+    if (isDirty) {
+      toast({ variant: "destructive", title: "Enregistrement requis", description: "Veuillez enregistrer vos modifications avant de lancer un test." });
+      return;
+    }
+
+    setTesting(true);
+    try {
+      const result = await testEntityEmailSettingsAction({
+        entityId,
+        testEmail,
+        actorUid: user.uid
+      });
+
+      if (result.success) {
+        toast({ title: "Test réussi !", description: `Un email a été envoyé à ${testEmail}.` });
+      } else {
+        toast({ variant: "destructive", title: "Échec du test", description: result.error });
+      }
+      await loadSettings();
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur technique", description: err.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const updateSettings = (updates: Partial<typeof settings>) => {
+    setSettings(prev => ({ ...prev, ...updates }));
+    setIsDirty(true);
   };
 
   if (membershipLoading || loading) {
@@ -168,16 +196,16 @@ export default function EntityEmailSettingsPage() {
         </div>
       </Alert>
 
-      <form onSubmit={handleSave} className="space-y-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          <form onSubmit={handleSave} className="space-y-8">
             <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
               <CardHeader className="bg-primary/5 border-b py-6 px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                   <User className="w-4 h-4" /> Identité d’envoi
                 </CardTitle>
                 <CardDescription className="text-xs font-medium text-slate-500 mt-2">
-                  Cette page configure uniquement l’expéditeur des emails de cette entité. Le destinataire (À / TO) reste défini dans chaque module : candidat, consultant, employé ou dossier concerné.
+                  Configurez l’expéditeur des emails. Le destinataire (À / TO) reste défini par les modules métier.
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-8 space-y-6">
@@ -188,7 +216,7 @@ export default function EntityEmailSettingsPage() {
                       id="fromName" 
                       placeholder="Ex: HR Nexus - Mon Entreprise" 
                       value={settings.fromName || ""} 
-                      onChange={(e) => setSettings(p => ({...p, fromName: e.target.value}))}
+                      onChange={(e) => updateSettings({ fromName: e.target.value })}
                       className="rounded-xl h-11"
                     />
                   </div>
@@ -199,10 +227,9 @@ export default function EntityEmailSettingsPage() {
                       type="email"
                       placeholder="hr@entreprise.com" 
                       value={settings.fromEmail || ""} 
-                      onChange={(e) => setSettings(p => ({...p, fromEmail: e.target.value}))}
+                      onChange={(e) => updateSettings({ fromEmail: e.target.value })}
                       className="rounded-xl h-11"
                     />
-                    <p className="text-[10px] text-muted-foreground italic">Adresse utilisée comme expéditeur officiel des emails envoyés par cette entité.</p>
                   </div>
                   <div className="space-y-2 col-span-full">
                     <Label htmlFor="replyToEmail" className="text-[10px] font-black uppercase text-muted-foreground">Adresse de réception des réponses (REPLY-TO)</Label>
@@ -211,10 +238,9 @@ export default function EntityEmailSettingsPage() {
                       type="email"
                       placeholder="recrutement@entreprise.com" 
                       value={settings.replyToEmail || ""} 
-                      onChange={(e) => setSettings(p => ({...p, replyToEmail: e.target.value}))}
+                      onChange={(e) => updateSettings({ replyToEmail: e.target.value })}
                       className="rounded-xl h-11"
                     />
-                    <p className="text-[10px] text-muted-foreground italic">Lorsqu’un destinataire répond à un email, sa réponse sera envoyée à cette adresse. Ce n’est pas l’adresse du destinataire.</p>
                   </div>
                 </div>
               </CardContent>
@@ -229,13 +255,13 @@ export default function EntityEmailSettingsPage() {
               <CardContent className="p-8 space-y-8">
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Fournisseur</Label>
-                  <Select value={settings.provider || "none"} onValueChange={(v) => setSettings(p => ({...p, provider: v as EmailProvider}))}>
+                  <Select value={settings.provider || "none"} onValueChange={(v) => updateSettings({ provider: v as EmailProvider })}>
                     <SelectTrigger className="h-11 rounded-xl">
                       <SelectValue placeholder="Choisir..." />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="smtp">Serveur SMTP Personnalisé</SelectItem>
-                      <SelectItem value="none">Aucun (Utiliser défaut plateforme)</SelectItem>
+                      <SelectItem value="none">Aucun (Défaut plateforme)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -248,7 +274,7 @@ export default function EntityEmailSettingsPage() {
                         id="smtpHost" 
                         placeholder="smtp.mailgun.org" 
                         value={settings.smtpHost || ""} 
-                        onChange={(e) => setSettings(p => ({...p, smtpHost: e.target.value}))}
+                        onChange={(e) => updateSettings({ smtpHost: e.target.value })}
                         className="rounded-xl h-11"
                       />
                     </div>
@@ -259,7 +285,7 @@ export default function EntityEmailSettingsPage() {
                         type="number"
                         placeholder="587" 
                         value={settings.smtpPort || 587} 
-                        onChange={(e) => setSettings(p => ({...p, smtpPort: parseInt(e.target.value) || 0}))}
+                        onChange={(e) => updateSettings({ smtpPort: parseInt(e.target.value) || 0 })}
                         className="rounded-xl h-11"
                       />
                     </div>
@@ -269,7 +295,7 @@ export default function EntityEmailSettingsPage() {
                         id="smtpUser" 
                         placeholder="postmaster@domain.com" 
                         value={settings.smtpUser || ""} 
-                        onChange={(e) => setSettings(p => ({...p, smtpUser: e.target.value}))}
+                        onChange={(e) => updateSettings({ smtpUser: e.target.value })}
                         className="rounded-xl h-11"
                       />
                     </div>
@@ -280,7 +306,7 @@ export default function EntityEmailSettingsPage() {
                         type="password"
                         placeholder="••••••••" 
                         value={settings.password || ""} 
-                        onChange={(e) => setSettings(p => ({...p, password: e.target.value}))}
+                        onChange={(e) => updateSettings({ password: e.target.value })}
                         className="rounded-xl h-11"
                       />
                     </div>
@@ -289,80 +315,133 @@ export default function EntityEmailSettingsPage() {
                          <Switch 
                            id="smtpSecure" 
                            checked={!!settings.smtpSecure} 
-                           onCheckedChange={(v) => setSettings(p => ({...p, smtpSecure: v}))} 
+                           onCheckedChange={(v) => updateSettings({ smtpSecure: v })} 
                          />
-                         <Label htmlFor="smtpSecure" className="text-xs font-bold cursor-pointer">SSL / TLS (Port 465)</Label>
+                         <Label htmlFor="smtpSecure" className="text-xs font-bold cursor-pointer">SSL / TLS</Label>
                        </div>
                     </div>
 
-                    {settings.hasPassword && (
+                    {settings.hasPassword && !settings.password && (
                       <div className="col-span-full flex items-center gap-2 p-3 bg-green-50 text-green-700 rounded-xl border border-green-100 text-[10px] font-black uppercase tracking-tight">
                          <Lock className="w-3 h-3" />
-                         Mot de passe configuré — laisser vide pour conserver le mot de passe actuel.
+                         Mot de passe configuré — laisser vide pour conserver.
                       </div>
                     )}
                   </div>
                 )}
               </CardContent>
               <CardFooter className="bg-slate-50 border-t p-8 flex justify-end">
-                <Button type="submit" disabled={saving} className="gap-2 rounded-xl px-8 font-black shadow-lg">
+                <Button type="submit" disabled={saving || !isDirty} className="gap-2 rounded-xl px-8 font-black shadow-lg">
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                   Enregistrer la configuration
                 </Button>
               </CardFooter>
             </Card>
-          </div>
+          </form>
 
-          <div className="space-y-8">
-            <Card className="rounded-[2rem] border-primary/10 bg-secondary/5 overflow-hidden">
-               <CardHeader className="py-6 px-8 border-b bg-secondary/10">
-                  <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                    <Settings2 className="w-4 h-4" /> Statut & Diagnostics
-                  </CardTitle>
-               </CardHeader>
-               <CardContent className="p-8 space-y-6">
-                  <div className="space-y-1">
-                    <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">État actuel</p>
-                    <div className="flex items-center gap-2">
-                       {settings.status === 'verified' ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Clock className="w-4 h-4 text-orange-400" />}
-                       <span className="text-xs font-bold text-slate-800">
-                         {settings.status ? (settings.status as string).replace(/_/g, ' ').toUpperCase() : "NON CONFIGURÉ"}
-                       </span>
-                    </div>
+          {/* Test Connectivity Section */}
+          {settings.provider === 'smtp' && (
+            <Card className="rounded-[2rem] border-accent/20 bg-accent/5 overflow-hidden shadow-lg animate-in fade-in slide-in-from-bottom-4">
+              <CardHeader className="bg-accent/10 border-b py-6 px-8">
+                <CardTitle className="text-sm font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
+                  <Send className="w-4 h-4" /> Test de connectivité
+                </CardTitle>
+                <CardDescription className="text-xs font-medium text-accent-foreground/70 mt-1">
+                  Vérifiez vos identifiants en envoyant un email de test technique.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-8 space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="testEmail" className="text-[10px] font-black uppercase text-accent-foreground/60">Email de réception du test</Label>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Input 
+                      id="testEmail" 
+                      type="email" 
+                      placeholder="votre@email.com" 
+                      value={testEmail} 
+                      onChange={(e) => setTestEmail(e.target.value)}
+                      className="rounded-xl h-12 bg-white flex-1"
+                    />
+                    <Button 
+                      onClick={handleTestConnection} 
+                      disabled={testing || !testEmail || isDirty}
+                      className="rounded-xl h-12 px-6 font-black bg-accent text-white shadow-lg gap-2"
+                    >
+                      {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      Envoyer le test
+                    </Button>
                   </div>
-
-                  <Separator className="opacity-20" />
-
-                  <Button variant="outline" className="w-full h-11 rounded-xl font-bold gap-2 border-dashed border-2 opacity-50 cursor-not-allowed" disabled title="Bientôt disponible">
-                     <Mail className="w-4 h-4" /> Envoyer email de test
-                  </Button>
-                  <p className="text-[8px] text-center text-muted-foreground uppercase font-black tracking-tighter">Disponible en phase Email D</p>
-               </CardContent>
-            </Card>
-
-            <Card className="border-primary/10 rounded-[2rem] shadow-lg overflow-hidden bg-primary/95 text-white">
-               <CardHeader className="bg-white/10 py-6 border-b border-white/10 px-8">
-                  <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                     <ShieldCheck className="w-4 h-4" /> Sécurité
-                  </CardTitle>
-               </CardHeader>
-               <CardContent className="p-8 space-y-4">
-                  <p className="text-xs leading-relaxed opacity-80">
-                    Vos identifiants SMTP sont chiffrés côté serveur à l'aide de l'algorithme <strong>AES-256-GCM</strong>.
+                  <p className="text-[10px] text-accent-foreground/50 italic">
+                    Cette adresse sert uniquement au test technique et n'est pas enregistrée dans le dossier.
                   </p>
-                  <p className="text-xs leading-relaxed opacity-80">
-                    Le mot de passe ne quitte jamais le serveur et n'est jamais affiché dans cette interface.
-                  </p>
-                  <Separator className="bg-white/10" />
-                  <div className="flex items-center gap-3">
-                     <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                     <p className="text-[10px] font-bold uppercase tracking-tight">Chiffrement actif</p>
-                  </div>
-               </CardContent>
+                </div>
+
+                {isDirty && (
+                   <Alert className="bg-orange-50 border-orange-200 rounded-xl">
+                      <AlertCircle className="h-4 w-4 text-orange-600" />
+                      <AlertDescription className="text-xs font-bold text-orange-700">
+                        Veuillez enregistrer vos modifications avant de pouvoir tester la connexion.
+                      </AlertDescription>
+                   </Alert>
+                )}
+              </CardContent>
             </Card>
-          </div>
+          )}
         </div>
-      </form>
+
+        <div className="space-y-8">
+          <Card className="rounded-[2rem] border-primary/10 bg-secondary/5 overflow-hidden">
+             <CardHeader className="py-6 px-8 border-b bg-secondary/10">
+                <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                  <Settings2 className="w-4 h-4" /> Statut & Diagnostics
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-6">
+                <div className="space-y-1">
+                  <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">État actuel</p>
+                  <div className="flex items-center gap-2">
+                     {settings.status === 'verified' ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : settings.status === 'failed' ? <XCircle className="w-4 h-4 text-destructive" /> : <Clock className="w-4 h-4 text-orange-400" />}
+                     <span className="text-xs font-bold text-slate-800">
+                       {settings.status ? (settings.status as string).replace(/_/g, ' ').toUpperCase() : "NON CONFIGURÉ"}
+                     </span>
+                  </div>
+                </div>
+
+                {settings.lastTestedAt && (
+                   <div className="space-y-1 pt-2">
+                      <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">Dernier test</p>
+                      <p className="text-xs font-bold text-slate-700">{formatDateTime(settings.lastTestedAt)}</p>
+                   </div>
+                )}
+
+                {settings.lastError && (
+                  <div className="p-3 bg-red-50 border border-red-100 rounded-xl space-y-1">
+                     <p className="text-[8px] font-black text-red-700 uppercase">Dernière erreur</p>
+                     <p className="text-[10px] text-red-600 font-medium leading-tight">{settings.lastError}</p>
+                  </div>
+                )}
+             </CardContent>
+          </Card>
+
+          <Card className="border-primary/10 rounded-[2rem] shadow-lg overflow-hidden bg-primary/95 text-white">
+             <CardHeader className="bg-white/10 py-6 border-b border-white/10 px-8">
+                <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                   <ShieldCheck className="w-4 h-4" /> Sécurité
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-4">
+                <p className="text-xs leading-relaxed opacity-80">
+                  Vos identifiants SMTP sont chiffrés à l'aide de l'algorithme <strong>AES-256-GCM</strong>.
+                </p>
+                <Separator className="bg-white/10" />
+                <div className="flex items-center gap-3">
+                   <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
+                   <p className="text-[10px] font-bold uppercase tracking-tight">Chiffrement actif</p>
+                </div>
+             </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }
@@ -375,4 +454,12 @@ function getStatusBadge(status: string | undefined) {
     case 'configured': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 font-black text-[10px] h-6 px-3">CONFIGURÉ</Badge>;
     default: return <Badge variant="outline" className="font-black text-[10px] h-6 px-3 uppercase text-muted-foreground">{s.replace(/_/g, ' ')}</Badge>;
   }
+}
+
+function formatDateTime(val: any): string {
+  if (!val) return "Jamais";
+  try {
+    const d = val.toDate ? val.toDate() : new Date(val);
+    return d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return "Date invalide"; }
 }

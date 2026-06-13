@@ -9,10 +9,16 @@ import {
   serverTimestamp 
 } from "firebase/firestore";
 import crypto from "crypto";
+import nodemailer from 'nodemailer';
 import { EntityEmailSettings, EntityEmailSettingsUI } from "@/types/email-settings";
 import { createAuditLog } from "./audit.service";
 
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
+
+/**
+ * @fileOverview Server-side administration and data repair services for Email Settings.
+ * Handles AES-256-GCM encryption/decryption of SMTP credentials.
+ */
 
 /**
  * Derives a 32-byte key from the environment secret for AES-256.
@@ -230,4 +236,111 @@ export async function getEntityEmailTransportSettings(entityId: string): Promise
   }
 
   return result;
+}
+
+/**
+ * Executes a connectivity test using the entity's SMTP configuration.
+ * Sends a non-branded technical test email.
+ */
+export async function testEntityEmailSettingsAction(params: {
+  entityId: string;
+  testEmail: string;
+  actorUid: string;
+}) {
+  const { entityId, testEmail, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const transportSettings = await getEntityEmailTransportSettings(entityId);
+  if (!transportSettings || transportSettings.provider !== 'smtp') {
+    throw new Error("Configuration SMTP manquante ou incomplète pour ce test.");
+  }
+
+  const { smtpHost, smtpPort, smtpSecure, smtpUser, decryptedPassword, fromName, fromEmail, replyToEmail } = transportSettings;
+
+  if (!decryptedPassword) {
+    throw new Error("Mot de passe SMTP introuvable ou illisible.");
+  }
+
+  const docRef = doc(db, `entities/${entityId}/emailSettings`, "main");
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure || smtpPort === 465,
+      auth: {
+        user: smtpUser,
+        pass: decryptedPassword
+      },
+      connectionTimeout: 10000, // 10s
+    });
+
+    const fromString = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
+
+    await transporter.sendMail({
+      from: fromString,
+      to: testEmail,
+      replyTo: replyToEmail || undefined,
+      subject: `Test configuration email — HR Nexus`,
+      text: `Ceci est un email de test envoyé depuis la configuration SMTP de votre entité. Si vous recevez ce message, la configuration d’envoi fonctionne correctement.`,
+      html: `
+        <div style="font-family: sans-serif; padding: 20px; color: #1F1F66;">
+          <h2 style="color: #1F1F66;">Test de connectivité SMTP</h2>
+          <p>Ceci est un email de test envoyé depuis la configuration de votre entité.</p>
+          <p style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #EEEFF7;">
+            <strong>Statut :</strong> Connecté et prêt à l'envoi.
+          </p>
+          <p style="font-size: 12px; color: #94A3B8; margin-top: 30px;">
+            HR Nexus Ecosystem — Identifiant Entité : ${entityId}
+          </p>
+        </div>
+      `
+    });
+
+    // Update Status to Verified
+    await updateDoc(docRef, {
+      status: "verified",
+      lastTestedAt: serverTimestamp(),
+      lastTestResult: "success",
+      lastError: null,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
+
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "emailSettings.tested",
+      resourceType: "emailSettings",
+      resourceId: "main",
+      details: { result: "success", target: testEmail }
+    });
+
+    return { success: true };
+  } catch (err: any) {
+    console.error("[SMTP Test Error]:", err);
+    
+    // Sanitize error message to avoid secret leaking
+    const safeError = err.message?.replace(decryptedPassword, '****') || "Échec de la connexion SMTP.";
+
+    await updateDoc(docRef, {
+      status: "failed",
+      lastTestedAt: serverTimestamp(),
+      lastTestResult: "failure",
+      lastError: safeError,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    });
+
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "emailSettings.tested",
+      resourceType: "emailSettings",
+      resourceId: "main",
+      details: { result: "failure", error: safeError }
+    });
+
+    return { success: false, error: safeError };
+  }
 }
