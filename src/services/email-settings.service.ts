@@ -65,6 +65,28 @@ function decrypt(encrypted: string, iv: string, authTag: string) {
 }
 
 /**
+ * Converts Firestore Timestamps (including Admin SDK POJO formats) to ISO strings for client consumption.
+ */
+function serializeDate(value: any): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  
+  // Standard toDate helper (Client SDK or Admin SDK)
+  if (typeof value.toDate === 'function') {
+    return value.toDate().toISOString();
+  }
+  
+  // Serialized POJO from Admin SDK
+  if (value._seconds !== undefined) {
+    return new Date(value._seconds * 1000).toISOString();
+  }
+  
+  if (typeof value === 'string') return value;
+  
+  return null;
+}
+
+/**
  * Removes undefined properties to prevent Firestore "unsupported field value" errors.
  */
 function sanitizePayload(obj: any): any {
@@ -91,11 +113,17 @@ function sanitizePayload(obj: any): any {
 }
 
 /**
- * Strips sensitive encryption fields before sending settings to the UI.
+ * Strips sensitive encryption fields and serializes dates before sending settings to the UI.
  */
 function sanitizeEmailSettingsForClient(settings: EntityEmailSettings): EntityEmailSettingsUI {
   const { encryptedSmtpPassword, passwordIv, passwordAuthTag, ...safeData } = settings;
-  return safeData;
+  
+  return {
+    ...safeData,
+    lastTestedAt: serializeDate(settings.lastTestedAt),
+    createdAt: serializeDate(settings.createdAt),
+    updatedAt: serializeDate(settings.updatedAt),
+  } as EntityEmailSettingsUI;
 }
 
 /**

@@ -48,8 +48,24 @@ export interface EntityEmailSettings {
 
 /**
  * Sanitized version of settings for public/admin UI consumption.
+ * Dates are serialized as ISO strings to satisfy Next.js plain object rules.
  */
-export type EntityEmailSettingsUI = Omit<
-  EntityEmailSettings, 
-  "encryptedSmtpPassword" | "passwordIv" | "passwordAuthTag"
->;
+export interface EntityEmailSettingsUI {
+  provider: EmailProvider;
+  fromName: string;
+  fromEmail: string;
+  replyToEmail: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  hasPassword: boolean;
+  status: EmailSettingsStatus;
+  lastTestedAt?: string | null;
+  lastTestResult?: "success" | "failure" | null;
+  lastError?: string | null;
+  createdAt?: string | null;
+  createdBy?: string;
+  updatedAt?: string | null;
+  updatedBy?: string;
+}
