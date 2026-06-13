@@ -227,6 +227,11 @@ service cloud.firestore {
         allow read: if isEntityMember(entityId) || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
 
+        match /levels/{levelId} {
+          allow read: if isEntityMember(entityId) || isPlatformAdmin();
+          allow create, update, delete: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+        }
+
         match /{allPaths=**} {
            allow read: if isEntityMember(entityId) || isPlatformAdmin();
         }
