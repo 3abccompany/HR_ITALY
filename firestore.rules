@@ -235,7 +235,7 @@ service cloud.firestore {
       match /employmentRequests/{requestId} {
         allow read: if hasPermission(entityId, 'employmentRequests.read') || isPlatformAdmin();
         allow create: if hasPermission(entityId, 'employmentRequests.create') || isPlatformAdmin();
-        allow update: if hasPermission(entityId, 'employmentRequests.update') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'employmentRequests.update') || hasPermission(entityId, 'employmentRequests.complete') || isPlatformAdmin();
         allow delete: if false;
       }
 
@@ -246,18 +246,10 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      match /employmentRequests/{requestId} {
-        allow read: if hasPermission(entityId, 'employmentRequests.read') || isPlatformAdmin();
-        allow create: if hasPermission(entityId, 'employmentRequests.create') || isPlatformAdmin();
-        allow update: if hasPermission(entityId, 'employmentRequests.update') || isPlatformAdmin();
-        allow delete: if false;
-      }
-
-      match /consultants/{consultantId} {
-        allow read: if hasPermission(entityId, 'consultants.read') || isPlatformAdmin();
-        allow create: if hasPermission(entityId, 'consultants.create') || isPlatformAdmin();
-        allow update: if hasPermission(entityId, 'consultants.update') || hasPermission(entityId, 'consultants.archive') || isPlatformAdmin();
-        allow delete: if false;
+      match /emailSettings/{settingId} {
+        allow read, write: if isPlatformAdmin()
+          || hasPermission(entityId, "settings.manage")
+          || hasPermission(entityId, "emailSettings.manage");
       }
     }
 

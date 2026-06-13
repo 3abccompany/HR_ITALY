@@ -1,23 +1,16 @@
 'use server';
 
-import { db } from "@/lib/firebase/client";
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  serverTimestamp 
-} from "firebase/firestore";
+import { adminDb } from "@/lib/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
 import crypto from "crypto";
 import nodemailer from 'nodemailer';
-import { EntityEmailSettings, EntityEmailSettingsUI } from "@/types/email-settings";
-import { createAuditLog } from "./audit.service";
+import { EntityEmailSettings, EntityEmailSettingsUI, EmailProvider } from "@/types/email-settings";
 
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 
 /**
  * @fileOverview Server-side administration and data repair services for Email Settings.
- * Handles AES-256-GCM encryption/decryption of SMTP credentials.
+ * Handles AES-256-GCM encryption/decryption of SMTP credentials using Admin SDK.
  */
 
 /**
@@ -77,6 +70,7 @@ function decrypt(encrypted: string, iv: string, authTag: string) {
 function sanitizePayload(obj: any): any {
   if (obj === null || typeof obj !== 'object') return obj;
   
+  // Preservation check for Firestore internal objects
   if (
     obj.constructor?.name === 'FieldValue' || 
     obj.constructor?.name === 'Timestamp' || 
@@ -105,13 +99,45 @@ function sanitizeEmailSettingsForClient(settings: EntityEmailSettings): EntityEm
 }
 
 /**
+ * Security helper to verify if an actor has the required permissions for an entity.
+ */
+async function verifyPermission(entityId: string, actorUid: string) {
+  if (!actorUid || !entityId) return false;
+  
+  try {
+    const membershipId = `${actorUid}_${entityId}`;
+    const mSnap = await adminDb.collection("memberships").doc(membershipId).get();
+    
+    if (mSnap.exists) {
+      const mData = mSnap.data();
+      if (mData?.status === "active") {
+        const perms = mData?.permissions || [];
+        if (perms.includes("settings.manage") || perms.includes("emailSettings.manage")) {
+          return true;
+        }
+      }
+    }
+
+    const userSnap = await adminDb.collection("users").doc(actorUid).get();
+    if (userSnap.exists) {
+      const uData = userSnap.data();
+      return uData?.platformRole === 'superAdmin' && uData?.status === 'active';
+    }
+  } catch (err) {
+    console.error("[EmailSettings:PermissionCheck] Failed", err);
+  }
+
+  return false;
+}
+
+/**
  * Retrieves the email settings for an entity, sanitized for the UI.
  */
 export async function getEntityEmailSettingsForAdmin(entityId: string): Promise<EntityEmailSettingsUI | null> {
-  if (!db || !entityId) return null;
+  if (!entityId) return null;
   try {
-    const snap = await getDoc(doc(db, `entities/${entityId}/emailSettings`, "main"));
-    if (!snap.exists()) return null;
+    const snap = await adminDb.collection("entities").doc(entityId).collection("emailSettings").doc("main").get();
+    if (!snap.exists) return null;
     
     const data = snap.data() as EntityEmailSettings;
     return sanitizeEmailSettingsForClient(data);
@@ -150,18 +176,19 @@ export async function validateEmailSettingsInput(input: any) {
 }
 
 /**
- * Saves or updates email settings for an entity.
+ * Saves or updates email settings for an entity using Admin SDK.
  */
 export async function saveEntityEmailSettings(
   entityId: string, 
   input: Partial<EntityEmailSettings> & { password?: string }, 
   actorUid: string
 ) {
-  if (!db) throw new Error("Firestore not initialized");
+  const hasPerm = await verifyPermission(entityId, actorUid);
+  if (!hasPerm) throw new Error("PERMISSION_DENIED: Vous n'avez pas les droits pour modifier ces paramètres.");
 
-  const docRef = doc(db, `entities/${entityId}/emailSettings`, "main");
-  const snap = await getDoc(docRef);
-  const existing = snap.exists() ? (snap.data() as EntityEmailSettings) : null;
+  const docRef = adminDb.collection("entities").doc(entityId).collection("emailSettings").doc("main");
+  const snap = await docRef.get();
+  const existing = snap.exists ? (snap.data() as EntityEmailSettings) : null;
 
   const { password, ...otherData } = input;
   
@@ -188,25 +215,27 @@ export async function saveEntityEmailSettings(
     ...otherData,
     ...encryptionData,
     hasPassword,
-    updatedAt: serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
     updatedBy: actorUid,
   });
 
   if (!existing) {
-    payload.createdAt = serverTimestamp();
+    payload.createdAt = FieldValue.serverTimestamp();
     payload.createdBy = actorUid;
     payload.status = payload.status || "configured";
-    await setDoc(docRef, payload);
+    await docRef.set(payload);
   } else {
-    await updateDoc(docRef, payload);
+    await docRef.update(payload);
   }
 
-  await createAuditLog({
+  // Record Audit Log via Admin SDK
+  await adminDb.collection("auditLogs").add({
     userId: actorUid,
     entityId,
     action: "emailSettings.saved",
     resourceType: "emailSettings",
     resourceId: "main",
+    timestamp: FieldValue.serverTimestamp()
   });
 
   return { success: true };
@@ -216,9 +245,8 @@ export async function saveEntityEmailSettings(
  * Internal server-only function to fetch full settings with decrypted password.
  */
 export async function getEntityEmailTransportSettings(entityId: string): Promise<(EntityEmailSettings & { decryptedPassword?: string }) | null> {
-  if (!db) return null;
-  const snap = await getDoc(doc(db, `entities/${entityId}/emailSettings`, "main"));
-  if (!snap.exists()) return null;
+  const snap = await adminDb.collection("entities").doc(entityId).collection("emailSettings").doc("main").get();
+  if (!snap.exists) return null;
   
   const settings = snap.data() as EntityEmailSettings;
   const result = { ...settings } as any;
@@ -239,8 +267,7 @@ export async function getEntityEmailTransportSettings(entityId: string): Promise
 }
 
 /**
- * Executes a connectivity test using the entity's SMTP configuration.
- * Sends a non-branded technical test email.
+ * Executes a connectivity test using the entity's SMTP configuration via Admin SDK.
  */
 export async function testEntityEmailSettingsAction(params: {
   entityId: string;
@@ -248,7 +275,9 @@ export async function testEntityEmailSettingsAction(params: {
   actorUid: string;
 }) {
   const { entityId, testEmail, actorUid } = params;
-  if (!db) throw new Error("Firestore not initialized");
+  
+  const hasPerm = await verifyPermission(entityId, actorUid);
+  if (!hasPerm) throw new Error("PERMISSION_DENIED");
 
   const transportSettings = await getEntityEmailTransportSettings(entityId);
   if (!transportSettings || transportSettings.provider !== 'smtp') {
@@ -261,7 +290,7 @@ export async function testEntityEmailSettingsAction(params: {
     throw new Error("Mot de passe SMTP introuvable ou illisible.");
   }
 
-  const docRef = doc(db, `entities/${entityId}/emailSettings`, "main");
+  const docRef = adminDb.collection("entities").doc(entityId).collection("emailSettings").doc("main");
 
   try {
     const transporter = nodemailer.createTransport({
@@ -272,7 +301,7 @@ export async function testEntityEmailSettingsAction(params: {
         user: smtpUser,
         pass: decryptedPassword
       },
-      connectionTimeout: 10000, // 10s
+      connectionTimeout: 10000,
     });
 
     const fromString = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
@@ -282,7 +311,7 @@ export async function testEntityEmailSettingsAction(params: {
       to: testEmail,
       replyTo: replyToEmail || undefined,
       subject: `Test configuration email — HR Nexus`,
-      text: `Ceci est un email de test envoyé depuis la configuration SMTP de votre entité. Si vous recevez ce message, la configuration d’envoi fonctionne correctement.`,
+      text: `Ceci est un email de test envoyé depuis la configuration SMTP de votre entité.`,
       html: `
         <div style="font-family: sans-serif; padding: 20px; color: #1F1F66;">
           <h2 style="color: #1F1F66;">Test de connectivité SMTP</h2>
@@ -290,55 +319,52 @@ export async function testEntityEmailSettingsAction(params: {
           <p style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #EEEFF7;">
             <strong>Statut :</strong> Connecté et prêt à l'envoi.
           </p>
-          <p style="font-size: 12px; color: #94A3B8; margin-top: 30px;">
-            HR Nexus Ecosystem — Identifiant Entité : ${entityId}
-          </p>
         </div>
       `
     });
 
-    // Update Status to Verified
-    await updateDoc(docRef, {
+    await docRef.update({
       status: "verified",
-      lastTestedAt: serverTimestamp(),
+      lastTestedAt: FieldValue.serverTimestamp(),
       lastTestResult: "success",
       lastError: null,
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actorUid,
     });
 
-    await createAuditLog({
+    await adminDb.collection("auditLogs").add({
       userId: actorUid,
       entityId,
       action: "emailSettings.tested",
       resourceType: "emailSettings",
       resourceId: "main",
-      details: { result: "success", target: testEmail }
+      details: { result: "success", target: testEmail },
+      timestamp: FieldValue.serverTimestamp()
     });
 
     return { success: true };
   } catch (err: any) {
     console.error("[SMTP Test Error]:", err);
     
-    // Sanitize error message to avoid secret leaking
     const safeError = err.message?.replace(decryptedPassword, '****') || "Échec de la connexion SMTP.";
 
-    await updateDoc(docRef, {
+    await docRef.update({
       status: "failed",
-      lastTestedAt: serverTimestamp(),
+      lastTestedAt: FieldValue.serverTimestamp(),
       lastTestResult: "failure",
       lastError: safeError,
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actorUid,
     });
 
-    await createAuditLog({
+    await adminDb.collection("auditLogs").add({
       userId: actorUid,
       entityId,
       action: "emailSettings.tested",
       resourceType: "emailSettings",
       resourceId: "main",
-      details: { result: "failure", error: safeError }
+      details: { result: "failure", error: safeError },
+      timestamp: FieldValue.serverTimestamp()
     });
 
     return { success: false, error: safeError };
