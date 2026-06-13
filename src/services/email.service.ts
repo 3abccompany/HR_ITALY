@@ -7,6 +7,7 @@
 import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import nodemailer from 'nodemailer';
+import { resolveEmailTransportForEntity } from "./email-settings.service";
 
 export interface SendInterviewEmailParams {
   entityId: string;
@@ -26,6 +27,7 @@ export interface SendInterviewEmailParams {
 }
 
 export interface SendOfferEmailParams {
+  entityId: string;
   to: string;
   subject: string;
   candidateName: string;
@@ -36,6 +38,7 @@ export interface SendOfferEmailParams {
 }
 
 export interface SendDocumentRequestParams {
+  entityId: string;
   to: string;
   candidateName: string;
   companyName: string;
@@ -149,6 +152,7 @@ Ufficio Risorse Umane — ${data.companyName}`;
 
 /**
  * Server Action to send an interview notification.
+ * Integrates Entity SMTP with global fallback.
  */
 export async function sendInterviewEmailAction(params: SendInterviewEmailParams) {
   const { entityId, interviewId, to, subject, message, templateData } = params;
@@ -159,29 +163,22 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
   const renderedBody = renderTemplate(message, templateData);
 
   try {
-    const host = process.env.SMTP_HOST;
-    const port = parseInt(process.env.SMTP_PORT || '587');
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    const from = process.env.SMTP_FROM || user;
+    const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+    
+    const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+    const canSend = source === 'entity' || isGlobalConfigured;
 
-    if (host && user && pass) {
-      const transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: { user, pass },
-      });
-
+    if (canSend) {
       await transporter.sendMail({
         from,
         to,
+        replyTo: replyTo || undefined,
         subject: renderedSubject,
         html: renderedBody.replace(/\n/g, '<br>'),
         text: renderedBody,
       });
     } else {
-      console.log(`[Email Service] SMTP not configured. Log only: to=${to}, subject=${renderedSubject}`);
+      console.log(`[Email Service] SMTP not configured for ${source}. Log only: to=${to}, subject=${renderedSubject}`);
     }
 
     const interviewRef = adminDb.collection("entities").doc(entityId).collection("interviews").doc(interviewId);
@@ -211,28 +208,19 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
 
 /**
  * Sends the formal employment offer link to the candidate.
+ * Integrates Entity SMTP with global fallback.
  */
 export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || '587');
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || user;
+  const { entityId, to, subject, candidateName, companyName, jobTitle, offerLink, expiresAt } = params;
+  
+  const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
 
-  if (!host || !user || !pass) {
+  const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+  const canSend = source === 'entity' || isGlobalConfigured;
+
+  if (!canSend) {
     throw new Error("Configuration du service email requise.");
   }
-
-  const candidateName = params.candidateName || "candidat";
-  const jobTitle = params.jobTitle || "poste proposé";
-  const companyName = params.companyName || "notre entreprise";
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
 
   const html = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.6;">
@@ -240,18 +228,18 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
         <h1 style="color: white; margin: 0; font-size: 24px;">Proposition d'embauche</h1>
       </div>
       <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; border-radius: 0 0 12px 12px; background-color: white;">
-        <p>Buongiorno <strong>${candidateName}</strong>,</p>
-        <p>Abbiamo il piacere di trasmetterti una proposta di assunzione per la posizione di <strong>${jobTitle}</strong> presso l'azienda <strong>${companyName}</strong>.</p>
+        <p>Buongiorno <strong>${candidateName || "candidato"}</strong>,</p>
+        <p>Abbiamo il piacere di trasmetterti una proposta di assunzione per la posizione di <strong>${jobTitle || "poste proposé"}</strong> presso l'azienda <strong>${companyName || "notre entreprise"}</strong>.</p>
         <p>Puoi consultare i dettagli di questa proposta e trasmetterci la tua risposta tramite il nostro portale sicuro:</p>
         
         <div style="margin: 40px 0; text-align: center;">
-          <a href="${params.offerLink}" style="background-color: #4DB3E6; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 12px rgba(77, 179, 230, 0.3);">
+          <a href="${offerLink}" style="background-color: #4DB3E6; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 12px rgba(77, 179, 230, 0.3);">
             Visualizza la mia proposta
           </a>
         </div>
         
         <p style="font-size: 12px; color: #71717A; text-align: center; margin-top: 20px;">
-          Questo link sicuro è personale e valido fino al <strong>${params.expiresAt}</strong>.
+          Questo link sicuro è personale e valido fino al <strong>${expiresAt}</strong>.
         </p>
       </div>
     </div>
@@ -260,8 +248,9 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
   try {
     await transporter.sendMail({
       from,
-      to: params.to,
-      subject: params.subject,
+      to,
+      replyTo: replyTo || undefined,
+      subject,
       html,
     });
     return { success: true };
@@ -273,22 +262,22 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
 
 /**
  * Sends a request for hiring documents to the candidate in Italian.
+ * Integrates Entity SMTP with global fallback.
  */
 export async function sendDocumentRequestEmailAction(params: SendDocumentRequestParams) {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || '587');
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || user;
+  const { entityId, to, candidateName, companyName, jobTitle, requiredDocuments, contactEmail } = params;
+  
+  const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
 
-  if (!host || !user || !pass) {
-    console.warn("[Email Service] SMTP not configured. Simulating success for document request.");
+  const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+  const canSend = source === 'entity' || isGlobalConfigured;
+
+  if (!canSend) {
+    console.warn(`[Email Service] SMTP not configured for ${source}. Simulating success for document request.`);
     return { success: true };
   }
 
-  const transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
-
-  const docList = params.requiredDocuments.map(d => `<li>${d}</li>`).join('');
+  const docList = requiredDocuments.map(d => `<li>${d}</li>`).join('');
 
   const html = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66;">
@@ -296,13 +285,13 @@ export async function sendDocumentRequestEmailAction(params: SendDocumentRequest
         <h1 style="color: white; margin: 0; font-size: 22px;">Documenti necessari per l'assunzione</h1>
       </div>
       <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white;">
-        <p>Buongiorno <strong>${params.candidateName}</strong>,</p>
-        <p>Siamo lieti di procedere con la tua assunzione per la posizione di <strong>${params.jobTitle}</strong> presso <strong>${params.companyName}</strong>.</p>
+        <p>Buongiorno <strong>${candidateName}</strong>,</p>
+        <p>Siamo lieti di procedere con la tua assunzione per la posizione di <strong>${jobTitle}</strong> presso <strong>${companyName}</strong>.</p>
         <p>Per poter predisporre il contrat e le comunicazioni obbligatorie, ti chiediamo gentilmente di inviarci i seguenti documenti:</p>
         <ul style="background: #F8FAFC; padding: 20px 40px; border-radius: 12px; list-style-type: square; color: #334155;">
           ${docList}
         </ul>
-        <p>Ti preghiamo di trasmettere i documenti rispondendo a cette email o contattando il nostro ufficio RU all'indirizzo: <strong>${params.contactEmail}</strong>.</p>
+        <p>Ti preghiamo di trasmettere i documenti rispondendo a cette email o contattando il nostro ufficio RU all'indirizzo: <strong>${contactEmail}</strong>.</p>
         <p style="font-size: 13px; color: #64748B; margin-top: 30px;">
           <em>Nota sulla privacy: I dati forniti saranno trattati esclusivamente per le finalità legate alla gestione del rapporto di lavoro, nel rispetto del GDPR.</em>
         </p>
@@ -313,8 +302,9 @@ export async function sendDocumentRequestEmailAction(params: SendDocumentRequest
   try {
     await transporter.sendMail({
       from,
-      to: params.to,
-      subject: `Documenti necessari per la tua assunzione — ${params.companyName}`,
+      to,
+      replyTo: replyTo || undefined,
+      subject: `Documenti necessari per la tua assunzione — ${companyName}`,
       html,
     });
     return { success: true };
@@ -353,6 +343,7 @@ export async function getConsultantCPIEmailPreviewAction(params: {
 /**
  * Sends the official request for UniLav / CPI communication to the Labor Consultant.
  * Supports subject and body overrides from the preview/edit step.
+ * Integrates Entity SMTP with global fallback.
  */
 export async function sendConsultantCPIRequestAction(params: SendConsultantCPIParams & {
   subjectOverride?: string;
@@ -361,11 +352,10 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
   const { entityId, requestId, to, subject, templateData, subjectOverride, bodyOverride } = params;
 
   try {
-    const host = process.env.SMTP_HOST;
-    const port = parseInt(process.env.SMTP_PORT || '587');
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    const from = process.env.SMTP_FROM || user;
+    const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+    
+    const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+    const canSend = source === 'entity' || isGlobalConfigured;
 
     const finalSubject = subjectOverride?.trim() || subject;
     let finalHtml: string;
@@ -388,17 +378,11 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
       finalText = text;
     }
 
-    if (host && user && pass) {
-      const transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: { user, pass },
-      });
-
+    if (canSend) {
       const info = await transporter.sendMail({
         from,
         to,
+        replyTo: replyTo || undefined,
         subject: finalSubject,
         html: finalHtml,
         text: finalText,
@@ -425,7 +409,7 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
          console.warn("[Email Service] Non-blocking log failure:", logErr);
       }
     } else {
-      console.log(`[Email Service] SMTP not configured. Log only: to=${to}, subject=${finalSubject}`);
+      console.log(`[Email Service] SMTP not configured for ${source}. Log only: to=${to}, subject=${finalSubject}`);
     }
 
     return { success: true };

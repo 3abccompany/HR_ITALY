@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -184,6 +183,7 @@ export async function sendDocumentRequestEmail(entityId: string, dossierId: stri
   const items = itemsSnap.docs.map(d => d.data() as PreHireDocument).filter(i => i.isRequired);
 
   const result = await sendDocumentRequestEmailAction({
+    entityId,
     to: offer.candidateEmail,
     candidateName: offer.candidateDisplayName,
     companyName: offer.entityName || "L'azienda",

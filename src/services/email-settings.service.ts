@@ -398,3 +398,69 @@ export async function testEntityEmailSettingsAction(params: {
     return { success: false, error: safeError };
   }
 }
+
+/**
+ * Internal resolver to provide the global platform email transport.
+ */
+export async function resolveGlobalEmailTransport() {
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || '587');
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || user || '';
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+
+  return {
+    source: "global" as const,
+    transporter,
+    from,
+    replyTo: null
+  };
+}
+
+/**
+ * Phase Email D: Resolves the appropriate SMTP transport for an entity with global fallback.
+ * Determines if entity-specific verified SMTP should be used or platform default.
+ */
+export async function resolveEmailTransportForEntity(entityId: string) {
+  const transportSettings = await getEntityEmailTransportSettings(entityId);
+  
+  if (transportSettings && 
+      transportSettings.provider === 'smtp' && 
+      transportSettings.status === 'verified' &&
+      transportSettings.decryptedPassword) {
+    
+    try {
+      const { smtpHost, smtpPort, smtpSecure, smtpUser, decryptedPassword, fromName, fromEmail, replyToEmail } = transportSettings;
+      
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure || smtpPort === 465,
+        auth: {
+          user: smtpUser,
+          pass: decryptedPassword
+        }
+      });
+
+      const fromString = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
+
+      return {
+        source: "entity" as const,
+        transporter,
+        from: fromString,
+        replyTo: replyToEmail || null
+      };
+    } catch (err) {
+      console.warn(`[Email Transport Resolver] Entity ${entityId} custom SMTP failed, falling back to global:`, err);
+    }
+  }
+
+  return resolveGlobalEmailTransport();
+}

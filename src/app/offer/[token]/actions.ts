@@ -43,6 +43,7 @@ export async function sendOfferToCandidateAction(params: {
     const offerLink = `${baseUrl}/offer/${rawToken}`;
 
     await sendEmploymentOfferEmail({
+      entityId,
       to: offer.candidateEmail,
       subject: `Proposta di assunzione — ${resolvedEntityName}`,
       candidateName: offer.candidateDisplayName,
@@ -237,6 +238,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         "Dati principali:",
         `- Candidato: ${candidateName}`,
         `- Email candidato: ${offerData.candidateEmail || "-"}`,
+        `- Telefono candidato: ${offerData.candidatePhone || "-"}`,
         `- Mansione / posizione: ${offerData.jobTitleName || "-"}`,
         `- Reparto: ${offerData.departmentName || "-"}`,
         `- Sede di lavoro: ${offerData.worksiteName || "-"}`,
