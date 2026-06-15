@@ -44,7 +44,7 @@ env:
       - RUNTIME
 
   - variable: FIREBASE_CLIENT_EMAIL
-    value: "FIREBASE_CLIENT_EMAIL"
+    value: "firebase-adminsdk-fbsvc@studio-4239589207-a7388.iam.gserviceaccount.com"
     availability:
       - BUILD
       - RUNTIME
@@ -96,6 +96,6 @@ env:
 
   - variable: CRYPTION_SECRET
     secret: CRYPTION_SECRET
-    
+
   - variable: EMAIL_ENCRYPTION_SECRET
     secret: EMAIL_ENCRYPTION_SECRET
