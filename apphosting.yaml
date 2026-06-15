@@ -85,7 +85,8 @@ env:
       - RUNTIME
 
   - variable: APP_PUBLIC_URL
-    value: "https://9000-firebase-studio-1778080877203.cluster-fbfjltn375c6wqxlhoehbz44sk.cloudworkstations.dev"
+    value: "https://9000-firebase-studio-1778080877203.cluster-fbfjltn375c6wqxlhoeh\
+      bz44sk.cloudworkstations.dev"
     availability:
       - BUILD
       - RUNTIME
@@ -95,3 +96,6 @@ env:
 
   - variable: CRYPTION_SECRET
     secret: CRYPTION_SECRET
+    
+  - variable: EMAIL_ENCRYPTION_SECRET
+    secret: EMAIL_ENCRYPTION_SECRET
