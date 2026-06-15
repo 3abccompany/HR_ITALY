@@ -1,322 +1,155 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminDb, adminBucket } from "@/lib/firebase/admin";
 import { executeSubmissionTransaction } from "@/services/application-submission.service";
-import { adminBucket, adminDb } from "@/lib/firebase/admin";
-import { randomUUID } from "crypto";
+import { AttachmentMetadata } from "@/types/application-submission";
 
 export const dynamic = "force-dynamic";
-
-type PublicApplicationFormField = {
-  key: string;
-  label: string;
-  type: string;
-  required?: boolean;
-  enabled?: boolean;
-  options?: string[];
-  [key: string]: any;
-};
-
-type PublicApplicationFormForSubmit = {
-  id: string;
-  formId: string;
-  entityId: string;
-  status: string;
-  publicSlug?: string;
-  fields: PublicApplicationFormField[];
-
-  recruitmentNeedId?: string;
-  recruitmentNeedTitle?: string;
-
-  jobProfileId?: string;
-  jobProfileTitle?: string;
-
-  departmentId?: string;
-  departmentName?: string;
-
-  jobTitleId?: string;
-  jobTitleName?: string;
-
-  worksiteId?: string | null;
-  worksiteName?: string;
-
-  title?: string;
-  description?: string;
-
-  [key: string]: any;
-};
-
-function normalizeFormSnapshot(
-  docSnap: FirebaseFirestore.DocumentSnapshot,
-  publicSlug: string
-): PublicApplicationFormForSubmit | null {
-  if (!docSnap.exists) return null;
-
-  const data = docSnap.data() || {};
-  const status = String(data.status || "");
-
-  if (!["published", "active"].includes(status)) {
-    return null;
-  }
-
-  if (data.publicSlug && data.publicSlug !== publicSlug) {
-    return null;
-  }
-
-  const fields = Array.isArray(data.fields) ? data.fields : [];
-
-  return {
-    ...data,
-
-    id: docSnap.id,
-    formId: data.formId || docSnap.id,
-    entityId: data.entityId || "",
-    status,
-    publicSlug: data.publicSlug || publicSlug,
-    fields,
-
-    recruitmentNeedId: data.recruitmentNeedId || "",
-    recruitmentNeedTitle: data.recruitmentNeedTitle || "",
-
-    jobProfileId: data.jobProfileId || "",
-    jobProfileTitle: data.jobProfileTitle || "",
-
-    departmentId: data.departmentId || "",
-    departmentName: data.departmentName || "",
-
-    jobTitleId: data.jobTitleId || "",
-    jobTitleName: data.jobTitleName || "",
-
-    worksiteId: data.worksiteId || null,
-    worksiteName: data.worksiteName || "",
-
-    title: data.title || "",
-    description: data.description || "",
-  };
-}
+export const runtime = "nodejs";
 
 /**
- * Direct server-side form lookup.
- * No collectionGroup query.
- * No Firestore composite index required.
- */
-async function getPublicFormForSubmitServer(input: {
-  publicSlug: string;
-  entityId: string;
-  formId: string;
-}): Promise<PublicApplicationFormForSubmit | null> {
-  const { publicSlug, entityId, formId } = input;
-
-  if (!publicSlug || !entityId || !formId) {
-    return null;
-  }
-
-  const formRef = adminDb
-    .collection("entities")
-    .doc(entityId)
-    .collection("applicationForms")
-    .doc(formId);
-
-  const formSnap = await formRef.get();
-
-  return normalizeFormSnapshot(formSnap, publicSlug);
-}
-
-/**
- * Handles the public submission of candidate application forms.
- * Performs validation, file uploads to storage, and transactional Firestore writes.
+ * POST /api/public/applications/submit
+ * Public endpoint for candidate form submissions.
+ * Handles multipart/form-data, file uploads to Storage, and atomic Firestore transactions.
  */
 export async function POST(request: NextRequest) {
+  // Guard for Admin SDK readiness (build-time safety)
+  if (!adminDb || !adminBucket) {
+    console.error("[Public Submission] Firebase Admin SDK not properly initialized or missing credentials.");
+    return NextResponse.json(
+      { success: false, error: "Le service de candidature est momentanément indisponible." }, 
+      { status: 503 }
+    );
+  }
+
   try {
     const formData = await request.formData();
+    
+    // Extract base parameters sent by PublicFormRenderer.tsx
+    const publicSlug = formData.get("publicSlug") as string;
+    const answersRaw = formData.get("answers") as string;
 
-    const publicSlug = String(formData.get("publicSlug") || "").trim();
-    const entityIdFromRequest = String(formData.get("entityId") || "").trim();
-    const formIdFromRequest = String(formData.get("formId") || "").trim();
-    const answersStr = String(formData.get("answers") || "");
-
-    if (!publicSlug || !answersStr) {
+    if (!publicSlug || !answersRaw) {
       return NextResponse.json(
-        {
-          error: {
-            message: "Paramètres de soumission manquants.",
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!entityIdFromRequest || !formIdFromRequest) {
-      return NextResponse.json(
-        {
-          error: {
-            message:
-              "Contexte formulaire manquant. Veuillez recharger la page et réessayer.",
-          },
-        },
+        { success: false, error: "Données de candidature incomplètes." }, 
         { status: 400 }
       );
     }
 
     let answers: Record<string, any>;
-
     try {
-      answers = JSON.parse(answersStr);
-    } catch {
+      answers = JSON.parse(answersRaw);
+    } catch (e) {
       return NextResponse.json(
-        {
-          error: {
-            message: "Format des réponses invalide.",
-          },
-        },
+        { success: false, error: "Format de données invalide." }, 
         { status: 400 }
       );
     }
 
-    const form = await getPublicFormForSubmitServer({
-      publicSlug,
-      entityId: entityIdFromRequest,
-      formId: formIdFromRequest,
-    });
+    // 1. Resolve Public Form Context Server-Side
+    // We look up the form by slug across all entities to ensure it exists and is published.
+    const formSnap = await adminDb
+      .collectionGroup("applicationForms")
+      .where("publicSlug", "==", publicSlug)
+      .where("status", "==", "published")
+      .limit(1)
+      .get();
 
-    if (!form) {
+    if (formSnap.empty) {
       return NextResponse.json(
-        {
-          error: {
-            message: "Formulaire non trouvé ou fermé.",
-          },
-        },
+        { success: false, error: "Cette offre d'emploi n'est plus disponible ou a été clôturée." }, 
         { status: 404 }
       );
     }
 
+    const formDoc = formSnap.docs[0];
+    const form = formDoc.data();
     const entityId = form.entityId;
 
-    if (!entityId) {
-      return NextResponse.json(
-        {
-          error: {
-            message: "Contexte entreprise manquant pour ce formulaire.",
-          },
-        },
-        { status: 400 }
-      );
-    }
+    // 2. Pre-generate submission ID for storage paths and database consistency
+    const submissionRef = adminDb.collection("entities").doc(entityId).collection("applicationSubmissions").doc();
+    const submissionId = submissionRef.id;
 
-    const fields = Array.isArray(form.fields) ? form.fields : [];
-    const attachments: any[] = [];
-
-    for (const field of fields) {
-      if (field.enabled === false) continue;
-
-      const val = answers[field.key];
-
-      const isAccepted =
-        val === true || val === "true" || val === "on" || val === "1";
-
-      if (field.required) {
-        if (field.type === "checkbox") {
-          if (!isAccepted) {
-            return NextResponse.json(
-              {
-                error: {
-                  message: `Le champ "${field.label}" est obligatoire.`,
-                },
-              },
-              { status: 400 }
-            );
-          }
-        } else if (field.type === "file") {
-          const file = formData.get(field.key);
-
-          if (!file || !(file instanceof File) || file.size === 0) {
-            return NextResponse.json(
-              {
-                error: {
-                  message: `Le fichier "${field.label}" est obligatoire.`,
-                },
-              },
-              { status: 400 }
-            );
-          }
-        } else if (
-          val === undefined ||
-          val === null ||
-          (typeof val === "string" && val.trim() === "")
-        ) {
-          return NextResponse.json(
-            {
-              error: {
-                message: `Le champ "${field.label}" est obligatoire.`,
-              },
-            },
-            { status: 400 }
-          );
-        }
-      }
-
-      if (field.type === "file") {
-        const file = formData.get(field.key);
-
-        if (file && file instanceof File && file.size > 0) {
-          const fileId = randomUUID();
-          const safeFileName = file.name.replace(/[^\w.\-() ]+/g, "_");
-          const filePath = `entities/${entityId}/submissions/attachments/${fileId}_${safeFileName}`;
-
-          const buffer = Buffer.from(await file.arrayBuffer());
-
-          await adminBucket.file(filePath).save(buffer, {
+    // 3. Process File Attachments (CV, Cover Letter)
+    const attachments: AttachmentMetadata[] = [];
+    
+    // Standard file keys used in the public form renderer
+    const fileFields = ["cv", "coverLetter"];
+    
+    for (const key of fileFields) {
+      const file = formData.get(key);
+      if (file && file instanceof File) {
+        const type = key === "cv" ? "cv" : "cover_letter";
+        
+        // Construct tenant-isolated and unique storage path
+        const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const storagePath = `entities/${entityId}/applicationSubmissions/${submissionId}/${Date.now()}_${safeFileName}`;
+        
+        // Upload to Cloud Storage using Admin SDK
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const bucketFile = adminBucket.file(storagePath);
+        
+        await bucketFile.save(fileBuffer, {
+          contentType: file.type,
+          metadata: {
             metadata: {
-              contentType: file.type || "application/octet-stream",
-            },
-          });
+              entityId,
+              submissionId,
+              formId: form.formId,
+              type,
+              origin: "public_submission"
+            }
+          }
+        });
 
-          attachments.push({
-            id: fileId,
-            type: field.key,
-            fileName: file.name,
-            filePath,
-            mimeType: file.type || "application/octet-stream",
-            size: file.size,
-            uploadedAt: new Date().toISOString(),
-          });
-        }
+        attachments.push({
+          id: adminDb.collection("_").doc().id, // Metadata entry ID
+          type,
+          fileName: file.name,
+          filePath: storagePath,
+          mimeType: file.type,
+          size: file.size,
+          uploadedAt: new Date().toISOString()
+        });
       }
     }
 
+    // 4. Invoke Business Transaction
+    // Handles deduplication, identity reconciliation (Person), and record creation.
     const result = await executeSubmissionTransaction(
       entityId,
       form,
       answers,
-      attachments
+      attachments,
+      submissionId
     );
 
-    return NextResponse.json({
-      success: true,
-      ...result,
+    return NextResponse.json({ 
+      success: true, 
+      submissionId: result.submissionId 
     });
-  } catch (error: any) {
-    console.error("[Public Submission Route Error]", error);
 
-    let userMessage = "Une erreur est survenue lors de l'envoi.";
-    let statusCode = 500;
+  } catch (err: any) {
+    console.error("[Public Submission API] Failure:", err);
 
-    if (error.message === "ALREADY_APPLIED_TO_THIS_JOB") {
-      userMessage = "Vous avez déjà envoyé une candidature pour ce poste.";
-      statusCode = 409;
-    } else if (error.message?.startsWith("IDENTITY_CONFLICT")) {
-      userMessage =
-        "Cette adresse email est déjà associée à un profil différent. Veuillez vérifier vos informations.";
-      statusCode = 409;
+    // Business rule violations (Duplicate check or Identity conflict)
+    if (err.message === "ALREADY_APPLIED_TO_THIS_JOB") {
+      return NextResponse.json({ 
+        success: false, 
+        error: "Vous avez déjà postulé à cette offre d'emploi." 
+      }, { status: 409 });
     }
 
-    return NextResponse.json(
-      {
-        error: {
-          message: userMessage,
-          debugMessage:
-            process.env.NODE_ENV === "development" ? error.message : undefined,
-        },
-      },
-      { status: statusCode }
-    );
+    if (err.message?.includes("IDENTITY_CONFLICT")) {
+      return NextResponse.json({ 
+        success: false, 
+        error: "Conflit d'identité. Cette adresse email appartient à un profil existant avec un nom différent. Veuillez vérifier vos informations." 
+      }, { status: 409 });
+    }
+
+    // Generic fallback for unexpected errors
+    return NextResponse.json({ 
+      success: false, 
+      error: "Une erreur est survenue lors du traitement de votre candidature. Veuillez réessayer plus tard." 
+    }, { status: 500 });
   }
 }
