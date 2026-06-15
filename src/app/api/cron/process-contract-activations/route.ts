@@ -4,6 +4,7 @@ import { executeRenewalActivationServerTransaction, processContractExpirationsSe
 import { Timestamp } from "firebase-admin/firestore";
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 /**
  * GET /api/cron/process-contract-activations
@@ -25,6 +26,12 @@ export async function GET(request: NextRequest) {
 
   if (authHeader !== cronSecret) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Ensure Admin SDK is ready
+  if (!adminDb) {
+    console.error("[Cron:Global] Admin SDK not initialized.");
+    return NextResponse.json({ error: "Service unavailable: Admin SDK missing" }, { status: 503 });
   }
 
   const searchParams = request.nextUrl.searchParams;
