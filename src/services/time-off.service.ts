@@ -10,7 +10,8 @@ import {
   serverTimestamp,
   orderBy,
   Query,
-  updateDoc
+  updateDoc,
+  arrayUnion
 } from "firebase/firestore";
 import { TimeOffRequest, DayPart, TimeOffStatus, JustificationStatus } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
@@ -224,6 +225,40 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
     resourceType: "timeOffRequest",
     resourceId: requestId,
   });
+}
+
+/**
+ * Links an uploaded document to a time-off request as a justification.
+ */
+export async function addJustificationDocumentToRequest(
+  entityId: string,
+  requestId: string,
+  documentId: string,
+  note?: string,
+  actorUid?: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
+  
+  await updateDoc(requestRef, {
+    justificationDocumentIds: arrayUnion(documentId),
+    justificationStatus: "provided",
+    justificationNote: note || null,
+    updatedAt: serverTimestamp(),
+    ...(actorUid && { updatedBy: actorUid })
+  });
+
+  if (actorUid) {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "timeOff.justification_added",
+      resourceType: "timeOffRequest",
+      resourceId: requestId,
+      details: { documentId }
+    });
+  }
 }
 
 export async function listTimeOffRequests(entityId: string) {

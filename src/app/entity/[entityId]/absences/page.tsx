@@ -7,7 +7,8 @@ import {
   Clock, Filter, X, ListFilter, AlertCircle,
   FileText, CheckCircle2, History, Send,
   ChevronRight, ArrowRight, MoreVertical,
-  XCircle, Ban, FileWarning, Paperclip
+  XCircle, Ban, FileWarning, Paperclip, Upload,
+  Download, Eye
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,12 +21,15 @@ import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, Query, where } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, JustificationStatus } from "@/types/time-off";
+import { HRDocumentType } from "@/types/hr-document";
 import { 
   createTimeOffRequestForEmployee, 
   approveTimeOffRequest, 
   rejectTimeOffRequest, 
-  cancelTimeOffRequest 
+  cancelTimeOffRequest,
+  addJustificationDocumentToRequest
 } from "@/services/time-off.service";
+import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { 
@@ -83,8 +87,15 @@ export default function TimeOffManagementPage() {
   const [decisionPending, setDecisionPending] = useState<{ id: string, action: 'approve' | 'reject' | 'cancel' } | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
 
+  // Upload State
+  const [uploadingRequest, setUploadingRequest] = useState<TimeOffRequest | null>(null);
+  const [uploadFile, setReplacementFile] = useState<File | null>(null);
+  const [uploadNote, setUploadNote] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+
   const canRead = hasPermission("leaveRequests.read");
   const canCreate = hasPermission("leaveRequests.create");
+  const canUpdate = hasPermission("leaveRequests.update");
   const canApprove = hasPermission("leaveRequests.approve");
 
   // Queries
@@ -174,6 +185,83 @@ export default function TimeOffManagementPage() {
       }
       setDecisionPending(null);
       setRejectionReason("");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExecuteUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !uploadingRequest || !uploadFile) return;
+
+    setIsUploading(true);
+    try {
+      let docType: HRDocumentType = "absence_justification";
+      let title = `Justificatif d'absence - ${uploadingRequest.employeeName} - ${uploadingRequest.startDate}`;
+
+      if (uploadingRequest.requestType === "sickness") {
+        docType = "medical_certificate";
+        title = `Certificat médical - ${uploadingRequest.employeeName} - ${uploadingRequest.startDate}`;
+      } else if (uploadingRequest.requestType === "work_accident") {
+        docType = "work_accident_justification";
+        title = `Justificatif accident du travail - ${uploadingRequest.employeeName} - ${uploadingRequest.startDate}`;
+      }
+
+      const docId = await uploadHRDocument(
+        entityId,
+        uploadFile,
+        {
+          title,
+          documentType: docType,
+          employeeId: uploadingRequest.employeeId,
+          personId: uploadingRequest.personId || null,
+          relatedModule: "timeOffRequests",
+          relatedId: uploadingRequest.requestId,
+          status: "valid"
+        },
+        user.uid,
+        membership?.userDisplayName || "Utilisateur"
+      );
+
+      await addJustificationDocumentToRequest(
+        entityId,
+        uploadingRequest.requestId,
+        docId,
+        uploadNote,
+        user.uid
+      );
+
+      toast({ title: "Justificatif ajouté", description: "Le document a été lié à la demande." });
+      setUploadingRequest(null);
+      setReplacementFile(null);
+      setUploadNote("");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleOpenJustification = async (requestId: string) => {
+    const request = requests?.find(r => r.requestId === requestId);
+    if (!request || !request.justificationDocumentIds || request.justificationDocumentIds.length === 0) return;
+
+    const docId = request.justificationDocumentIds[0];
+    setLoading(true);
+    try {
+      // We need storage path from the document registry
+      const { useFirestore } = await import("@/firebase");
+      const { getDoc, doc } = await import("firebase/firestore");
+      const docSnap = await getDoc(doc(db!, `entities/${entityId}/documents`, docId));
+      
+      if (docSnap.exists()) {
+        const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
+        window.open(url, "_blank");
+      } else {
+        throw new Error("Document introuvable dans le registre.");
+      }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -300,6 +388,17 @@ export default function TimeOffManagementPage() {
                              <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-48">
+                             {canUpdate && r.justificationStatus === 'missing' && r.requiresJustification && (
+                               <DropdownMenuItem onClick={() => setUploadingRequest(r)} className="text-primary font-bold gap-2">
+                                  <Upload className="w-4 h-4" /> Ajouter justificatif
+                               </DropdownMenuItem>
+                             )}
+                             {r.justificationStatus === 'provided' && (
+                               <DropdownMenuItem onClick={() => handleOpenJustification(r.requestId)} className="gap-2">
+                                  <Eye className="w-4 h-4" /> Voir justificatif
+                               </DropdownMenuItem>
+                             )}
+                             <DropdownMenuSeparator />
                              {canApprove && r.status === 'submitted' && (
                                 <>
                                   <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'approve' })} className="text-green-600 font-bold gap-2">
@@ -316,9 +415,6 @@ export default function TimeOffManagementPage() {
                                    <Ban className="w-4 h-4" /> Annuler
                                 </DropdownMenuItem>
                              )}
-                             <DropdownMenuItem className="gap-2" disabled>
-                                <Paperclip className="w-4 h-4" /> Ajouter justificatif (Bientôt)
-                             </DropdownMenuItem>
                           </DropdownMenuContent>
                        </DropdownMenu>
                     </TableCell>
@@ -431,6 +527,63 @@ export default function TimeOffManagementPage() {
                 </Button>
              </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Justification Upload Modal */}
+      <Dialog open={!!uploadingRequest} onOpenChange={(open) => !open && setUploadingRequest(null)}>
+        <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
+           <DialogHeader>
+              <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+                <Paperclip className="w-6 h-6" /> Ajouter un justificatif
+              </DialogTitle>
+              <DialogDescription>
+                 Joindre un document officiel pour {uploadingRequest?.employeeName}.
+              </DialogDescription>
+           </DialogHeader>
+           
+           <form onSubmit={handleExecuteUpload} className="space-y-6 py-4">
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-center relative group hover:bg-slate-100 transition-colors">
+                   <input 
+                    type="file" 
+                    accept=".pdf,.png,.jpg,.jpeg" 
+                    onChange={(e) => setReplacementFile(e.target.files?.[0] || null)}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    required
+                   />
+                   <div className="flex flex-col items-center gap-2">
+                      <div className="bg-white p-3 rounded-2xl shadow-sm text-primary/40 group-hover:text-primary transition-colors">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      {uploadFile ? (
+                        <p className="text-xs font-bold text-green-600 truncate max-w-xs">{uploadFile.name}</p>
+                      ) : (
+                        <p className="text-xs font-bold text-slate-500">Cliquer pour choisir un fichier (PDF, Image)</p>
+                      )}
+                      <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">Max 10 Mo</p>
+                   </div>
+                </div>
+
+                <div className="space-y-2">
+                   <Label className="text-[10px] uppercase font-black text-muted-foreground">Note ou commentaire (Optionnel)</Label>
+                   <Textarea 
+                    value={uploadNote}
+                    onChange={(e) => setUploadNote(e.target.value)}
+                    placeholder="Détails sur le document..."
+                    className="rounded-xl min-h-[80px]"
+                   />
+                </div>
+              </div>
+
+              <DialogFooter className="pt-4 border-t">
+                 <Button type="button" variant="ghost" onClick={() => setUploadingRequest(null)} disabled={isUploading}>Annuler</Button>
+                 <Button type="submit" disabled={isUploading || !uploadFile} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
+                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                    Confirmer l'ajout
+                 </Button>
+              </DialogFooter>
+           </form>
         </DialogContent>
       </Dialog>
 
