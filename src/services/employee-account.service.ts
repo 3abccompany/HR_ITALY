@@ -3,7 +3,7 @@
 
 import { adminDb, adminAuth } from "@/lib/firebase/admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import crypto from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { sendEmployeeInvitationEmailAction } from "./email.service";
 
 /**
@@ -13,7 +13,7 @@ import { sendEmployeeInvitationEmailAction } from "./email.service";
  */
 
 function hashToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex');
+  return createHash('sha256').update(token).digest('hex');
 }
 
 /**
@@ -39,8 +39,8 @@ export async function inviteEmployeeToEmployeeSpace(params: {
     if (!employee.email) throw new Error("L'employé ne possède pas d'adresse email configurée.");
     if (employee.accountStatus === "active") throw new Error("Cet employé possède déjà un compte actif.");
 
-    // 2. TOKEN GENERATION (Secure)
-    const rawToken = crypto.randomBytes(32).toString('hex');
+    // 2. TOKEN GENERATION (Secure & URL-safe)
+    const rawToken = randomBytes(32).toString('base64url');
     const tokenHash = hashToken(rawToken);
     const validityHours = 48;
     const expiresAt = new Date();
@@ -101,9 +101,15 @@ export async function inviteEmployeeToEmployeeSpace(params: {
  * Uses collectionGroup to resolve the invitation without entityId in URL.
  */
 export async function getInvitationSnippetAction(rawToken: string) {
-  if (!rawToken || !adminDb) return { success: false, error: "Lien invalide." };
+  if (!rawToken) return { success: false, error: "Lien invalide." };
+  
+  if (!adminDb) {
+    console.error("[Get Invitation Snippet] Admin SDK not initialized.");
+    return { success: false, error: "Service momentanément indisponible." };
+  }
   
   const tokenHash = hashToken(rawToken);
+  console.log(`[Activation] Verifying token hash prefix: ${tokenHash.substring(0, 8)}...`);
   
   try {
     const snap = await adminDb.collectionGroup("employeeInvitations")
@@ -111,7 +117,10 @@ export async function getInvitationSnippetAction(rawToken: string) {
       .limit(1)
       .get();
       
-    if (snap.empty) return { success: false, error: "Invitation introuvable." };
+    if (snap.empty) {
+      console.warn(`[Activation] No invitation found for hash prefix: ${tokenHash.substring(0, 8)}`);
+      return { success: false, error: "Invitation introuvable ou expiré." };
+    }
     
     const data = snap.docs[0].data();
     
@@ -128,17 +137,18 @@ export async function getInvitationSnippetAction(rawToken: string) {
         entityName
       } 
     };
-  } catch (err) {
-    console.error("[Get Invitation Snippet] Error:", err);
+  } catch (err: any) {
+    console.error("[Get Invitation Snippet] Firestore Query Error:", err);
+    // Common cause: missing collectionGroup index
+    if (err.code === 9 || err.message?.includes("index")) {
+      return { success: false, error: "Configuration système en cours (index manquant). Veuillez réessayer plus tard." };
+    }
     return { success: false, error: "Erreur technique lors de la vérification." };
   }
 }
 
 /**
  * Main Activation logic (Phase 1B).
- * 1. Verifies tokenHash.
- * 2. Creates/Retrieves Auth User.
- * 3. Atomic transition: accept invitation, link membership, update employee.
  */
 export async function activateEmployeeAccountAction(rawToken: string, password: string) {
   if (!rawToken || !password || !adminDb || !adminAuth) {
@@ -169,7 +179,6 @@ export async function activateEmployeeAccountAction(rawToken: string, password: 
     try {
       const existingUser = await adminAuth.getUserByEmail(email);
       uid = existingUser.uid;
-      // Do NOT overwrite password for existing users as per safety rule.
     } catch (authErr: any) {
       if (authErr.code === 'auth/user-not-found') {
         const newUser = await adminAuth.createUser({

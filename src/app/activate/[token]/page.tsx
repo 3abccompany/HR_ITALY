@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ShieldCheck, Loader2, CheckCircle2, AlertCircle, Building2, Lock, Eye, EyeOff, Info } from "lucide-react";
@@ -20,6 +20,8 @@ export default function EmployeeActivationPage() {
   const params = useParams();
   const router = useRouter();
   const { toast } = useToast();
+  
+  // Use React.use() equivalent or check for promise if needed, but in Client Component useParams() is sync.
   const token = params.token as string;
 
   const [loading, setLoading] = useState(true);
@@ -35,14 +37,18 @@ export default function EmployeeActivationPage() {
   useEffect(() => {
     async function verify() {
       if (!token) return;
+      
+      setLoading(true);
       try {
         const result = await getInvitationSnippetAction(token);
         if (result.success && result.invitation) {
           setInvitation(result.invitation);
+          setError(null);
         } else {
           setError(result.error || "Ce lien d'activation est invalide ou a expiré.");
         }
       } catch (err) {
+        console.error("[Activation Page] Verify catch:", err);
         setError("Impossible de vérifier votre invitation.");
       } finally {
         setLoading(false);
