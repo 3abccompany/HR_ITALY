@@ -6,7 +6,7 @@ import {
   Loader2, User, Calendar, Clock, FolderOpen, 
   ShieldCheck, UserCircle, Briefcase, 
   MapPin, Building2, Fingerprint, Info,
-  Calculator, Plane
+  Calculator, Plane, Plus
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Employee } from "@/types/employee";
 import { LeaveBalance } from "@/types/time-off";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 export default function MySpacePage() {
   const params = useParams();

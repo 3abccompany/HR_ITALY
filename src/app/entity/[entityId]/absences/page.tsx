@@ -8,7 +8,7 @@ import {
   FileText, CheckCircle2, History, Send,
   ChevronRight, ArrowRight, MoreVertical,
   XCircle, Ban, FileWarning, Paperclip, Upload,
-  Download, Eye, Euro, Settings2, Calculator
+  Download, Eye, Euro, Settings2, Calculator, Save
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -753,7 +753,7 @@ export default function TimeOffManagementPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={loading}>Retour</AlertDialogCancel>
+            <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
             <AlertDialogAction 
               onClick={(e) => { e.preventDefault(); handleExecuteDecision(); }}
               className={cn("rounded-xl font-bold px-8", decisionPending?.action === 'approve' ? "bg-green-600 hover:bg-green-700" : "bg-destructive")}
