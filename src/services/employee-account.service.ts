@@ -10,6 +10,7 @@ import { sendEmployeeInvitationEmailAction } from "./email.service";
  * @fileOverview Server-only service for managing employee user accounts and invitations.
  * Phase 1A: Employee Access Foundation.
  * Phase 1B: Account Activation & Password Definition.
+ * Fix: Removed collectionGroup dependency. entityId is now passed via URL query param.
  */
 
 function hashToken(token: string): string {
@@ -75,7 +76,8 @@ export async function inviteEmployeeToEmployeeSpace(params: {
 
     // 5. EMAIL DISPATCH
     const baseUrl = process.env.APP_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
-    const activationLink = `${baseUrl}/activate/${rawToken}`;
+    // FIX: Include entityId in query string to allow direct lookup without collectionGroup
+    const activationLink = `${baseUrl}/activate/${rawToken}?entityId=${entityId}`;
 
     const emailResult = await sendEmployeeInvitationEmailAction({
       entityId,
@@ -98,10 +100,12 @@ export async function inviteEmployeeToEmployeeSpace(params: {
 
 /**
  * Retrieves a non-sensitive snippet of an invitation for UI verification.
- * Uses collectionGroup to resolve the invitation without entityId in URL.
+ * Uses direct collection lookup within the provided entity tenant.
  */
-export async function getInvitationSnippetAction(rawToken: string) {
-  if (!rawToken) return { success: false, error: "Lien invalide." };
+export async function getInvitationSnippetAction(rawToken: string, entityId: string | null) {
+  if (!rawToken || !entityId) {
+    return { success: false, error: "Lien d'activation invalide ou incomplet." };
+  }
   
   if (!adminDb) {
     console.error("[Get Invitation Snippet] Admin SDK not initialized.");
@@ -109,17 +113,16 @@ export async function getInvitationSnippetAction(rawToken: string) {
   }
   
   const tokenHash = hashToken(rawToken);
-  console.log(`[Activation] Verifying token hash prefix: ${tokenHash.substring(0, 8)}...`);
   
   try {
-    const snap = await adminDb.collectionGroup("employeeInvitations")
+    // Scoped query within entity sub-collection (No collectionGroup required)
+    const snap = await adminDb.collection("entities").doc(entityId).collection("employeeInvitations")
       .where("tokenHash", "==", tokenHash)
       .limit(1)
       .get();
       
     if (snap.empty) {
-      console.warn(`[Activation] No invitation found for hash prefix: ${tokenHash.substring(0, 8)}`);
-      return { success: false, error: "Invitation introuvable ou expiré." };
+      return { success: false, error: "Invitation introuvable ou expirée." };
     }
     
     const data = snap.docs[0].data();
@@ -127,7 +130,7 @@ export async function getInvitationSnippetAction(rawToken: string) {
     if (data.status !== "pending") return { success: false, error: "Cette invitation a déjà été utilisée." };
     if (data.expiresAt.toDate() < new Date()) return { success: false, error: "Ce lien a expiré." };
 
-    const entitySnap = await adminDb.collection("entities").doc(data.entityId).get();
+    const entitySnap = await adminDb.collection("entities").doc(entityId).get();
     const entityName = entitySnap.exists ? (entitySnap.data()?.nomEntreprise || "L'entreprise") : "L'entreprise";
 
     return { 
@@ -138,28 +141,25 @@ export async function getInvitationSnippetAction(rawToken: string) {
       } 
     };
   } catch (err: any) {
-    console.error("[Get Invitation Snippet] Firestore Query Error:", err);
-    // Common cause: missing collectionGroup index
-    if (err.code === 9 || err.message?.includes("index")) {
-      return { success: false, error: "Configuration système en cours (index manquant). Veuillez réessayer plus tard." };
-    }
-    return { success: false, error: "Erreur technique lors de la vérification." };
+    console.error("[Get Invitation Snippet] Firestore Scoped Query Error:", err);
+    return { success: false, error: "Erreur technique lors de la vérification de l'invitation." };
   }
 }
 
 /**
  * Main Activation logic (Phase 1B).
+ * Direct tenant path lookup using provided entityId.
  */
-export async function activateEmployeeAccountAction(rawToken: string, password: string) {
-  if (!rawToken || !password || !adminDb || !adminAuth) {
+export async function activateEmployeeAccountAction(rawToken: string, password: string, entityId: string | null) {
+  if (!rawToken || !password || !entityId || !adminDb || !adminAuth) {
     return { success: false, error: "Données manquantes pour l'activation." };
   }
 
   const tokenHash = hashToken(rawToken);
 
   try {
-    // 1. Find Invitation
-    const inviteSnap = await adminDb.collectionGroup("employeeInvitations")
+    // 1. Find Invitation via direct path
+    const inviteSnap = await adminDb.collection("entities").doc(entityId).collection("employeeInvitations")
       .where("tokenHash", "==", tokenHash)
       .limit(1)
       .get();
@@ -167,9 +167,8 @@ export async function activateEmployeeAccountAction(rawToken: string, password: 
     if (inviteSnap.empty) throw new Error("Invitation introuvable.");
     const inviteDoc = inviteSnap.docs[0];
     const invite = inviteDoc.data();
-    const entityId = invite.entityId;
-    const employeeId = invite.employeeId;
     const email = invite.email;
+    const employeeId = invite.employeeId;
 
     if (invite.status !== "pending") throw new Error("Invitation déjà utilisée.");
     if (invite.expiresAt.toDate() < new Date()) throw new Error("Lien expiré.");

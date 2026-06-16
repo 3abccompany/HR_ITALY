@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ShieldCheck, Loader2, CheckCircle2, AlertCircle, Building2, Lock, Eye, EyeOff, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,11 +18,12 @@ import Link from "next/link";
  */
 export default function EmployeeActivationPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { toast } = useToast();
   
-  // Use React.use() equivalent or check for promise if needed, but in Client Component useParams() is sync.
   const token = params.token as string;
+  const entityId = searchParams.get("entityId");
 
   const [loading, setLoading] = useState(true);
   const [activating, setActivating] = useState(false);
@@ -38,9 +39,15 @@ export default function EmployeeActivationPage() {
     async function verify() {
       if (!token) return;
       
+      if (!entityId) {
+        setError("Lien d'activation incomplet (ID entité manquant).");
+        setLoading(false);
+        return;
+      }
+      
       setLoading(true);
       try {
-        const result = await getInvitationSnippetAction(token);
+        const result = await getInvitationSnippetAction(token, entityId);
         if (result.success && result.invitation) {
           setInvitation(result.invitation);
           setError(null);
@@ -55,7 +62,7 @@ export default function EmployeeActivationPage() {
       }
     }
     verify();
-  }, [token]);
+  }, [token, entityId]);
 
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +77,7 @@ export default function EmployeeActivationPage() {
 
     setActivating(true);
     try {
-      const result = await activateEmployeeAccountAction(token, password);
+      const result = await activateEmployeeAccountAction(token, password, entityId);
       if (result.success) {
         setSuccess(true);
         toast({ title: "Compte activé !", description: "Vous pouvez maintenant vous connecter à votre espace." });
