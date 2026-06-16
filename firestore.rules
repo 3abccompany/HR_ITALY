@@ -258,6 +258,13 @@ service cloud.firestore {
           || hasPermission(entityId, "settings.manage")
           || hasPermission(entityId, "emailSettings.manage");
       }
+
+      match /timeOffRequests/{requestId} {
+        allow read: if hasPermission(entityId, 'leaveRequests.read') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'leaveRequests.create') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'leaveRequests.update') || hasPermission(entityId, 'leaveRequests.approve') || isPlatformAdmin();
+        allow delete: if false;
+      }
     }
 
     // --- Global Reference Data ---

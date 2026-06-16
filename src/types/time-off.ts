@@ -1,0 +1,50 @@
+import { FieldValue } from "firebase/firestore";
+
+export type TimeOffRequestKind = "leave" | "absence";
+
+export type TimeOffRequestType = 
+  | "paid_leave" 
+  | "unpaid_leave" 
+  | "permission" 
+  | "sickness" 
+  | "unjustified_absence" 
+  | "work_accident" 
+  | "other";
+
+export type TimeOffStatus = "submitted" | "approved" | "rejected" | "cancelled";
+
+export type DayPart = "full_day" | "morning" | "afternoon";
+
+export interface TimeOffRequest {
+  requestId: string;
+  entityId: string;
+  employeeId: string;
+  personId?: string;
+  employeeName: string;
+  requestKind: TimeOffRequestKind;
+  requestType: TimeOffRequestType;
+  source: "hr_created" | "employee_created";
+  status: TimeOffStatus;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  dayPart: DayPart;
+  durationDays: number;
+  reason?: string;
+  createdByUid: string;
+  createdByRole: string;
+  createdAt: Date | FieldValue;
+  updatedAt: Date | FieldValue;
+  approvedAt?: Date | FieldValue;
+  approvedBy?: string;
+  rejectionReason?: string;
+}
+
+export const TIME_OFF_TYPE_LABELS: Record<TimeOffRequestType, string> = {
+  paid_leave: "Congé payé",
+  unpaid_leave: "Congé sans solde",
+  permission: "Permission / RTT",
+  sickness: "Maladie",
+  unjustified_absence: "Absence injustifiée",
+  work_accident: "Accident du travail",
+  other: "Autre motif"
+};
