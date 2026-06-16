@@ -72,16 +72,14 @@ export async function createTimeOffRequestForEmployee(
 
   const duration = calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
 
-  // Determine justification requirements if not explicitly set
+  // Determine justification requirements - FORCE for specific types
   let requiresJustification = data.requiresJustification ?? false;
   const requestType = data.requestType || 'other';
 
-  if (data.requiresJustification === undefined) {
-    if (["sickness", "work_accident"].includes(requestType)) {
-      requiresJustification = true;
-    } else if (["paid_leave", "unpaid_leave", "unjustified_absence"].includes(requestType)) {
-      requiresJustification = false;
-    }
+  if (["sickness", "work_accident"].includes(requestType)) {
+    requiresJustification = true;
+  } else if (["paid_leave", "unpaid_leave", "unjustified_absence"].includes(requestType)) {
+    requiresJustification = false;
   }
 
   const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
@@ -120,6 +118,7 @@ export async function createTimeOffRequestForEmployee(
 
 /**
  * Approves a time-off request.
+ * BLOCKS approval if a required justification is missing.
  */
 export async function approveTimeOffRequest(entityId: string, requestId: string, actorUid: string, actorRole: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -131,6 +130,15 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
 
   if (request.status !== "submitted") {
     throw new Error(`Statut invalide pour approbation : ${request.status}`);
+  }
+
+  // Guard: Required justification check
+  const isSickness = ["sickness", "work_accident"].includes(request.requestType);
+  const isJustificationRequired = request.requiresJustification ?? isSickness;
+  const hasDocument = request.justificationDocumentIds && request.justificationDocumentIds.length > 0;
+
+  if (isJustificationRequired && !hasDocument) {
+    throw new Error("Justificatif requis avant approbation.");
   }
 
   await updateDoc(requestRef, {

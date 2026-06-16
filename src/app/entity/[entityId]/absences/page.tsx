@@ -438,7 +438,7 @@ export default function TimeOffManagementPage() {
       <AlertDialog open={!!decisionPending && decisionPending.action !== 'reject'} onOpenChange={(open) => !open && setDecisionPending(null)}>
         <AlertDialogContent className="rounded-[2rem]">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-xl font-black text-primary">
+            <AlertDialogTitle>
               {decisionPending?.action === 'approve' ? 'Approuver la demande ?' : 'Annuler la demande ?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
@@ -513,8 +513,10 @@ function getStatusBadge(status: string) {
 }
 
 function renderJustificationStatus(r: TimeOffRequest) {
-  const requires = r.requiresJustification ?? false;
-  const status = r.justificationStatus || "not_required";
+  const isSickness = ["sickness", "work_accident"].includes(r.requestType);
+  const requires = r.requiresJustification ?? isSickness;
+  const docIds = r.justificationDocumentIds || [];
+  const status = r.justificationStatus || (requires ? (docIds.length > 0 ? "provided" : "missing") : "not_required");
 
   if (!requires) return <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-tight">Non requis</span>;
 
