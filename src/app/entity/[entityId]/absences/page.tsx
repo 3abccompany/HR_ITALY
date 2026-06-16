@@ -8,7 +8,7 @@ import {
   FileText, CheckCircle2, History, Send,
   ChevronRight, ArrowRight, MoreVertical,
   XCircle, Ban, FileWarning, Paperclip, Upload,
-  Download, Eye
+  Download, Eye, Euro, Settings2, Calculator
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,14 +20,15 @@ import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, Query, where } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, JustificationStatus } from "@/types/time-off";
+import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, LeaveBalance } from "@/types/time-off";
 import { HRDocumentType } from "@/types/hr-document";
 import { 
   createTimeOffRequestForEmployee, 
   approveTimeOffRequest, 
   rejectTimeOffRequest, 
   cancelTimeOffRequest,
-  addJustificationDocumentToRequest
+  addJustificationDocumentToRequest,
+  updateLeaveBalanceManual
 } from "@/services/time-off.service";
 import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
@@ -57,6 +58,7 @@ import { Switch } from "@/components/ui/switch";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const initialForm = {
   employeeId: "",
@@ -70,6 +72,13 @@ const initialForm = {
   justificationNote: ""
 };
 
+const initialBalanceForm = {
+  employeeId: "",
+  year: new Date().getFullYear(),
+  entitlementDays: 25,
+  carriedOverDays: 0
+};
+
 export default function TimeOffManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -78,9 +87,12 @@ export default function TimeOffManagementPage() {
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
 
+  const [activeTab, setActiveTab] = useState("requests");
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isBalanceModalOpen, setIsBalanceModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState(initialForm);
+  const [balanceForm, setBalanceForm] = useState(initialBalanceForm);
   const [statusFilter, setStatusFilter] = useState("all");
 
   // Decision State
@@ -109,8 +121,14 @@ export default function TimeOffManagementPage() {
     return query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active"), orderBy("displayName", "asc")) as Query<Employee>;
   }, [db, entityId, canRead]);
 
+  const balancesQuery = useMemo(() => {
+    if (!db || !entityId || !canRead) return null;
+    return query(collection(db, `entities/${entityId}/leaveBalances`), orderBy("year", "desc")) as Query<LeaveBalance>;
+  }, [db, entityId, canRead]);
+
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery);
   const { data: employees } = useCollection<Employee>(employeesQuery);
+  const { data: balances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
 
   const filteredRequests = useMemo(() => {
     if (!requests) return [];
@@ -163,6 +181,33 @@ export default function TimeOffManagementPage() {
       setFormData(initialForm);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Échec", description: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateBalance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !membership || !entityId) return;
+    if (!balanceForm.employeeId) return;
+
+    setLoading(true);
+    try {
+      await updateLeaveBalanceManual(
+        entityId,
+        balanceForm.employeeId,
+        balanceForm.year,
+        {
+          entitlementDays: Number(balanceForm.entitlementDays),
+          carriedOverDays: Number(balanceForm.carriedOverDays)
+        },
+        user.uid,
+        membership.roleId
+      );
+      toast({ title: "Solde mis à jour" });
+      setIsBalanceModalOpen(false);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
     }
@@ -250,7 +295,6 @@ export default function TimeOffManagementPage() {
     const docId = request.justificationDocumentIds[0];
     setLoading(true);
     try {
-      // We need storage path from the document registry
       const { getDoc, doc } = await import("firebase/firestore");
       const docSnap = await getDoc(doc(db!, `entities/${entityId}/documents`, docId));
       
@@ -276,158 +320,263 @@ export default function TimeOffManagementPage() {
           <h1 className="text-3xl font-black text-primary tracking-tight">Absences & Congés</h1>
           <p className="text-muted-foreground text-sm">Gestion des demandes de temps libre et absences maladie.</p>
         </div>
-        {canCreate && (
-          <Button onClick={() => setIsFormOpen(true)} className="gap-2 shadow-lg shadow-primary/10 rounded-xl font-bold">
-            <Plus className="w-4 h-4" /> Nouvelle demande
-          </Button>
-        )}
+        <div className="flex gap-3">
+          {canUpdate && (
+            <Button onClick={() => setIsBalanceModalOpen(true)} variant="outline" className="gap-2 rounded-xl font-bold border-dashed">
+              <Calculator className="w-4 h-4" /> Gérer les soldes
+            </Button>
+          )}
+          {canCreate && (
+            <Button onClick={() => setIsFormOpen(true)} className="gap-2 shadow-lg shadow-primary/10 rounded-xl font-bold">
+              <Plus className="w-4 h-4" /> Nouvelle demande
+            </Button>
+          )}
+        </div>
       </header>
 
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-           <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[200px] h-10 rounded-xl">
-                <SelectValue placeholder="Filtrer par statut" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tous les statuts</SelectItem>
-                <SelectItem value="submitted">En attente</SelectItem>
-                <SelectItem value="approved">Approuvé</SelectItem>
-                <SelectItem value="rejected">Refusé</SelectItem>
-                <SelectItem value="cancelled">Annulé</SelectItem>
-              </SelectContent>
-           </Select>
-        </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList className="bg-white border rounded-xl p-1 h-11">
+          <TabsTrigger value="requests" className="rounded-lg px-6 font-bold">Demandes</TabsTrigger>
+          <TabsTrigger value="balances" className="rounded-lg px-6 font-bold">Soldes annuels</TabsTrigger>
+        </TabsList>
 
-        <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
-          <Table>
-            <TableHeader className="bg-secondary/20">
-              <TableRow>
-                <TableHead className="pl-6">Employé</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Période</TableHead>
-                <TableHead>Durée</TableHead>
-                <TableHead>Justificatif</TableHead>
-                <TableHead>Statut</TableHead>
-                <TableHead className="text-right pr-6">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loadingRequests ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-              ) : filteredRequests.length === 0 ? (
+        <TabsContent value="requests" className="space-y-6 mt-0">
+          <div className="flex items-center gap-4">
+             <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[200px] h-10 rounded-xl">
+                  <SelectValue placeholder="Filtrer par statut" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tous les statuts</SelectItem>
+                  <SelectItem value="submitted">En attente</SelectItem>
+                  <SelectItem value="approved">Approuvé</SelectItem>
+                  <SelectItem value="rejected">Refusé</SelectItem>
+                  <SelectItem value="cancelled">Annulé</SelectItem>
+                </SelectContent>
+             </Select>
+          </div>
+
+          <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
+            <Table>
+              <TableHeader className="bg-secondary/20">
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-20 text-muted-foreground">
-                    <div className="flex flex-col items-center gap-3">
-                      <ListFilter className="h-10 w-10 opacity-20" />
-                      <p className="font-bold text-sm uppercase tracking-widest">Aucune demande trouvée.</p>
-                    </div>
-                  </TableCell>
+                  <TableHead className="pl-6">Employé</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Période</TableHead>
+                  <TableHead>Durée</TableHead>
+                  <TableHead>Justificatif</TableHead>
+                  <TableHead>Statut</TableHead>
+                  <TableHead className="text-right pr-6">Actions</TableHead>
                 </TableRow>
-              ) : (
-                filteredRequests.map((r) => (
-                  <TableRow key={r.requestId} className="hover:bg-muted/50 transition-colors">
-                    <TableCell className="pl-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-primary/5 p-2 rounded-lg text-primary"><User className="w-4 h-4" /></div>
-                        <div>
-                          <p className="font-bold text-slate-900">{r.employeeName}</p>
-                          <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter">Source: {r.source === 'hr_created' ? 'RH' : 'Employé'}</p>
-                        </div>
+              </TableHeader>
+              <TableBody>
+                {loadingRequests ? (
+                  <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                ) : filteredRequests.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-20 text-muted-foreground">
+                      <div className="flex flex-col items-center gap-3">
+                        <ListFilter className="h-10 w-10 opacity-20" />
+                        <p className="font-bold text-sm uppercase tracking-widest">Aucune demande trouvée.</p>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1">
-                        <Badge variant="outline" className={cn("text-[9px] uppercase font-black w-fit", r.requestKind === 'leave' ? "border-blue-200 text-blue-700 bg-blue-50" : "border-orange-200 text-orange-700 bg-orange-50")}>
-                          {r.requestKind === 'leave' ? 'Congé' : 'Absence'}
-                        </Badge>
-                        <span className="text-xs font-bold text-slate-700">{TIME_OFF_TYPE_LABELS[r.requestType]}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-xs font-medium">
-                        <Calendar className="w-3.5 h-3.5 text-primary/40" />
-                        {r.startDate === r.endDate ? (
-                          <span>{formatDate(r.startDate)}</span>
-                        ) : (
-                          <div className="flex items-center gap-1">
-                            <span>{formatDate(r.startDate)}</span>
-                            <ArrowRight className="w-3 h-3 text-muted-foreground/30" />
-                            <span>{formatDate(r.endDate)}</span>
-                          </div>
-                        )}
-                        {r.dayPart !== "full_day" && (
-                          <Badge variant="outline" className="text-[8px] h-4 bg-slate-50">{r.dayPart === 'morning' ? 'Matin' : 'Après-midi'}</Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                       <div className="flex items-center gap-1.5 font-black text-primary">
-                          <Clock className="w-3.5 h-3.5 opacity-30" />
-                          {r.durationDays} j
-                       </div>
-                    </TableCell>
-                    <TableCell>
-                       {renderJustificationStatus(r)}
-                    </TableCell>
-                    <TableCell>
-                       <div className="flex flex-col gap-1">
-                          {getStatusBadge(r.status)}
-                          {r.status === 'rejected' && r.rejectionReason && (
-                            <p className="text-[9px] text-red-600 italic font-medium truncate max-w-[120px]" title={r.rejectionReason}>
-                               "{r.rejectionReason}"
-                            </p>
-                          )}
-                       </div>
-                    </TableCell>
-                    <TableCell className="text-right pr-6">
-                       <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                             <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
-                             {canUpdate && r.justificationStatus === 'missing' && r.requiresJustification && (
-                               <DropdownMenuItem onClick={() => setUploadingRequest(r)} className="text-primary font-bold gap-2">
-                                  <Upload className="w-4 h-4" /> Ajouter justificatif
-                               </DropdownMenuItem>
-                             )}
-                             {r.justificationStatus === 'provided' && (
-                               <DropdownMenuItem onClick={() => handleOpenJustification(r.requestId)} className="gap-2">
-                                  <Eye className="w-4 h-4" /> Voir justificatif
-                               </DropdownMenuItem>
-                             )}
-                             <DropdownMenuSeparator />
-                             {canApprove && r.status === 'submitted' && (
-                                <>
-                                  <DropdownMenuItem 
-                                    onClick={() => setDecisionPending({ id: r.requestId, action: 'approve' })} 
-                                    className={cn("text-green-600 font-bold gap-2", 
-                                      (r.requiresJustification && r.justificationStatus === 'missing') && "opacity-50 pointer-events-none"
-                                    )}
-                                  >
-                                     <CheckCircle2 className="w-4 h-4" /> Approuver
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'reject' })} className="text-red-600 font-bold gap-2">
-                                     <XCircle className="w-4 h-4" /> Refuser
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                </>
-                             )}
-                             {canApprove && (r.status === 'submitted' || r.status === 'approved') && (
-                                <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'cancel' })} className="text-muted-foreground gap-2">
-                                   <Ban className="w-4 h-4" /> Annuler
-                                </DropdownMenuItem>
-                             )}
-                          </DropdownMenuContent>
-                       </DropdownMenu>
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </Card>
-      </div>
+                ) : (
+                  filteredRequests.map((r) => (
+                    <TableRow key={r.requestId} className="hover:bg-muted/50 transition-colors">
+                      <TableCell className="pl-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-primary/5 p-2 rounded-lg text-primary"><User className="w-4 h-4" /></div>
+                          <div>
+                            <p className="font-bold text-slate-900">{r.employeeName}</p>
+                            <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter">Source: {r.source === 'hr_created' ? 'RH' : 'Employé'}</p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant="outline" className={cn("text-[9px] uppercase font-black w-fit", r.requestKind === 'leave' ? "border-blue-200 text-blue-700 bg-blue-50" : "border-orange-200 text-orange-700 bg-orange-50")}>
+                            {r.requestKind === 'leave' ? 'Congé' : 'Absence'}
+                          </Badge>
+                          <span className="text-xs font-bold text-slate-700">{TIME_OFF_TYPE_LABELS[r.requestType]}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2 text-xs font-medium">
+                          <Calendar className="w-3.5 h-3.5 text-primary/40" />
+                          {r.startDate === r.endDate ? (
+                            <span>{formatDate(r.startDate)}</span>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span>{formatDate(r.startDate)}</span>
+                              <ArrowRight className="w-3 h-3 text-muted-foreground/30" />
+                              <span>{formatDate(r.endDate)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                         <div className="flex items-center gap-1.5 font-black text-primary">
+                            <Clock className="w-3.5 h-3.5 opacity-30" />
+                            {r.durationDays} j
+                         </div>
+                      </TableCell>
+                      <TableCell>
+                         {renderJustificationStatus(r)}
+                      </TableCell>
+                      <TableCell>
+                         <div className="flex flex-col gap-1">
+                            {getStatusBadge(r.status)}
+                            {r.status === 'rejected' && r.rejectionReason && (
+                              <p className="text-[9px] text-red-600 italic font-medium truncate max-w-[120px]" title={r.rejectionReason}>
+                                 "{r.rejectionReason}"
+                              </p>
+                            )}
+                         </div>
+                      </TableCell>
+                      <TableCell className="text-right pr-6">
+                         <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                               {canUpdate && r.justificationStatus === 'missing' && r.requiresJustification && (
+                                 <DropdownMenuItem onClick={() => setUploadingRequest(r)} className="text-primary font-bold gap-2">
+                                    <Upload className="w-4 h-4" /> Ajouter justificatif
+                                 </DropdownMenuItem>
+                               )}
+                               {r.justificationStatus === 'provided' && (
+                                 <DropdownMenuItem onClick={() => handleOpenJustification(r.requestId)} className="gap-2">
+                                    <Eye className="w-4 h-4" /> Voir justificatif
+                                 </DropdownMenuItem>
+                               )}
+                               <DropdownMenuSeparator />
+                               {canApprove && r.status === 'submitted' && (
+                                  <>
+                                    <DropdownMenuItem 
+                                      onClick={() => setDecisionPending({ id: r.requestId, action: 'approve' })} 
+                                      className={cn("text-green-600 font-bold gap-2", 
+                                        (r.requiresJustification && r.justificationStatus === 'missing') && "opacity-50 pointer-events-none"
+                                      )}
+                                    >
+                                       <CheckCircle2 className="w-4 h-4" /> Approuver
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'reject' })} className="text-red-600 font-bold gap-2">
+                                       <XCircle className="w-4 h-4" /> Refuser
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                  </>
+                               )}
+                               {canApprove && (r.status === 'submitted' || r.status === 'approved') && (
+                                  <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'cancel' })} className="text-muted-foreground gap-2">
+                                     <Ban className="w-4 h-4" /> Annuler
+                                  </DropdownMenuItem>
+                               )}
+                            </DropdownMenuContent>
+                         </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="balances" className="mt-0">
+           <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
+              <Table>
+                <TableHeader className="bg-secondary/20">
+                   <TableRow>
+                      <TableHead className="pl-6">Employé</TableHead>
+                      <TableHead>Année</TableHead>
+                      <TableHead>Acquis / Report</TableHead>
+                      <TableHead>Pris</TableHead>
+                      <TableHead>En attente</TableHead>
+                      <TableHead>Restant</TableHead>
+                      <TableHead className="text-right pr-6">Actions</TableHead>
+                   </TableRow>
+                </TableHeader>
+                <TableBody>
+                   {loadingBalances ? (
+                     <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                   ) : balances?.length === 0 ? (
+                     <TableRow><TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">Aucun solde initialisé.</TableCell></TableRow>
+                   ) : (
+                     balances?.map(b => (
+                       <TableRow key={`${b.employeeId}_${b.year}`}>
+                          <TableCell className="pl-6 font-bold">{employees?.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</TableCell>
+                          <TableCell><Badge variant="outline">{b.year}</Badge></TableCell>
+                          <TableCell>{b.entitlementDays}j + {b.carriedOverDays}j</TableCell>
+                          <TableCell className="font-bold text-red-600">{b.usedDays}j</TableCell>
+                          <TableCell className="font-medium text-orange-600">{b.pendingDays}j</TableCell>
+                          <TableCell><Badge className="bg-primary text-white font-black">{b.remainingDays}j</Badge></TableCell>
+                          <TableCell className="text-right pr-6">
+                             <Button variant="ghost" size="icon" onClick={() => {
+                               setBalanceForm({
+                                 employeeId: b.employeeId,
+                                 year: b.year,
+                                 entitlementDays: b.entitlementDays,
+                                 carriedOverDays: b.carriedOverDays
+                               });
+                               setIsBalanceModalOpen(true);
+                             }}>
+                               <Settings2 className="w-4 h-4" />
+                             </Button>
+                          </TableCell>
+                       </TableRow>
+                     ))
+                   )}
+                </TableBody>
+              </Table>
+           </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Manual Balance Dialog */}
+      <Dialog open={isBalanceModalOpen} onOpenChange={setIsBalanceModalOpen}>
+        <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary">Définir solde annuel</DialogTitle>
+            <DialogDescription>Initialisez ou ajustez les droits à congés payés d'un collaborateur.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleUpdateBalance} className="space-y-6 py-4">
+             <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
+                <Select value={balanceForm.employeeId} onValueChange={(v) => setBalanceForm(p => ({...p, employeeId: v}))}>
+                   <SelectTrigger className="h-11 rounded-xl">
+                      <SelectValue placeholder="Sélectionner..." />
+                   </SelectTrigger>
+                   <SelectContent>
+                      {employees?.map(e => <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>)}
+                   </SelectContent>
+                </Select>
+             </div>
+             <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Année</Label>
+                   <Input type="number" value={balanceForm.year} onChange={(e) => setBalanceForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl" />
+                </div>
+             </div>
+             <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+                <div className="space-y-2">
+                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Droits acquis (jours)</Label>
+                   <Input type="number" value={balanceForm.entitlementDays} onChange={(e) => setBalanceForm(p => ({...p, entitlementDays: parseFloat(e.target.value)}))} className="rounded-xl h-11" />
+                </div>
+                <div className="space-y-2">
+                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Report année N-1</Label>
+                   <Input type="number" value={balanceForm.carriedOverDays} onChange={(e) => setBalanceForm(p => ({...p, carriedOverDays: parseFloat(e.target.value)}))} className="rounded-xl h-11" />
+                </div>
+             </div>
+             <DialogFooter>
+                <Button type="button" variant="ghost" onClick={() => setIsBalanceModalOpen(false)} disabled={loading}>Annuler</Button>
+                <Button type="submit" disabled={loading || !balanceForm.employeeId} className="rounded-xl font-black px-8">
+                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Enregistrer
+                </Button>
+             </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Creation Modal */}
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>

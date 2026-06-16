@@ -60,6 +60,20 @@ export interface TimeOffRequest {
   cancelReason?: string;
 }
 
+export interface LeaveBalance {
+  entityId: string;
+  employeeId: string;
+  year: number;
+  entitlementDays: number;
+  carriedOverDays: number;
+  usedDays: number;
+  pendingDays: number;
+  remainingDays: number;
+  updatedAt: Date | FieldValue;
+  updatedByUid: string;
+  updatedByRole: string;
+}
+
 export const TIME_OFF_TYPE_LABELS: Record<TimeOffRequestType, string> = {
   paid_leave: "Congé payé",
   unpaid_leave: "Congé sans solde",

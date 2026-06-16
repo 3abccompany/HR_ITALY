@@ -11,16 +11,16 @@ import {
   orderBy,
   Query,
   updateDoc,
-  arrayUnion
+  arrayUnion,
+  runTransaction,
+  increment
 } from "firebase/firestore";
-import { TimeOffRequest, DayPart, TimeOffStatus, JustificationStatus } from "@/types/time-off";
+import { TimeOffRequest, DayPart, TimeOffStatus, JustificationStatus, LeaveBalance } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { createAuditLog } from "./audit.service";
 
 /**
  * Calculates the duration of a time-off request in days.
- * - Same day + half day = 0.5
- * - Inclusive calendar days otherwise
  */
 export function calculateDuration(startDate: string, endDate: string, dayPart: DayPart): number {
   const start = parseISO(startDate);
@@ -55,6 +55,86 @@ export async function checkTimeOffOverlap(entityId: string, employeeId: string, 
 }
 
 /**
+ * Atomic helper to get or create a leave balance for an employee/year.
+ */
+async function getOrCreateLeaveBalance(transaction: any, entityId: string, employeeId: string, year: number, actorUid: string, actorRole: string) {
+  const balanceId = `${employeeId}_${year}`;
+  const balanceRef = doc(db!, `entities/${entityId}/leaveBalances`, balanceId);
+  const snap = await transaction.get(balanceRef);
+
+  if (snap.exists()) {
+    return { ref: balanceRef, data: snap.data() as LeaveBalance };
+  }
+
+  const initialBalance: LeaveBalance = {
+    entityId,
+    employeeId,
+    year,
+    entitlementDays: 0,
+    carriedOverDays: 0,
+    usedDays: 0,
+    pendingDays: 0,
+    remainingDays: 0,
+    updatedAt: serverTimestamp(),
+    updatedByUid: actorUid,
+    updatedByRole: actorRole
+  };
+
+  transaction.set(balanceRef, initialBalance);
+  return { ref: balanceRef, data: initialBalance };
+}
+
+/**
+ * RH Action: Manually initialize or edit a leave balance.
+ */
+export async function updateLeaveBalanceManual(
+  entityId: string, 
+  employeeId: string, 
+  year: number, 
+  data: { entitlementDays: number, carriedOverDays: number },
+  actorUid: string,
+  actorRole: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const balanceId = `${employeeId}_${year}`;
+  const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
+
+  return await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(balanceRef);
+    const existing = snap.exists() ? (snap.data() as LeaveBalance) : { usedDays: 0, pendingDays: 0 };
+
+    const remainingDays = data.entitlementDays + data.carriedOverDays - existing.usedDays;
+
+    const payload: Partial<LeaveBalance> = {
+      entityId,
+      employeeId,
+      year,
+      entitlementDays: data.entitlementDays,
+      carriedOverDays: data.carriedOverDays,
+      remainingDays,
+      updatedAt: serverTimestamp(),
+      updatedByUid: actorUid,
+      updatedByRole: actorRole
+    };
+
+    transaction.set(balanceRef, payload, { merge: true });
+
+    return { balanceId };
+  }).then(async (res) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "leaveBalance.manual_update",
+      resourceType: "leaveBalance",
+      resourceId: res.balanceId,
+      details: data
+    });
+    return res;
+  });
+}
+
+/**
  * Creates a time-off request (RH/Admin source).
  */
 export async function createTimeOffRequestForEmployee(
@@ -70,166 +150,222 @@ export async function createTimeOffRequestForEmployee(
     throw new Error("OVERLAP_DETECTED: L'employé a déjà une demande en cours ou validée sur cette période.");
   }
 
-  const requestRef = doc(collection(db, `entities/${entityId}/timeOffRequests`));
-  const requestId = requestRef.id;
-
   const duration = calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
-
-  // Determine justification requirements - FORCE for specific types
   const requestType = data.requestType || 'other';
-  let requiresJustification = data.requiresJustification ?? false;
+  const year = parseInt(data.startDate.split('-')[0]);
 
-  if (["sickness", "work_accident"].includes(requestType)) {
-    requiresJustification = true;
-  }
+  return await runTransaction(db, async (transaction) => {
+    const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
+    const requestId = requestRef.id;
 
-  const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
+    let requiresJustification = data.requiresJustification ?? false;
+    if (["sickness", "work_accident"].includes(requestType)) {
+      requiresJustification = true;
+    }
+    const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
 
-  const payload: TimeOffRequest = {
-    ...(data as any),
-    requestId,
-    entityId,
-    source: "hr_created",
-    status: "submitted",
-    dayPart: data.dayPart || "full_day",
-    durationDays: duration,
-    requiresJustification,
-    justificationStatus,
-    justificationNote: data.justificationNote || null,
-    justificationDocumentIds: [],
-    createdByUid: actorUid,
-    createdByRole: actorRole,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
+    const payload: TimeOffRequest = {
+      ...(data as any),
+      requestId,
+      entityId,
+      source: "hr_created",
+      status: "submitted",
+      dayPart: data.dayPart || "full_day",
+      durationDays: duration,
+      requiresJustification,
+      justificationStatus,
+      justificationNote: data.justificationNote || null,
+      justificationDocumentIds: [],
+      createdByUid: actorUid,
+      createdByRole: actorRole,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
 
-  await setDoc(requestRef, payload);
+    // 1. Create Request
+    transaction.set(requestRef, payload);
 
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "timeOff.created_by_hr",
-    resourceType: "timeOffRequest",
-    resourceId: requestId,
-    details: { employeeId: data.employeeId, duration, requiresJustification }
+    // 2. Update Balance if paid_leave
+    if (requestType === "paid_leave") {
+      const { ref: balanceRef } = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
+      transaction.update(balanceRef, {
+        pendingDays: increment(duration),
+        updatedAt: serverTimestamp()
+      });
+    }
+
+    return requestId;
+  }).then(async (requestId) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "timeOff.created_by_hr",
+      resourceType: "timeOffRequest",
+      resourceId: requestId,
+      details: { employeeId: data.employeeId, duration, requestType }
+    });
+    return requestId;
   });
-
-  return requestId;
 }
 
 /**
  * Approves a time-off request.
- * BLOCKS approval if a required justification is missing.
  */
 export async function approveTimeOffRequest(entityId: string, requestId: string, actorUid: string, actorRole: string) {
   if (!db) throw new Error("Firestore not initialized");
 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
-  const snap = await getDoc(requestRef);
-  if (!snap.exists()) throw new Error("Demande introuvable.");
-  const request = snap.data() as TimeOffRequest;
 
-  // State Guard
-  if (request.status !== "submitted") {
-    throw new Error(`Action impossible : la demande est en statut "${request.status}" (attendu: "submitted").`);
-  }
+  return await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(requestRef);
+    if (!snap.exists()) throw new Error("Demande introuvable.");
+    const request = snap.data() as TimeOffRequest;
 
-  // Compliance Guard: Required justification check
-  const isSickness = ["sickness", "work_accident"].includes(request.requestType);
-  const isJustificationRequired = request.requiresJustification === true || isSickness;
-  const hasDocument = request.justificationDocumentIds && request.justificationDocumentIds.length > 0;
-  const hasStatusProvided = request.justificationStatus === "provided";
+    if (request.status !== "submitted") {
+      throw new Error(`Action impossible : la demande est en statut "${request.status}".`);
+    }
 
-  if (isJustificationRequired && (!hasDocument || !hasStatusProvided)) {
-    throw new Error("Justificatif requis avant approbation.");
-  }
+    const isSickness = ["sickness", "work_accident"].includes(request.requestType);
+    if ((request.requiresJustification || isSickness) && request.justificationStatus !== "provided") {
+      throw new Error("Justificatif requis avant approbation.");
+    }
 
-  await updateDoc(requestRef, {
-    status: "approved",
-    approvedAt: serverTimestamp(),
-    approvedByUid: actorUid,
-    approvedByRole: actorRole,
-    updatedAt: serverTimestamp(),
-  });
+    const now = serverTimestamp();
+    const year = parseInt(request.startDate.split('-')[0]);
 
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "timeOff.approved",
-    resourceType: "timeOffRequest",
-    resourceId: requestId,
+    // Update Balance if paid_leave
+    if (request.requestType === "paid_leave") {
+      const { ref: balanceRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      
+      const newRemaining = balance.entitlementDays + balance.carriedOverDays - (balance.usedDays + request.durationDays);
+      if (newRemaining < 0) {
+        throw new Error("Solde de congé insuffisant.");
+      }
+
+      transaction.update(balanceRef, {
+        pendingDays: increment(-request.durationDays),
+        usedDays: increment(request.durationDays),
+        remainingDays: newRemaining,
+        updatedAt: now
+      });
+    }
+
+    transaction.update(requestRef, {
+      status: "approved",
+      approvedAt: now,
+      approvedByUid: actorUid,
+      approvedByRole: actorRole,
+      updatedAt: now,
+    });
+  }).then(async () => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "timeOff.approved",
+      resourceType: "timeOffRequest",
+      resourceId: requestId,
+    });
   });
 }
 
 /**
- * Rejects a time-off request with a mandatory reason.
+ * Rejects a time-off request.
  */
 export async function rejectTimeOffRequest(entityId: string, requestId: string, rejectionReason: string, actorUid: string, actorRole: string) {
   if (!db) throw new Error("Firestore not initialized");
   if (!rejectionReason.trim()) throw new Error("Le motif du refus est obligatoire.");
 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
-  const snap = await getDoc(requestRef);
-  if (!snap.exists()) throw new Error("Demande introuvable.");
-  const request = snap.data() as TimeOffRequest;
 
-  // State Guard
-  if (request.status !== "submitted") {
-    throw new Error(`Action impossible : la demande est en statut "${request.status}" (attendu: "submitted").`);
-  }
+  return await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(requestRef);
+    if (!snap.exists()) throw new Error("Demande introuvable.");
+    const request = snap.data() as TimeOffRequest;
 
-  await updateDoc(requestRef, {
-    status: "rejected",
-    rejectionReason: rejectionReason.trim(),
-    rejectedAt: serverTimestamp(),
-    rejectedByUid: actorUid,
-    rejectedByRole: actorRole,
-    updatedAt: serverTimestamp(),
-  });
+    if (request.status !== "submitted") throw new Error("Statut invalide.");
 
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "timeOff.rejected",
-    resourceType: "timeOffRequest",
-    resourceId: requestId,
-    details: { rejectionReason }
+    const now = serverTimestamp();
+    const year = parseInt(request.startDate.split('-')[0]);
+
+    if (request.requestType === "paid_leave") {
+      const { ref: balanceRef } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      transaction.update(balanceRef, {
+        pendingDays: increment(-request.durationDays),
+        updatedAt: now
+      });
+    }
+
+    transaction.update(requestRef, {
+      status: "rejected",
+      rejectionReason: rejectionReason.trim(),
+      rejectedAt: now,
+      rejectedByUid: actorUid,
+      rejectedByRole: actorRole,
+      updatedAt: now,
+    });
+  }).then(async () => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "timeOff.rejected",
+      resourceType: "timeOffRequest",
+      resourceId: requestId,
+    });
   });
 }
 
 /**
  * Cancels a time-off request.
- * Allowed for 'submitted' and 'approved' requests.
  */
 export async function cancelTimeOffRequest(entityId: string, requestId: string, actorUid: string, actorRole: string, cancelReason?: string) {
   if (!db) throw new Error("Firestore not initialized");
 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
-  const snap = await getDoc(requestRef);
-  if (!snap.exists()) throw new Error("Demande introuvable.");
-  const request = snap.data() as TimeOffRequest;
 
-  // State Guard
-  if (!["submitted", "approved"].includes(request.status)) {
-    throw new Error(`Action impossible : la demande est déjà en statut terminal "${request.status}".`);
-  }
+  return await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(requestRef);
+    if (!snap.exists()) throw new Error("Demande introuvable.");
+    const request = snap.data() as TimeOffRequest;
 
-  await updateDoc(requestRef, {
-    status: "cancelled",
-    cancelReason: cancelReason?.trim() || null,
-    cancelledAt: serverTimestamp(),
-    cancelledByUid: actorUid,
-    cancelledByRole: actorRole,
-    updatedAt: serverTimestamp(),
-  });
+    if (!["submitted", "approved"].includes(request.status)) throw new Error("Statut invalide.");
 
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "timeOff.cancelled",
-    resourceType: "timeOffRequest",
-    resourceId: requestId,
-    details: { previousStatus: request.status }
+    const now = serverTimestamp();
+    const year = parseInt(request.startDate.split('-')[0]);
+
+    if (request.requestType === "paid_leave") {
+      const { ref: balanceRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      
+      if (request.status === "submitted") {
+        transaction.update(balanceRef, {
+          pendingDays: increment(-request.durationDays),
+          updatedAt: now
+        });
+      } else if (request.status === "approved") {
+        const newUsed = Math.max(0, balance.usedDays - request.durationDays);
+        transaction.update(balanceRef, {
+          usedDays: newUsed,
+          remainingDays: balance.entitlementDays + balance.carriedOverDays - newUsed,
+          updatedAt: now
+        });
+      }
+    }
+
+    transaction.update(requestRef, {
+      status: "cancelled",
+      cancelReason: cancelReason?.trim() || null,
+      cancelledAt: now,
+      cancelledByUid: actorUid,
+      cancelledByRole: actorRole,
+      updatedAt: now,
+    });
+  }).then(async () => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "timeOff.cancelled",
+      resourceType: "timeOffRequest",
+      resourceId: requestId,
+    });
   });
 }
 

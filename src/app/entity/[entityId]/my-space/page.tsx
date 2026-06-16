@@ -5,7 +5,8 @@ import { useParams } from "next/navigation";
 import { 
   Loader2, User, Calendar, Clock, FolderOpen, 
   ShieldCheck, UserCircle, Briefcase, 
-  MapPin, Building2, Fingerprint, Info
+  MapPin, Building2, Fingerprint, Info,
+  Calculator, Plane
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,7 @@ import { useFirebase, useUser, useCollection } from "@/firebase";
 import { collection, query, where, limit } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Employee } from "@/types/employee";
+import { LeaveBalance } from "@/types/time-off";
 import { Separator } from "@/components/ui/separator";
 
 export default function MySpacePage() {
@@ -21,6 +23,8 @@ export default function MySpacePage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { loading: membershipLoading, entity } = useActiveMembership(entityId);
+
+  const currentYear = new Date().getFullYear();
 
   // Fetch only the employee document linked to this user's UID
   const employeeQuery = useMemo(() => {
@@ -34,6 +38,19 @@ export default function MySpacePage() {
 
   const { data: employeeData, loading: loadingEmployee } = useCollection<Employee>(employeeQuery as any, "my-space.profile");
   const employee = employeeData?.[0];
+
+  const balanceQuery = useMemo(() => {
+    if (!db || !entityId || !employee) return null;
+    return query(
+      collection(db, `entities/${entityId}/leaveBalances`),
+      where("employeeId", "==", employee.employeeId),
+      where("year", "==", currentYear),
+      limit(1)
+    );
+  }, [db, entityId, employee, currentYear]);
+
+  const { data: balanceData, loading: loadingBalance } = useCollection<LeaveBalance>(balanceQuery as any, "my-space.balance");
+  const balance = balanceData?.[0];
 
   if (membershipLoading || loadingEmployee) {
     return (
@@ -84,10 +101,40 @@ export default function MySpacePage() {
             </CardContent>
           </Card>
 
+          {/* Leave Balances */}
+          <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
+             <CardHeader className="bg-primary/5 border-b py-6 px-8 flex flex-row items-center justify-between">
+                <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
+                   <Plane className="w-4 h-4" /> Solde Congés {currentYear}
+                </CardTitle>
+                <Badge variant="outline" className="bg-white border-primary/10">Congés Payés</Badge>
+             </CardHeader>
+             <CardContent className="p-8">
+                {loadingBalance ? (
+                   <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-primary/20" /></div>
+                ) : balance ? (
+                   <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+                      <BalanceStat label="Total Acquis" value={balance.entitlementDays + balance.carriedOverDays} unit="jours" />
+                      <BalanceStat label="Déjà Pris" value={balance.usedDays} unit="jours" color="red" />
+                      <BalanceStat label="En attente" value={balance.pendingDays} unit="jours" color="orange" />
+                      <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center">
+                         <p className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-1">Restant</p>
+                         <p className="text-3xl font-black text-primary">{balance.remainingDays}</p>
+                      </div>
+                   </div>
+                ) : (
+                   <div className="py-8 text-center bg-secondary/5 rounded-2xl border border-dashed">
+                      <Calculator className="w-8 h-8 text-muted-foreground/20 mx-auto mb-2" />
+                      <p className="text-xs text-muted-foreground font-medium">Votre solde n'a pas encore été initialisé pour {currentYear}.</p>
+                   </div>
+                )}
+             </CardContent>
+          </Card>
+
           {/* Placeholders for future modules */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <PlaceholderCard title="Mes congés" icon={Calendar} description="Consultez vos soldes et posez vos congés." />
-            <PlaceholderCard title="Mes absences" icon={Clock} description="Déclarez une absence ou un arrêt maladie." />
+            <PlaceholderCard title="Nouvelle demande" icon={Plus} description="Posez un congé ou déclarez une absence (Bientôt)." />
+            <PlaceholderCard title="Historique" icon={Clock} description="Consultez l'historique de vos demandes." />
           </div>
         </div>
 
@@ -128,6 +175,19 @@ export default function MySpacePage() {
       </div>
     </div>
   );
+}
+
+function BalanceStat({ label, value, unit, color }: any) {
+   return (
+      <div className="text-center">
+         <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest mb-1">{label}</p>
+         <p className={cn("text-2xl font-black", 
+           color === 'red' ? "text-red-600" : 
+           color === 'orange' ? "text-orange-600" : "text-slate-800"
+         )}>{value}</p>
+         <p className="text-[8px] font-bold text-muted-foreground uppercase">{unit}</p>
+      </div>
+   );
 }
 
 function DetailItem({ label, value, icon: Icon }: any) {
