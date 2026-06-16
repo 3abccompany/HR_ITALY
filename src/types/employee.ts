@@ -9,6 +9,7 @@ export interface Employee {
   sourceCandidateId?: string | null;
   sourceInterviewId?: string | null;
   sourceOfferId?: string | null;
+  recruitmentNeedId?: string | null;
   employeeCode: string;
   firstName: string;
   lastName: string;

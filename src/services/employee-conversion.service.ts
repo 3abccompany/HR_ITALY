@@ -4,7 +4,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { Person } from "@/types/person";
-import { RecruitmentNeed } from "@/types/recruitment-need";
+import { RecruitmentNeed, RecruitmentNeedStatus } from "@/types/recruitment-need";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
 
 /**
@@ -119,6 +119,8 @@ export async function convertOfferToEmployeeAction(params: {
       const resolvedTaxCode = getIdentifier(personData) || getIdentifier(offer) || getIdentifier(candidateSnap.data()) || null;
 
       // --- PHASE 3: WRITES ---
+      
+      const isConversionNew = offer.conversionStatus !== 'converted' && !offer.employeeId;
 
       if (isNewEmployee) {
         transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
@@ -126,6 +128,7 @@ export async function convertOfferToEmployeeAction(params: {
           personId: personData.personId, 
           entityId, 
           sourceOfferId: offerId, 
+          recruitmentNeedId: offer.recruitmentNeedId || null, // Enrichment (Phase 7K-E Fix)
           employeeCode: personData.codiceFiscale ? `E-${personData.codiceFiscale.substring(0, 6)}` : `E-${Date.now().toString().slice(-6)}`,
           firstName: personData.firstName, 
           lastName: personData.lastName, 
@@ -172,6 +175,30 @@ export async function convertOfferToEmployeeAction(params: {
           updatedAt: FieldValue.serverTimestamp(),
           updatedBy: actorUid
       });
+
+      // --- NEW: Recruitment Need Update (Phase 7K-E Fix) ---
+      if (isConversionNew && needSnap && needSnap.exists) {
+        const needData = needSnap.data() as RecruitmentNeed;
+        const currentFulfilled = needData.fulfilledHeadcount || 0;
+        const requested = needData.requestedHeadcount || 1;
+        
+        const newFulfilled = currentFulfilled + 1;
+        const newRemaining = Math.max(0, requested - newFulfilled);
+        
+        let newStatus: RecruitmentNeedStatus = "partially_fulfilled";
+        if (newRemaining <= 0) {
+          newStatus = "fulfilled";
+        }
+
+        transaction.update(needRef!, {
+          fulfilledHeadcount: newFulfilled,
+          remainingHeadcount: newRemaining,
+          status: newStatus,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid,
+          ...(newStatus === "fulfilled" ? { fulfilledAt: FieldValue.serverTimestamp(), fulfilledBy: actorUid } : {})
+        });
+      }
 
       // Synchronize Lifecycle
       transaction.update(candidateRef, { status: "hired", employeeId, updatedAt: FieldValue.serverTimestamp() });
