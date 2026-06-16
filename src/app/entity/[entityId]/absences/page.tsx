@@ -176,7 +176,6 @@ export default function TimeOffManagementPage() {
         await approveTimeOffRequest(entityId, decisionPending.id, user.uid, membership.roleId);
         toast({ title: "Demande approuvée" });
       } else if (decisionPending.action === 'reject') {
-        if (!rejectionReason.trim()) throw new Error("Le motif du refus est obligatoire.");
         await rejectTimeOffRequest(entityId, decisionPending.id, rejectionReason, user.uid, membership.roleId);
         toast({ title: "Demande refusée" });
       } else if (decisionPending.action === 'cancel') {
@@ -252,7 +251,6 @@ export default function TimeOffManagementPage() {
     setLoading(true);
     try {
       // We need storage path from the document registry
-      const { useFirestore } = await import("@/firebase");
       const { getDoc, doc } = await import("firebase/firestore");
       const docSnap = await getDoc(doc(db!, `entities/${entityId}/documents`, docId));
       
@@ -401,7 +399,12 @@ export default function TimeOffManagementPage() {
                              <DropdownMenuSeparator />
                              {canApprove && r.status === 'submitted' && (
                                 <>
-                                  <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'approve' })} className="text-green-600 font-bold gap-2">
+                                  <DropdownMenuItem 
+                                    onClick={() => setDecisionPending({ id: r.requestId, action: 'approve' })} 
+                                    className={cn("text-green-600 font-bold gap-2", 
+                                      (r.requiresJustification && r.justificationStatus === 'missing') && "opacity-50 pointer-events-none"
+                                    )}
+                                  >
                                      <CheckCircle2 className="w-4 h-4" /> Approuver
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'reject' })} className="text-red-600 font-bold gap-2">
