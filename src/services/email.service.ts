@@ -165,7 +165,7 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
   try {
     const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
     
-    const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+    const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
     const canSend = source === 'entity' || isGlobalConfigured;
 
     if (canSend) {
@@ -215,7 +215,7 @@ export async function sendEmploymentOfferEmail(params: SendOfferEmailParams) {
   
   const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
 
-  const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+  const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
   const canSend = source === 'entity' || isGlobalConfigured;
 
   if (!canSend) {
@@ -269,7 +269,7 @@ export async function sendDocumentRequestEmailAction(params: SendDocumentRequest
   
   const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
 
-  const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+  const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
   const canSend = source === 'entity' || isGlobalConfigured;
 
   if (!canSend) {
@@ -354,7 +354,7 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
   try {
     const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
     
-    const isGlobalConfigured = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+    const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
     const canSend = source === 'entity' || isGlobalConfigured;
 
     const finalSubject = subjectOverride?.trim() || subject;
@@ -366,7 +366,7 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
       // Basic text to HTML conversion with entity escaping for safety
       const escapedText = finalText
         .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
+        .replace(/@/g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");

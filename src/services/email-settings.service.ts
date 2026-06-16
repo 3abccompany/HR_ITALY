@@ -68,7 +68,7 @@ function decrypt(encrypted: string, iv: string, authTag: string) {
  * Converts Firestore Timestamps (including Admin SDK POJO formats) to ISO strings for client consumption.
  */
 function serializeDate(value: any): string | null {
-  if (!value) return null;
+  if (value === null || value === undefined) return null;
   if (value instanceof Date) return value.toISOString();
   
   // Standard toDate helper (Client SDK or Admin SDK)
@@ -401,13 +401,15 @@ export async function testEntityEmailSettingsAction(params: {
 
 /**
  * Internal resolver to provide the global platform email transport.
+ * Normalizes environment variables by trimming whitespaces/newlines.
  */
 export async function resolveGlobalEmailTransport() {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || '587');
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || user || '';
+  const host = process.env.SMTP_HOST?.trim();
+  const portStr = process.env.SMTP_PORT?.trim() || '587';
+  const port = parseInt(portStr);
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+  const from = process.env.SMTP_FROM?.trim() || user || '';
 
   const transporter = nodemailer.createTransport({
     host,
