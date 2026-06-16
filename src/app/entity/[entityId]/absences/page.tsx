@@ -118,7 +118,8 @@ export default function TimeOffManagementPage() {
 
   const employeesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active"), orderBy("displayName", "asc")) as Query<Employee>;
+    // Removed strict server-side status filter to handle localized/capitalized values
+    return query(collection(db, `entities/${entityId}/employees`), orderBy("displayName", "asc")) as Query<Employee>;
   }, [db, entityId, canRead]);
 
   const balancesQuery = useMemo(() => {
@@ -129,6 +130,15 @@ export default function TimeOffManagementPage() {
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery);
   const { data: employees } = useCollection<Employee>(employeesQuery);
   const { data: balances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
+
+  // Client-side filtering for active employees
+  const activeEmployees = useMemo(() => {
+    if (!employees) return [];
+    return employees.filter(e => {
+      const s = String(e.status || '').toLowerCase();
+      return s === 'active' || s === 'actif' || s === 'active_contract';
+    });
+  }, [employees]);
 
   const filteredRequests = useMemo(() => {
     if (!requests) return [];
@@ -505,7 +515,7 @@ export default function TimeOffManagementPage() {
                    ) : (
                      balances?.map(b => (
                        <TableRow key={`${b.employeeId}_${b.year}`}>
-                          <TableCell className="pl-6 font-bold">{employees?.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</TableCell>
+                          <TableCell className="pl-6 font-bold">{activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</TableCell>
                           <TableCell><Badge variant="outline">{b.year}</Badge></TableCell>
                           <TableCell>{b.entitlementDays}j + {b.carriedOverDays}j</TableCell>
                           <TableCell className="font-bold text-red-600">{b.usedDays}j</TableCell>
@@ -548,7 +558,11 @@ export default function TimeOffManagementPage() {
                       <SelectValue placeholder="Sélectionner..." />
                    </SelectTrigger>
                    <SelectContent>
-                      {employees?.map(e => <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>)}
+                      {activeEmployees.map(e => (
+                        <SelectItem key={e.employeeId} value={e.employeeId}>
+                          {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''} {e.jobTitle ? `— ${e.jobTitle}` : ''}
+                        </SelectItem>
+                      ))}
                    </SelectContent>
                 </Select>
              </div>
@@ -594,8 +608,10 @@ export default function TimeOffManagementPage() {
                     <SelectValue placeholder="Sélectionner un employé actif..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {employees?.map(e => (
-                      <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName} ({e.jobTitle})</SelectItem>
+                    {activeEmployees.map(e => (
+                      <SelectItem key={e.employeeId} value={e.employeeId}>
+                        {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''} {e.jobTitle ? `— ${e.jobTitle}` : ''}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
