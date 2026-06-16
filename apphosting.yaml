@@ -43,15 +43,6 @@ env:
       - BUILD
       - RUNTIME
 
-  - variable: FIREBASE_CLIENT_EMAIL
-    value: "firebase-adminsdk-fbsvc@studio-4239589207-a7388.iam.gserviceaccount.com"
-    availability:
-      - BUILD
-      - RUNTIME
-
-  - variable: FIREBASE_PRIVATE_KEY
-    secret: FIREBASE_PRIVATE_KEY
-
   - variable: FIREBASE_STORAGE_BUCKET
     value: "studio-4239589207-a7388.firebasestorage.app"
     availability:
