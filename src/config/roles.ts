@@ -1,4 +1,3 @@
-
 import { RoleScope } from "@/types/role";
 import { MVP_PERMISSIONS } from "./permissions";
 
@@ -92,6 +91,17 @@ export const MVP_ROLES: RoleDefinition[] = [
       MVP_PERMISSIONS
         .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions" || p.module === "persons" || p.module === "worksites"))
         .filter(p => p.action === "read")
+        .map(p => p.code)
+  },
+  {
+    roleId: "employee",
+    name: "employee",
+    label: "Employé",
+    description: "Accès personnel à l'Espace Employé (profil et absences).",
+    scope: "entity",
+    getPermissions: () => 
+      MVP_PERMISSIONS
+        .filter(p => p.code.startsWith("self."))
         .map(p => p.code)
   }
 ];

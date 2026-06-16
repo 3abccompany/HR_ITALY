@@ -19,7 +19,8 @@ import {
   ArrowRight,
   UserPlus,
   Globe,
-  GraduationCap
+  GraduationCap,
+  Send
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -34,7 +35,7 @@ import {
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useFirebase, useDoc, useCollection, useAuth } from "@/firebase";
+import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, query, collection, where, Query } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
@@ -51,6 +52,7 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { Person } from "@/types/person";
+import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
 
 /**
  * Robust date parser for mixed formats.
@@ -120,6 +122,7 @@ export default function Employee360HubPage() {
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
 
   // --- 1. STRICT PERMISSION READINESS ---
   const permissionsReady = 
@@ -250,6 +253,29 @@ export default function Employee360HubPage() {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
     } finally {
       setLoadingActionId(null);
+    }
+  };
+
+  const handleInviteToEspaceEmploye = async () => {
+    if (!membership || !employee) return;
+    setInviting(true);
+    try {
+      const result = await inviteEmployeeToEmployeeSpace({
+        entityId,
+        employeeId,
+        actorUid: membership.uid
+      });
+      
+      if (result.success) {
+        toast({ 
+          title: "Invitation envoyée", 
+          description: result.simulated ? "Simulé (SMTP non configuré)" : "L'email a été transmis au collaborateur." 
+        });
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur invitation", description: err.message });
+    } finally {
+      setInviting(false);
     }
   };
 
@@ -390,40 +416,82 @@ export default function Employee360HubPage() {
                  </CardContent>
               </Card>
 
-              <Card className="border-primary/5 rounded-[2.5rem] bg-secondary/5 overflow-hidden">
-                 <CardHeader className="py-6 px-8">
-                    <CardTitle className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                       <Clock className="w-4 h-4" /> Prochaines échéances
-                    </CardTitle>
-                 </CardHeader>
-                 <CardContent className="px-8 pb-8 space-y-4">
-                    {!canReadContracts ? (
-                       <p className="text-xs italic text-muted-foreground">Accès restreint aux dates contractuelles.</p>
-                    ) : activeContract?.endDate ? (
-                       <div className="p-4 bg-white rounded-2xl border shadow-sm flex items-center gap-3">
-                          <div className="bg-orange-100 p-2 rounded-xl text-orange-600"><Calendar className="w-4 h-4" /></div>
-                          <div>
-                             <p className="text-[10px] font-black uppercase text-muted-foreground">Fin de contrat CDD</p>
-                             <p className="text-sm font-bold text-slate-800">{formatDateSafe(activeContract.endDate)}</p>
-                          </div>
-                       </div>
-                    ) : (
-                       <p className="text-xs italic text-muted-foreground">Aucune échéance contractuelle proche.</p>
-                    )}
-                    <Separator className="opacity-50" />
-                    <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Modules conformité</p>
-                    <div className="space-y-2">
-                       <div className="flex items-center justify-between text-xs opacity-40 grayscale pointer-events-none">
-                          <span className="flex items-center gap-2"><Stethoscope className="w-3.5 h-3.5" /> Visite Médicale</span>
-                          <Badge variant="outline" className="text-[8px]">À venir</Badge>
-                       </div>
-                       <div className="flex items-center justify-between text-xs opacity-40 grayscale pointer-events-none">
-                          <span className="flex items-center gap-2"><Shield className="w-3.5 h-3.5" /> Sécurité / DPI</span>
-                          <Badge variant="outline" className="text-[8px]">À venir</Badge>
-                       </div>
-                    </div>
-                 </CardContent>
-              </Card>
+              <div className="space-y-6">
+                <Card className="border-primary/5 rounded-[2.5rem] bg-secondary/5 overflow-hidden">
+                  <CardHeader className="py-6 px-8">
+                      <CardTitle className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                        <Globe className="w-4 h-4" /> Espace Employé
+                      </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-8 pb-8 space-y-4">
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-black uppercase text-muted-foreground opacity-60">Statut du compte</p>
+                        <div className="flex items-center gap-2">
+                           {renderAccountStatus(employee.accountStatus)}
+                        </div>
+                      </div>
+                      
+                      {employee.accountStatus === 'invited' && (
+                        <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl space-y-1">
+                           <p className="text-[9px] font-black text-blue-700 uppercase">Invitation envoyée</p>
+                           <p className="text-[10px] text-blue-600 font-medium">Le {formatDateSafe(employee.invitedAt)}</p>
+                        </div>
+                      )}
+
+                      {(!employee.accountStatus || employee.accountStatus === 'no_account') && (
+                        <div className="space-y-3 pt-2">
+                           <p className="text-[10px] text-muted-foreground leading-relaxed">
+                              Invitez ce collaborateur à activer son espace personnel pour poser ses congés et consulter ses documents.
+                           </p>
+                           <Button 
+                             onClick={handleInviteToEspaceEmploye} 
+                             disabled={inviting || !employee.email} 
+                             className="w-full rounded-xl font-bold gap-2 shadow-lg shadow-primary/10"
+                           >
+                              {inviting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                              Inviter à l'Espace Employé
+                           </Button>
+                           {!employee.email && <p className="text-[9px] text-red-500 font-bold text-center uppercase">Email requis pour l'invitation</p>}
+                        </div>
+                      )}
+                  </CardContent>
+                </Card>
+
+                <Card className="border-primary/5 rounded-[2.5rem] bg-secondary/5 overflow-hidden">
+                  <CardHeader className="py-6 px-8">
+                      <CardTitle className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                        <Clock className="w-4 h-4" /> Prochaines échéances
+                      </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-8 pb-8 space-y-4">
+                      {!canReadContracts ? (
+                        <p className="text-xs italic text-muted-foreground">Accès restreint aux dates contractuelles.</p>
+                      ) : activeContract?.endDate ? (
+                        <div className="p-4 bg-white rounded-2xl border shadow-sm flex items-center gap-3">
+                            <div className="bg-orange-100 p-2 rounded-xl text-orange-600"><Calendar className="w-4 h-4" /></div>
+                            <div>
+                              <p className="text-[10px] font-black uppercase text-muted-foreground">Fin de contrat CDD</p>
+                              <p className="text-sm font-bold text-slate-800">{formatDateSafe(activeContract.endDate)}</p>
+                            </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs italic text-muted-foreground">Aucune échéance contractuelle proche.</p>
+                      )}
+                      <Separator className="opacity-50" />
+                      <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Modules conformité</p>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs opacity-40 grayscale pointer-events-none">
+                            <span className="flex items-center gap-2"><Stethoscope className="w-3.5 h-3.5" /> Visite Médicale</span>
+                            <Badge variant="outline" className="text-[8px]">À venir</Badge>
+                        </div>
+                        <div className="flex items-center justify-between text-xs opacity-40 grayscale pointer-events-none">
+                            <span className="flex items-center gap-2"><Shield className="w-3.5 h-3.5" /> Sécurité / DPI</span>
+                            <Badge variant="outline" className="text-[8px]">À venir</Badge>
+                        </div>
+                      </div>
+                  </CardContent>
+                </Card>
+              </div>
            </div>
         </TabsContent>
 
@@ -788,6 +856,15 @@ function getStatusBadge(status: string) {
   }
 }
 
+function renderAccountStatus(status?: string) {
+  switch (status) {
+    case 'active': return <Badge className="bg-green-600 text-white font-bold h-6 border-none">Compte actif</Badge>;
+    case 'invited': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 font-bold h-6 border-blue-100">Invité</Badge>;
+    case 'disabled': return <Badge variant="destructive" className="font-bold h-6">Désactivé</Badge>;
+    default: return <Badge variant="outline" className="text-muted-foreground font-medium h-6">Sans accès</Badge>;
+  }
+}
+
 function getContractStatusBadge(status: string) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="text-[8px] h-4 bg-slate-100 text-slate-500 uppercase font-black px-2">Brouillon</Badge>;
@@ -879,3 +956,4 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
     </Table>
   );
 }
+

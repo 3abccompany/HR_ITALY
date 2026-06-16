@@ -65,6 +65,13 @@ export interface SendConsultantCPIParams {
   };
 }
 
+export interface SendEmployeeInvitationEmailParams {
+  entityId: string;
+  to: string;
+  employeeName: string;
+  activationLink: string;
+}
+
 /**
  * Replaces {{variable}} placeholders in a string.
  */
@@ -433,6 +440,66 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
        });
     } catch (e) {}
 
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Sends a secure invitation to the employee to activate their personal space.
+ * Phase 1A: Employee Access Foundation.
+ */
+export async function sendEmployeeInvitationEmailAction(params: SendEmployeeInvitationEmailParams) {
+  const { entityId, to, employeeName, activationLink } = params;
+
+  try {
+    const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+    
+    const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+    const canSend = source === 'entity' || isGlobalConfigured;
+
+    if (!canSend) {
+       console.warn(`[Email Service] SMTP not configured for ${source}. Skipping real email dispatch.`);
+       return { success: true, simulated: true };
+    }
+
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.6;">
+        <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 22px;">Activation de votre Espace Employé</h1>
+        </div>
+        <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; border-radius: 0 0 12px 12px; background-color: white;">
+          <p>Bonjour <strong>${employeeName}</strong>,</p>
+          <p>Votre compte employé a été créé pour accéder à l’Espace Employé.</p>
+          <p>Email de connexion : <strong>${to}</strong></p>
+          <p>Pour activer votre compte et définir votre mot de passe, veuillez cliquer sur le lien sécurisé ci-dessous :</p>
+          
+          <div style="margin: 40px 0; text-align: center;">
+            <a href="${activationLink}" style="background-color: #4DB3E6; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block;">
+              Activer mon compte
+            </a>
+          </div>
+          
+          <p style="font-size: 12px; color: #71717A; text-align: center; margin-top: 20px;">
+            Ce lien est personnel et expirera dans 48 heures.
+          </p>
+          <p style="font-size: 14px; font-weight: bold; border-top: 1px solid #EEEFF7; padding-top: 20px; margin-top: 20px;">
+            Cordialement,<br>L’équipe RH
+          </p>
+        </div>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from,
+      to,
+      replyTo: replyTo || undefined,
+      subject: "Activation de votre Espace Employé",
+      html,
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send employee invitation:", error);
     return { success: false, error: error.message };
   }
 }

@@ -1,4 +1,3 @@
-
 import { PermissionScope } from "@/types/permission";
 
 export interface PermissionDefinition {
@@ -125,4 +124,9 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
 
   // --- Email Settings ---
   { code: "emailSettings.manage", module: "emailSettings", action: "manage", label: "Gérer les paramètres email", description: "Mise à jour de l'identité d'envoi et du SMTP.", scope: "entity" },
+
+  // --- Employee Self-Service (Phase 1A) ---
+  { code: "self.profile.read", module: "self-service", action: "read", label: "Voir mon profil", description: "Accès personnel à ses propres données RH.", scope: "entity" },
+  { code: "self.leaves.read", module: "self-service", action: "read", label: "Voir mes absences", description: "Consultation de ses propres demandes de congés.", scope: "entity" },
+  { code: "self.leaves.create", module: "self-service", action: "create", label: "Demander absence", description: "Saisie d'une demande personnelle de congé ou absence.", scope: "entity" },
 ];

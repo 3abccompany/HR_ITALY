@@ -30,6 +30,17 @@ export interface Employee {
   activeContractId?: string;
   pendingContractId?: string;
   status: EmployeeStatus;
+  
+  // Espace Employé / Account Metadata (Phase 1A)
+  userId?: string;
+  accountEmail?: string;
+  accountStatus?: "no_account" | "invited" | "active" | "disabled";
+  accountRole?: "employee";
+  invitedAt?: Date | FieldValue | null;
+  invitedBy?: string | null;
+  activatedAt?: Date | FieldValue | null;
+  disabledAt?: Date | FieldValue | null;
+
   createdAt: Date | FieldValue;
   updatedAt: Date | FieldValue;
 }
