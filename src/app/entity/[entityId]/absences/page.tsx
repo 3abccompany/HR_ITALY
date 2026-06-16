@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
   Plus, Loader2, Calendar, User, Briefcase, 
   Clock, Filter, X, ListFilter, AlertCircle,
   FileText, CheckCircle2, History, Send,
   ChevronRight, ArrowRight, MoreVertical,
-  XCircle, Ban
+  XCircle, Ban, FileWarning, Paperclip
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, Query, where } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS } from "@/types/time-off";
+import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, JustificationStatus } from "@/types/time-off";
 import { 
   createTimeOffRequestForEmployee, 
   approveTimeOffRequest, 
@@ -49,6 +49,7 @@ import {
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -60,7 +61,9 @@ const initialForm = {
   startDate: new Date().toISOString().split('T')[0],
   endDate: new Date().toISOString().split('T')[0],
   dayPart: "full_day" as any,
-  reason: ""
+  reason: "",
+  requiresJustification: false,
+  justificationNote: ""
 };
 
 export default function TimeOffManagementPage() {
@@ -103,6 +106,17 @@ export default function TimeOffManagementPage() {
     if (statusFilter === "all") return requests;
     return requests.filter(r => r.status === statusFilter);
   }, [requests, statusFilter]);
+
+  // Handle default justification rules in UI
+  const handleTypeChange = (type: TimeOffRequestType) => {
+    let requires = false;
+    if (["sickness", "work_accident"].includes(type)) {
+      requires = true;
+    } else if (["permission", "other"].includes(type)) {
+      requires = false; // Default to false but can be toggled
+    }
+    setFormData(p => ({ ...p, requestType: type, requiresJustification: requires }));
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -207,16 +221,17 @@ export default function TimeOffManagementPage() {
                 <TableHead>Type</TableHead>
                 <TableHead>Période</TableHead>
                 <TableHead>Durée</TableHead>
+                <TableHead>Justificatif</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right pr-6">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loadingRequests ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
               ) : filteredRequests.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-20 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-20 text-muted-foreground">
                     <div className="flex flex-col items-center gap-3">
                       <ListFilter className="h-10 w-10 opacity-20" />
                       <p className="font-bold text-sm uppercase tracking-widest">Aucune demande trouvée.</p>
@@ -267,6 +282,9 @@ export default function TimeOffManagementPage() {
                        </div>
                     </TableCell>
                     <TableCell>
+                       {renderJustificationStatus(r)}
+                    </TableCell>
+                    <TableCell>
                        <div className="flex flex-col gap-1">
                           {getStatusBadge(r.status)}
                           {r.status === 'rejected' && r.rejectionReason && (
@@ -299,7 +317,7 @@ export default function TimeOffManagementPage() {
                                 </DropdownMenuItem>
                              )}
                              <DropdownMenuItem className="gap-2" disabled>
-                                <FileText className="w-4 h-4" /> Détails / Justificatif
+                                <Paperclip className="w-4 h-4" /> Ajouter justificatif (Bientôt)
                              </DropdownMenuItem>
                           </DropdownMenuContent>
                        </DropdownMenu>
@@ -348,7 +366,7 @@ export default function TimeOffManagementPage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Motif précis</Label>
-                  <Select value={formData.requestType} onValueChange={(v: any) => setFormData(p => ({...p, requestType: v}))}>
+                  <Select value={formData.requestType} onValueChange={(v: any) => handleTypeChange(v)}>
                     <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {formData.requestKind === 'leave' ? (
@@ -382,19 +400,17 @@ export default function TimeOffManagementPage() {
              </div>
 
              <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground">Format de la journée (Si dates identiques)</Label>
-                <Select 
-                  value={formData.dayPart} 
-                  onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}
-                  disabled={formData.startDate !== formData.endDate}
-                >
-                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full_day">Journée entière</SelectItem>
-                    <SelectItem value="morning">Matin uniquement (0.5j)</SelectItem>
-                    <SelectItem value="afternoon">Après-midi uniquement (0.5j)</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border">
+                   <div className="space-y-0.5">
+                      <Label className="text-xs font-bold text-primary">Justificatif requis ?</Label>
+                      <p className="text-[10px] text-muted-foreground">Activez si un document GED est nécessaire.</p>
+                   </div>
+                   <Switch 
+                    checked={formData.requiresJustification} 
+                    onCheckedChange={(v) => setFormData(p => ({...p, requiresJustification: v}))}
+                    disabled={["sickness", "work_accident"].includes(formData.requestType)}
+                   />
+                </div>
              </div>
 
              <div className="space-y-2">
@@ -493,5 +509,31 @@ function getStatusBadge(status: string) {
     case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Refusé</Badge>;
     case 'cancelled': return <Badge variant="outline" className="bg-slate-50 text-slate-400">Annulé</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+function renderJustificationStatus(r: TimeOffRequest) {
+  const requires = r.requiresJustification ?? false;
+  const status = r.justificationStatus || "not_required";
+
+  if (!requires) return <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-tight">Non requis</span>;
+
+  switch (status) {
+    case 'missing': 
+      return (
+        <div className="flex items-center gap-1.5 text-red-600 font-bold text-[10px] uppercase">
+          <FileWarning className="w-3.5 h-3.5" />
+          Manquant
+        </div>
+      );
+    case 'provided':
+      return (
+        <div className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase">
+          <FileText className="w-3.5 h-3.5" />
+          Fourni
+        </div>
+      );
+    default:
+      return <span className="text-[10px] text-muted-foreground uppercase">N/A</span>;
   }
 }

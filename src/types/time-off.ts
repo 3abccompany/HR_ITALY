@@ -13,6 +13,8 @@ export type TimeOffRequestType =
 
 export type TimeOffStatus = "submitted" | "approved" | "rejected" | "cancelled";
 
+export type JustificationStatus = "not_required" | "missing" | "provided";
+
 export type DayPart = "full_day" | "morning" | "afternoon";
 
 export interface TimeOffRequest {
@@ -30,6 +32,13 @@ export interface TimeOffRequest {
   dayPart: DayPart;
   durationDays: number;
   reason?: string;
+  
+  // Justification Metadata
+  requiresJustification: boolean;
+  justificationStatus: JustificationStatus;
+  justificationNote?: string | null;
+  justificationDocumentIds: string[];
+
   createdByUid: string;
   createdByRole: string;
   createdAt: Date | FieldValue;

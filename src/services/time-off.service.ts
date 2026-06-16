@@ -12,7 +12,7 @@ import {
   Query,
   updateDoc
 } from "firebase/firestore";
-import { TimeOffRequest, DayPart, TimeOffStatus } from "@/types/time-off";
+import { TimeOffRequest, DayPart, TimeOffStatus, JustificationStatus } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { createAuditLog } from "./audit.service";
 
@@ -72,6 +72,20 @@ export async function createTimeOffRequestForEmployee(
 
   const duration = calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
 
+  // Determine justification requirements if not explicitly set
+  let requiresJustification = data.requiresJustification ?? false;
+  const requestType = data.requestType || 'other';
+
+  if (data.requiresJustification === undefined) {
+    if (["sickness", "work_accident"].includes(requestType)) {
+      requiresJustification = true;
+    } else if (["paid_leave", "unpaid_leave", "unjustified_absence"].includes(requestType)) {
+      requiresJustification = false;
+    }
+  }
+
+  const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
+
   const payload: TimeOffRequest = {
     ...(data as any),
     requestId,
@@ -80,6 +94,10 @@ export async function createTimeOffRequestForEmployee(
     status: "submitted",
     dayPart: data.dayPart || "full_day",
     durationDays: duration,
+    requiresJustification,
+    justificationStatus,
+    justificationNote: data.justificationNote || null,
+    justificationDocumentIds: [],
     createdByUid: actorUid,
     createdByRole: actorRole,
     createdAt: serverTimestamp(),
@@ -94,7 +112,7 @@ export async function createTimeOffRequestForEmployee(
     action: "timeOff.created_by_hr",
     resourceType: "timeOffRequest",
     resourceId: requestId,
-    details: { employeeId: data.employeeId, duration }
+    details: { employeeId: data.employeeId, duration, requiresJustification }
   });
 
   return requestId;
