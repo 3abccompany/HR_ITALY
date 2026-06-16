@@ -67,9 +67,6 @@ env:
   - variable: SMTP_PASS
     secret: SMTP_PASS
 
-  - variable: SMTP_PASSWORD
-    secret: SMTP_PASSWORD
-
   - variable: SMTP_FROM
     value: "HR Nexus <malogistics123@gmail.com>"
     availability:
