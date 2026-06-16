@@ -4,7 +4,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ShieldCheck, Loader2, CheckCircle2, AlertCircle, Building2, Lock, Eye, EyeOff } from "lucide-react";
+import { ShieldCheck, Loader2, CheckCircle2, AlertCircle, Building2, Lock, Eye, EyeOff, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
