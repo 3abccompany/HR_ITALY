@@ -63,13 +63,15 @@ export default function LoginPage() {
           }
 
           // 2. Check memberships for standard users
-          // Use the new valid check which verifies linked entity status too
           const memberships = await getValidActiveMembershipsByUid(uid);
           
           if (memberships.length === 0) {
             router.push("/no-access");
           } else if (memberships.length === 1) {
-            router.push(`/entity/${memberships[0].entityId}/dashboard`);
+            const m = memberships[0];
+            // Smart Redirect: Employees go to personal space, others to dashboard
+            const target = m.roleId === 'employee' ? 'my-space' : 'dashboard';
+            router.push(`/entity/${m.entityId}/${target}`);
           } else {
             router.push("/select-entity");
           }

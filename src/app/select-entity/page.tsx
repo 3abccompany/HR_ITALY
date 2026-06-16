@@ -94,7 +94,10 @@ export default function SelectEntityPage() {
           <Card 
             key={m.membershipId} 
             className="group cursor-pointer hover:border-accent border-2 transition-all hover:shadow-xl bg-card"
-            onClick={() => router.push(`/entity/${m.entityId}/dashboard`)}
+            onClick={() => {
+              const target = m.roleId === 'employee' ? 'my-space' : 'dashboard';
+              router.push(`/entity/${m.entityId}/${target}`);
+            }}
           >
             <CardHeader className="flex flex-row items-start justify-between pb-2">
               <div className="p-3 bg-secondary rounded-xl group-hover:bg-accent/10 transition-colors">

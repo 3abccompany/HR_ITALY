@@ -22,7 +22,8 @@ import {
   Scroll,
   FileSignature,
   LucideIcon,
-  Send
+  Send,
+  UserCircle
 } from "lucide-react";
 
 export interface MenuItem {
@@ -33,6 +34,7 @@ export interface MenuItem {
 }
 
 export const entityMenu: MenuItem[] = [
+  { label: "Mon Espace Employé", href: "my-space", permission: "self.profile.read", icon: UserCircle },
   { label: "Tableau de bord", href: "dashboard", permission: "dashboard.read", icon: LayoutDashboard },
   { label: "Personnes", href: "persons", permission: "persons.read", icon: Users },
   { label: "Candidats", href: "candidates", permission: "candidates.read", icon: Search },

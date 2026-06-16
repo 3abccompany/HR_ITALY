@@ -53,7 +53,7 @@ service cloud.firestore {
     }
 
     match /entities/{entityId} {
-      allow read: if isAuthenticated() && (hasPermission(entityId, 'dashboard.read') || isPlatformAdmin());
+      allow read: if isAuthenticated() && (hasPermission(entityId, 'dashboard.read') || isPlatformAdmin() || isEntityMember(entityId));
       allow write: if isPlatformAdmin();
 
       // --- Entity Specific Sub-collections ---
@@ -74,7 +74,9 @@ service cloud.firestore {
       }
 
       match /employees/{employeeId} {
-        allow read: if hasPermission(entityId, 'employees.read') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'employees.read') 
+                     || isPlatformAdmin()
+                     || (isAuthenticated() && resource.data.userId == request.auth.uid && isEntityMember(entityId));
         allow write: if hasPermission(entityId, 'employees.create') || hasPermission(entityId, 'employees.update') || isPlatformAdmin();
       }
 
