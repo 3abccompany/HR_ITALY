@@ -6,7 +6,8 @@ import {
   Plus, Loader2, Calendar, User, Briefcase, 
   Clock, Filter, X, ListFilter, AlertCircle,
   FileText, CheckCircle2, History, Send,
-  ChevronRight, ArrowRight
+  ChevronRight, ArrowRight, MoreVertical,
+  XCircle, Ban
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,12 +20,34 @@ import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, Query, where } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS } from "@/types/time-off";
-import { createTimeOffRequestForEmployee } from "@/services/time-off.service";
+import { 
+  createTimeOffRequestForEmployee, 
+  approveTimeOffRequest, 
+  rejectTimeOffRequest, 
+  cancelTimeOffRequest 
+} from "@/services/time-off.service";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
 } from "@/components/ui/dialog";
+import { 
+  AlertDialog, 
+  AlertDialogAction, 
+  AlertDialogCancel, 
+  AlertDialogContent, 
+  AlertDialogDescription, 
+  AlertDialogFooter, 
+  AlertDialogHeader, 
+  AlertDialogTitle 
+} from "@/components/ui/alert-dialog";
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger,
+  DropdownMenuSeparator
+} from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -53,8 +76,13 @@ export default function TimeOffManagementPage() {
   const [formData, setFormData] = useState(initialForm);
   const [statusFilter, setStatusFilter] = useState("all");
 
+  // Decision State
+  const [decisionPending, setDecisionPending] = useState<{ id: string, action: 'approve' | 'reject' | 'cancel' } | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
+
   const canRead = hasPermission("leaveRequests.read");
   const canCreate = hasPermission("leaveRequests.create");
+  const canApprove = hasPermission("leaveRequests.approve");
 
   // Queries
   const requestsQuery = useMemo(() => {
@@ -115,6 +143,30 @@ export default function TimeOffManagementPage() {
     }
   };
 
+  const handleExecuteDecision = async () => {
+    if (!decisionPending || !user || !membership) return;
+    setLoading(true);
+    try {
+      if (decisionPending.action === 'approve') {
+        await approveTimeOffRequest(entityId, decisionPending.id, user.uid, membership.roleId);
+        toast({ title: "Demande approuvée" });
+      } else if (decisionPending.action === 'reject') {
+        if (!rejectionReason.trim()) throw new Error("Le motif du refus est obligatoire.");
+        await rejectTimeOffRequest(entityId, decisionPending.id, rejectionReason, user.uid, membership.roleId);
+        toast({ title: "Demande refusée" });
+      } else if (decisionPending.action === 'cancel') {
+        await cancelTimeOffRequest(entityId, decisionPending.id, user.uid, membership.roleId);
+        toast({ title: "Demande annulée" });
+      }
+      setDecisionPending(null);
+      setRejectionReason("");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return (
@@ -139,7 +191,7 @@ export default function TimeOffManagementPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tous les statuts</SelectItem>
-                <SelectItem value="submitted">En attente (Submitted)</SelectItem>
+                <SelectItem value="submitted">En attente</SelectItem>
                 <SelectItem value="approved">Approuvé</SelectItem>
                 <SelectItem value="rejected">Refusé</SelectItem>
                 <SelectItem value="cancelled">Annulé</SelectItem>
@@ -215,12 +267,42 @@ export default function TimeOffManagementPage() {
                        </div>
                     </TableCell>
                     <TableCell>
-                       {getStatusBadge(r.status)}
+                       <div className="flex flex-col gap-1">
+                          {getStatusBadge(r.status)}
+                          {r.status === 'rejected' && r.rejectionReason && (
+                            <p className="text-[9px] text-red-600 italic font-medium truncate max-w-[120px]" title={r.rejectionReason}>
+                               "{r.rejectionReason}"
+                            </p>
+                          )}
+                       </div>
                     </TableCell>
                     <TableCell className="text-right pr-6">
-                       <Button variant="ghost" size="sm" className="h-8 rounded-lg font-bold gap-2 text-muted-foreground opacity-40 cursor-not-allowed">
-                          Actions <ChevronRight className="w-3.5 h-3.5" />
-                       </Button>
+                       <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                             <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                             {canApprove && r.status === 'submitted' && (
+                                <>
+                                  <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'approve' })} className="text-green-600 font-bold gap-2">
+                                     <CheckCircle2 className="w-4 h-4" /> Approuver
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'reject' })} className="text-red-600 font-bold gap-2">
+                                     <XCircle className="w-4 h-4" /> Refuser
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                </>
+                             )}
+                             {canApprove && (r.status === 'submitted' || r.status === 'approved') && (
+                                <DropdownMenuItem onClick={() => setDecisionPending({ id: r.requestId, action: 'cancel' })} className="text-muted-foreground gap-2">
+                                   <Ban className="w-4 h-4" /> Annuler
+                                </DropdownMenuItem>
+                             )}
+                             <DropdownMenuItem className="gap-2" disabled>
+                                <FileText className="w-4 h-4" /> Détails / Justificatif
+                             </DropdownMenuItem>
+                          </DropdownMenuContent>
+                       </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))
@@ -313,9 +395,6 @@ export default function TimeOffManagementPage() {
                     <SelectItem value="afternoon">Après-midi uniquement (0.5j)</SelectItem>
                   </SelectContent>
                 </Select>
-                {formData.startDate !== formData.endDate && (
-                   <p className="text-[9px] text-muted-foreground italic pl-1">Le format "Demi-journée" n'est disponible que pour les demandes d'un seul jour.</p>
-                )}
              </div>
 
              <div className="space-y-2">
@@ -338,6 +417,66 @@ export default function TimeOffManagementPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Decision AlertDialogs */}
+      <AlertDialog open={!!decisionPending && decisionPending.action !== 'reject'} onOpenChange={(open) => !open && setDecisionPending(null)}>
+        <AlertDialogContent className="rounded-[2rem]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-black text-primary">
+              {decisionPending?.action === 'approve' ? 'Approuver la demande ?' : 'Annuler la demande ?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {decisionPending?.action === 'approve' 
+                ? "Cette action confirmera l'absence du collaborateur." 
+                : "Cette action marquera la demande comme annulée et non avenue."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Retour</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => { e.preventDefault(); handleExecuteDecision(); }}
+              className={cn("rounded-xl font-bold px-8", decisionPending?.action === 'approve' ? "bg-green-600 hover:bg-green-700" : "bg-destructive")}
+              disabled={loading}
+            >
+               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+               Confirmer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Rejection Dialog */}
+      <Dialog open={!!decisionPending && decisionPending.action === 'reject'} onOpenChange={(open) => !open && setDecisionPending(null)}>
+         <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
+            <DialogHeader>
+               <DialogTitle className="text-xl font-black text-red-600">Refuser la demande</DialogTitle>
+               <DialogDescription>Veuillez indiquer le motif du refus pour informer le collaborateur.</DialogDescription>
+            </DialogHeader>
+            <div className="py-4 space-y-4">
+               <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Motif du refus (Requis)</Label>
+                  <Textarea 
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    placeholder="Ex: Nécessité de service, effectif insuffisant..."
+                    className="rounded-xl min-h-[100px]"
+                  />
+               </div>
+            </div>
+            <DialogFooter>
+               <Button variant="ghost" onClick={() => { setDecisionPending(null); setRejectionReason(""); }} disabled={loading}>Annuler</Button>
+               <Button 
+                onClick={handleExecuteDecision} 
+                disabled={loading || !rejectionReason.trim()}
+                className="bg-red-600 hover:bg-red-700 text-white font-black rounded-xl px-8"
+               >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <XCircle className="w-4 h-4 mr-2" />}
+                  Confirmer le refus
+               </Button>
+            </DialogFooter>
+         </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

@@ -34,9 +34,21 @@ export interface TimeOffRequest {
   createdByRole: string;
   createdAt: Date | FieldValue;
   updatedAt: Date | FieldValue;
+
+  // Decision Audit Fields
   approvedAt?: Date | FieldValue;
-  approvedBy?: string;
+  approvedByUid?: string;
+  approvedByRole?: string;
+  
+  rejectedAt?: Date | FieldValue;
+  rejectedByUid?: string;
+  rejectedByRole?: string;
   rejectionReason?: string;
+
+  cancelledAt?: Date | FieldValue;
+  cancelledByUid?: string;
+  cancelledByRole?: string;
+  cancelReason?: string;
 }
 
 export const TIME_OFF_TYPE_LABELS: Record<TimeOffRequestType, string> = {

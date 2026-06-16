@@ -3,14 +3,16 @@ import {
   collection, 
   doc, 
   setDoc, 
+  getDoc,
   getDocs, 
   query, 
   where, 
   serverTimestamp,
   orderBy,
-  Query
+  Query,
+  updateDoc
 } from "firebase/firestore";
-import { TimeOffRequest, DayPart } from "@/types/time-off";
+import { TimeOffRequest, DayPart, TimeOffStatus } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { createAuditLog } from "./audit.service";
 
@@ -31,7 +33,7 @@ export function calculateDuration(startDate: string, endDate: string, dayPart: D
 /**
  * Checks for overlapping requests for the same employee.
  */
-export async function checkTimeOffOverlap(entityId: string, employeeId: string, startDate: string, endDate: string) {
+export async function checkTimeOffOverlap(entityId: string, employeeId: string, startDate: string, endDate: string, excludeRequestId?: string) {
   if (!db) return false;
   
   const q = query(
@@ -44,6 +46,7 @@ export async function checkTimeOffOverlap(entityId: string, employeeId: string, 
   const requests = snap.docs.map(d => d.data());
   
   return requests.some(req => {
+    if (excludeRequestId && req.requestId === excludeRequestId) return false;
     return (req.startDate <= endDate && req.endDate >= startDate);
   });
 }
@@ -95,6 +98,106 @@ export async function createTimeOffRequestForEmployee(
   });
 
   return requestId;
+}
+
+/**
+ * Approves a time-off request.
+ */
+export async function approveTimeOffRequest(entityId: string, requestId: string, actorUid: string, actorRole: string) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Demande introuvable.");
+  const request = snap.data() as TimeOffRequest;
+
+  if (request.status !== "submitted") {
+    throw new Error(`Statut invalide pour approbation : ${request.status}`);
+  }
+
+  await updateDoc(requestRef, {
+    status: "approved",
+    approvedAt: serverTimestamp(),
+    approvedByUid: actorUid,
+    approvedByRole: actorRole,
+    updatedAt: serverTimestamp(),
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "timeOff.approved",
+    resourceType: "timeOffRequest",
+    resourceId: requestId,
+  });
+}
+
+/**
+ * Rejects a time-off request with a reason.
+ */
+export async function rejectTimeOffRequest(entityId: string, requestId: string, rejectionReason: string, actorUid: string, actorRole: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  if (!rejectionReason.trim()) throw new Error("Le motif du refus est obligatoire.");
+
+  const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Demande introuvable.");
+  const request = snap.data() as TimeOffRequest;
+
+  if (request.status !== "submitted") {
+    throw new Error(`Statut invalide pour rejet : ${request.status}`);
+  }
+
+  await updateDoc(requestRef, {
+    status: "rejected",
+    rejectionReason,
+    rejectedAt: serverTimestamp(),
+    rejectedByUid: actorUid,
+    rejectedByRole: actorRole,
+    updatedAt: serverTimestamp(),
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "timeOff.rejected",
+    resourceType: "timeOffRequest",
+    resourceId: requestId,
+    details: { rejectionReason }
+  });
+}
+
+/**
+ * Cancels a time-off request.
+ */
+export async function cancelTimeOffRequest(entityId: string, requestId: string, actorUid: string, actorRole: string, cancelReason?: string) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
+  const snap = await getDoc(requestRef);
+  if (!snap.exists()) throw new Error("Demande introuvable.");
+  const request = snap.data() as TimeOffRequest;
+
+  if (request.status === "rejected" || request.status === "cancelled") {
+    throw new Error(`Cette demande est déjà en statut terminal : ${request.status}`);
+  }
+
+  await updateDoc(requestRef, {
+    status: "cancelled",
+    cancelReason: cancelReason || null,
+    cancelledAt: serverTimestamp(),
+    cancelledByUid: actorUid,
+    cancelledByRole: actorRole,
+    updatedAt: serverTimestamp(),
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "timeOff.cancelled",
+    resourceType: "timeOffRequest",
+    resourceId: requestId,
+  });
 }
 
 export async function listTimeOffRequests(entityId: string) {
