@@ -42,7 +42,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -292,15 +291,15 @@ export default function CcnlRegistryPage() {
 
       {/* CCNL Form Dialog */}
       <Dialog open={isFormOpen} onOpenChange={(open) => !open && handleReset()}>
-        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0 rounded-[2rem]">
-          <DialogHeader className="p-8 pb-4">
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col overflow-hidden p-0 rounded-[2rem]">
+          <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-2xl font-black text-primary">
               {editingId ? "Modifier le CCNL" : "Nouveau CCNL"}
             </DialogTitle>
             <DialogDescription>Définissez les paramètres globaux et les règles d'acquisition des congés.</DialogDescription>
           </DialogHeader>
           
-          <ScrollArea className="flex-1 px-8">
+          <div className="flex-1 overflow-y-auto px-8 py-4 min-h-0">
             <form id="ccnl-form" onSubmit={handleSave} className="space-y-8 pb-8">
               <div className="space-y-6">
                 <h3 className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
@@ -412,9 +411,9 @@ export default function CcnlRegistryPage() {
                 <Textarea id="notes" value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} placeholder="Observations..." />
               </div>
             </form>
-          </ScrollArea>
+          </div>
 
-          <DialogFooter className="p-8 border-t bg-slate-50 shrink-0">
+          <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
             <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
             <Button form="ccnl-form" type="submit" disabled={loading} className="px-8 shadow-lg shadow-primary/20">
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
