@@ -60,15 +60,33 @@ export interface TimeOffRequest {
   cancelReason?: string;
 }
 
+export type BalanceCounterType = "paid_leave" | "rol" | "ex_holidays";
+export type BalanceUnit = "days" | "hours";
+
+export interface LeaveBalanceCounter {
+  entitlement: number;
+  carriedOver: number;
+  accrued: number;
+  used: number;
+  pending: number;
+  remaining: number;
+  unit: BalanceUnit;
+}
+
 export interface LeaveBalance {
   entityId: string;
   employeeId: string;
   year: number;
-  entitlementDays: number;
-  carriedOverDays: number;
-  usedDays: number;
-  pendingDays: number;
-  remainingDays: number;
+  
+  // Multi-counter structure (Phase 2F2)
+  counters?: Record<string, LeaveBalanceCounter>;
+
+  // Legacy flat fields for backward compatibility (mirrored to paid_leave counter)
+  entitlementDays?: number;
+  carriedOverDays?: number;
+  usedDays?: number;
+  pendingDays?: number;
+  remainingDays?: number;
   
   // CCNL Source Snapshot (Phase 2F1)
   ccnlSnapshot?: {

@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, Query, where, getDoc, doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, LeaveBalance } from "@/types/time-off";
+import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, LeaveBalance, normalizeBalance } from "@/types/time-off";
 import { HRDocumentType } from "@/types/hr-document";
 import { 
   createTimeOffRequestForEmployee, 
@@ -75,8 +75,9 @@ const initialForm = {
 const initialBalanceForm = {
   employeeId: "",
   year: new Date().getFullYear(),
-  entitlementDays: 25,
-  carriedOverDays: 0
+  paid_leave: { entitlement: 25, carriedOver: 0, accrued: 0 },
+  rol: { entitlement: 0, carriedOver: 0, accrued: 0 },
+  ex_holidays: { entitlement: 0, carriedOver: 0, accrued: 0 }
 };
 
 export default function TimeOffManagementPage() {
@@ -118,7 +119,7 @@ export default function TimeOffManagementPage() {
 
   const employeesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/employees`), orderBy("displayName", "asc")) as Query<Employee>;
+    return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
   }, [db, entityId, canRead]);
 
   const balancesQuery = useMemo(() => {
@@ -128,14 +129,16 @@ export default function TimeOffManagementPage() {
 
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery);
   const { data: employees } = useCollection<Employee>(employeesQuery);
-  const { data: balances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
+  const { data: rawBalances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
 
-  // Client-side filtering for active employees
+  const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
+
+  // Client-side filtering for active employees (broad check)
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
     return employees.filter(e => {
       const s = String(e.status || '').toLowerCase();
-      return s === 'active' || s === 'actif' || s === 'active_contract';
+      return s === 'active' || s === 'actif' || s === 'active_contract' || s === 'active';
     });
   }, [employees]);
 
@@ -172,7 +175,7 @@ export default function TimeOffManagementPage() {
 
     setLoading(true);
     try {
-      const emp = employees?.find(e => e.employeeId === formData.employeeId);
+      const emp = activeEmployees.find(e => e.employeeId === formData.employeeId);
       
       await createTimeOffRequestForEmployee(
         entityId,
@@ -207,8 +210,21 @@ export default function TimeOffManagementPage() {
         balanceForm.employeeId,
         balanceForm.year,
         {
-          entitlementDays: Number(balanceForm.entitlementDays),
-          carriedOverDays: Number(balanceForm.carriedOverDays)
+          paid_leave: {
+             entitlement: Number(balanceForm.paid_leave.entitlement),
+             carriedOver: Number(balanceForm.paid_leave.carriedOver),
+             accrued: Number(balanceForm.paid_leave.accrued)
+          },
+          rol: {
+             entitlement: Number(balanceForm.rol.entitlement),
+             carriedOver: Number(balanceForm.rol.carriedOver),
+             accrued: Number(balanceForm.rol.accrued)
+          },
+          ex_holidays: {
+             entitlement: Number(balanceForm.ex_holidays.entitlement),
+             carriedOver: Number(balanceForm.ex_holidays.carriedOver),
+             accrued: Number(balanceForm.ex_holidays.accrued)
+          }
         },
         user.uid,
         membership.roleId
@@ -497,53 +513,76 @@ export default function TimeOffManagementPage() {
                 <TableHeader className="bg-secondary/20">
                    <TableRow>
                       <TableHead className="pl-6">Employé</TableHead>
-                      <TableHead>Année</TableHead>
-                      <TableHead>Acquis / Report</TableHead>
-                      <TableHead>Pris</TableHead>
-                      <TableHead>En attente</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Droits / Report</TableHead>
+                      <TableHead>Acquis</TableHead>
+                      <TableHead>Utilisé</TableHead>
+                      <TableHead>Attente</TableHead>
                       <TableHead>Restant</TableHead>
                       <TableHead className="text-right pr-6">Actions</TableHead>
                    </TableRow>
                 </TableHeader>
                 <TableBody>
                    {loadingBalances ? (
-                     <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                     <TableRow><TableCell colSpan={8} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
                    ) : balances?.length === 0 ? (
-                     <TableRow><TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">Aucun solde initialisé.</TableCell></TableRow>
+                     <TableRow><TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">Aucun solde initialisé.</TableCell></TableRow>
                    ) : (
                      balances?.map(b => (
-                       <TableRow key={`${b.employeeId}_${b.year}`}>
-                          <TableCell className="pl-6 py-4">
-                            <div className="flex flex-col">
-                              <span className="font-bold text-slate-900">{activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</span>
-                              {b.ccnlSnapshot?.ccnlName ? (
-                                <span className="text-[9px] text-muted-foreground uppercase font-bold">
-                                  Source: {b.ccnlSnapshot.ccnlName} {b.ccnlSnapshot.levelCode ? `(${b.ccnlSnapshot.levelCode})` : ''}
-                                </span>
-                              ) : (
-                                <span className="text-[9px] text-muted-foreground uppercase">Source: manuel / inconnu</span>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell><Badge variant="outline">{b.year}</Badge></TableCell>
-                          <TableCell>{b.entitlementDays}j + {b.carriedOverDays}j</TableCell>
-                          <TableCell className="font-bold text-red-600">{b.usedDays}j</TableCell>
-                          <TableCell className="font-medium text-orange-600">{b.pendingDays}j</TableCell>
-                          <TableCell><Badge className="bg-primary text-white font-black">{b.remainingDays}j</Badge></TableCell>
-                          <TableCell className="text-right pr-6">
-                             <Button variant="ghost" size="icon" onClick={() => {
-                               setBalanceForm({
-                                 employeeId: b.employeeId,
-                                 year: b.year,
-                                 entitlementDays: b.entitlementDays,
-                                 carriedOverDays: b.carriedOverDays
-                               });
-                               setIsBalanceModalOpen(true);
-                             }}>
-                               <Settings2 className="w-4 h-4" />
-                             </Button>
-                          </TableCell>
-                       </TableRow>
+                       <React.Fragment key={`${b.employeeId}_${b.year}`}>
+                         {/* Paid Leave Row */}
+                         <TableRow className="border-t-2">
+                            <TableCell rowSpan={3} className="pl-6 py-4 bg-slate-50/30 align-top">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-900">{activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</span>
+                                <Badge variant="outline" className="w-fit mt-1">{b.year}</Badge>
+                                {b.ccnlSnapshot?.ccnlName && (
+                                  <span className="text-[9px] text-muted-foreground uppercase font-bold mt-2">
+                                    Source: {b.ccnlSnapshot.ccnlName} {b.ccnlSnapshot.levelCode ? `(${b.ccnlSnapshot.levelCode})` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-black text-xs text-blue-700">Ferie (Congés)</TableCell>
+                            <TableCell className="text-xs">{b.counters?.paid_leave.entitlement}j + {b.counters?.paid_leave.carriedOver}j</TableCell>
+                            <TableCell className="text-xs">{b.counters?.paid_leave.accrued}j</TableCell>
+                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.paid_leave.used}j</TableCell>
+                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.paid_leave.pending}j</TableCell>
+                            <TableCell><Badge className="bg-primary text-white font-black">{b.counters?.paid_leave.remaining}j</Badge></TableCell>
+                            <TableCell rowSpan={3} className="text-right pr-6 bg-slate-50/30 align-top py-4">
+                               <Button variant="ghost" size="icon" onClick={() => {
+                                 setBalanceForm({
+                                   employeeId: b.employeeId,
+                                   year: b.year,
+                                   paid_leave: { entitlement: b.counters?.paid_leave.entitlement || 0, carriedOver: b.counters?.paid_leave.carriedOver || 0, accrued: b.counters?.paid_leave.accrued || 0 },
+                                   rol: { entitlement: b.counters?.rol.entitlement || 0, carriedOver: b.counters?.rol.carriedOver || 0, accrued: b.counters?.rol.accrued || 0 },
+                                   ex_holidays: { entitlement: b.counters?.ex_holidays.entitlement || 0, carriedOver: b.counters?.ex_holidays.carriedOver || 0, accrued: b.counters?.ex_holidays.accrued || 0 }
+                                 });
+                                 setIsBalanceModalOpen(true);
+                               }}>
+                                 <Settings2 className="w-4 h-4" />
+                               </Button>
+                            </TableCell>
+                         </TableRow>
+                         {/* ROL Row */}
+                         <TableRow>
+                            <TableCell className="font-black text-xs text-indigo-700">ROL</TableCell>
+                            <TableCell className="text-xs">{b.counters?.rol.entitlement}h + {b.counters?.rol.carriedOver}h</TableCell>
+                            <TableCell className="text-xs">{b.counters?.rol.accrued}h</TableCell>
+                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.rol.used}h</TableCell>
+                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.rol.pending}h</TableCell>
+                            <TableCell><Badge variant="outline" className="font-black border-indigo-200 text-indigo-700">{b.counters?.rol.remaining}h</Badge></TableCell>
+                         </TableRow>
+                         {/* Ex Holidays Row */}
+                         <TableRow>
+                            <TableCell className="font-black text-xs text-teal-700">Ex Festività</TableCell>
+                            <TableCell className="text-xs">{b.counters?.ex_holidays.entitlement}h + {b.counters?.ex_holidays.carriedOver}h</TableCell>
+                            <TableCell className="text-xs">{b.counters?.ex_holidays.accrued}h</TableCell>
+                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.ex_holidays.used}h</TableCell>
+                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.ex_holidays.pending}h</TableCell>
+                            <TableCell><Badge variant="outline" className="font-black border-teal-200 text-teal-700">{b.counters?.ex_holidays.remaining}h</Badge></TableCell>
+                         </TableRow>
+                       </React.Fragment>
                      ))
                    )}
                 </TableBody>
@@ -554,43 +593,95 @@ export default function TimeOffManagementPage() {
 
       {/* Manual Balance Dialog */}
       <Dialog open={isBalanceModalOpen} onOpenChange={setIsBalanceModalOpen}>
-        <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
+        <DialogContent className="sm:max-w-[650px] rounded-[2rem]">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-primary">Définir solde annuel</DialogTitle>
-            <DialogDescription>Initialisez ou ajustez les droits à congés payés d'un collaborateur.</DialogDescription>
+            <DialogDescription>Initialisez ou ajustez les droits annuels d'un collaborateur.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleUpdateBalance} className="space-y-6 py-4">
-             <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
-                <Select value={balanceForm.employeeId} onValueChange={(v) => setBalanceForm(p => ({...p, employeeId: v}))}>
-                   <SelectTrigger className="h-11 rounded-xl">
-                      <SelectValue placeholder="Sélectionner..." />
-                   </SelectTrigger>
-                   <SelectContent>
-                      {activeEmployees.map(e => (
-                        <SelectItem key={e.employeeId} value={e.employeeId}>
-                          {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''} {e.jobTitle ? `— ${e.jobTitle}` : ''}
-                        </SelectItem>
-                      ))}
-                   </SelectContent>
-                </Select>
-             </div>
              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Année</Label>
-                   <Input type="number" value={balanceForm.year} onChange={(e) => setBalanceForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl" />
+               <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
+                  <Select value={balanceForm.employeeId} onValueChange={(v) => setBalanceForm(p => ({...p, employeeId: v}))}>
+                    <SelectTrigger className="h-11 rounded-xl">
+                        <SelectValue placeholder="Sélectionner..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {activeEmployees.map(e => (
+                          <SelectItem key={e.employeeId} value={e.employeeId}>
+                            {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+               </div>
+               <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Année</Label>
+                  <Input type="number" value={balanceForm.year} onChange={(e) => setBalanceForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl h-11" />
+               </div>
+             </div>
+
+             <Separator />
+
+             <div className="grid grid-cols-3 gap-8">
+                {/* Paid Leave Column */}
+                <div className="space-y-4">
+                   <p className="text-[11px] font-black text-blue-700 uppercase border-b pb-1">Congés (Jours)</p>
+                   <div className="space-y-3">
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droits</Label>
+                         <Input type="number" value={balanceForm.paid_leave.entitlement} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
+                         <Input type="number" value={balanceForm.paid_leave.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
+                         <Input type="number" value={balanceForm.paid_leave.accrued} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                   </div>
+                </div>
+
+                {/* ROL Column */}
+                <div className="space-y-4">
+                   <p className="text-[11px] font-black text-indigo-700 uppercase border-b pb-1">ROL (Heures)</p>
+                   <div className="space-y-3">
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droits</Label>
+                         <Input type="number" step="0.01" value={balanceForm.rol.entitlement} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
+                         <Input type="number" step="0.01" value={balanceForm.rol.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
+                         <Input type="number" step="0.01" value={balanceForm.rol.accrued} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                   </div>
+                </div>
+
+                {/* Ex Holidays Column */}
+                <div className="space-y-4">
+                   <p className="text-[11px] font-black text-teal-700 uppercase border-b pb-1">Ex Fest. (Heures)</p>
+                   <div className="space-y-3">
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droits</Label>
+                         <Input type="number" step="0.01" value={balanceForm.ex_holidays.entitlement} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
+                         <Input type="number" step="0.01" value={balanceForm.ex_holidays.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                      <div className="space-y-1">
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
+                         <Input type="number" step="0.01" value={balanceForm.ex_holidays.accrued} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                      </div>
+                   </div>
                 </div>
              </div>
-             <div className="grid grid-cols-2 gap-4 pt-2 border-t">
-                <div className="space-y-2">
-                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Droits acquis (jours)</Label>
-                   <Input type="number" value={balanceForm.entitlementDays} onChange={(e) => setBalanceForm(p => ({...p, entitlementDays: parseFloat(e.target.value)}))} className="rounded-xl h-11" />
-                </div>
-                <div className="space-y-2">
-                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Report année N-1</Label>
-                   <Input type="number" value={balanceForm.carriedOverDays} onChange={(e) => setBalanceForm(p => ({...p, carriedOverDays: parseFloat(e.target.value)}))} className="rounded-xl h-11" />
-                </div>
-             </div>
+
              <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => setIsBalanceModalOpen(false)} disabled={loading}>Annuler</Button>
                 <Button type="submit" disabled={loading || !balanceForm.employeeId} className="rounded-xl font-black px-8">

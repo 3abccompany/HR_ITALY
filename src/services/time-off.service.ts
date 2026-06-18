@@ -15,9 +15,58 @@ import {
   runTransaction,
   increment
 } from "firebase/firestore";
-import { TimeOffRequest, DayPart, TimeOffStatus, JustificationStatus, LeaveBalance, TimeOffRequestType } from "@/types/time-off";
+import { 
+  TimeOffRequest, 
+  DayPart, 
+  TimeOffStatus, 
+  JustificationStatus, 
+  LeaveBalance, 
+  TimeOffRequestType,
+  LeaveBalanceCounter
+} from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { createAuditLog } from "./audit.service";
+import { CCNL, CCNLLevel } from "@/types/ccnl";
+
+/**
+ * Normalizes a leave balance document by mapping legacy flat fields 
+ * into the new multi-counter structure if missing.
+ */
+export function normalizeBalance(balance: any): LeaveBalance {
+  const b = balance as LeaveBalance;
+  
+  if (b.counters) return b;
+
+  // Migration logic for old flat balances
+  const paidLeaveCounter: LeaveBalanceCounter = {
+    entitlement: b.entitlementDays || 0,
+    carriedOver: b.carriedOverDays || 0,
+    accrued: 0,
+    used: b.usedDays || 0,
+    pending: b.pendingDays || 0,
+    remaining: b.remainingDays || 0,
+    unit: "days"
+  };
+
+  const zeroCounter = (unit: "hours" | "days"): LeaveBalanceCounter => ({
+    entitlement: 0,
+    carriedOver: 0,
+    accrued: 0,
+    used: 0,
+    pending: 0,
+    remaining: 0,
+    unit
+  });
+
+  return {
+    ...b,
+    counters: {
+      paid_leave: paidLeaveCounter,
+      rol: zeroCounter("hours"),
+      ex_holidays: zeroCounter("hours")
+    }
+  };
+}
 
 /**
  * Calculates the duration of a time-off request in days.
@@ -89,6 +138,7 @@ async function resolveCcnlSnapshot(transaction: any, entityId: string, employeeI
 /**
  * Atomic helper to get or create a leave balance for an employee/year.
  * Must be called in the READ phase of a transaction.
+ * Defaults values from CCNL registry if creating new.
  */
 async function getOrCreateLeaveBalance(transaction: any, entityId: string, employeeId: string, year: number, actorUid: string, actorRole: string) {
   const balanceId = `${employeeId}_${year}`;
@@ -96,22 +146,44 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
   const snap = await transaction.get(balanceRef);
 
   if (snap.exists()) {
-    return { ref: balanceRef, data: snap.data() as LeaveBalance };
+    return { ref: balanceRef, data: normalizeBalance(snap.data()) };
   }
 
   // If not exists, read context for the snapshot
   const ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, employeeId);
+  
+  // Try to load default entitlements from CCNL/Level
+  let defaultFerie = 0;
+  let defaultRol = 0;
+  let defaultExHolidays = 0;
+
+  if (ccnlSnapshot.ccnlId && ccnlSnapshot.levelId) {
+     const levelRef = doc(db!, `entities/${entityId}/ccnls/${ccnlSnapshot.ccnlId}/levels`, ccnlSnapshot.levelId);
+     const levelSnap = await transaction.get(levelRef);
+     if (levelSnap.exists()) {
+        const levelData = levelSnap.data() as CCNLLevel;
+        defaultFerie = levelData.annualPaidLeaveDays || 0;
+        defaultRol = levelData.annualRolHours || 0;
+        defaultExHolidays = levelData.annualExHolidayHours || 0;
+     }
+  }
 
   const initialBalance: LeaveBalance = {
     entityId,
     employeeId,
     year,
-    entitlementDays: 0,
+    ccnlSnapshot,
+    counters: {
+      paid_leave: { entitlement: defaultFerie, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: defaultFerie, unit: "days" },
+      rol: { entitlement: defaultRol, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: defaultRol, unit: "hours" },
+      ex_holidays: { entitlement: defaultExHolidays, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: defaultExHolidays, unit: "hours" }
+    },
+    // Mirror flat fields for legacy support
+    entitlementDays: defaultFerie,
     carriedOverDays: 0,
     usedDays: 0,
     pendingDays: 0,
-    remainingDays: 0,
-    ccnlSnapshot,
+    remainingDays: defaultFerie,
     updatedAt: serverTimestamp(),
     updatedByUid: actorUid,
     updatedByRole: actorRole
@@ -123,45 +195,81 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
 
 /**
  * RH Action: Manually initialize or edit a balance.
+ * Supports multi-counter updates.
  */
 export async function updateLeaveBalanceManual(
   entityId: string, 
   employeeId: string, 
   year: number, 
-  data: { entitlementDays: number, carriedOverDays: number },
+  data: { 
+    paid_leave: { entitlement: number, carriedOver: number, accrued: number },
+    rol: { entitlement: number, carriedOver: number, accrued: number },
+    ex_holidays: { entitlement: number, carriedOver: number, accrued: number }
+  },
   actorUid: string,
   actorRole: string
 ) {
   if (!db) throw new Error("Firestore not initialized");
 
-  const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, `${employeeId}_${year}`);
+  const balanceId = `${employeeId}_${year}`;
+  const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const [balanceSnap, ccnlSnapshot] = await Promise.all([
       transaction.get(balanceRef),
       resolveCcnlSnapshot(transaction, entityId, employeeId)
     ]);
 
-    const existing = balanceSnap.exists() ? (balanceSnap.data() as LeaveBalance) : { usedDays: 0, pendingDays: 0 };
-    const remainingDays = data.entitlementDays + data.carriedOverDays - (existing.usedDays || 0);
+    const existingFull = balanceSnap.exists() ? normalizeBalance(balanceSnap.data()) : null;
+    const existing = existingFull?.counters || {
+       paid_leave: { used: 0, pending: 0 },
+       rol: { used: 0, pending: 0 },
+       ex_holidays: { used: 0, pending: 0 }
+    };
+
+    const counters: Record<string, LeaveBalanceCounter> = {
+      paid_leave: {
+        ...data.paid_leave,
+        used: existing.paid_leave?.used || 0,
+        pending: existing.paid_leave?.pending || 0,
+        remaining: data.paid_leave.entitlement + data.paid_leave.carriedOver + data.paid_leave.accrued - (existing.paid_leave?.used || 0),
+        unit: "days"
+      },
+      rol: {
+        ...data.rol,
+        used: existing.rol?.used || 0,
+        pending: existing.rol?.pending || 0,
+        remaining: data.rol.entitlement + data.rol.carriedOver + data.rol.accrued - (existing.rol?.used || 0),
+        unit: "hours"
+      },
+      ex_holidays: {
+        ...data.ex_holidays,
+        used: existing.ex_holidays?.used || 0,
+        pending: existing.ex_holidays?.pending || 0,
+        remaining: data.ex_holidays.entitlement + data.ex_holidays.carriedOver + data.ex_holidays.accrued - (existing.ex_holidays?.used || 0),
+        unit: "hours"
+      }
+    };
 
     const payload: Partial<LeaveBalance> = {
       entityId,
       employeeId,
       year,
-      entitlementDays: data.entitlementDays,
-      carriedOverDays: data.carriedOverDays,
-      remainingDays,
       ccnlSnapshot,
+      counters,
+      // Mirror legacy fields
+      entitlementDays: counters.paid_leave.entitlement,
+      carriedOverDays: counters.paid_leave.carriedOver,
+      usedDays: counters.paid_leave.used,
+      pendingDays: counters.paid_leave.pending,
+      remainingDays: counters.paid_leave.remaining,
       updatedAt: serverTimestamp(),
       updatedByUid: actorUid,
       updatedByRole: actorRole
     };
 
-    // 2. ALL WRITES AFTER
     transaction.set(balanceRef, payload, { merge: true });
-    return { balanceId: balanceRef.id };
+    return { balanceId };
   }).then(async (res) => {
     await createAuditLog({
       userId: actorUid,
@@ -186,11 +294,6 @@ export async function createTimeOffRequestForEmployee(
 ) {
   if (!db) throw new Error("Firestore not initialized");
 
-  const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate);
-  if (isOverlapping) {
-    throw new Error("OVERLAP_DETECTED: L'employé a déjà une demande en cours ou validée sur cette période.");
-  }
-
   const duration = calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
   const requestType = (data.requestType as TimeOffRequestType) || 'other';
   const year = parseInt(data.startDate.split('-')[0]);
@@ -198,18 +301,18 @@ export async function createTimeOffRequestForEmployee(
   const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
   const requestId = requestRef.id;
 
+  const employeeRef = doc(db!, `entities/${entityId}/employees`, data.employeeId);
+  const balanceId = `${data.employeeId}_${year}`;
+  const balanceRef = doc(db!, `entities/${entityId}/leaveBalances`, balanceId);
+
   return await runTransaction(db, async (transaction) => {
     // 1. ALL READS FIRST
-    let balanceRef = null;
-    let ccnlSnapshot = null;
-
-    if (requestType === "paid_leave") {
-      const balanceInfo = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
-      balanceRef = balanceInfo.ref;
-    } else {
-      // Still capture snapshot for audit even if it doesn't affect balance
-      ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, data.employeeId);
+    const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate);
+    if (isOverlapping) {
+      throw new Error("OVERLAP_DETECTED: L'employé a déjà une demande en cours ou validée sur cette période.");
     }
+
+    const { ref: bRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
 
     // 2. DATA PREP
     const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
@@ -235,9 +338,15 @@ export async function createTimeOffRequestForEmployee(
 
     // 3. ALL WRITES AFTER
     transaction.set(requestRef, payload);
-    if (balanceRef) {
-      transaction.update(balanceRef, {
-        pendingDays: increment(duration),
+    
+    // Only update balance if paid_leave
+    if (requestType === "paid_leave" && balance.counters) {
+      const counters = { ...balance.counters };
+      counters.paid_leave.pending += duration;
+      
+      transaction.update(bRef, {
+        counters,
+        pendingDays: increment(duration), // Legacy mirror
         updatedAt: serverTimestamp()
       });
     }
@@ -282,15 +391,21 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
 
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
+    let normalizedBalance: LeaveBalance | null = null;
+
     if (request.requestType === "paid_leave") {
-      const { ref, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
-      const currentUsed = balance.usedDays || 0;
-      const currentPending = balance.pendingDays || 0;
-      const entitlement = (balance.entitlementDays || 0) + (balance.carriedOverDays || 0);
+      const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       
-      const newRemaining = entitlement - (currentUsed + request.durationDays);
+      const currentCounter = data.counters?.paid_leave;
+      if (!currentCounter) throw new Error("Erreur technique: structure de solde corrompue.");
+
+      const entitlement = currentCounter.entitlement + currentCounter.carriedOver + currentCounter.accrued;
+      const newRemaining = entitlement - (currentCounter.used + request.durationDays);
+      
       if (newRemaining < 0) throw new Error("Solde de congé insuffisant.");
+      
       balanceRef = ref;
+      normalizedBalance = data;
     }
 
     // 2. ALL WRITES AFTER
@@ -303,11 +418,17 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       updatedAt: now,
     });
 
-    if (balanceRef) {
+    if (balanceRef && normalizedBalance?.counters) {
+      const counters = { ...normalizedBalance.counters };
+      counters.paid_leave.pending -= request.durationDays;
+      counters.paid_leave.used += request.durationDays;
+      counters.paid_leave.remaining -= request.durationDays;
+
       transaction.update(balanceRef, {
-        pendingDays: increment(-request.durationDays),
-        usedDays: increment(request.durationDays),
-        remainingDays: increment(-request.durationDays),
+        counters,
+        pendingDays: increment(-request.durationDays), // Legacy mirror
+        usedDays: increment(request.durationDays),    // Legacy mirror
+        remainingDays: increment(-request.durationDays), // Legacy mirror
         updatedAt: now
       });
     }
@@ -341,9 +462,11 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
 
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
+    let normalizedBalance: LeaveBalance | null = null;
     if (request.requestType === "paid_leave") {
-      const { ref } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       balanceRef = ref;
+      normalizedBalance = data;
     }
 
     // 2. ALL WRITES AFTER
@@ -357,9 +480,13 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
       updatedAt: now,
     });
 
-    if (balanceRef) {
+    if (balanceRef && normalizedBalance?.counters) {
+      const counters = { ...normalizedBalance.counters };
+      counters.paid_leave.pending -= request.durationDays;
+
       transaction.update(balanceRef, {
-        pendingDays: increment(-request.durationDays),
+        counters,
+        pendingDays: increment(-request.durationDays), // Legacy mirror
         updatedAt: now
       });
     }
@@ -392,9 +519,11 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
 
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
+    let normalizedBalance: LeaveBalance | null = null;
     if (request.requestType === "paid_leave") {
-      const { ref } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       balanceRef = ref;
+      normalizedBalance = data;
     }
 
     // 2. ALL WRITES AFTER
@@ -410,16 +539,22 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
       updatedAt: now,
     });
 
-    if (balanceRef) {
+    if (balanceRef && normalizedBalance?.counters) {
+      const counters = { ...normalizedBalance.counters };
       if (previousStatus === "submitted") {
+        counters.paid_leave.pending -= request.durationDays;
         transaction.update(balanceRef, {
-          pendingDays: increment(-request.durationDays),
+          counters,
+          pendingDays: increment(-request.durationDays), // Legacy mirror
           updatedAt: now
         });
       } else if (previousStatus === "approved") {
+        counters.paid_leave.used -= request.durationDays;
+        counters.paid_leave.remaining += request.durationDays;
         transaction.update(balanceRef, {
-          usedDays: increment(-request.durationDays),
-          remainingDays: increment(request.durationDays),
+          counters,
+          usedDays: increment(-request.durationDays),      // Legacy mirror
+          remainingDays: increment(request.durationDays), // Legacy mirror
           updatedAt: now
         });
       }
