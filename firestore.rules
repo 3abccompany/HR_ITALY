@@ -272,6 +272,12 @@ service cloud.firestore {
                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
         allow write: if hasPermission(entityId, 'leaveRequests.update') || isPlatformAdmin();
       }
+
+      match /monthlyAccruals/{accrualId} {
+        allow read: if hasPermission(entityId, 'leaveRequests.read') || isPlatformAdmin();
+        allow create, update: if hasPermission(entityId, 'leaveRequests.update') || hasPermission(entityId, 'leaveRequests.approve') || isPlatformAdmin();
+        allow delete: if isPlatformAdmin();
+      }
     }
 
     // --- Global Reference Data ---
