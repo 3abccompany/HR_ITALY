@@ -22,51 +22,12 @@ import {
   JustificationStatus, 
   LeaveBalance, 
   TimeOffRequestType,
-  LeaveBalanceCounter
+  LeaveBalanceCounter,
+  normalizeBalance
 } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { createAuditLog } from "./audit.service";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
-
-/**
- * Normalizes a leave balance document by mapping legacy flat fields 
- * into the new multi-counter structure if missing.
- */
-export function normalizeBalance(balance: any): LeaveBalance {
-  const b = balance as LeaveBalance;
-  
-  if (b.counters) return b;
-
-  // Migration logic for old flat balances
-  const paidLeaveCounter: LeaveBalanceCounter = {
-    entitlement: b.entitlementDays || 0,
-    carriedOver: b.carriedOverDays || 0,
-    accrued: 0,
-    used: b.usedDays || 0,
-    pending: b.pendingDays || 0,
-    remaining: b.remainingDays || 0,
-    unit: "days"
-  };
-
-  const zeroCounter = (unit: "hours" | "days"): LeaveBalanceCounter => ({
-    entitlement: 0,
-    carriedOver: 0,
-    accrued: 0,
-    used: 0,
-    pending: 0,
-    remaining: 0,
-    unit
-  });
-
-  return {
-    ...b,
-    counters: {
-      paid_leave: paidLeaveCounter,
-      rol: zeroCounter("hours"),
-      ex_holidays: zeroCounter("hours")
-    }
-  };
-}
 
 /**
  * Calculates the duration of a time-off request in days.
@@ -215,11 +176,13 @@ export async function updateLeaveBalanceManual(
   const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
 
   return await runTransaction(db, async (transaction) => {
+    // READ PHASE FIRST
     const [balanceSnap, ccnlSnapshot] = await Promise.all([
       transaction.get(balanceRef),
       resolveCcnlSnapshot(transaction, entityId, employeeId)
     ]);
 
+    // WRITE PHASE
     const existingFull = balanceSnap.exists() ? normalizeBalance(balanceSnap.data()) : null;
     const existing = existingFull?.counters || {
        paid_leave: { used: 0, pending: 0 },
@@ -301,7 +264,6 @@ export async function createTimeOffRequestForEmployee(
   const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
   const requestId = requestRef.id;
 
-  const employeeRef = doc(db!, `entities/${entityId}/employees`, data.employeeId);
   const balanceId = `${data.employeeId}_${year}`;
   const balanceRef = doc(db!, `entities/${entityId}/leaveBalances`, balanceId);
 
@@ -379,6 +341,17 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
 
+    const year = parseInt(request.startDate.split('-')[0]);
+    let balanceRef = null;
+    let normalizedBalance: LeaveBalance | null = null;
+
+    if (request.requestType === "paid_leave") {
+      const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      balanceRef = ref;
+      normalizedBalance = data;
+    }
+
+    // 2. VALIDATIONS
     if (request.status !== "submitted") {
       throw new Error(`Action impossible : la demande est en statut "${request.status}".`);
     }
@@ -389,26 +362,15 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       throw new Error("Justificatif requis avant approbation.");
     }
 
-    const year = parseInt(request.startDate.split('-')[0]);
-    let balanceRef = null;
-    let normalizedBalance: LeaveBalance | null = null;
-
-    if (request.requestType === "paid_leave") {
-      const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
-      
-      const currentCounter = data.counters?.paid_leave;
-      if (!currentCounter) throw new Error("Erreur technique: structure de solde corrompue.");
-
+    if (request.requestType === "paid_leave" && normalizedBalance?.counters) {
+      const currentCounter = normalizedBalance.counters.paid_leave;
       const entitlement = currentCounter.entitlement + currentCounter.carriedOver + currentCounter.accrued;
       const newRemaining = entitlement - (currentCounter.used + request.durationDays);
       
       if (newRemaining < 0) throw new Error("Solde de congé insuffisant.");
-      
-      balanceRef = ref;
-      normalizedBalance = data;
     }
 
-    // 2. ALL WRITES AFTER
+    // 3. ALL WRITES AFTER
     const now = serverTimestamp();
     transaction.update(requestRef, {
       status: "approved",
@@ -458,8 +420,6 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
 
-    if (request.status !== "submitted") throw new Error("Statut invalide.");
-
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
     let normalizedBalance: LeaveBalance | null = null;
@@ -469,7 +429,10 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
       normalizedBalance = data;
     }
 
-    // 2. ALL WRITES AFTER
+    // 2. VALIDATIONS
+    if (request.status !== "submitted") throw new Error("Statut invalide.");
+
+    // 3. ALL WRITES AFTER
     const now = serverTimestamp();
     transaction.update(requestRef, {
       status: "rejected",
@@ -515,8 +478,6 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
 
-    if (!["submitted", "approved"].includes(request.status)) throw new Error("Statut invalide.");
-
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
     let normalizedBalance: LeaveBalance | null = null;
@@ -526,7 +487,10 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
       normalizedBalance = data;
     }
 
-    // 2. ALL WRITES AFTER
+    // 2. VALIDATIONS
+    if (!["submitted", "approved"].includes(request.status)) throw new Error("Statut invalide.");
+
+    // 3. ALL WRITES AFTER
     const previousStatus = request.status;
     const now = serverTimestamp();
 

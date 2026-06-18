@@ -105,6 +105,46 @@ export interface LeaveBalance {
   updatedByRole: string;
 }
 
+/**
+ * Normalizes a leave balance document by mapping legacy flat fields 
+ * into the new multi-counter structure if missing.
+ */
+export function normalizeBalance(balance: any): LeaveBalance {
+  const b = balance as LeaveBalance;
+  
+  if (b.counters) return b;
+
+  // Migration logic for old flat balances
+  const paidLeaveCounter: LeaveBalanceCounter = {
+    entitlement: b.entitlementDays || 0,
+    carriedOver: b.carriedOverDays || 0,
+    accrued: 0,
+    used: b.usedDays || 0,
+    pending: b.pendingDays || 0,
+    remaining: b.remainingDays || 0,
+    unit: "days"
+  };
+
+  const zeroCounter = (unit: "hours" | "days"): LeaveBalanceCounter => ({
+    entitlement: 0,
+    carriedOver: 0,
+    accrued: 0,
+    used: 0,
+    pending: 0,
+    remaining: 0,
+    unit
+  });
+
+  return {
+    ...b,
+    counters: {
+      paid_leave: paidLeaveCounter,
+      rol: zeroCounter("hours"),
+      ex_holidays: zeroCounter("hours")
+    }
+  };
+}
+
 export const TIME_OFF_TYPE_LABELS: Record<TimeOffRequestType, string> = {
   paid_leave: "Congé payé",
   unpaid_leave: "Congé sans solde",
