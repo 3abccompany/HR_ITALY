@@ -67,6 +67,8 @@ const initialForm = {
   requestType: "paid_leave" as TimeOffRequestType,
   startDate: new Date().toISOString().split('T')[0],
   endDate: new Date().toISOString().split('T')[0],
+  startTime: "09:00",
+  endTime: "10:00",
   dayPart: "full_day" as any,
   durationHours: "",
   reason: "",
@@ -81,6 +83,17 @@ const initialBalanceForm = {
   rol: { entitlement: 0, carriedOver: 0, accrued: 0 },
   ex_holidays: { entitlement: 0, carriedOver: 0, accrued: 0 }
 };
+
+function calculateDecimalHours(start: string, end: string): string {
+  if (!start || !end) return "0";
+  const [sH, sM] = start.split(':').map(Number);
+  const [eH, eM] = end.split(':').map(Number);
+  const startMins = sH * 60 + sM;
+  const endMins = eH * 60 + eM;
+  if (endMins <= startMins) return "0";
+  const hours = (endMins - startMins) / 60;
+  return hours.toFixed(2).replace(/\.00$/, "");
+}
 
 export default function TimeOffManagementPage() {
   const params = useParams();
@@ -133,8 +146,6 @@ export default function TimeOffManagementPage() {
   const { data: employees } = useCollection<Employee>(employeesQuery);
   const { data: rawBalances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
 
-  const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
-
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
     return employees.filter(e => {
@@ -142,6 +153,8 @@ export default function TimeOffManagementPage() {
       return s === 'active' || s === 'actif' || s === 'active_contract';
     });
   }, [employees]);
+
+  const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
 
   const filteredRequests = useMemo(() => {
     if (!requests) return [];
@@ -172,9 +185,21 @@ export default function TimeOffManagementPage() {
       return;
     }
 
-    if (formData.endDate < formData.startDate) {
-      toast({ variant: "destructive", title: "Erreur", description: "La date de fin ne peut pas être antérieure à la date de début." });
-      return;
+    const isHourly = ["rol_permission", "ex_holiday_permission"].includes(formData.requestType);
+    let finalDurationHours = undefined;
+
+    if (isHourly) {
+      const duration = Number(calculateDecimalHours(formData.startTime, formData.endTime));
+      if (duration <= 0) {
+        toast({ variant: "destructive", title: "Heures invalides", description: "L'heure de fin doit être supérieure à l'heure de début." });
+        return;
+      }
+      finalDurationHours = duration;
+    } else {
+      if (formData.endDate < formData.startDate) {
+        toast({ variant: "destructive", title: "Erreur", description: "La date de fin ne peut pas être antérieure à la date de début." });
+        return;
+      }
     }
 
     setLoading(true);
@@ -185,7 +210,7 @@ export default function TimeOffManagementPage() {
         entityId,
         {
           ...formData,
-          durationHours: formData.durationHours ? parseFloat(formData.durationHours) : undefined,
+          durationHours: isHourly ? finalDurationHours : undefined,
           employeeName: emp?.displayName || "Employé inconnu",
           personId: emp?.personId || ""
         },
@@ -342,6 +367,8 @@ export default function TimeOffManagementPage() {
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
+  const isHourly = ["rol_permission", "ex_holiday_permission"].includes(formData.requestType);
+
   return (
     <div className="p-8 max-w-7xl mx-auto pb-24">
       <header className="flex items-center justify-between mb-8">
@@ -443,13 +470,18 @@ export default function TimeOffManagementPage() {
                             </div>
                           )}
                         </div>
+                        {r.startTime && r.endTime && (
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
+                             <Clock className="w-2.5 h-2.5" />
+                             {r.startTime} - {r.endTime}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                          <div className="flex items-center gap-1.5 font-black text-primary">
                             <Clock className="w-3.5 h-3.5 opacity-30" />
                             {(() => {
-                              const isHours = r.unit === "hours" || ['rol_permission', 'ex_holiday_permission'].includes(r.requestType);
-                              if (isHours) {
+                              if (r.unit === "hours" || ['rol_permission', 'ex_holiday_permission'].includes(r.requestType)) {
                                 return r.durationHours !== undefined && r.durationHours !== null ? `${r.durationHours} h` : "—";
                               }
                               return r.durationDays !== undefined && r.durationDays !== null ? `${r.durationDays} j` : "—";
@@ -555,11 +587,11 @@ export default function TimeOffManagementPage() {
                               </div>
                             </TableCell>
                             <TableCell className="font-black text-xs text-blue-700">Ferie (Congés)</TableCell>
-                            <TableCell className="text-xs">{b.counters?.paid_leave.entitlement}j + {b.counters?.paid_leave.carriedOver}j</TableCell>
-                            <TableCell className="text-xs">{b.counters?.paid_leave.accrued}j</TableCell>
-                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.paid_leave.used}j</TableCell>
-                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.paid_leave.pending}j</TableCell>
-                            <TableCell><Badge className="bg-primary text-white font-black">{b.counters?.paid_leave.remaining}j</Badge></TableCell>
+                            <TableCell className="text-xs">{(b.counters?.paid_leave.entitlement ?? 0) + (b.counters?.paid_leave.carriedOver ?? 0)}j</TableCell>
+                            <TableCell className="text-xs">{b.counters?.paid_leave.accrued ?? 0}j</TableCell>
+                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.paid_leave.used ?? 0}j</TableCell>
+                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.paid_leave.pending ?? 0}j</TableCell>
+                            <TableCell><Badge className="bg-primary text-white font-black">{b.counters?.paid_leave.remaining ?? 0}j</Badge></TableCell>
                             <TableCell rowSpan={3} className="text-right pr-6 bg-slate-50/30 align-top py-4">
                                <Button variant="ghost" size="icon" onClick={() => {
                                  setBalanceForm({
@@ -578,20 +610,20 @@ export default function TimeOffManagementPage() {
                          {/* ROL Row */}
                          <TableRow>
                             <TableCell className="font-black text-xs text-indigo-700">ROL</TableCell>
-                            <TableCell className="text-xs">{b.counters?.rol.entitlement}h + {b.counters?.rol.carriedOver}h</TableCell>
-                            <TableCell className="text-xs">{b.counters?.rol.accrued}h</TableCell>
-                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.rol.used}h</TableCell>
-                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.rol.pending}h</TableCell>
-                            <TableCell><Badge variant="outline" className="font-black border-indigo-200 text-indigo-700">{b.counters?.rol.remaining}h</Badge></TableCell>
+                            <TableCell className="text-xs">{(b.counters?.rol.entitlement ?? 0) + (b.counters?.rol.carriedOver ?? 0)}h</TableCell>
+                            <TableCell className="text-xs">{b.counters?.rol.accrued ?? 0}h</TableCell>
+                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.rol.used ?? 0}h</TableCell>
+                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.rol.pending ?? 0}h</TableCell>
+                            <TableCell><Badge variant="outline" className="font-black border-indigo-200 text-indigo-700">{b.counters?.rol.remaining ?? 0}h</Badge></TableCell>
                          </TableRow>
                          {/* Ex Holidays Row */}
                          <TableRow>
                             <TableCell className="font-black text-xs text-teal-700">Ex Festività</TableCell>
-                            <TableCell className="text-xs">{b.counters?.ex_holidays.entitlement}h + {b.counters?.ex_holidays.carriedOver}h</TableCell>
-                            <TableCell className="text-xs">{b.counters?.ex_holidays.accrued}h</TableCell>
-                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.ex_holidays.used}h</TableCell>
-                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.ex_holidays.pending}h</TableCell>
-                            <TableCell><Badge variant="outline" className="font-black border-teal-200 text-teal-700">{b.counters?.ex_holidays.remaining}h</Badge></TableCell>
+                            <TableCell className="text-xs">{(b.counters?.ex_holidays.entitlement ?? 0) + (b.counters?.ex_holidays.carriedOver ?? 0)}h</TableCell>
+                            <TableCell className="text-xs">{b.counters?.ex_holidays.accrued ?? 0}h</TableCell>
+                            <TableCell className="text-xs font-bold text-red-600">{b.counters?.ex_holidays.used ?? 0}h</TableCell>
+                            <TableCell className="text-xs font-medium text-orange-600">{b.counters?.ex_holidays.pending ?? 0}h</TableCell>
+                            <TableCell><Badge variant="outline" className="font-black border-teal-200 text-teal-700">{b.counters?.ex_holidays.remaining ?? 0}h</Badge></TableCell>
                          </TableRow>
                        </React.Fragment>
                      ))
@@ -765,46 +797,60 @@ export default function TimeOffManagementPage() {
                 </div>
              </div>
 
-             <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de début</Label>
-                  <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de fin (incluse)</Label>
-                  <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
-                </div>
-             </div>
-
-             <div className="space-y-2">
-                {formData.requestType === "paid_leave" ? (
-                   <div className="space-y-1">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Partie de la journée</Label>
-                      <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
-                        <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="full_day">Journée entière</SelectItem>
-                          <SelectItem value="morning">Matinée</SelectItem>
-                          <SelectItem value="afternoon">Après-midi</SelectItem>
-                        </SelectContent>
-                      </Select>
-                   </div>
-                ) : (formData.requestType === "rol_permission" || formData.requestType === "ex_holiday_permission") ? (
-                  <div className="space-y-1">
-                     <Label className="text-[10px] font-black uppercase text-muted-foreground">Durée en heures</Label>
-                     <Input 
-                      type="number" 
-                      step="0.1" 
-                      value={formData.durationHours} 
-                      onChange={(e) => setFormData(p => ({...p, durationHours: e.target.value}))} 
-                      placeholder="Ex: 2.5" 
-                      required 
-                      className="rounded-xl h-11"
-                     />
-                     <p className="text-[9px] text-muted-foreground italic">Exemple : 2.5 = 2h30</p>
+             {/* Conditional Fields based on Request Type */}
+             {isHourly ? (
+                <>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Date</Label>
+                    <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value, endDate: e.target.value}))} required className="rounded-xl h-11" />
                   </div>
-                ) : null}
-             </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure début</Label>
+                      <Input type="time" value={formData.startTime} onChange={(e) => setFormData(p => ({...p, startTime: e.target.value}))} required className="rounded-xl h-11" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure fin</Label>
+                      <Input type="time" value={formData.endTime} onChange={(e) => setFormData(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Durée estimée (Heures)</Label>
+                    <div className="h-11 px-3 bg-secondary/20 border rounded-xl flex items-center text-sm font-bold text-primary">
+                       {calculateDecimalHours(formData.startTime, formData.endTime)} h
+                    </div>
+                    <p className="text-[9px] text-muted-foreground italic">Exemple : 09:00 → 11:30 = 2.5 h</p>
+                  </div>
+                </>
+             ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de début</Label>
+                      <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de fin (incluse)</Label>
+                      <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {formData.requestType === "paid_leave" ? (
+                       <div className="space-y-1">
+                          <Label className="text-[10px] font-black uppercase text-muted-foreground">Partie de la journée</Label>
+                          <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
+                            <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="full_day">Journée entière</SelectItem>
+                              <SelectItem value="morning">Matinée</SelectItem>
+                              <SelectItem value="afternoon">Après-midi</SelectItem>
+                            </SelectContent>
+                          </Select>
+                       </div>
+                    ) : null}
+                  </div>
+                </>
+             )}
 
              <div className="space-y-2">
                 <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border">

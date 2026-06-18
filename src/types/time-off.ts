@@ -31,6 +31,8 @@ export interface TimeOffRequest {
   status: TimeOffStatus;
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
+  startTime?: string | null;
+  endTime?: string | null;
   dayPart: DayPart;
   durationDays: number;
   durationHours?: number;
