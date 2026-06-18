@@ -9,6 +9,8 @@ export type TimeOffRequestType =
   | "sickness" 
   | "unjustified_absence" 
   | "work_accident" 
+  | "rol_permission"
+  | "ex_holiday_permission"
   | "other";
 
 export type TimeOffStatus = "submitted" | "approved" | "rejected" | "cancelled";
@@ -31,6 +33,9 @@ export interface TimeOffRequest {
   endDate: string; // YYYY-MM-DD
   dayPart: DayPart;
   durationDays: number;
+  durationHours?: number;
+  unit: "days" | "hours";
+  balanceCounterType?: BalanceCounterType | null;
   reason?: string;
   
   // Justification Metadata
@@ -145,6 +150,18 @@ export function normalizeBalance(balance: any): LeaveBalance {
   };
 }
 
+/**
+ * Maps a request type to the specific counter it should consume.
+ */
+export function getCounterTypeForRequestType(type: TimeOffRequestType): BalanceCounterType | null {
+  switch (type) {
+    case "paid_leave": return "paid_leave";
+    case "rol_permission": return "rol";
+    case "ex_holiday_permission": return "ex_holidays";
+    default: return null;
+  }
+}
+
 export const TIME_OFF_TYPE_LABELS: Record<TimeOffRequestType, string> = {
   paid_leave: "Congé payé",
   unpaid_leave: "Congé sans solde",
@@ -152,5 +169,7 @@ export const TIME_OFF_TYPE_LABELS: Record<TimeOffRequestType, string> = {
   sickness: "Maladie",
   unjustified_absence: "Absence injustifiée",
   work_accident: "Accident du travail",
+  rol_permission: "Permission ROL",
+  ex_holiday_permission: "Permission anciens jours fériés (Ex Fest.)",
   other: "Autre motif"
 };

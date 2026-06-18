@@ -23,7 +23,8 @@ import {
   LeaveBalance, 
   TimeOffRequestType,
   LeaveBalanceCounter,
-  normalizeBalance
+  normalizeBalance,
+  getCounterTypeForRequestType
 } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { createAuditLog } from "./audit.service";
@@ -123,9 +124,9 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
      const levelSnap = await transaction.get(levelRef);
      if (levelSnap.exists()) {
         const levelData = levelSnap.data() as CCNLLevel;
-        defaultFerie = levelData.annualPaidLeaveDays || 0;
-        defaultRol = levelData.annualRolHours || 0;
-        defaultExHolidays = levelData.annualExHolidayHours || 0;
+        defaultFerie = (levelData as any).annualPaidLeaveDays || 0;
+        defaultRol = (levelData as any).annualRolHours || 0;
+        defaultExHolidays = (levelData as any).annualExHolidayHours || 0;
      }
   }
 
@@ -156,7 +157,6 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
 
 /**
  * RH Action: Manually initialize or edit a balance.
- * Supports multi-counter updates.
  */
 export async function updateLeaveBalanceManual(
   entityId: string, 
@@ -176,13 +176,11 @@ export async function updateLeaveBalanceManual(
   const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
 
   return await runTransaction(db, async (transaction) => {
-    // READ PHASE FIRST
-    const [balanceSnap, ccnlSnapshot] = await Promise.all([
-      transaction.get(balanceRef),
-      resolveCcnlSnapshot(transaction, entityId, employeeId)
-    ]);
+    // 1. ALL READS FIRST
+    const balanceSnap = await transaction.get(balanceRef);
+    const ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, employeeId);
 
-    // WRITE PHASE
+    // 2. DATA PREP
     const existingFull = balanceSnap.exists() ? normalizeBalance(balanceSnap.data()) : null;
     const existing = existingFull?.counters || {
        paid_leave: { used: 0, pending: 0 },
@@ -231,6 +229,7 @@ export async function updateLeaveBalanceManual(
       updatedByRole: actorRole
     };
 
+    // 3. ALL WRITES AFTER
     transaction.set(balanceRef, payload, { merge: true });
     return { balanceId };
   }).then(async (res) => {
@@ -257,8 +256,14 @@ export async function createTimeOffRequestForEmployee(
 ) {
   if (!db) throw new Error("Firestore not initialized");
 
-  const duration = calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
   const requestType = (data.requestType as TimeOffRequestType) || 'other';
+  const counterType = getCounterTypeForRequestType(requestType);
+  const unit = (requestType === "paid_leave") ? "days" : "hours";
+  
+  const duration = (unit === "days") 
+    ? calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day")
+    : Number(data.durationHours || 0);
+
   const year = parseInt(data.startDate.split('-')[0]);
 
   const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
@@ -276,7 +281,14 @@ export async function createTimeOffRequestForEmployee(
 
     const { ref: bRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
 
-    // 2. DATA PREP
+    // 2. DATA PREP & VALIDATION
+    if (counterType && balance.counters) {
+      const remaining = balance.counters[counterType].remaining;
+      if (duration > remaining) {
+        throw new Error(`Solde ${counterType === 'paid_leave' ? 'de congé' : counterType.toUpperCase()} insuffisant.`);
+      }
+    }
+
     const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
     const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
 
@@ -287,7 +299,10 @@ export async function createTimeOffRequestForEmployee(
       source: "hr_created",
       status: "submitted",
       dayPart: data.dayPart || "full_day",
-      durationDays: duration,
+      durationDays: unit === "days" ? duration : 0,
+      durationHours: unit === "hours" ? duration : undefined,
+      unit,
+      balanceCounterType: counterType,
       requiresJustification,
       justificationStatus,
       justificationNote: data.justificationNote || null,
@@ -301,16 +316,22 @@ export async function createTimeOffRequestForEmployee(
     // 3. ALL WRITES AFTER
     transaction.set(requestRef, payload);
     
-    // Only update balance if paid_leave
-    if (requestType === "paid_leave" && balance.counters) {
+    // Update balance if applicable
+    if (counterType && balance.counters) {
       const counters = { ...balance.counters };
-      counters.paid_leave.pending += duration;
+      counters[counterType].pending += duration;
       
-      transaction.update(bRef, {
+      const balanceUpdate: any = {
         counters,
-        pendingDays: increment(duration), // Legacy mirror
         updatedAt: serverTimestamp()
-      });
+      };
+
+      // Legacy mirror for paid_leave
+      if (counterType === "paid_leave") {
+        balanceUpdate.pendingDays = increment(duration);
+      }
+
+      transaction.update(bRef, balanceUpdate);
     }
 
     return requestId;
@@ -321,7 +342,7 @@ export async function createTimeOffRequestForEmployee(
       action: "timeOff.created_by_hr",
       resourceType: "timeOffRequest",
       resourceId: reqId,
-      details: { employeeId: data.employeeId, duration, requestType }
+      details: { employeeId: data.employeeId, duration, unit, requestType }
     });
     return reqId;
   });
@@ -341,11 +362,14 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
 
+    const counterType = request.balanceCounterType;
+    const duration = (request.unit === "days") ? request.durationDays : (request.durationHours || 0);
+
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
     let normalizedBalance: LeaveBalance | null = null;
 
-    if (request.requestType === "paid_leave") {
+    if (counterType) {
       const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       balanceRef = ref;
       normalizedBalance = data;
@@ -362,12 +386,14 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       throw new Error("Justificatif requis avant approbation.");
     }
 
-    if (request.requestType === "paid_leave" && normalizedBalance?.counters) {
-      const currentCounter = normalizedBalance.counters.paid_leave;
-      const entitlement = currentCounter.entitlement + currentCounter.carriedOver + currentCounter.accrued;
-      const newRemaining = entitlement - (currentCounter.used + request.durationDays);
+    if (counterType && normalizedBalance?.counters) {
+      const currentCounter = normalizedBalance.counters[counterType];
+      const totalEntitlement = currentCounter.entitlement + currentCounter.carriedOver + currentCounter.accrued;
+      const newRemaining = totalEntitlement - (currentCounter.used + duration);
       
-      if (newRemaining < 0) throw new Error("Solde de congé insuffisant.");
+      if (newRemaining < 0) {
+         throw new Error(`Solde ${counterType === 'paid_leave' ? 'de congé' : counterType.toUpperCase()} insuffisant.`);
+      }
     }
 
     // 3. ALL WRITES AFTER
@@ -380,19 +406,25 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       updatedAt: now,
     });
 
-    if (balanceRef && normalizedBalance?.counters) {
+    if (balanceRef && normalizedBalance?.counters && counterType) {
       const counters = { ...normalizedBalance.counters };
-      counters.paid_leave.pending -= request.durationDays;
-      counters.paid_leave.used += request.durationDays;
-      counters.paid_leave.remaining -= request.durationDays;
+      counters[counterType].pending -= duration;
+      counters[counterType].used += duration;
+      counters[counterType].remaining -= duration;
 
-      transaction.update(balanceRef, {
+      const balanceUpdate: any = {
         counters,
-        pendingDays: increment(-request.durationDays), // Legacy mirror
-        usedDays: increment(request.durationDays),    // Legacy mirror
-        remainingDays: increment(-request.durationDays), // Legacy mirror
         updatedAt: now
-      });
+      };
+
+      // Legacy mirror for paid_leave
+      if (counterType === "paid_leave") {
+        balanceUpdate.pendingDays = increment(-duration);
+        balanceUpdate.usedDays = increment(duration);
+        balanceUpdate.remainingDays = increment(-duration);
+      }
+
+      transaction.update(balanceRef, balanceUpdate);
     }
   }).then(async () => {
     await createAuditLog({
@@ -420,10 +452,14 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
 
+    const counterType = request.balanceCounterType;
+    const duration = (request.unit === "days") ? request.durationDays : (request.durationHours || 0);
+
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
     let normalizedBalance: LeaveBalance | null = null;
-    if (request.requestType === "paid_leave") {
+    
+    if (counterType) {
       const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       balanceRef = ref;
       normalizedBalance = data;
@@ -443,15 +479,20 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
       updatedAt: now,
     });
 
-    if (balanceRef && normalizedBalance?.counters) {
+    if (balanceRef && normalizedBalance?.counters && counterType) {
       const counters = { ...normalizedBalance.counters };
-      counters.paid_leave.pending -= request.durationDays;
+      counters[counterType].pending -= duration;
 
-      transaction.update(balanceRef, {
+      const balanceUpdate: any = {
         counters,
-        pendingDays: increment(-request.durationDays), // Legacy mirror
         updatedAt: now
-      });
+      };
+
+      if (counterType === "paid_leave") {
+        balanceUpdate.pendingDays = increment(-duration);
+      }
+
+      transaction.update(balanceRef, balanceUpdate);
     }
   }).then(async () => {
     await createAuditLog({
@@ -478,10 +519,14 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
 
+    const counterType = request.balanceCounterType;
+    const duration = (request.unit === "days") ? request.durationDays : (request.durationHours || 0);
+
     const year = parseInt(request.startDate.split('-')[0]);
     let balanceRef = null;
     let normalizedBalance: LeaveBalance | null = null;
-    if (request.requestType === "paid_leave") {
+    
+    if (counterType) {
       const { ref, data } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       balanceRef = ref;
       normalizedBalance = data;
@@ -503,25 +548,28 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
       updatedAt: now,
     });
 
-    if (balanceRef && normalizedBalance?.counters) {
+    if (balanceRef && normalizedBalance?.counters && counterType) {
       const counters = { ...normalizedBalance.counters };
+      const balanceUpdate: any = {
+        counters,
+        updatedAt: now
+      };
+
       if (previousStatus === "submitted") {
-        counters.paid_leave.pending -= request.durationDays;
-        transaction.update(balanceRef, {
-          counters,
-          pendingDays: increment(-request.durationDays), // Legacy mirror
-          updatedAt: now
-        });
+        counters[counterType].pending -= duration;
+        if (counterType === "paid_leave") {
+           balanceUpdate.pendingDays = increment(-duration);
+        }
       } else if (previousStatus === "approved") {
-        counters.paid_leave.used -= request.durationDays;
-        counters.paid_leave.remaining += request.durationDays;
-        transaction.update(balanceRef, {
-          counters,
-          usedDays: increment(-request.durationDays),      // Legacy mirror
-          remainingDays: increment(request.durationDays), // Legacy mirror
-          updatedAt: now
-        });
+        counters[counterType].used -= duration;
+        counters[counterType].remaining += duration;
+        if (counterType === "paid_leave") {
+           balanceUpdate.usedDays = increment(-duration);
+           balanceUpdate.remainingDays = increment(duration);
+        }
       }
+      
+      transaction.update(balanceRef, balanceUpdate);
     }
   }).then(async () => {
     await createAuditLog({

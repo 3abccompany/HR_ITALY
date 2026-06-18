@@ -68,6 +68,7 @@ const initialForm = {
   startDate: new Date().toISOString().split('T')[0],
   endDate: new Date().toISOString().split('T')[0],
   dayPart: "full_day" as any,
+  durationHours: "",
   reason: "",
   requiresJustification: false,
   justificationNote: ""
@@ -134,12 +135,11 @@ export default function TimeOffManagementPage() {
 
   const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
 
-  // Client-side filtering for active employees (broad check)
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
     return employees.filter(e => {
       const s = String(e.status || '').toLowerCase();
-      return s === 'active' || s === 'actif' || s === 'active_contract' || s === 'active';
+      return s === 'active' || s === 'actif' || s === 'active_contract';
     });
   }, [employees]);
 
@@ -149,15 +149,18 @@ export default function TimeOffManagementPage() {
     return requests.filter(r => r.status === statusFilter);
   }, [requests, statusFilter]);
 
-  // Handle default justification rules in UI
   const handleTypeChange = (type: TimeOffRequestType) => {
     let requires = false;
     if (["sickness", "work_accident"].includes(type)) {
       requires = true;
-    } else if (["permission", "other"].includes(type)) {
-      requires = false; // Default to false but can be toggled
     }
-    setFormData(p => ({ ...p, requestType: type, requiresJustification: requires }));
+    
+    setFormData(p => ({ 
+      ...p, 
+      requestType: type, 
+      requiresJustification: requires,
+      requestKind: (type === "rol_permission" || type === "ex_holiday_permission") ? "leave" : p.requestKind
+    }));
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -182,6 +185,7 @@ export default function TimeOffManagementPage() {
         entityId,
         {
           ...formData,
+          durationHours: formData.durationHours ? parseFloat(formData.durationHours) : undefined,
           employeeName: emp?.displayName || "Employé inconnu",
           personId: emp?.personId || ""
         },
@@ -443,7 +447,7 @@ export default function TimeOffManagementPage() {
                       <TableCell>
                          <div className="flex items-center gap-1.5 font-black text-primary">
                             <Clock className="w-3.5 h-3.5 opacity-30" />
-                            {r.durationDays} j
+                            {r.unit === "days" ? `${r.durationDays} j` : `${r.durationHours} h`}
                          </div>
                       </TableCell>
                       <TableCell>
@@ -724,7 +728,7 @@ export default function TimeOffManagementPage() {
                   <Select value={formData.requestKind} onValueChange={(v: any) => setFormData(p => ({...p, requestKind: v, requestType: v === 'leave' ? 'paid_leave' : 'sickness'}))}>
                     <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="leave">Congé (Vacances/RTT)</SelectItem>
+                      <SelectItem value="leave">Congé (Vacances/Permis)</SelectItem>
                       <SelectItem value="absence">Absence (Maladie/Autre)</SelectItem>
                     </SelectContent>
                   </Select>
@@ -736,9 +740,11 @@ export default function TimeOffManagementPage() {
                     <SelectContent>
                       {formData.requestKind === 'leave' ? (
                         <>
-                          <SelectItem value="paid_leave">Congé payé</SelectItem>
+                          <SelectItem value="paid_leave">Congé payé (Ferie)</SelectItem>
+                          <SelectItem value="rol_permission">Permission ROL</SelectItem>
+                          <SelectItem value="ex_holiday_permission">Permission Ex Festività</SelectItem>
                           <SelectItem value="unpaid_leave">Congé sans solde</SelectItem>
-                          <SelectItem value="permission">Permission / RTT</SelectItem>
+                          <SelectItem value="permission">Autre Permission / RTT</SelectItem>
                         </>
                       ) : (
                         <>
@@ -762,6 +768,36 @@ export default function TimeOffManagementPage() {
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de fin (incluse)</Label>
                   <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
                 </div>
+             </div>
+
+             <div className="space-y-2">
+                {formData.requestType === "paid_leave" ? (
+                   <div className="space-y-1">
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Partie de la journée</Label>
+                      <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
+                        <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full_day">Journée entière</SelectItem>
+                          <SelectItem value="morning">Matinée</SelectItem>
+                          <SelectItem value="afternoon">Après-midi</SelectItem>
+                        </SelectContent>
+                      </Select>
+                   </div>
+                ) : (formData.requestType === "rol_permission" || formData.requestType === "ex_holiday_permission") ? (
+                  <div className="space-y-1">
+                     <Label className="text-[10px] font-black uppercase text-muted-foreground">Durée en heures</Label>
+                     <Input 
+                      type="number" 
+                      step="0.1" 
+                      value={formData.durationHours} 
+                      onChange={(e) => setFormData(p => ({...p, durationHours: e.target.value}))} 
+                      placeholder="Ex: 2.5" 
+                      required 
+                      className="rounded-xl h-11"
+                     />
+                     <p className="text-[9px] text-muted-foreground italic">Exemple : 2.5 = 2h30</p>
+                  </div>
+                ) : null}
              </div>
 
              <div className="space-y-2">
