@@ -88,7 +88,7 @@ async function resolveCcnlSnapshot(transaction: any, entityId: string, employeeI
 
 /**
  * Atomic helper to get or create a leave balance for an employee/year.
- * Must be called in the READ phase of a transaction if used inside runTransaction.
+ * Must be called in the READ phase of a transaction.
  */
 async function getOrCreateLeaveBalance(transaction: any, entityId: string, employeeId: string, year: number, actorUid: string, actorRole: string) {
   const balanceId = `${employeeId}_${year}`;
@@ -99,7 +99,7 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
     return { ref: balanceRef, data: snap.data() as LeaveBalance };
   }
 
-  // If not exists, we also need to read employee/contract context for the snapshot
+  // If not exists, read context for the snapshot
   const ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, employeeId);
 
   const initialBalance: LeaveBalance = {
@@ -137,12 +137,13 @@ export async function updateLeaveBalanceManual(
   const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, `${employeeId}_${year}`);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS FIRST
     const [balanceSnap, ccnlSnapshot] = await Promise.all([
       transaction.get(balanceRef),
       resolveCcnlSnapshot(transaction, entityId, employeeId)
     ]);
 
-    const existing = balanceSnap.exists ? (balanceSnap.data() as LeaveBalance) : { usedDays: 0, pendingDays: 0 };
+    const existing = balanceSnap.exists() ? (balanceSnap.data() as LeaveBalance) : { usedDays: 0, pendingDays: 0 };
     const remainingDays = data.entitlementDays + data.carriedOverDays - (existing.usedDays || 0);
 
     const payload: Partial<LeaveBalance> = {
@@ -158,6 +159,7 @@ export async function updateLeaveBalanceManual(
       updatedByRole: actorRole
     };
 
+    // 2. ALL WRITES AFTER
     transaction.set(balanceRef, payload, { merge: true });
     return { balanceId: balanceRef.id };
   }).then(async (res) => {
@@ -197,18 +199,20 @@ export async function createTimeOffRequestForEmployee(
   const requestId = requestRef.id;
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS
+    // 1. ALL READS FIRST
     let balanceRef = null;
+    let ccnlSnapshot = null;
+
     if (requestType === "paid_leave") {
       const balanceInfo = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
       balanceRef = balanceInfo.ref;
+    } else {
+      // Still capture snapshot for audit even if it doesn't affect balance
+      ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, data.employeeId);
     }
 
-    // 2. DATA PREP (All logic calculation)
-    let requiresJustification = data.requiresJustification ?? false;
-    if (["sickness", "work_accident"].includes(requestType)) {
-      requiresJustification = true;
-    }
+    // 2. DATA PREP
+    const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
     const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
 
     const payload: TimeOffRequest = {
@@ -229,7 +233,7 @@ export async function createTimeOffRequestForEmployee(
       updatedAt: serverTimestamp(),
     };
 
-    // 3. ALL WRITES
+    // 3. ALL WRITES AFTER
     transaction.set(requestRef, payload);
     if (balanceRef) {
       transaction.update(balanceRef, {
@@ -261,7 +265,7 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS
+    // 1. ALL READS FIRST
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -280,12 +284,16 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
     let balanceRef = null;
     if (request.requestType === "paid_leave") {
       const { ref, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
-      const newRemaining = (balance.entitlementDays || 0) + (balance.carriedOverDays || 0) - ((balance.usedDays || 0) + request.durationDays);
+      const currentUsed = balance.usedDays || 0;
+      const currentPending = balance.pendingDays || 0;
+      const entitlement = (balance.entitlementDays || 0) + (balance.carriedOverDays || 0);
+      
+      const newRemaining = entitlement - (currentUsed + request.durationDays);
       if (newRemaining < 0) throw new Error("Solde de congé insuffisant.");
       balanceRef = ref;
     }
 
-    // 2. ALL WRITES
+    // 2. ALL WRITES AFTER
     const now = serverTimestamp();
     transaction.update(requestRef, {
       status: "approved",
@@ -324,6 +332,7 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS FIRST
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -337,6 +346,7 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
       balanceRef = ref;
     }
 
+    // 2. ALL WRITES AFTER
     const now = serverTimestamp();
     transaction.update(requestRef, {
       status: "rejected",
@@ -373,6 +383,7 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS FIRST
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -386,6 +397,7 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
       balanceRef = ref;
     }
 
+    // 2. ALL WRITES AFTER
     const previousStatus = request.status;
     const now = serverTimestamp();
 
