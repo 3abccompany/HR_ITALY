@@ -69,6 +69,19 @@ export interface LeaveBalance {
   usedDays: number;
   pendingDays: number;
   remainingDays: number;
+  
+  // CCNL Source Snapshot (Phase 2F1)
+  ccnlSnapshot?: {
+    ccnlId?: string | null;
+    ccnlName?: string | null;
+    levelId?: string | null;
+    levelCode?: string | null;
+    ruleVersion?: number | null;
+    contractId?: string | null;
+    source: "contract" | "manual" | "unknown";
+    capturedAt: Date | FieldValue | null;
+  };
+
   updatedAt: Date | FieldValue;
   updatedByUid: string;
   updatedByRole: string;

@@ -118,7 +118,6 @@ export default function TimeOffManagementPage() {
 
   const employeesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    // Removed strict server-side status filter to handle localized/capitalized values
     return query(collection(db, `entities/${entityId}/employees`), orderBy("displayName", "asc")) as Query<Employee>;
   }, [db, entityId, canRead]);
 
@@ -305,7 +304,6 @@ export default function TimeOffManagementPage() {
     const docId = request.justificationDocumentIds[0];
     setLoading(true);
     try {
-      const { getDoc, doc } = await import("firebase/firestore");
       const docSnap = await getDoc(doc(db!, `entities/${entityId}/documents`, docId));
       
       if (docSnap.exists()) {
@@ -515,7 +513,18 @@ export default function TimeOffManagementPage() {
                    ) : (
                      balances?.map(b => (
                        <TableRow key={`${b.employeeId}_${b.year}`}>
-                          <TableCell className="pl-6 font-bold">{activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</TableCell>
+                          <TableCell className="pl-6 py-4">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-slate-900">{activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</span>
+                              {b.ccnlSnapshot?.ccnlName ? (
+                                <span className="text-[9px] text-muted-foreground uppercase font-bold">
+                                  Source: {b.ccnlSnapshot.ccnlName} {b.ccnlSnapshot.levelCode ? `(${b.ccnlSnapshot.levelCode})` : ''}
+                                </span>
+                              ) : (
+                                <span className="text-[9px] text-muted-foreground uppercase">Source: manuel / inconnu</span>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell><Badge variant="outline">{b.year}</Badge></TableCell>
                           <TableCell>{b.entitlementDays}j + {b.carriedOverDays}j</TableCell>
                           <TableCell className="font-bold text-red-600">{b.usedDays}j</TableCell>

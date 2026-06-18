@@ -15,7 +15,7 @@ import {
   runTransaction,
   increment
 } from "firebase/firestore";
-import { TimeOffRequest, DayPart, TimeOffStatus, JustificationStatus, LeaveBalance } from "@/types/time-off";
+import { TimeOffRequest, DayPart, TimeOffStatus, JustificationStatus, LeaveBalance, TimeOffRequestType } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { createAuditLog } from "./audit.service";
 
@@ -55,6 +55,38 @@ export async function checkTimeOffOverlap(entityId: string, employeeId: string, 
 }
 
 /**
+ * Internal helper to resolve the CCNL source snapshot for an employee.
+ * Must be called in the READ phase of a transaction.
+ */
+async function resolveCcnlSnapshot(transaction: any, entityId: string, employeeId: string) {
+  const employeeRef = doc(db!, `entities/${entityId}/employees`, employeeId);
+  const empSnap = await transaction.get(employeeRef);
+  const empData = empSnap.data();
+  
+  if (empData?.activeContractId) {
+    const contractRef = doc(db!, `entities/${entityId}/contracts`, empData.activeContractId);
+    const contractSnap = await transaction.get(contractRef);
+    if (contractSnap.exists()) {
+      const c = contractSnap.data();
+      return {
+        ccnlId: c.ccnlId || null,
+        ccnlName: c.ccnlName || null,
+        levelId: c.levelId || null,
+        levelCode: c.levelCode || null,
+        contractId: empData.activeContractId,
+        source: "contract" as const,
+        capturedAt: serverTimestamp()
+      };
+    }
+  }
+
+  return { 
+    source: "manual" as const, 
+    capturedAt: serverTimestamp() 
+  };
+}
+
+/**
  * Atomic helper to get or create a leave balance for an employee/year.
  * Must be called in the READ phase of a transaction if used inside runTransaction.
  */
@@ -67,6 +99,9 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
     return { ref: balanceRef, data: snap.data() as LeaveBalance };
   }
 
+  // If not exists, we also need to read employee/contract context for the snapshot
+  const ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, employeeId);
+
   const initialBalance: LeaveBalance = {
     entityId,
     employeeId,
@@ -76,6 +111,7 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
     usedDays: 0,
     pendingDays: 0,
     remainingDays: 0,
+    ccnlSnapshot,
     updatedAt: serverTimestamp(),
     updatedByUid: actorUid,
     updatedByRole: actorRole
@@ -102,11 +138,17 @@ export async function updateLeaveBalanceManual(
   const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
 
   return await runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(balanceRef);
-    const existing = snap.exists() ? (snap.data() as LeaveBalance) : { usedDays: 0, pendingDays: 0 };
+    // 1. ALL READS
+    const [balanceSnap, ccnlSnapshot] = await Promise.all([
+      transaction.get(balanceRef),
+      resolveCcnlSnapshot(transaction, entityId, employeeId)
+    ]);
+
+    const existing = balanceSnap.exists ? (balanceSnap.data() as LeaveBalance) : { usedDays: 0, pendingDays: 0 };
 
     const remainingDays = data.entitlementDays + data.carriedOverDays - (existing.usedDays || 0);
 
+    // 2. ALL WRITES
     const payload: Partial<LeaveBalance> = {
       entityId,
       employeeId,
@@ -114,6 +156,7 @@ export async function updateLeaveBalanceManual(
       entitlementDays: data.entitlementDays,
       carriedOverDays: data.carriedOverDays,
       remainingDays,
+      ccnlSnapshot,
       updatedAt: serverTimestamp(),
       updatedByUid: actorUid,
       updatedByRole: actorRole
@@ -152,21 +195,22 @@ export async function createTimeOffRequestForEmployee(
   }
 
   const duration = calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
-  const requestType = data.requestType || 'other';
+  const requestType = (data.requestType as TimeOffRequestType) || 'other';
   const year = parseInt(data.startDate.split('-')[0]);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS (Must happen before any writes)
+    // 1. ALL READS
     let balanceRef = null;
     if (requestType === "paid_leave") {
       const balanceInfo = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
       balanceRef = balanceInfo.ref;
     }
 
-    // 2. LOGIC / DATA PREP
+    // 2. DATA PREP
     const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
     const requestId = requestRef.id;
 
+    // Normalization rules for justifications
     let requiresJustification = data.requiresJustification ?? false;
     if (["sickness", "work_accident"].includes(requestType)) {
       requiresJustification = true;
@@ -224,6 +268,7 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -232,31 +277,28 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       throw new Error(`Action impossible : la demande est en statut "${request.status}".`);
     }
 
+    // Guard: Justification check
     const isSickness = ["sickness", "work_accident"].includes(request.requestType);
-    if ((request.requiresJustification || isSickness) && request.justificationStatus !== "provided") {
+    const requiresJustification = request.requiresJustification || isSickness;
+    if (requiresJustification && (request.justificationStatus !== "provided" || !request.justificationDocumentIds?.length)) {
       throw new Error("Justificatif requis avant approbation.");
     }
 
     const now = serverTimestamp();
     const year = parseInt(request.startDate.split('-')[0]);
 
-    // Update Balance if paid_leave
+    let balanceRef = null;
     if (request.requestType === "paid_leave") {
-      const { ref: balanceRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      const { ref, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       
       const newRemaining = (balance.entitlementDays || 0) + (balance.carriedOverDays || 0) - ((balance.usedDays || 0) + request.durationDays);
       if (newRemaining < 0) {
         throw new Error("Solde de congé insuffisant.");
       }
-
-      transaction.update(balanceRef, {
-        pendingDays: increment(-request.durationDays),
-        usedDays: increment(request.durationDays),
-        remainingDays: newRemaining,
-        updatedAt: now
-      });
+      balanceRef = ref;
     }
 
+    // 2. ALL WRITES
     transaction.update(requestRef, {
       status: "approved",
       approvedAt: now,
@@ -264,6 +306,15 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       approvedByRole: actorRole,
       updatedAt: now,
     });
+
+    if (balanceRef) {
+      transaction.update(balanceRef, {
+        pendingDays: increment(-request.durationDays),
+        usedDays: increment(request.durationDays),
+        remainingDays: increment(-request.durationDays), // More atomic than recalculating based on non-transactional input
+        updatedAt: now
+      });
+    }
   }).then(async () => {
     await createAuditLog({
       userId: actorUid,
@@ -285,6 +336,7 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -294,14 +346,13 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
     const now = serverTimestamp();
     const year = parseInt(request.startDate.split('-')[0]);
 
+    let balanceRef = null;
     if (request.requestType === "paid_leave") {
-      const { ref: balanceRef } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
-      transaction.update(balanceRef, {
-        pendingDays: increment(-request.durationDays),
-        updatedAt: now
-      });
+      const { ref } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      balanceRef = ref;
     }
 
+    // 2. ALL WRITES
     transaction.update(requestRef, {
       status: "rejected",
       rejectionReason: rejectionReason.trim(),
@@ -310,6 +361,13 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
       rejectedByRole: actorRole,
       updatedAt: now,
     });
+
+    if (balanceRef) {
+      transaction.update(balanceRef, {
+        pendingDays: increment(-request.durationDays),
+        updatedAt: now
+      });
+    }
   }).then(async () => {
     await createAuditLog({
       userId: actorUid,
@@ -330,6 +388,7 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -339,23 +398,14 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
     const now = serverTimestamp();
     const year = parseInt(request.startDate.split('-')[0]);
 
+    let balanceRef = null;
     if (request.requestType === "paid_leave") {
-      const { ref: balanceRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
-      
-      if (request.status === "submitted") {
-        transaction.update(balanceRef, {
-          pendingDays: increment(-request.durationDays),
-          updatedAt: now
-        });
-      } else if (request.status === "approved") {
-        const newUsed = Math.max(0, (balance.usedDays || 0) - request.durationDays);
-        transaction.update(balanceRef, {
-          usedDays: newUsed,
-          remainingDays: (balance.entitlementDays || 0) + (balance.carriedOverDays || 0) - newUsed,
-          updatedAt: now
-        });
-      }
+      const { ref } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
+      balanceRef = ref;
     }
+
+    // 2. ALL WRITES
+    const previousStatus = request.status;
 
     transaction.update(requestRef, {
       status: "cancelled",
@@ -365,6 +415,21 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
       cancelledByRole: actorRole,
       updatedAt: now,
     });
+
+    if (balanceRef) {
+      if (previousStatus === "submitted") {
+        transaction.update(balanceRef, {
+          pendingDays: increment(-request.durationDays),
+          updatedAt: now
+        });
+      } else if (previousStatus === "approved") {
+        transaction.update(balanceRef, {
+          usedDays: increment(-request.durationDays),
+          remainingDays: increment(request.durationDays),
+          updatedAt: now
+        });
+      }
+    }
   }).then(async () => {
     await createAuditLog({
       userId: actorUid,
