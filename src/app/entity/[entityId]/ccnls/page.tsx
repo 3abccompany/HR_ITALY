@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
@@ -300,7 +301,7 @@ export default function CcnlRegistryPage() {
           </DialogHeader>
           
           <ScrollArea className="flex-1 px-8">
-            <form onSubmit={handleSave} className="space-y-8 pb-8">
+            <form id="ccnl-form" onSubmit={handleSave} className="space-y-8 pb-8">
               <div className="space-y-6">
                 <h3 className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
                    <Library className="w-4 h-4" /> Identité & Paramètres Paie
@@ -413,9 +414,9 @@ export default function CcnlRegistryPage() {
             </form>
           </ScrollArea>
 
-          <DialogFooter className="p-8 border-t bg-slate-50">
+          <DialogFooter className="p-8 border-t bg-slate-50 shrink-0">
             <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
-            <Button onClick={handleSave} disabled={loading} className="px-8 shadow-lg shadow-primary/20">
+            <Button form="ccnl-form" type="submit" disabled={loading} className="px-8 shadow-lg shadow-primary/20">
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
               {editingId ? "Enregistrer" : "Créer CCNL"}
             </Button>
