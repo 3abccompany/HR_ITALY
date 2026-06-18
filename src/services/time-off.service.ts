@@ -56,6 +56,7 @@ export async function checkTimeOffOverlap(entityId: string, employeeId: string, 
 
 /**
  * Atomic helper to get or create a leave balance for an employee/year.
+ * Must be called in the READ phase of a transaction if used inside runTransaction.
  */
 async function getOrCreateLeaveBalance(transaction: any, entityId: string, employeeId: string, year: number, actorUid: string, actorRole: string) {
   const balanceId = `${employeeId}_${year}`;
@@ -104,7 +105,7 @@ export async function updateLeaveBalanceManual(
     const snap = await transaction.get(balanceRef);
     const existing = snap.exists() ? (snap.data() as LeaveBalance) : { usedDays: 0, pendingDays: 0 };
 
-    const remainingDays = data.entitlementDays + data.carriedOverDays - existing.usedDays;
+    const remainingDays = data.entitlementDays + data.carriedOverDays - (existing.usedDays || 0);
 
     const payload: Partial<LeaveBalance> = {
       entityId,
@@ -155,6 +156,14 @@ export async function createTimeOffRequestForEmployee(
   const year = parseInt(data.startDate.split('-')[0]);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS (Must happen before any writes)
+    let balanceRef = null;
+    if (requestType === "paid_leave") {
+      const balanceInfo = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
+      balanceRef = balanceInfo.ref;
+    }
+
+    // 2. LOGIC / DATA PREP
     const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
     const requestId = requestRef.id;
 
@@ -182,12 +191,10 @@ export async function createTimeOffRequestForEmployee(
       updatedAt: serverTimestamp(),
     };
 
-    // 1. Create Request
+    // 3. ALL WRITES
     transaction.set(requestRef, payload);
 
-    // 2. Update Balance if paid_leave
-    if (requestType === "paid_leave") {
-      const { ref: balanceRef } = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
+    if (balanceRef) {
       transaction.update(balanceRef, {
         pendingDays: increment(duration),
         updatedAt: serverTimestamp()
@@ -237,7 +244,7 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
     if (request.requestType === "paid_leave") {
       const { ref: balanceRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, request.employeeId, year, actorUid, actorRole);
       
-      const newRemaining = balance.entitlementDays + balance.carriedOverDays - (balance.usedDays + request.durationDays);
+      const newRemaining = (balance.entitlementDays || 0) + (balance.carriedOverDays || 0) - ((balance.usedDays || 0) + request.durationDays);
       if (newRemaining < 0) {
         throw new Error("Solde de congé insuffisant.");
       }
@@ -341,10 +348,10 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
           updatedAt: now
         });
       } else if (request.status === "approved") {
-        const newUsed = Math.max(0, balance.usedDays - request.durationDays);
+        const newUsed = Math.max(0, (balance.usedDays || 0) - request.durationDays);
         transaction.update(balanceRef, {
           usedDays: newUsed,
-          remainingDays: balance.entitlementDays + balance.carriedOverDays - newUsed,
+          remainingDays: (balance.entitlementDays || 0) + (balance.carriedOverDays || 0) - newUsed,
           updatedAt: now
         });
       }
