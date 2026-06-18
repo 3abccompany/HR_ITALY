@@ -636,7 +636,7 @@ export async function runMonthlyAccrualCalculation(params: {
   const { entityId, year, month, employeeId, usefulDaysMode, manualUsefulDays, actorUid } = params;
   if (!db) throw new Error("Firestore not initialized");
 
-  const results = [];
+  const results: { empId: string; status: string; qualified: boolean }[] = [];
   
   // 1. Identify target employees
   let targets: string[] = [];
