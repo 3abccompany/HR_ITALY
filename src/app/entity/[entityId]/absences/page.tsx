@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
   Plus, Loader2, Calendar, User, Briefcase, 
@@ -59,6 +59,7 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
 
 const initialForm = {
   employeeId: "",
@@ -253,7 +254,7 @@ export default function TimeOffManagementPage() {
         toast({ title: "Demande annulée" });
       }
       setDecisionPending(null);
-      setRejectionReason("");
+      rejectionReason && setRejectionReason("");
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {

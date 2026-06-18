@@ -14,7 +14,7 @@ import { useFirebase, useUser, useCollection } from "@/firebase";
 import { collection, query, where, limit } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Employee } from "@/types/employee";
-import { LeaveBalance } from "@/types/time-off";
+import { LeaveBalance, normalizeBalance } from "@/types/time-off";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
@@ -50,8 +50,8 @@ export default function MySpacePage() {
     );
   }, [db, entityId, employee, currentYear]);
 
-  const { data: balanceData, loading: loadingBalance } = useCollection<LeaveBalance>(balanceQuery as any, "my-space.balance");
-  const balance = balanceData?.[0];
+  const { data: rawBalanceData, loading: loadingBalance } = useCollection<LeaveBalance>(balanceQuery as any, "my-space.balance");
+  const balance = rawBalanceData?.[0] ? normalizeBalance(rawBalanceData[0]) : null;
 
   if (membershipLoading || loadingEmployee) {
     return (
@@ -115,12 +115,12 @@ export default function MySpacePage() {
                    <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-primary/20" /></div>
                 ) : balance ? (
                    <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-                      <BalanceStat label="Total Acquis" value={balance.entitlementDays + balance.carriedOverDays} unit="jours" />
-                      <BalanceStat label="Déjà Pris" value={balance.usedDays} unit="jours" color="red" />
-                      <BalanceStat label="En attente" value={balance.pendingDays} unit="jours" color="orange" />
+                      <BalanceStat label="Total Acquis" value={(balance.entitlementDays ?? 0) + (balance.carriedOverDays ?? 0)} unit="jours" />
+                      <BalanceStat label="Déjà Pris" value={balance.usedDays ?? 0} unit="jours" color="red" />
+                      <BalanceStat label="En attente" value={balance.pendingDays ?? 0} unit="jours" color="orange" />
                       <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center">
                          <p className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-1">Restant</p>
-                         <p className="text-3xl font-black text-primary">{balance.remainingDays}</p>
+                         <p className="text-3xl font-black text-primary">{balance.remainingDays ?? 0}</p>
                       </div>
                    </div>
                 ) : (
