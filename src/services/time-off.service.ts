@@ -13,7 +13,8 @@ import {
   updateDoc,
   arrayUnion,
   runTransaction,
-  increment
+  increment,
+  Timestamp
 } from "firebase/firestore";
 import { 
   TimeOffRequest, 
@@ -24,11 +25,14 @@ import {
   TimeOffRequestType,
   LeaveBalanceCounter,
   normalizeBalance,
-  getCounterTypeForRequestType
+  getCounterTypeForRequestType,
+  MonthlyAccrual,
+  MonthlyAccrualStatus
 } from "@/types/time-off";
-import { differenceInCalendarDays, parseISO } from "date-fns";
+import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth } from "date-fns";
 import { createAuditLog } from "./audit.service";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
+import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.service";
 
 /**
  * Calculates the duration of a time-off request in days.
@@ -614,6 +618,202 @@ export async function addJustificationDocumentToRequest(
       details: { documentId }
     });
   }
+}
+
+/**
+ * Phase 2H: Calculates a draft monthly accrual for an employee.
+ * Uses approved timeOffRequests to estimate useful days.
+ */
+export async function runMonthlyAccrualCalculation(params: {
+  entityId: string;
+  year: number;
+  month: number;
+  employeeId?: string; // If missing, runs for all active employees
+  usefulDaysMode: "time_off_estimate" | "manual";
+  manualUsefulDays?: number;
+  actorUid: string;
+}) {
+  const { entityId, year, month, employeeId, usefulDaysMode, manualUsefulDays, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const results = [];
+  
+  // 1. Identify target employees
+  let targets: string[] = [];
+  if (employeeId) {
+    targets = [employeeId];
+  } else {
+    const q = query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active"));
+    const snap = await getDocs(q);
+    targets = snap.docs.map(d => d.id);
+  }
+
+  if (targets.length === 0) throw new Error("Aucun employé actif trouvé.");
+
+  const periodStart = startOfMonth(new Date(year, month - 1));
+  const periodEnd = endOfMonth(periodStart);
+  const periodKey = `${year}-${month.toString().padStart(2, '0')}`;
+
+  for (const empId of targets) {
+    try {
+      await runTransaction(db, async (transaction) => {
+        // --- READ PHASE ---
+        const empRef = doc(db!, `entities/${entityId}/employees`, empId);
+        const empSnap = await transaction.get(empRef);
+        if (!empSnap.exists()) return;
+        const employee = empSnap.data();
+
+        // Overwrite check
+        const accrualId = `${empId}_${year}_${month.toString().padStart(2, '0')}`;
+        const accrualRef = doc(db!, `entities/${entityId}/monthlyAccruals`, accrualId);
+        const existingSnap = await transaction.get(accrualRef);
+        if (existingSnap.exists() && existingSnap.data().status === "confirmed") {
+          throw new Error(`La maturation mensuelle est déjà confirmée pour ${employee.displayName} (${periodKey}).`);
+        }
+
+        // Resolve CCNL context
+        const ccnlContext = await resolveCcnlSnapshot(transaction, entityId, empId);
+        let rules = getDefaultAccrualRules();
+        let levelData: any = null;
+
+        if (ccnlContext.ccnlId && ccnlContext.levelId) {
+          const cRef = doc(db!, `entities/${entityId}/ccnls`, ccnlContext.ccnlId);
+          const lRef = doc(db!, `entities/${entityId}/ccnls/${ccnlContext.ccnlId}/levels`, ccnlContext.levelId);
+          const [cSnap, lSnap] = await Promise.all([transaction.get(cRef), transaction.get(lRef)]);
+          
+          if (cSnap.exists()) {
+            rules = resolveAccrualRulesForCcnlLevel(cSnap.data() as CCNL, ccnlContext.levelId);
+          }
+          if (lSnap.exists()) {
+            levelData = lSnap.data();
+          }
+        }
+
+        // Fetch requests for the month
+        const requestsQ = query(
+          collection(db!, `entities/${entityId}/timeOffRequests`),
+          where("employeeId", "==", empId),
+          where("status", "==", "approved")
+        );
+        const requestsSnap = await getDocs(requestsQ); // Read-only query outside transaction is safer for large lists but here we use it for count
+        const monthRequests = requestsSnap.docs.filter(d => {
+          const r = d.data();
+          return (r.startDate <= periodEnd.toISOString().split('T')[0] && r.endDate >= periodStart.toISOString().split('T')[0]);
+        }).map(d => d.data() as TimeOffRequest);
+
+        // --- CALCULATION PHASE ---
+        let usefulDaysCount = 22; // Default assumption for standard work month
+        let blockingFound = false;
+        let blockingTypes: string[] = [];
+        let notes = "";
+
+        if (usefulDaysMode === "manual" && manualUsefulDays !== undefined) {
+          usefulDaysCount = manualUsefulDays;
+        } else {
+          // Estimate from time off
+          monthRequests.forEach(r => {
+            if (rules.blockingAbsenceTypes?.includes(r.requestType)) {
+              blockingFound = true;
+              blockingTypes.push(r.requestType);
+            }
+            // Simple useful days logic: subtract approved blocking days or unpaid days
+            if (["unpaid_leave", "unjustified_absence"].includes(r.requestType)) {
+               usefulDaysCount -= r.durationDays;
+            }
+          });
+        }
+
+        const isQualified = usefulDaysCount >= (rules.usefulDaysThreshold || 14) && !blockingFound;
+
+        // Proration check
+        let prorationFactor = 1.0;
+        if (employee.hireDate && rules.prorationMethod === "hired_before_15_full_month") {
+          const hireDate = new Date(employee.hireDate);
+          if (hireDate.getFullYear() === year && (hireDate.getMonth() + 1) === month) {
+            if (hireDate.getDate() > 15) {
+              prorationFactor = 0;
+              notes += "Prorata : Embauche après le 15 du mois (Accrual = 0). ";
+            }
+          }
+        }
+
+        const accrued = {
+          paid_leave: isQualified && rules.accrualPaidLeaveEnabled ? ((levelData?.annualPaidLeaveDays || 0) / 12) * prorationFactor : 0,
+          rol: isQualified && rules.accrualRolEnabled ? ((levelData?.annualRolHours || 0) / 12) * prorationFactor : 0,
+          ex_holidays: isQualified && rules.accrualExHolidaysEnabled ? ((levelData?.annualExHolidayHours || 0) / 12) * prorationFactor : 0
+        };
+
+        if (rules.prorationMethod === "pro_rata_temporis") {
+           notes += "Prorata détaillé non appliqué dans Phase 2H. ";
+        }
+
+        if (!levelData) {
+           notes += "Attention : Pas de grille de salaire trouvée pour le calcul. ";
+        }
+
+        // --- WRITE PHASE ---
+        const payload: MonthlyAccrual = {
+          id: accrualId,
+          entityId,
+          employeeId: empId,
+          employeeName: employee.displayName,
+          year,
+          month,
+          periodKey,
+          contractId: ccnlContext.contractId,
+          ccnlSnapshot: ccnlContext.ccnlId ? {
+            ccnlId: ccnlContext.ccnlId,
+            ccnlName: ccnlContext.ccnlName || "N/A",
+            levelId: ccnlContext.levelId || "N/A",
+            levelCode: ccnlContext.levelCode || "N/A"
+          } : null,
+          ruleSnapshot: {
+            usefulDaysThreshold: rules.usefulDaysThreshold || 14,
+            prorationMethod: rules.prorationMethod || "none",
+            blockingAbsenceTypes: rules.blockingAbsenceTypes || []
+          },
+          usefulDaysCount,
+          usefulDaysSource: usefulDaysMode,
+          blockingReasonFound: blockingFound,
+          blockingReasonTypes: Array.from(new Set(blockingTypes)),
+          isAccrualQualified: isQualified && prorationFactor > 0,
+          accrued,
+          status: "draft",
+          calculationNotes: notes.trim() || null,
+          createdAt: serverTimestamp(),
+          createdByUid: actorUid,
+          updatedAt: serverTimestamp(),
+          updatedByUid: actorUid
+        };
+
+        transaction.set(accrualRef, payload, { merge: true });
+        results.push({ empId, status: "calculated", qualified: isQualified });
+      });
+    } catch (err: any) {
+      console.error(`Accrual calculation failed for ${empId}:`, err.message);
+    }
+  }
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "monthlyAccrual.calculated",
+    resourceType: "monthlyAccrual",
+    resourceId: periodKey,
+    details: { targetsCount: targets.length, month, year }
+  });
+
+  return results;
+}
+
+export async function updateMonthlyAccrualStatus(entityId: string, accrualId: string, status: "confirmed" | "cancelled", actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const ref = doc(db, `entities/${entityId}/monthlyAccruals`, accrualId);
+  await updateDoc(ref, {
+    status,
+    updatedAt: serverTimestamp(),
+    updatedByUid: actorUid
+  });
 }
 
 export async function listTimeOffRequests(entityId: string) {

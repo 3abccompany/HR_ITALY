@@ -8,7 +8,8 @@ import {
   FileText, CheckCircle2, History, Send,
   ChevronRight, ArrowRight, MoreVertical,
   XCircle, Ban, FileWarning, Paperclip, Upload,
-  Download, Eye, Euro, Settings2, Calculator, Save
+  Download, Eye, Euro, Settings2, Calculator, Save,
+  BarChart, Trash2, ShieldCheck, RefreshCw, CheckCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, Query, where, getDoc, doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, LeaveBalance, normalizeBalance } from "@/types/time-off";
+import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, LeaveBalance, normalizeBalance, MonthlyAccrual } from "@/types/time-off";
 import { HRDocumentType } from "@/types/hr-document";
 import { 
   createTimeOffRequestForEmployee, 
@@ -28,7 +29,9 @@ import {
   rejectTimeOffRequest, 
   cancelTimeOffRequest,
   addJustificationDocumentToRequest,
-  updateLeaveBalanceManual
+  updateLeaveBalanceManual,
+  runMonthlyAccrualCalculation,
+  updateMonthlyAccrualStatus
 } from "@/services/time-off.service";
 import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
@@ -84,6 +87,14 @@ const initialBalanceForm = {
   ex_holidays: { entitlement: 0, carriedOver: 0, accrued: 0 }
 };
 
+const initialAccrualForm = {
+  year: new Date().getFullYear(),
+  month: new Date().getMonth() + 1,
+  employeeId: "all",
+  usefulDaysMode: "time_off_estimate" as any,
+  manualUsefulDays: 22
+};
+
 function calculateDecimalHours(start: string, end: string): string {
   if (!start || !end) return "0";
   const [sH, sM] = start.split(':').map(Number);
@@ -106,9 +117,11 @@ export default function TimeOffManagementPage() {
   const [activeTab, setActiveTab] = useState("requests");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isBalanceModalOpen, setIsBalanceModalOpen] = useState(false);
+  const [isAccrualModalOpen, setIsAccrualModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState(initialForm);
   const [balanceForm, setBalanceForm] = useState(initialBalanceForm);
+  const [accrualForm, setAccrualForm] = useState(initialAccrualForm);
   const [statusFilter, setStatusFilter] = useState("all");
 
   // Decision State
@@ -142,9 +155,15 @@ export default function TimeOffManagementPage() {
     return query(collection(db, `entities/${entityId}/leaveBalances`), orderBy("year", "desc")) as Query<LeaveBalance>;
   }, [db, entityId, canRead]);
 
+  const accrualsQuery = useMemo(() => {
+    if (!db || !entityId || !canRead) return null;
+    return query(collection(db, `entities/${entityId}/monthlyAccruals`), orderBy("periodKey", "desc")) as Query<MonthlyAccrual>;
+  }, [db, entityId, canRead]);
+
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery);
   const { data: employees } = useCollection<Employee>(employeesQuery);
   const { data: rawBalances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
+  const { data: accruals, loading: loadingAccruals } = useCollection<MonthlyAccrual>(accrualsQuery);
 
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
@@ -225,6 +244,41 @@ export default function TimeOffManagementPage() {
       toast({ variant: "destructive", title: "Échec", description: err.message });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRunAccrual = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !entityId) return;
+
+    setLoading(true);
+    try {
+      await runMonthlyAccrualCalculation({
+        entityId,
+        year: accrualForm.year,
+        month: accrualForm.month,
+        employeeId: accrualForm.employeeId === "all" ? undefined : accrualForm.employeeId,
+        usefulDaysMode: accrualForm.usefulDaysMode,
+        manualUsefulDays: accrualForm.manualUsefulDays,
+        actorUid: user.uid
+      });
+
+      toast({ title: "Calcul terminé", description: "Les maturations ont été générées en mode brouillon." });
+      setIsAccrualModalOpen(false);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur de calcul", description: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateAccrualStatus = async (id: string, status: "confirmed" | "cancelled") => {
+    if (!user || !entityId) return;
+    try {
+      await updateMonthlyAccrualStatus(entityId, id, status, user.uid);
+      toast({ title: status === 'confirmed' ? "Maturation confirmée" : "Maturation annulée" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -378,6 +432,11 @@ export default function TimeOffManagementPage() {
         </div>
         <div className="flex gap-3">
           {canUpdate && (
+            <Button onClick={() => setIsAccrualModalOpen(true)} variant="outline" className="gap-2 rounded-xl font-bold border-accent text-accent hover:bg-accent/5">
+              <RefreshCw className="w-4 h-4" /> Calculer maturation
+            </Button>
+          )}
+          {canUpdate && (
             <Button onClick={() => setIsBalanceModalOpen(true)} variant="outline" className="gap-2 rounded-xl font-bold border-dashed">
               <Calculator className="w-4 h-4" /> Gérer les soldes
             </Button>
@@ -393,6 +452,7 @@ export default function TimeOffManagementPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-white border rounded-xl p-1 h-11">
           <TabsTrigger value="requests" className="rounded-lg px-6 font-bold">Demandes</TabsTrigger>
+          <TabsTrigger value="accruals" className="rounded-lg px-6 font-bold">Maturations mensuelles</TabsTrigger>
           <TabsTrigger value="balances" className="rounded-lg px-6 font-bold">Soldes annuels</TabsTrigger>
         </TabsList>
 
@@ -550,6 +610,72 @@ export default function TimeOffManagementPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="accruals" className="mt-0 space-y-6">
+           <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
+              <Table>
+                 <TableHeader className="bg-secondary/20">
+                    <TableRow>
+                       <TableHead className="pl-6">Employé</TableHead>
+                       <TableHead>Période</TableHead>
+                       <TableHead>Qualification</TableHead>
+                       <TableHead>Jours utiles</TableHead>
+                       <TableHead>Congés (j)</TableHead>
+                       <TableHead>ROL (h)</TableHead>
+                       <TableHead>Ex Fest. (h)</TableHead>
+                       <TableHead>Statut</TableHead>
+                       <TableHead className="text-right pr-6">Actions</TableHead>
+                    </TableRow>
+                 </TableHeader>
+                 <TableBody>
+                    {loadingAccruals ? (
+                      <TableRow><TableCell colSpan={9} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                    ) : accruals?.length === 0 ? (
+                      <TableRow><TableCell colSpan={9} className="text-center py-20 text-muted-foreground italic">Aucune maturation calculée.</TableCell></TableRow>
+                    ) : (
+                      accruals?.map(a => (
+                        <TableRow key={a.id} className="hover:bg-muted/50">
+                           <TableCell className="pl-6 py-4 font-bold text-slate-900">{a.employeeName}</TableCell>
+                           <TableCell className="text-xs font-medium uppercase">{a.periodKey}</TableCell>
+                           <TableCell>
+                              {a.isAccrualQualified ? (
+                                <Badge className="bg-green-600 text-white border-none text-[8px]">QUALIFIÉ</Badge>
+                              ) : (
+                                <div className="flex flex-col gap-0.5">
+                                   <Badge variant="destructive" className="text-[8px]">NON QUALIFIÉ</Badge>
+                                   {a.blockingReasonFound && <p className="text-[8px] text-red-600 font-bold">Bloquant trouvé</p>}
+                                </div>
+                              )}
+                           </TableCell>
+                           <TableCell className="text-xs">
+                              <span className={cn("font-bold", a.usefulDaysCount < (a.ruleSnapshot?.usefulDaysThreshold || 14) ? "text-red-600" : "text-green-700")}>
+                                {a.usefulDaysCount} j
+                              </span>
+                              <p className="text-[9px] text-muted-foreground uppercase">{a.usefulDaysSource === 'manual' ? 'Saisie' : 'Est.'}</p>
+                           </TableCell>
+                           <TableCell className="font-bold">{a.accrued.paid_leave.toFixed(2)}</TableCell>
+                           <TableCell className="font-bold">{a.accrued.rol.toFixed(2)}</TableCell>
+                           <TableCell className="font-bold">{a.accrued.ex_holidays.toFixed(2)}</TableCell>
+                           <TableCell>
+                              <Badge variant="outline" className={cn("text-[9px] uppercase font-black", a.status === 'confirmed' ? "bg-green-50 text-green-700 border-green-200" : "bg-slate-50")}>
+                                {a.status}
+                              </Badge>
+                           </TableCell>
+                           <TableCell className="text-right pr-6">
+                              {a.status === 'draft' && (
+                                <div className="flex justify-end gap-2">
+                                   <Button variant="ghost" size="icon" className="text-green-600" onClick={() => handleUpdateAccrualStatus(a.id, 'confirmed')}><CheckCircle className="w-4 h-4" /></Button>
+                                   <Button variant="ghost" size="icon" className="text-red-600" onClick={() => handleUpdateAccrualStatus(a.id, 'cancelled')}><Trash2 className="w-4 h-4" /></Button>
+                                </div>
+                              )}
+                           </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                 </TableBody>
+              </Table>
+           </Card>
+        </TabsContent>
+
         <TabsContent value="balances" className="mt-0">
            <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
               <Table>
@@ -633,6 +759,81 @@ export default function TimeOffManagementPage() {
            </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Accrual Calculation Modal */}
+      <Dialog open={isAccrualModalOpen} onOpenChange={setIsAccrualModalOpen}>
+        <DialogContent className="sm:max-w-[500px] rounded-[2rem]">
+           <DialogHeader>
+              <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+                 <RefreshCw className="w-5 h-5 text-accent" /> Calculer maturation mensuelle
+              </DialogTitle>
+              <DialogDescription>Générez les acquisitions de congés et ROL pour une période donnée.</DialogDescription>
+           </DialogHeader>
+
+           <form onSubmit={handleRunAccrual} className="space-y-6 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase">Année</Label>
+                    <Input type="number" value={accrualForm.year} onChange={(e) => setAccrualForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl h-11" />
+                 </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase">Mois</Label>
+                    <Select value={accrualForm.month.toString()} onValueChange={(v) => setAccrualForm(p => ({...p, month: parseInt(v)}))}>
+                       <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                       <SelectContent>
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+                            <SelectItem key={m} value={m.toString()}>{format(new Date(2000, m-1), 'MMMM', { locale: fr })}</SelectItem>
+                          ))}
+                       </SelectContent>
+                    </Select>
+                 </div>
+              </div>
+
+              <div className="space-y-2">
+                 <Label className="text-[10px] font-black uppercase">Collaborateur (Optionnel)</Label>
+                 <Select value={accrualForm.employeeId} onValueChange={(v) => setAccrualForm(p => ({...p, employeeId: v}))}>
+                    <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Tous les actifs" /></SelectTrigger>
+                    <SelectContent>
+                       <SelectItem value="all">Calcul groupé (Tous les actifs)</SelectItem>
+                       {activeEmployees.map(e => (
+                         <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>
+                       ))}
+                    </SelectContent>
+                 </Select>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-4">
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase">Mode jours utiles</Label>
+                    <Select value={accrualForm.usefulDaysMode} onValueChange={(v: any) => setAccrualForm(p => ({...p, usefulDaysMode: v}))}>
+                       <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                       <SelectContent>
+                          <SelectItem value="time_off_estimate">Estimation système (via absences)</SelectItem>
+                          <SelectItem value="manual">Saisie manuelle fixe</SelectItem>
+                       </SelectContent>
+                    </Select>
+                 </div>
+
+                 {accrualForm.usefulDaysMode === 'manual' && (
+                    <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+                       <Label className="text-[10px] font-black uppercase">Jours utiles à appliquer</Label>
+                       <Input type="number" value={accrualForm.manualUsefulDays} onChange={(e) => setAccrualForm(p => ({...p, manualUsefulDays: parseInt(e.target.value)}))} className="rounded-xl h-11" />
+                       <p className="text-[9px] text-muted-foreground italic">Standard : 22j pour une semaine de 5j.</p>
+                    </div>
+                 )}
+              </div>
+
+              <DialogFooter>
+                 <Button type="button" variant="ghost" onClick={() => setIsAccrualModalOpen(false)} disabled={loading}>Annuler</Button>
+                 <Button type="submit" disabled={loading} className="rounded-xl font-black px-8">
+                    {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Lancer le calcul
+                 </Button>
+              </DialogFooter>
+           </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Manual Balance Dialog */}
       <Dialog open={isBalanceModalOpen} onOpenChange={setIsBalanceModalOpen}>

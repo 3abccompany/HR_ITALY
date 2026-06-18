@@ -112,6 +112,52 @@ export interface LeaveBalance {
   updatedByRole: string;
 }
 
+export type MonthlyAccrualStatus = "draft" | "confirmed" | "cancelled" | "posted";
+
+export interface MonthlyAccrual {
+  id: string; // {employeeId}_YYYY_MM
+  entityId: string;
+  employeeId: string;
+  employeeName: string;
+  year: number;
+  month: number;
+  periodKey: string; // "YYYY-MM"
+  contractId?: string | null;
+  
+  ccnlSnapshot?: {
+    ccnlId: string;
+    ccnlName: string;
+    levelId: string;
+    levelCode: string;
+  } | null;
+
+  ruleSnapshot?: {
+    usefulDaysThreshold: number;
+    prorationMethod: string;
+    blockingAbsenceTypes: string[];
+  } | null;
+
+  usefulDaysCount: number;
+  usefulDaysSource: "manual" | "time_off_estimate";
+  blockingReasonFound: boolean;
+  blockingReasonTypes: string[];
+  isAccrualQualified: boolean;
+
+  accrued: {
+    paid_leave: number;
+    rol: number;
+    ex_holidays: number;
+  };
+
+  status: MonthlyAccrualStatus;
+  calculationNotes?: string | null;
+  
+  createdAt: Date | FieldValue;
+  createdByUid: string;
+  updatedAt: Date | FieldValue;
+  updatedByUid: string;
+}
+
 /**
  * Normalizes a leave balance document by mapping legacy flat fields 
  * into the new multi-counter structure if missing.
