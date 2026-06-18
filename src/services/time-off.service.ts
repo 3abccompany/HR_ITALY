@@ -674,6 +674,7 @@ export async function runMonthlyAccrualCalculation(params: {
         // Resolve CCNL context
         const ccnlContext = await resolveCcnlSnapshot(transaction, entityId, empId);
         let rules = getDefaultAccrualRules();
+        let ccnlData: any = null;
         let levelData: any = null;
 
         if (ccnlContext.ccnlId && ccnlContext.levelId) {
@@ -682,7 +683,8 @@ export async function runMonthlyAccrualCalculation(params: {
           const [cSnap, lSnap] = await Promise.all([transaction.get(cRef), transaction.get(lRef)]);
           
           if (cSnap.exists()) {
-            rules = resolveAccrualRulesForCcnlLevel(cSnap.data() as CCNL, ccnlContext.levelId);
+            ccnlData = cSnap.data();
+            rules = resolveAccrualRulesForCcnlLevel(ccnlData as CCNL, ccnlContext.levelId);
           }
           if (lSnap.exists()) {
             levelData = lSnap.data();
@@ -695,7 +697,7 @@ export async function runMonthlyAccrualCalculation(params: {
           where("employeeId", "==", empId),
           where("status", "==", "approved")
         );
-        const requestsSnap = await getDocs(requestsQ); // Read-only query outside transaction is safer for large lists but here we use it for count
+        const requestsSnap = await getDocs(requestsQ); // Read-only query outside transaction is safer for large lists
         const monthRequests = requestsSnap.docs.filter(d => {
           const r = d.data();
           return (r.startDate <= periodEnd.toISOString().split('T')[0] && r.endDate >= periodStart.toISOString().split('T')[0]);
@@ -737,18 +739,25 @@ export async function runMonthlyAccrualCalculation(params: {
           }
         }
 
+        // Entitlement resolution hierarchy: Level -> Root -> 0
+        const annualPaidLeave = levelData?.annualPaidLeaveDays || ccnlData?.annualPaidLeaveDays || 0;
+        const annualRol = levelData?.annualRolHours || ccnlData?.annualRolHours || 0;
+        const annualExHolidays = levelData?.annualExHolidayHours || ccnlData?.annualExHolidayHours || 0;
+
+        if (isQualified) {
+          if (rules.accrualPaidLeaveEnabled && annualPaidLeave === 0) notes += "Droits annuels CCNL manquants pour congés. ";
+          if (rules.accrualRolEnabled && annualRol === 0) notes += "Droits annuels CCNL manquants pour ROL. ";
+          if (rules.accrualExHolidaysEnabled && annualExHolidays === 0) notes += "Droits annuels CCNL manquants pour ex festività. ";
+        }
+
         const accrued = {
-          paid_leave: isQualified && rules.accrualPaidLeaveEnabled ? ((levelData?.annualPaidLeaveDays || 0) / 12) * prorationFactor : 0,
-          rol: isQualified && rules.accrualRolEnabled ? ((levelData?.annualRolHours || 0) / 12) * prorationFactor : 0,
-          ex_holidays: isQualified && rules.accrualExHolidaysEnabled ? ((levelData?.annualExHolidayHours || 0) / 12) * prorationFactor : 0
+          paid_leave: isQualified && rules.accrualPaidLeaveEnabled ? (annualPaidLeave / 12) * prorationFactor : 0,
+          rol: isQualified && rules.accrualRolEnabled ? (annualRol / 12) * prorationFactor : 0,
+          ex_holidays: isQualified && rules.accrualExHolidaysEnabled ? (annualExHolidays / 12) * prorationFactor : 0
         };
 
         if (rules.prorationMethod === "pro_rata_temporis") {
            notes += "Prorata détaillé non appliqué dans Phase 2H. ";
-        }
-
-        if (!levelData) {
-           notes += "Attention : Pas de grille de salaire trouvée pour le calcul. ";
         }
 
         // --- WRITE PHASE ---

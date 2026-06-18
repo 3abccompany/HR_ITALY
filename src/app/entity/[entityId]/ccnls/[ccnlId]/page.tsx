@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -42,6 +41,9 @@ const initialLevelForm = {
   qualificationLabel: "",
   minimumGrossMonthly: "0",
   minimumGrossHourly: "0",
+  annualPaidLeaveDays: "0",
+  annualRolHours: "0",
+  annualExHolidayHours: "0",
   effectiveFrom: new Date().toISOString().split('T')[0],
   notes: ""
 };
@@ -86,6 +88,9 @@ export default function CcnlLevelsPage() {
       qualificationLabel: l.qualificationLabel,
       minimumGrossMonthly: l.minimumGrossMonthly.toString(),
       minimumGrossHourly: l.minimumGrossHourly.toString(),
+      annualPaidLeaveDays: (l.annualPaidLeaveDays || 0).toString(),
+      annualRolHours: (l.annualRolHours || 0).toString(),
+      annualExHolidayHours: (l.annualExHolidayHours || 0).toString(),
       effectiveFrom: l.effectiveFrom,
       notes: l.notes || ""
     });
@@ -133,7 +138,10 @@ export default function CcnlLevelsPage() {
       const finalPayload = {
         ...formData,
         minimumGrossMonthly: monthlyNum,
-        minimumGrossHourly: hourlyNum
+        minimumGrossHourly: hourlyNum,
+        annualPaidLeaveDays: parseFloat(formData.annualPaidLeaveDays.toString()) || 0,
+        annualRolHours: parseFloat(formData.annualRolHours.toString()) || 0,
+        annualExHolidayHours: parseFloat(formData.annualExHolidayHours.toString()) || 0
       };
 
       if (editingLevelId) {
@@ -313,6 +321,33 @@ export default function CcnlLevelsPage() {
                    inputMode="decimal"
                    value={formData.minimumGrossHourly} 
                    onChange={(e) => setFormData(p => ({...p, minimumGrossHourly: e.target.value}))} 
+                 />
+               </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 pt-2 border-t">
+               <div className="space-y-2">
+                 <Label className="text-[10px] uppercase font-bold">Congés (j/an)</Label>
+                 <Input 
+                   type="number" 
+                   value={formData.annualPaidLeaveDays} 
+                   onChange={(e) => setFormData(p => ({...p, annualPaidLeaveDays: e.target.value}))} 
+                 />
+               </div>
+               <div className="space-y-2">
+                 <Label className="text-[10px] uppercase font-bold">ROL (h/an)</Label>
+                 <Input 
+                   type="number" 
+                   value={formData.annualRolHours} 
+                   onChange={(e) => setFormData(p => ({...p, annualRolHours: e.target.value}))} 
+                 />
+               </div>
+               <div className="space-y-2">
+                 <Label className="text-[10px] uppercase font-bold">Ex Fest. (h/an)</Label>
+                 <Input 
+                   type="number" 
+                   value={formData.annualExHolidayHours} 
+                   onChange={(e) => setFormData(p => ({...p, annualExHolidayHours: e.target.value}))} 
                  />
                </div>
             </div>

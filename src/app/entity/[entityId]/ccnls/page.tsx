@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -7,7 +6,8 @@ import {
   Plus, Search, Edit, PowerOff, Loader2, 
   Library, FileText, Calendar, ShieldCheck,
   Filter, X, ListFilter, MoreVertical, Eye,
-  AlertCircle, Settings2, Clock, CheckCircle2, Save
+  AlertCircle, Settings2, Clock, CheckCircle2, Save,
+  Euro
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +53,9 @@ const initialForm = {
   standardWeeklyHours: 40,
   monthlyPayments: 13,
   hourlyDivisor: 173,
+  annualPaidLeaveDays: 0,
+  annualRolHours: 0,
+  annualExHolidayHours: 0,
   effectiveFrom: new Date().toISOString().split('T')[0],
   notes: "",
   accrualRules: getDefaultAccrualRules()
@@ -112,6 +115,9 @@ export default function CcnlRegistryPage() {
       standardWeeklyHours: c.standardWeeklyHours,
       monthlyPayments: c.monthlyPayments,
       hourlyDivisor: c.hourlyDivisor,
+      annualPaidLeaveDays: c.annualPaidLeaveDays || 0,
+      annualRolHours: c.annualRolHours || 0,
+      annualExHolidayHours: c.annualExHolidayHours || 0,
       effectiveFrom: c.effectiveFrom,
       notes: c.notes || "",
       accrualRules: normalizeAccrualRules(c.accrualRules)
@@ -332,6 +338,21 @@ export default function CcnlRegistryPage() {
                   <div className="space-y-2">
                     <Label htmlFor="hourlyDivisor">Diviseur Horaire</Label>
                     <Input id="hourlyDivisor" type="number" value={formData.hourlyDivisor} onChange={(e) => setFormData(p => ({...p, hourlyDivisor: parseInt(e.target.value)}))} required />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4 border-t pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="annualPaidLeaveDays">Congés (j/an)</Label>
+                    <Input id="annualPaidLeaveDays" type="number" value={formData.annualPaidLeaveDays} onChange={(e) => setFormData(p => ({...p, annualPaidLeaveDays: parseFloat(e.target.value)}))} placeholder="Ex: 26" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="annualRolHours">ROL (h/an)</Label>
+                    <Input id="annualRolHours" type="number" value={formData.annualRolHours} onChange={(e) => setFormData(p => ({...p, annualRolHours: parseFloat(e.target.value)}))} placeholder="Ex: 40" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="annualExHolidayHours">Ex Fest. (h/an)</Label>
+                    <Input id="annualExHolidayHours" type="number" value={formData.annualExHolidayHours} onChange={(e) => setFormData(p => ({...p, annualExHolidayHours: parseFloat(e.target.value)}))} placeholder="Ex: 32" />
                   </div>
                 </div>
 
