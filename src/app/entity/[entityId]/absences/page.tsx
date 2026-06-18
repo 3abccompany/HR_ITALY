@@ -447,7 +447,13 @@ export default function TimeOffManagementPage() {
                       <TableCell>
                          <div className="flex items-center gap-1.5 font-black text-primary">
                             <Clock className="w-3.5 h-3.5 opacity-30" />
-                            {r.unit === "days" ? `${r.durationDays} j` : `${r.durationHours} h`}
+                            {(() => {
+                              const isHours = r.unit === "hours" || ['rol_permission', 'ex_holiday_permission'].includes(r.requestType);
+                              if (isHours) {
+                                return r.durationHours !== undefined && r.durationHours !== null ? `${r.durationHours} h` : "—";
+                              }
+                              return r.durationDays !== undefined && r.durationDays !== null ? `${r.durationDays} j` : "—";
+                            })()}
                          </div>
                       </TableCell>
                       <TableCell>
@@ -884,7 +890,7 @@ export default function TimeOffManagementPage() {
               <DialogFooter className="pt-4 border-t">
                  <Button type="button" variant="ghost" onClick={() => setUploadingRequest(null)} disabled={isUploading}>Annuler</Button>
                  <Button type="submit" disabled={isUploading || !uploadFile} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
-                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                     Confirmer l'ajout
                  </Button>
               </DialogFooter>
