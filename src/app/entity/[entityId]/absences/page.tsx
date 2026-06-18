@@ -18,7 +18,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy, Query, where } from "firebase/firestore";
+import { collection, query, orderBy, Query, where, getDoc, doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, LeaveBalance } from "@/types/time-off";
 import { HRDocumentType } from "@/types/hr-document";
