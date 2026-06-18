@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -7,19 +6,20 @@ import {
   Plus, Search, Edit, PowerOff, Loader2, 
   Library, FileText, Calendar, ShieldCheck,
   Filter, X, ListFilter, MoreVertical, Eye,
-  AlertCircle
+  AlertCircle, Settings2, Clock, CheckCircle2, Save
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { createCcnl, updateCcnl, archiveCcnl } from "@/services/ccnl.service";
-import { CCNL, CCNLStatus } from "@/types/ccnl";
+import { createCcnl, updateCcnl, archiveCcnl, getDefaultAccrualRules, normalizeAccrualRules } from "@/services/ccnl.service";
+import { CCNL, CCNLStatus, CCNLAccrualRules } from "@/types/ccnl";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
@@ -42,6 +42,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 const initialForm = {
@@ -52,7 +54,8 @@ const initialForm = {
   monthlyPayments: 13,
   hourlyDivisor: 173,
   effectiveFrom: new Date().toISOString().split('T')[0],
-  notes: ""
+  notes: "",
+  accrualRules: getDefaultAccrualRules()
 };
 
 export default function CcnlRegistryPage() {
@@ -110,7 +113,8 @@ export default function CcnlRegistryPage() {
       monthlyPayments: c.monthlyPayments,
       hourlyDivisor: c.hourlyDivisor,
       effectiveFrom: c.effectiveFrom,
-      notes: c.notes || ""
+      notes: c.notes || "",
+      accrualRules: normalizeAccrualRules(c.accrualRules)
     });
     setEditingId(c.ccnlId);
     setIsFormOpen(true);
@@ -134,6 +138,16 @@ export default function CcnlRegistryPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const updateAccrualRule = (key: keyof CCNLAccrualRules, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      accrualRules: {
+        ...prev.accrualRules,
+        [key]: value
+      }
+    }));
   };
 
   const confirmArchive = async () => {
@@ -277,65 +291,135 @@ export default function CcnlRegistryPage() {
 
       {/* CCNL Form Dialog */}
       <Dialog open={isFormOpen} onOpenChange={(open) => !open && handleReset()}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>{editingId ? "Modifier le CCNL" : "Nouveau CCNL"}</DialogTitle>
-            <DialogDescription>Définissez les paramètres globaux du contrat collectif.</DialogDescription>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0 rounded-[2rem]">
+          <DialogHeader className="p-8 pb-4">
+            <DialogTitle className="text-2xl font-black text-primary">
+              {editingId ? "Modifier le CCNL" : "Nouveau CCNL"}
+            </DialogTitle>
+            <DialogDescription>Définissez les paramètres globaux et les règles d'acquisition des congés.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2 col-span-2">
-                <Label htmlFor="name">Nom du CCNL</Label>
-                <Input id="name" value={formData.name} onChange={(e) => setFormData(p => ({...p, name: e.target.value}))} required placeholder="Ex: Commerce et Tertiaire" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="sector">Secteur d'activité</Label>
-                <Input id="sector" value={formData.sector} onChange={(e) => setFormData(p => ({...p, sector: e.target.value}))} required placeholder="Ex: Tertiaire" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="cnelCode">Code CNEL (Optionnel)</Label>
-                <Input id="cnelCode" value={formData.cnelCode} onChange={(e) => setFormData(p => ({...p, cnelCode: e.target.value}))} placeholder="Ex: H012" />
-              </div>
-            </div>
+          
+          <ScrollArea className="flex-1 px-8">
+            <form onSubmit={handleSave} className="space-y-8 pb-8">
+              <div className="space-y-6">
+                <h3 className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
+                   <Library className="w-4 h-4" /> Identité & Paramètres Paie
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2 col-span-2">
+                    <Label htmlFor="name">Nom du CCNL</Label>
+                    <Input id="name" value={formData.name} onChange={(e) => setFormData(p => ({...p, name: e.target.value}))} required placeholder="Ex: Commerce et Tertiaire" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sector">Secteur d'activité</Label>
+                    <Input id="sector" value={formData.sector} onChange={(e) => setFormData(p => ({...p, sector: e.target.value}))} required placeholder="Ex: Tertiaire" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="cnelCode">Code CNEL (Optionnel)</Label>
+                    <Input id="cnelCode" value={formData.cnelCode} onChange={(e) => setFormData(p => ({...p, cnelCode: e.target.value}))} placeholder="Ex: H012" />
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-3 gap-4 border-t pt-4">
-              <div className="space-y-2">
-                <Label htmlFor="standardWeeklyHours">Heures Hebdo.</Label>
-                <Input id="standardWeeklyHours" type="number" step="0.5" value={formData.standardWeeklyHours} onChange={(e) => setFormData(p => ({...p, standardWeeklyHours: parseFloat(e.target.value)}))} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="monthlyPayments">Mensualités</Label>
-                <Input id="monthlyPayments" type="number" value={formData.monthlyPayments} onChange={(e) => setFormData(p => ({...p, monthlyPayments: parseInt(e.target.value)}))} required />
-                {formData.monthlyPayments > 0 && ![12, 13, 14].includes(formData.monthlyPayments) && (
-                  <p className="text-[10px] text-orange-600 font-bold flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> Valeur inhabituelle
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="hourlyDivisor">Diviseur Horaire</Label>
-                <Input id="hourlyDivisor" type="number" value={formData.hourlyDivisor} onChange={(e) => setFormData(p => ({...p, hourlyDivisor: parseInt(e.target.value)}))} required />
-              </div>
-            </div>
+                <div className="grid grid-cols-3 gap-4 border-t pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="standardWeeklyHours">Heures Hebdo.</Label>
+                    <Input id="standardWeeklyHours" type="number" step="0.5" value={formData.standardWeeklyHours} onChange={(e) => setFormData(p => ({...p, standardWeeklyHours: parseFloat(e.target.value)}))} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="monthlyPayments">Mensualités</Label>
+                    <Input id="monthlyPayments" type="number" value={formData.monthlyPayments} onChange={(e) => setFormData(p => ({...p, monthlyPayments: parseInt(e.target.value)}))} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hourlyDivisor">Diviseur Horaire</Label>
+                    <Input id="hourlyDivisor" type="number" value={formData.hourlyDivisor} onChange={(e) => setFormData(p => ({...p, hourlyDivisor: parseInt(e.target.value)}))} required />
+                  </div>
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="effectiveFrom">Date d'effet</Label>
-              <Input id="effectiveFrom" type="date" value={formData.effectiveFrom} onChange={(e) => setFormData(p => ({...p, effectiveFrom: e.target.value}))} required />
-            </div>
+                <div className="space-y-2">
+                  <Label htmlFor="effectiveFrom">Date d'effet</Label>
+                  <Input id="effectiveFrom" type="date" value={formData.effectiveFrom} onChange={(e) => setFormData(p => ({...p, effectiveFrom: e.target.value}))} required />
+                </div>
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="notes">Notes</Label>
-              <Input id="notes" value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} placeholder="Observations..." />
-            </div>
+              <Separator />
 
-            <DialogFooter className="pt-4 border-t">
-              <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
-              <Button type="submit" disabled={loading}>
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-                {editingId ? "Enregistrer" : "Créer CCNL"}
-              </Button>
-            </DialogFooter>
-          </form>
+              {/* Accrual Rules Section */}
+              <div className="space-y-6">
+                <h3 className="text-xs font-black uppercase text-primary tracking-widest flex items-center gap-2">
+                   <ShieldCheck className="w-4 h-4" /> Règles d'acquisition (Maturation)
+                </h3>
+                
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase">Seuil jours utiles / mois</Label>
+                    <Input 
+                      type="number" 
+                      value={formData.accrualRules.usefulDaysThreshold} 
+                      onChange={(e) => updateAccrualRule('usefulDaysThreshold', parseInt(e.target.value))} 
+                    />
+                    <p className="text-[9px] text-muted-foreground italic">Standard Italie : 14 jours travaillés ou assimilés.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase">Méthode de prorata</Label>
+                    <Select 
+                      value={formData.accrualRules.prorationMethod} 
+                      onValueChange={(v) => updateAccrualRule('prorationMethod', v)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun (Tout ou rien)</SelectItem>
+                        <SelectItem value="pro_rata_temporis">Pro-rata temporis</SelectItem>
+                        <SelectItem value="hired_before_15_full_month">Embauche {'<'} 15 du mois = Mois plein</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-4 bg-secondary/10 p-6 rounded-2xl border">
+                   <p className="text-[10px] font-black uppercase text-muted-foreground border-b pb-2">Jours considérés comme "utiles"</p>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                      <BooleanRule label="Maladie" checked={formData.accrualRules.includeSickDaysInUsefulDays} onChange={(v) => updateAccrualRule('includeSickDaysInUsefulDays', v)} />
+                      <BooleanRule label="Congés payés" checked={formData.accrualRules.includePaidLeaveInUsefulDays} onChange={(v) => updateAccrualRule('includePaidLeaveInUsefulDays', v)} />
+                      <BooleanRule label="Permissions ROL" checked={formData.accrualRules.includeRolInUsefulDays} onChange={(v) => updateAccrualRule('includeRolInUsefulDays', v)} />
+                      <BooleanRule label="Ex Festività" checked={formData.accrualRules.includeExHolidaysInUsefulDays} onChange={(v) => updateAccrualRule('includeExHolidaysInUsefulDays', v)} />
+                      <BooleanRule label="Accident travail" checked={formData.accrualRules.includeWorkAccidentInUsefulDays} onChange={(v) => updateAccrualRule('includeWorkAccidentInUsefulDays', v)} />
+                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase">Motifs d'absence bloquants</Label>
+                  <Input 
+                    value={formData.accrualRules.blockingAbsenceTypes?.join(', ')} 
+                    onChange={(e) => updateAccrualRule('blockingAbsenceTypes', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                    placeholder="Ex: unpaid_leave, unjustified_absence"
+                  />
+                  <p className="text-[9px] text-muted-foreground">Séparez les codes par une virgule.</p>
+                </div>
+
+                <div className="space-y-4 bg-primary/5 p-6 rounded-2xl border border-primary/10">
+                   <p className="text-[10px] font-black uppercase text-primary border-b border-primary/10 pb-2">Compteurs activés pour l'acquisition</p>
+                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                      <BooleanRule label="Ferie (Congés)" checked={formData.accrualRules.accrualPaidLeaveEnabled} onChange={(v) => updateAccrualRule('accrualPaidLeaveEnabled', v)} />
+                      <BooleanRule label="ROL" checked={formData.accrualRules.accrualRolEnabled} onChange={(v) => updateAccrualRule('accrualRolEnabled', v)} />
+                      <BooleanRule label="Ex Festività" checked={formData.accrualRules.accrualExHolidaysEnabled} onChange={(v) => updateAccrualRule('accrualExHolidaysEnabled', v)} />
+                   </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="notes">Notes</Label>
+                <Textarea id="notes" value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} placeholder="Observations..." />
+              </div>
+            </form>
+          </ScrollArea>
+
+          <DialogFooter className="p-8 border-t bg-slate-50">
+            <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
+            <Button onClick={handleSave} disabled={loading} className="px-8 shadow-lg shadow-primary/20">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+              {editingId ? "Enregistrer" : "Créer CCNL"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -355,5 +439,34 @@ export default function CcnlRegistryPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function BooleanRule({ label, checked, onChange }: { label: string, checked?: boolean, onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-xs font-bold text-slate-700">{label}</span>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+function FilterDropdown({ label, value, onValueChange, options, icon: Icon }: { label: string, value: string, onValueChange: (v: string) => void, options: { label: string, value: string }[], icon?: any }) {
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className={cn("h-10 w-auto min-w-[150px] text-xs font-medium bg-background border-primary/10", value !== 'all' && "border-primary ring-1 ring-primary/10")}>
+        <div className="flex items-center gap-2">
+          {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" />}
+          <span className="text-muted-foreground">{label}:</span>
+          <SelectValue placeholder="Tous" />
+        </div>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">Tous ({label})</SelectItem>
+        {options.map(opt => (
+          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

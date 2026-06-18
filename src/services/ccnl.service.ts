@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -11,8 +10,47 @@ import {
   orderBy, 
   serverTimestamp 
 } from "firebase/firestore";
-import { CCNL, CCNLLevel } from "@/types/ccnl";
+import { CCNL, CCNLLevel, CCNLAccrualRules } from "@/types/ccnl";
 import { createAuditLog } from "./audit.service";
+
+/**
+ * Returns the default Italian accrual rules (14 useful days standard).
+ */
+export function getDefaultAccrualRules(): CCNLAccrualRules {
+  return {
+    usefulDaysThreshold: 14,
+    prorationMethod: "pro_rata_temporis",
+    includeSickDaysInUsefulDays: true,
+    includePaidLeaveInUsefulDays: true,
+    includeRolInUsefulDays: true,
+    includeExHolidaysInUsefulDays: true,
+    includeWorkAccidentInUsefulDays: true,
+    blockingAbsenceTypes: ["unpaid_leave", "unjustified_absence"],
+    accrualPaidLeaveEnabled: true,
+    accrualRolEnabled: true,
+    accrualExHolidaysEnabled: true,
+  };
+}
+
+/**
+ * Normalizes rules by filling missing fields with defaults.
+ */
+export function normalizeAccrualRules(rules?: CCNLAccrualRules): CCNLAccrualRules {
+  return {
+    ...getDefaultAccrualRules(),
+    ...(rules || {}),
+  };
+}
+
+/**
+ * Resolves the effective accrual rules for a specific level.
+ * Merges level overrides into global CCNL rules.
+ */
+export function resolveAccrualRulesForCcnlLevel(ccnl: CCNL, levelId?: string): CCNLAccrualRules {
+  const baseRules = normalizeAccrualRules(ccnl.accrualRules);
+  // Implementation note: Level overrides can be added here once fetched
+  return baseRules;
+}
 
 /**
  * CCNL Registry Services

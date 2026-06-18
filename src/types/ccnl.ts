@@ -1,4 +1,3 @@
-
 import { FieldValue } from "firebase/firestore";
 
 export type CCNLStatus = "active" | "inactive" | "archived";
@@ -11,12 +10,19 @@ export interface CCNLAccrualRules {
   /** Threshold of days worked in a month to accrue entitlements (Default 14) */
   usefulDaysThreshold?: number;
   prorationMethod?: CcnlProrationMethod;
+  
+  // Useful day inclusion toggles
   includeSickDaysInUsefulDays?: boolean;
   includePaidLeaveInUsefulDays?: boolean;
   includeRolInUsefulDays?: boolean;
   includeExHolidaysInUsefulDays?: boolean;
+  includeWorkAccidentInUsefulDays?: boolean;
+
   /** List of absence request types that block the monthly accrual */
   blockingAbsenceTypes?: string[];
+
+  // Acquisition enablement
+  accrualPaidLeaveEnabled?: boolean;
   accrualRolEnabled?: boolean;
   accrualExHolidaysEnabled?: boolean;
 }
