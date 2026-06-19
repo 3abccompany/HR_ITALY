@@ -53,9 +53,9 @@ const initialForm = {
   softSkills: [] as string[],
   notes: "",
   // Recommendations
-  defaultCcnlId: "",
+  defaultCcnlId: "none_clear",
   defaultCcnlName: "",
-  defaultLevelId: "",
+  defaultLevelId: "none_clear",
   defaultLevelCode: "",
   defaultLevelLabel: "",
   defaultContractType: "",
@@ -105,7 +105,8 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   }, [db, entityId, canReadProfiles, canModifyProfiles]);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !formData.defaultCcnlId || (!canReadProfiles && !canModifyProfiles)) return null;
+    const isReady = !!db && !!entityId && !!formData.defaultCcnlId && formData.defaultCcnlId !== "none_clear" && (canReadProfiles || canModifyProfiles);
+    if (!isReady) return null;
     return query(collection(db, `entities/${entityId}/ccnls/${formData.defaultCcnlId}/levels`), where("status", "==", "active")) as Query<CCNLLevel>;
   }, [db, entityId, formData.defaultCcnlId, canReadProfiles, canModifyProfiles]);
 
@@ -125,12 +126,24 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
 
   // Handle prefill for weekly hours and snapshot values
   const handleCcnlChange = (ccnlId: string) => {
-    const ccnl = activeCcnls?.find(c => c.ccnlId === ccnlId);
+    if (ccnlId === "none_clear") {
+      setFormData(p => ({
+        ...p,
+        defaultCcnlId: "none_clear",
+        defaultCcnlName: "",
+        defaultLevelId: "none_clear",
+        defaultLevelCode: "",
+        defaultLevelLabel: ""
+      }));
+      return;
+    }
+
+    const foundCcnl = activeCcnls?.find(c => c.ccnlId === ccnlId);
     setFormData(p => ({
       ...p,
       defaultCcnlId: ccnlId,
-      defaultCcnlName: ccnl?.name || "",
-      defaultLevelId: "", // Reset level on CCNL change
+      defaultCcnlName: foundCcnl?.name || "",
+      defaultLevelId: "none_clear", 
       defaultLevelCode: "",
       defaultLevelLabel: "",
       defaultWeeklyHours: ccnl?.standardWeeklyHours || p.defaultWeeklyHours
@@ -138,16 +151,33 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   };
 
   const handleLevelChange = (levelId: string) => {
-    const level = activeLevels?.find(l => l.levelId === levelId);
-    setFormData(p => ({
-      ...p,
-      defaultLevelId: levelId,
-      defaultLevelCode: level?.levelCode || "",
-      defaultLevelLabel: level?.label || ""
-    }));
+    if (levelId === "none_clear") {
+       setFormData(p => ({
+         ...p,
+         defaultLevelId: "none_clear",
+         defaultLevelCode: "",
+         defaultLevelLabel: ""
+       }));
+       return;
+    }
+
+    const foundLevel = activeLevels?.find(l => l.levelId === levelId);
+    setFormData(p => {
+      const monthly = foundLevel?.minimumGrossMonthly || 0;
+      const payments = p.monthlyPayments || 13;
+      return {
+        ...p,
+        defaultLevelId: levelId,
+        defaultLevelCode: foundLevel?.levelCode || "",
+        defaultLevelLabel: foundLevel?.label || "",
+        defaultMinimumGrossMonthly: monthly,
+        defaultMinimumGrossHourly: foundLevel?.minimumGrossHourly || 0
+      };
+    });
   };
 
   const selectedLevel = useMemo(() => {
+    if (formData.defaultLevelId === "none_clear") return null;
     return activeLevels?.find(l => l.levelId === formData.defaultLevelId);
   }, [activeLevels, formData.defaultLevelId]);
 
@@ -166,9 +196,9 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
         professionalExperience: initialData.professionalExperience || [],
         softSkills: initialData.softSkills || [],
         notes: initialData.notes || "",
-        defaultCcnlId: initialData.defaultCcnlId || "",
+        defaultCcnlId: initialData.defaultCcnlId || "none_clear",
         defaultCcnlName: initialData.defaultCcnlName || "",
-        defaultLevelId: initialData.defaultLevelId || "",
+        defaultLevelId: initialData.defaultLevelId || "none_clear",
         defaultLevelCode: initialData.defaultLevelCode || "",
         defaultLevelLabel: initialData.defaultLevelLabel || "",
         defaultContractType: initialData.defaultContractType || "",
@@ -181,7 +211,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
     e.preventDefault();
     if (!userId || !entityId) return;
 
-    if (formData.defaultLevelId && !formData.defaultCcnlId) {
+    if (formData.defaultLevelId !== "none_clear" && formData.defaultCcnlId === "none_clear") {
       toast({ variant: "destructive", title: "Configuration invalide", description: "Veuillez sélectionner un CCNL avant de choisir un niveau." });
       return;
     }
@@ -347,7 +377,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label className="text-[10px] uppercase font-bold text-muted-foreground">CCNL recommandé</Label>
-                    {formData.defaultCcnlId && !activeCcnls?.some(c => c.ccnlId === formData.defaultCcnlId) && (
+                    {formData.defaultCcnlId && formData.defaultCcnlId !== "none_clear" && !activeCcnls?.some(c => c.ccnlId === formData.defaultCcnlId) && (
                       <Badge variant="destructive" className="h-4 px-1.5 text-[8px] uppercase">CCNL archivé</Badge>
                     )}
                   </div>
@@ -360,8 +390,8 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                       {activeCcnls?.map(c => (
                         <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name} ({c.sector})</SelectItem>
                       ))}
-                      {formData.defaultCcnlId && !activeCcnls?.some(c => c.ccnlId === formData.defaultCcnlId) && (
-                        <SelectItem value={formData.defaultCcnlId} disabled>{formData.defaultCcnlName} (Archivé)</SelectItem>
+                      {formData.defaultCcnlId && formData.defaultCcnlId !== "none_clear" && !activeCcnls?.some(c => c.ccnlId === formData.defaultCcnlId) && (
+                        <SelectItem value={formData.defaultCcnlId} disabled>{formData.defaultCcnlName || "CCNL"} (Archivé)</SelectItem>
                       )}
                     </SelectContent>
                   </Select>
@@ -370,7 +400,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label className="text-[10px] uppercase font-bold text-muted-foreground">Niveau recommandé</Label>
-                    {formData.defaultLevelId && !activeLevels?.some(l => l.levelId === formData.defaultLevelId) && (
+                    {formData.defaultLevelId && formData.defaultLevelId !== "none_clear" && !activeLevels?.some(l => l.levelId === formData.defaultLevelId) && (
                       <Badge variant="destructive" className="h-4 px-1.5 text-[8px] uppercase">Niveau archivé</Badge>
                     )}
                   </div>
@@ -380,15 +410,15 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                     disabled={!formData.defaultCcnlId || formData.defaultCcnlId === "none_clear"}
                   >
                     <SelectTrigger className="bg-white">
-                      <SelectValue placeholder={formData.defaultCcnlId ? "Sél. Niveau..." : "Sél. CCNL d'abord"} />
+                      <SelectValue placeholder={formData.defaultCcnlId !== "none_clear" ? "Sél. Niveau..." : "Sél. CCNL d'abord"} />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none_clear">--- Aucun ---</SelectItem>
                       {activeLevels?.map(l => (
                         <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>
                       ))}
-                      {formData.defaultLevelId && !activeLevels?.some(l => l.levelId === formData.defaultLevelId) && (
-                        <SelectItem value={formData.defaultLevelId} disabled>{formData.defaultLevelCode} (Archivé)</SelectItem>
+                      {formData.defaultLevelId && formData.defaultLevelId !== "none_clear" && !activeLevels?.some(l => l.levelId === formData.defaultLevelId) && (
+                        <SelectItem value={formData.defaultLevelId} disabled>{formData.defaultLevelCode || "Niveau"} (Archivé)</SelectItem>
                       )}
                     </SelectContent>
                   </Select>
