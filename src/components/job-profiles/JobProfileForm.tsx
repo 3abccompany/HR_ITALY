@@ -99,6 +99,12 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
     return query(collection(db, `entities/${entityId}/jobProfileCatalogItems`), orderBy("label", "asc")) as Query<JobProfileCatalogItem>;
   }, [db, entityId, canReadProfiles]);
 
+  // Added missing profiles query for activeProfiles logic
+  const profilesQuery = useMemo(() => {
+    if (!db || !entityId || !canReadProfiles) return null;
+    return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc")) as Query<JobProfile>;
+  }, [db, entityId, canReadProfiles]);
+
   // CCNL / Levels
   const ccnlsQuery = useMemo(() => {
     if (!db || !entityId || (!canReadProfiles && !canModifyProfiles)) return null;
@@ -116,6 +122,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   const { data: catalogItems } = useCollection<JobProfileCatalogItem>(catalogQuery);
   const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
   const { data: activeLevels } = useCollection<CCNLLevel>(levelsQuery);
+  const { data: jobProfiles } = useCollection<JobProfile>(profilesQuery);
 
   const activeDepartments = useMemo(() => departments?.filter(d => d.status === "active") || [], [departments]);
   const activeJobTitles = useMemo(() => jobTitles?.filter(j => j.status === "active") || [], [jobTitles]);
@@ -223,7 +230,6 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
 
     setLoading(true);
     try {
-      const profile = activeProfiles.find(p => p.jobProfileId === formData.jobProfileId);
       const dept = departments?.find(d => d.departmentId === formData.departmentId);
       const title = jobTitles?.find(j => j.jobTitleId === formData.jobTitleId);
       const supervisor = jobTitles?.find(j => j.jobTitleId === formData.directSupervisorJobTitleId);
