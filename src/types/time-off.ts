@@ -151,6 +151,16 @@ export interface MonthlyAccrual {
 
   status: MonthlyAccrualStatus;
   calculationNotes?: string | null;
+
+  // Posting metadata (Phase 2I)
+  postedAt?: Date | FieldValue | null;
+  postedByUid?: string | null;
+  postedToBalanceId?: string | null;
+  postedValues?: {
+    paid_leave: number;
+    rol: number;
+    ex_holidays: number;
+  } | null;
   
   createdAt: Date | FieldValue;
   createdByUid: string;

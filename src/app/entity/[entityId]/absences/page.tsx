@@ -9,7 +9,8 @@ import {
   ChevronRight, ArrowRight, MoreVertical,
   XCircle, Ban, FileWarning, Paperclip, Upload,
   Download, Eye, Euro, Settings2, Calculator, Save,
-  BarChart, Trash2, ShieldCheck, RefreshCw, CheckCircle
+  BarChart, Trash2, ShieldCheck, RefreshCw, CheckCircle,
+  Check
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +32,8 @@ import {
   addJustificationDocumentToRequest,
   updateLeaveBalanceManual,
   runMonthlyAccrualCalculation,
-  updateMonthlyAccrualStatus
+  updateMonthlyAccrualStatus,
+  postMonthlyAccrualToBalance
 } from "@/services/time-off.service";
 import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
@@ -123,6 +125,9 @@ export default function TimeOffManagementPage() {
   const [balanceForm, setBalanceForm] = useState(initialBalanceForm);
   const [accrualForm, setAccrualForm] = useState(initialAccrualForm);
   const [statusFilter, setStatusFilter] = useState("all");
+
+  // Posting State (Phase 2I)
+  const [accrualToPost, setAccrualToPost] = useState<MonthlyAccrual | null>(null);
 
   // Decision State
   const [decisionPending, setDecisionPending] = useState<{ id: string, action: 'approve' | 'reject' | 'cancel' } | null>(null);
@@ -279,6 +284,25 @@ export default function TimeOffManagementPage() {
       toast({ title: status === 'confirmed' ? "Maturation confirmée" : "Maturation annulée" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
+    }
+  };
+
+  const handlePostAccrualToBalance = async () => {
+    if (!user || !entityId || !accrualToPost || !membership) return;
+    setLoading(true);
+    try {
+      await postMonthlyAccrualToBalance(
+        entityId, 
+        accrualToPost.id, 
+        user.uid, 
+        membership.roleId
+      );
+      toast({ title: "Maturation postée", description: "Le solde annuel a été mis à jour." });
+      setAccrualToPost(null);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur de transfert", description: err.message });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -656,14 +680,20 @@ export default function TimeOffManagementPage() {
                            <TableCell className="font-bold">{a.accrued.rol.toFixed(2)}</TableCell>
                            <TableCell className="font-bold">{a.accrued.ex_holidays.toFixed(2)}</TableCell>
                            <TableCell>
-                              <Badge variant="outline" className={cn("text-[9px] uppercase font-black", a.status === 'confirmed' ? "bg-green-50 text-green-700 border-green-200" : "bg-slate-50")}>
-                                {a.status}
-                              </Badge>
+                              {getAccrualStatusBadge(a.status)}
                            </TableCell>
                            <TableCell className="text-right pr-6">
                               {a.status === 'draft' && (
                                 <div className="flex justify-end gap-2">
                                    <Button variant="ghost" size="icon" className="text-green-600" onClick={() => handleUpdateAccrualStatus(a.id, 'confirmed')}><CheckCircle className="w-4 h-4" /></Button>
+                                   <Button variant="ghost" size="icon" className="text-red-600" onClick={() => handleUpdateAccrualStatus(a.id, 'cancelled')}><Trash2 className="w-4 h-4" /></Button>
+                                </div>
+                              )}
+                              {a.status === 'confirmed' && (
+                                <div className="flex justify-end gap-2">
+                                   <Button variant="secondary" size="sm" className="h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 gap-1.5" onClick={() => setAccrualToPost(a)}>
+                                      <Send className="w-3.5 h-3.5" /> Poster au solde
+                                   </Button>
                                    <Button variant="ghost" size="icon" className="text-red-600" onClick={() => handleUpdateAccrualStatus(a.id, 'cancelled')}><Trash2 className="w-4 h-4" /></Button>
                                 </div>
                               )}
@@ -714,10 +744,10 @@ export default function TimeOffManagementPage() {
                             </TableCell>
                             <TableCell className="font-black text-xs text-blue-700">Ferie (Congés)</TableCell>
                             <TableCell className="text-xs">{(b.counters?.paid_leave.entitlement ?? 0) + (b.counters?.paid_leave.carriedOver ?? 0)}j</TableCell>
-                            <TableCell className="text-xs">{b.counters?.paid_leave.accrued ?? 0}j</TableCell>
+                            <TableCell className="text-xs">{b.counters?.paid_leave.accrued.toFixed(2)}j</TableCell>
                             <TableCell className="text-xs font-bold text-red-600">{b.counters?.paid_leave.used ?? 0}j</TableCell>
                             <TableCell className="text-xs font-medium text-orange-600">{b.counters?.paid_leave.pending ?? 0}j</TableCell>
-                            <TableCell><Badge className="bg-primary text-white font-black">{b.counters?.paid_leave.remaining ?? 0}j</Badge></TableCell>
+                            <TableCell><Badge className="bg-primary text-white font-black">{b.counters?.paid_leave.remaining.toFixed(2)}j</Badge></TableCell>
                             <TableCell rowSpan={3} className="text-right pr-6 bg-slate-50/30 align-top py-4">
                                <Button variant="ghost" size="icon" onClick={() => {
                                  setBalanceForm({
@@ -737,19 +767,19 @@ export default function TimeOffManagementPage() {
                          <TableRow>
                             <TableCell className="font-black text-xs text-indigo-700">ROL</TableCell>
                             <TableCell className="text-xs">{(b.counters?.rol.entitlement ?? 0) + (b.counters?.rol.carriedOver ?? 0)}h</TableCell>
-                            <TableCell className="text-xs">{b.counters?.rol.accrued ?? 0}h</TableCell>
+                            <TableCell className="text-xs">{b.counters?.rol.accrued.toFixed(2)}h</TableCell>
                             <TableCell className="text-xs font-bold text-red-600">{b.counters?.rol.used ?? 0}h</TableCell>
                             <TableCell className="text-xs font-medium text-orange-600">{b.counters?.rol.pending ?? 0}h</TableCell>
-                            <TableCell><Badge variant="outline" className="font-black border-indigo-200 text-indigo-700">{b.counters?.rol.remaining ?? 0}h</Badge></TableCell>
+                            <TableCell><Badge variant="outline" className="font-black border-indigo-200 text-indigo-700">{b.counters?.rol.remaining.toFixed(2)}h</Badge></TableCell>
                          </TableRow>
                          {/* Ex Holidays Row */}
                          <TableRow>
                             <TableCell className="font-black text-xs text-teal-700">Ex Festività</TableCell>
                             <TableCell className="text-xs">{(b.counters?.ex_holidays.entitlement ?? 0) + (b.counters?.ex_holidays.carriedOver ?? 0)}h</TableCell>
-                            <TableCell className="text-xs">{b.counters?.ex_holidays.accrued ?? 0}h</TableCell>
+                            <TableCell className="text-xs">{b.counters?.ex_holidays.accrued.toFixed(2)}h</TableCell>
                             <TableCell className="text-xs font-bold text-red-600">{b.counters?.ex_holidays.used ?? 0}h</TableCell>
                             <TableCell className="text-xs font-medium text-orange-600">{b.counters?.ex_holidays.pending ?? 0}h</TableCell>
-                            <TableCell><Badge variant="outline" className="font-black border-teal-200 text-teal-700">{b.counters?.ex_holidays.remaining ?? 0}h</Badge></TableCell>
+                            <TableCell><Badge variant="outline" className="font-black border-teal-200 text-teal-700">{b.counters?.ex_holidays.remaining.toFixed(2)}h</Badge></TableCell>
                          </TableRow>
                        </React.Fragment>
                      ))
@@ -759,6 +789,50 @@ export default function TimeOffManagementPage() {
            </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Posting Confirmation Dialog (Phase 2I) */}
+      <AlertDialog open={!!accrualToPost} onOpenChange={(open) => !open && setAccrualToPost(null)}>
+        <AlertDialogContent className="rounded-[2rem] sm:max-w-[450px]">
+           <AlertDialogHeader>
+              <AlertDialogTitle className="text-xl font-black text-primary">Poster la maturation au solde ?</AlertDialogTitle>
+              <AlertDialogDescription>
+                 Cette action ajoutera les droits calculés au solde annuel de l’employé. Elle ne doit être réalisée qu’après vérification RH.
+              </AlertDialogDescription>
+           </AlertDialogHeader>
+           
+           {accrualToPost && (
+             <div className="py-4 space-y-3">
+                <div className="p-4 bg-slate-50 rounded-2xl border flex flex-col gap-2">
+                   <div className="flex justify-between text-sm">
+                      <span className="font-medium text-muted-foreground">Congés (Ferie)</span>
+                      <span className="font-black text-blue-700">{accrualToPost.accrued.paid_leave.toFixed(2)} j</span>
+                   </div>
+                   <div className="flex justify-between text-sm">
+                      <span className="font-medium text-muted-foreground">ROL</span>
+                      <span className="font-black text-indigo-700">{accrualToPost.accrued.rol.toFixed(2)} h</span>
+                   </div>
+                   <div className="flex justify-between text-sm">
+                      <span className="font-medium text-muted-foreground">Ex Festività</span>
+                      <span className="font-black text-teal-700">{accrualToPost.accrued.ex_holidays.toFixed(2)} h</span>
+                   </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold text-center">Employé: {accrualToPost.employeeName}</p>
+             </div>
+           )}
+
+           <AlertDialogFooter>
+              <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={(e) => { e.preventDefault(); handlePostAccrualToBalance(); }}
+                disabled={loading}
+                className="bg-primary text-white font-black rounded-xl px-8"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                Poster au solde
+              </AlertDialogAction>
+           </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Accrual Calculation Modal */}
       <Dialog open={isAccrualModalOpen} onOpenChange={setIsAccrualModalOpen}>
@@ -1219,6 +1293,16 @@ function getStatusBadge(status: string) {
     case 'approved': return <Badge className="bg-green-600 text-white border-none">Approuvé</Badge>;
     case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Refusé</Badge>;
     case 'cancelled': return <Badge variant="outline" className="bg-slate-50 text-slate-400">Annulé</Badge>;
+    default: return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+function getAccrualStatusBadge(status: string) {
+  switch (status) {
+    case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-400">Brouillon</Badge>;
+    case 'confirmed': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Confirmé</Badge>;
+    case 'posted': return <Badge className="bg-green-600 text-white border-none">Posté</Badge>;
+    case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700">Annulé</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
   }
 }

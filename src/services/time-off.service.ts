@@ -14,7 +14,8 @@ import {
   arrayUnion,
   runTransaction,
   increment,
-  Timestamp
+  Timestamp,
+  FieldValue
 } from "firebase/firestore";
 import { 
   TimeOffRequest, 
@@ -667,8 +668,14 @@ export async function runMonthlyAccrualCalculation(params: {
         const accrualId = `${empId}_${year}_${month.toString().padStart(2, '0')}`;
         const accrualRef = doc(db!, `entities/${entityId}/monthlyAccruals`, accrualId);
         const existingSnap = await transaction.get(accrualRef);
-        if (existingSnap.exists() && existingSnap.data().status === "confirmed") {
-          throw new Error(`La maturation mensuelle est déjà confirmée pour ${employee.displayName} (${periodKey}).`);
+        if (existingSnap.exists()) {
+           const existing = existingSnap.data();
+           if (existing.status === "confirmed") {
+             throw new Error(`La maturation mensuelle est déjà confirmée pour ${employee.displayName} (${periodKey}).`);
+           }
+           if (existing.status === "posted") {
+             throw new Error(`La maturation mensuelle est déjà postée pour ${employee.displayName} (${periodKey}).`);
+           }
         }
 
         // Resolve CCNL context
@@ -813,6 +820,98 @@ export async function runMonthlyAccrualCalculation(params: {
   });
 
   return results;
+}
+
+/**
+ * Phase 2I: Posts a confirmed monthly accrual to the annual leave balance.
+ * Uses a transaction to ensure atomicity and idempotency.
+ */
+export async function postMonthlyAccrualToBalance(
+  entityId: string,
+  accrualId: string,
+  actorUid: string,
+  actorRole: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const accrualRef = doc(db, `entities/${entityId}/monthlyAccruals`, accrualId);
+
+  return await runTransaction(db, async (transaction) => {
+    // 1. ALL READS FIRST
+    const accrualSnap = await transaction.get(accrualRef);
+    if (!accrualSnap.exists()) throw new Error("Maturation introuvable.");
+    const accrual = accrualSnap.data() as MonthlyAccrual;
+
+    const balanceId = `${accrual.employeeId}_${accrual.year}`;
+    const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
+    const balanceSnap = await transaction.get(balanceRef);
+
+    // 2. VALIDATION PHASE
+    if (accrual.status === "posted") throw new Error("Cette maturation a déjà été postée au solde.");
+    if (accrual.status !== "confirmed") throw new Error("La maturation doit être confirmée avant d’être postée.");
+    if (!accrual.isAccrualQualified) throw new Error("Cette maturation n’est pas qualifiée.");
+    
+    const hasValues = (accrual.accrued.paid_leave > 0 || accrual.accrued.rol > 0 || accrual.accrued.ex_holidays > 0);
+    if (!hasValues) throw new Error("Aucune valeur de maturation à poster.");
+
+    // 3. BALANCE RESOLUTION
+    let balance: LeaveBalance;
+    if (!balanceSnap.exists()) {
+       const initial = await getOrCreateLeaveBalance(transaction, entityId, accrual.employeeId, accrual.year, actorUid, actorRole);
+       balance = initial.data;
+    } else {
+       balance = normalizeBalance(balanceSnap.data());
+    }
+
+    // 4. COMPUTATION
+    const counters = { ...balance.counters! };
+    
+    // Add accrued values and recalculate remaining
+    const countersToProcess: (keyof typeof counters)[] = ["paid_leave", "rol", "ex_holidays"];
+    countersToProcess.forEach(type => {
+      const addedValue = accrual.accrued[type as keyof typeof accrual.accrued] || 0;
+      const c = counters[type];
+      c.accrued += addedValue;
+      c.remaining = c.entitlement + c.carriedOver + c.accrued - c.used;
+    });
+
+    const now = serverTimestamp();
+    const balanceUpdate: any = {
+      counters,
+      updatedAt: now,
+      updatedByUid: actorUid,
+      updatedByRole: actorRole,
+      // Legacy mirrors for paid_leave
+      entitlementDays: counters.paid_leave.entitlement,
+      carriedOverDays: counters.paid_leave.carriedOver,
+      usedDays: counters.paid_leave.used,
+      pendingDays: counters.paid_leave.pending,
+      remainingDays: counters.paid_leave.remaining,
+    };
+
+    // 5. ALL WRITES AFTER
+    transaction.set(balanceRef, balanceUpdate, { merge: true });
+    transaction.update(accrualRef, {
+      status: "posted",
+      postedAt: now,
+      postedByUid: actorUid,
+      postedToBalanceId: balanceId,
+      postedValues: accrual.accrued,
+      updatedAt: now,
+      updatedByUid: actorUid
+    });
+
+    return { balanceId };
+  }).then(async (res) => {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "monthlyAccrual.posted",
+      resourceType: "monthlyAccrual",
+      resourceId: accrualId,
+      details: { balanceId: res.balanceId, year: accrual.year, month: accrual.month }
+    });
+  });
 }
 
 export async function updateMonthlyAccrualStatus(entityId: string, accrualId: string, status: "confirmed" | "cancelled", actorUid: string) {
