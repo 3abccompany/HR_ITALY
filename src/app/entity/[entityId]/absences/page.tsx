@@ -141,7 +141,7 @@ interface JournalMovement {
 }
 
 /**
- * Robust date conversion to ISO for sorting. Handles Timestamp, Date, and serialized JSON.
+ * Robust date conversion to ISO for sorting. Handles Timestamp, Date, and FieldValue.
  */
 function safeToIso(val: any): string {
   if (!val) return "";
@@ -282,14 +282,26 @@ export default function TimeOffManagementPage() {
     try {
       const emp = activeEmployees.find(e => e.employeeId === formData.employeeId);
       
+      // Clean payload: Omit hourly fields for day-based and vice versa
+      const payload: any = {
+        ...formData,
+        employeeName: emp?.displayName || "Employé inconnu",
+        personId: emp?.personId || ""
+      };
+
+      if (isHourly) {
+        payload.durationHours = finalDurationHours;
+        payload.endDate = formData.startDate; // Hourly is always same day
+        delete payload.dayPart;
+      } else {
+        delete payload.startTime;
+        delete payload.endTime;
+        delete payload.durationHours;
+      }
+
       await createTimeOffRequestForEmployee(
         entityId,
-        {
-          ...formData,
-          durationHours: isHourly ? finalDurationHours : undefined,
-          employeeName: emp?.displayName || "Employé inconnu",
-          personId: emp?.personId || ""
-        },
+        payload,
         user.uid,
         membership.roleId
       );
@@ -1271,7 +1283,7 @@ export default function TimeOffManagementPage() {
                   <Textarea 
                     value={formData.reason} 
                     onChange={(e) => setFormData(p => ({...p, reason: e.target.value}))} 
-                    placeholder="Notes internes sur cette absence..."
+                    placeholder="Notes internes on cette absence..."
                     className="rounded-xl min-h-[100px]"
                   />
                </div>
@@ -1281,7 +1293,7 @@ export default function TimeOffManagementPage() {
           <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
              <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
              <Button form="request-form" type="submit" disabled={loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/20">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                 Enregistrer la demande
              </Button>
           </DialogFooter>
@@ -1408,10 +1420,6 @@ export default function TimeOffManagementPage() {
   );
 }
 
-function formatValToIso(val: any): string {
-  return safeToIso(val);
-}
-
 function AnnualJournalContent({ balance, accruals, requests }: { balance: LeaveBalance, accruals: MonthlyAccrual[], requests: TimeOffRequest[] }) {
   const tabs = [
     { id: "paid_leave", label: "Ferie / Congés", unit: "j", counter: "paid_leave" },
@@ -1463,9 +1471,9 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
       if (val !== 0) {
         let dateStr = `${a.year}-${a.month.toString().padStart(2, '0')}-01`;
         if (a.postedAt) {
-          dateStr = formatValToIso(a.postedAt);
+          dateStr = safeToIso(a.postedAt);
         } else if (a.updatedAt) {
-          dateStr = formatValToIso(a.updatedAt);
+          dateStr = safeToIso(a.updatedAt);
         }
 
         list.push({
@@ -1488,6 +1496,7 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
       const matchYear = r.startDate.startsWith(year.toString());
       
       let rCounter = r.balanceCounterType;
+      // Fallback for missing balanceCounterType on existing records
       if (!rCounter) {
         if (r.requestType === "paid_leave") rCounter = "paid_leave";
         else if (r.requestType === "rol_permission") rCounter = "rol";
@@ -1496,9 +1505,9 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
 
       return matchEmp && matchStatus && matchYear && rCounter === counterType;
     }).forEach(r => {
-      const val = r.unit === "days" ? (r.durationDays || 0) : (r.durationHours || 0);
+      const val = (r.unit === "days") ? (r.durationDays || 0) : (r.durationHours || 0);
       if (val !== 0) {
-        const dateStr = r.approvedAt ? formatValToIso(r.approvedAt) : r.startDate;
+        const dateStr = r.approvedAt ? safeToIso(r.approvedAt) : r.startDate;
 
         list.push({
           date: dateStr,
@@ -1643,7 +1652,7 @@ function formatDate(val: string) {
 function getStatusBadge(status: string) {
   switch (status) {
     case 'submitted': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200">En attente</Badge>;
-    case 'approved': return <Badge className="bg-green-600 text-white border-none">Approuvé</Badge>;
+    case 'approved': return <Badge className="bg-green-500 text-white border-none">Approuvé</Badge>;
     case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Refusé</Badge>;
     case 'cancelled': return <Badge variant="outline" className="bg-slate-50 text-slate-400">Annulé</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;

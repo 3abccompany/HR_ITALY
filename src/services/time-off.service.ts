@@ -36,7 +36,34 @@ import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.service";
 
 /**
+ * Normalizes an object by removing undefined properties to satisfy Firestore.
+ * Preserves FieldValue and Timestamp identities.
+ */
+function sanitizePayload(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp'
+  ) {
+    return obj;
+  }
+
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  for (const key in obj) {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = typeof val === 'object' ? sanitizePayload(val) : val;
+    }
+  }
+  return newObj;
+}
+
+/**
  * Calculates the duration of a time-off request in days.
+ * 22/06 to 23/06 = 2 inclusive calendar days.
  */
 export function calculateDuration(startDate: string, endDate: string, dayPart: DayPart): number {
   const start = parseISO(startDate);
@@ -72,7 +99,6 @@ export async function checkTimeOffOverlap(entityId: string, employeeId: string, 
 
 /**
  * Internal helper to resolve the CCNL source snapshot for an employee.
- * Must be called in the READ phase of a transaction.
  */
 async function resolveCcnlSnapshot(transaction: any, entityId: string, employeeId: string) {
   const employeeRef = doc(db!, `entities/${entityId}/employees`, employeeId);
@@ -104,8 +130,6 @@ async function resolveCcnlSnapshot(transaction: any, entityId: string, employeeI
 
 /**
  * Atomic helper to get or create a leave balance for an employee/year.
- * Must be called in the READ phase of a transaction.
- * Defaults values from CCNL registry if creating new.
  */
 async function getOrCreateLeaveBalance(transaction: any, entityId: string, employeeId: string, year: number, actorUid: string, actorRole: string) {
   const balanceId = `${employeeId}_${year}`;
@@ -116,10 +140,8 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
     return { ref: balanceRef, data: normalizeBalance(snap.data()) };
   }
 
-  // If not exists, read context for the snapshot
   const ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, employeeId);
   
-  // Try to load default entitlements from CCNL/Level
   let defaultFerie = 0;
   let defaultRol = 0;
   let defaultExHolidays = 0;
@@ -145,7 +167,6 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
       rol: { entitlement: defaultRol, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: 0, unit: "hours" },
       ex_holidays: { entitlement: defaultExHolidays, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: 0, unit: "hours" }
     },
-    // Mirror flat fields for legacy support
     entitlementDays: defaultFerie,
     carriedOverDays: 0,
     usedDays: 0,
@@ -181,11 +202,9 @@ export async function updateLeaveBalanceManual(
   const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const balanceSnap = await transaction.get(balanceRef);
     const ccnlSnapshot = await resolveCcnlSnapshot(transaction, entityId, employeeId);
 
-    // 2. DATA PREP
     const existingFull = balanceSnap.exists() ? normalizeBalance(balanceSnap.data()) : null;
     const existing = existingFull?.counters || {
        paid_leave: { used: 0, pending: 0 },
@@ -193,7 +212,6 @@ export async function updateLeaveBalanceManual(
        ex_holidays: { used: 0, pending: 0 }
     };
 
-    // FORMULA: remaining = carriedOver + accrued - used
     const counters: Record<string, LeaveBalanceCounter> = {
       paid_leave: {
         ...data.paid_leave,
@@ -224,7 +242,6 @@ export async function updateLeaveBalanceManual(
       year,
       ccnlSnapshot,
       counters,
-      // Mirror legacy fields
       entitlementDays: data.paid_leave.entitlement,
       carriedOverDays: data.paid_leave.carriedOver,
       usedDays: counters.paid_leave.used,
@@ -235,8 +252,7 @@ export async function updateLeaveBalanceManual(
       updatedByRole: actorRole
     };
 
-    // 3. ALL WRITES AFTER
-    transaction.set(balanceRef, payload, { merge: true });
+    transaction.set(balanceRef, sanitizePayload(payload), { merge: true });
     return { balanceId };
   }).then(async (res) => {
     await createAuditLog({
@@ -252,8 +268,7 @@ export async function updateLeaveBalanceManual(
 }
 
 /**
- * Phase 2J-A: Helper to mark existing monthly accruals as needing review 
- * when a request is modified in that period.
+ * Phase 2J-A: Mark existing monthly accruals as needing review.
  */
 export async function markMonthlyAccrualImpactedByRequest(entityId: string, request: TimeOffRequest) {
   if (!db) return;
@@ -308,16 +323,15 @@ export async function createTimeOffRequestForEmployee(
   const requestType = (data.requestType as TimeOffRequestType) || 'other';
   const counterType = getCounterTypeForRequestType(requestType);
   
-  // Mapping unit: only ROL and EX_HOLIDAY are hours
-  const hourlyTypes: TimeOffRequestType[] = ["rol_permission", "ex_holiday_permission"];
-  const unit = hourlyTypes.includes(requestType) ? "hours" : "days";
+  const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestType);
+  const unit = isHourly ? "hours" : "days";
   
-  const duration = (unit === "days") 
-    ? calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day")
-    : Number(data.durationHours || 0);
+  // Calculate specific duration
+  const duration = isHourly 
+    ? Number(data.durationHours || 0)
+    : calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
 
   const year = parseInt(data.startDate.split('-')[0]);
-
   const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
   const requestId = requestRef.id;
 
@@ -325,7 +339,6 @@ export async function createTimeOffRequestForEmployee(
   const balanceRef = doc(db!, `entities/${entityId}/leaveBalances`, balanceId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate);
     if (isOverlapping) {
       throw new Error("OVERLAP_DETECTED: L'employé a déjà une demande en cours ou validée sur cette période.");
@@ -333,7 +346,6 @@ export async function createTimeOffRequestForEmployee(
 
     const { ref: bRef, data: balance } = await getOrCreateLeaveBalance(transaction, entityId, data.employeeId, year, actorUid, actorRole);
 
-    // 2. DATA PREP & VALIDATION
     if (counterType && balance.counters) {
       const remaining = balance.counters[counterType].remaining;
       if (duration > remaining) {
@@ -344,20 +356,18 @@ export async function createTimeOffRequestForEmployee(
     const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
     const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
 
-    const payload: TimeOffRequest = {
-      ...(data as any),
+    const payload: Partial<TimeOffRequest> = {
+      ...data,
       requestId,
       entityId,
       source: "hr_created",
       status: "submitted",
-      dayPart: data.dayPart || "full_day",
-      durationDays: unit === "days" ? duration : 0,
-      durationHours: unit === "hours" ? duration : undefined,
+      durationDays: isHourly ? 0 : duration,
+      durationHours: isHourly ? duration : undefined,
       unit,
       balanceCounterType: counterType,
       requiresJustification,
       justificationStatus,
-      justificationNote: data.justificationNote || null,
       justificationDocumentIds: [],
       createdByUid: actorUid,
       createdByRole: actorRole,
@@ -365,10 +375,9 @@ export async function createTimeOffRequestForEmployee(
       updatedAt: serverTimestamp(),
     };
 
-    // 3. ALL WRITES AFTER
-    transaction.set(requestRef, payload);
+    // Strict write with sanitize to prevent undefined errors
+    transaction.set(requestRef, sanitizePayload(payload));
     
-    // Update balance if applicable
     if (counterType && balance.counters) {
       const counters = { ...balance.counters };
       counters[counterType].pending += duration;
@@ -378,7 +387,6 @@ export async function createTimeOffRequestForEmployee(
         updatedAt: serverTimestamp()
       };
 
-      // Legacy mirror for paid_leave
       if (counterType === "paid_leave") {
         balanceUpdate.pendingDays = increment(duration);
       }
@@ -409,7 +417,6 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -427,7 +434,6 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       normalizedBalance = data;
     }
 
-    // 2. VALIDATIONS
     if (request.status !== "submitted") {
       throw new Error(`Action impossible : la demande est en statut "${request.status}".`);
     }
@@ -438,7 +444,6 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       throw new Error("Justificatif requis avant approbation.");
     }
 
-    // FORMULA: remaining = carriedOver + accrued - used
     if (counterType && normalizedBalance?.counters) {
       const currentCounter = normalizedBalance.counters[counterType];
       const actualAvailable = currentCounter.carriedOver + currentCounter.accrued;
@@ -449,7 +454,6 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       }
     }
 
-    // 3. ALL WRITES AFTER
     const now = serverTimestamp();
     transaction.update(requestRef, {
       status: "approved",
@@ -470,7 +474,6 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
         updatedAt: now
       };
 
-      // Legacy mirror for paid_leave
       if (counterType === "paid_leave") {
         balanceUpdate.pendingDays = increment(-duration);
         balanceUpdate.usedDays = increment(duration);
@@ -482,7 +485,6 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
 
     return request;
   }).then(async (req) => {
-    // Phase 2J-A: Detect impact on monthly accruals
     await markMonthlyAccrualImpactedByRequest(entityId, req as TimeOffRequest);
 
     await createAuditLog({
@@ -505,7 +507,6 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -523,10 +524,8 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
       normalizedBalance = data;
     }
 
-    // 2. VALIDATIONS
     if (request.status !== "submitted") throw new Error("Statut invalide.");
 
-    // 3. ALL WRITES AFTER
     const now = serverTimestamp();
     transaction.update(requestRef, {
       status: "rejected",
@@ -572,7 +571,6 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -590,10 +588,8 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
       normalizedBalance = data;
     }
 
-    // 2. VALIDATIONS
     if (!["submitted", "approved"].includes(request.status)) throw new Error("Statut invalide.");
 
-    // 3. ALL WRITES AFTER
     const previousStatus = request.status;
     const now = serverTimestamp();
 
@@ -632,7 +628,6 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
 
     return request;
   }).then(async (req) => {
-    // Phase 2J-A: Detect impact on monthly accruals
     await markMonthlyAccrualImpactedByRequest(entityId, req as TimeOffRequest);
 
     await createAuditLog({
@@ -681,13 +676,12 @@ export async function addJustificationDocumentToRequest(
 
 /**
  * Phase 2H: Calculates a draft monthly accrual for an employee.
- * Uses approved timeOffRequests to estimate useful days.
  */
 export async function runMonthlyAccrualCalculation(params: {
   entityId: string;
   year: number;
   month: number;
-  employeeId?: string; // If missing, runs for all active employees
+  employeeId?: string;
   usefulDaysMode: "time_off_estimate" | "manual";
   manualUsefulDays?: number;
   actorUid: string;
@@ -697,7 +691,6 @@ export async function runMonthlyAccrualCalculation(params: {
 
   const results: { empId: string; status: string; qualified: boolean }[] = [];
   
-  // 1. Identify target employees
   let targets: string[] = [];
   if (employeeId) {
     targets = [employeeId];
@@ -716,13 +709,11 @@ export async function runMonthlyAccrualCalculation(params: {
   for (const empId of targets) {
     try {
       await runTransaction(db, async (transaction) => {
-        // --- READ PHASE ---
         const empRef = doc(db!, `entities/${entityId}/employees`, empId);
         const empSnap = await transaction.get(empRef);
         if (!empSnap.exists()) return;
         const employee = empSnap.data();
 
-        // Overwrite check
         const accrualId = `${empId}_${year}_${month.toString().padStart(2, '0')}`;
         const accrualRef = doc(db!, `entities/${entityId}/monthlyAccruals`, accrualId);
         const existingSnap = await transaction.get(accrualRef);
@@ -736,7 +727,6 @@ export async function runMonthlyAccrualCalculation(params: {
            }
         }
 
-        // Resolve CCNL context
         const ccnlContext = await resolveCcnlSnapshot(transaction, entityId, empId);
         let rules = getDefaultAccrualRules();
         let ccnlData: any = null;
@@ -756,20 +746,18 @@ export async function runMonthlyAccrualCalculation(params: {
           }
         }
 
-        // Fetch requests for the month
         const requestsQ = query(
           collection(db!, `entities/${entityId}/timeOffRequests`),
           where("employeeId", "==", empId),
           where("status", "==", "approved")
         );
-        const requestsSnap = await getDocs(requestsQ); // Read-only query outside transaction is safer for large lists
+        const requestsSnap = await getDocs(requestsQ);
         const monthRequests = requestsSnap.docs.filter(d => {
           const r = d.data();
           return (r.startDate <= periodEnd.toISOString().split('T')[0] && r.endDate >= periodStart.toISOString().split('T')[0]);
         }).map(d => d.data() as TimeOffRequest);
 
-        // --- CALCULATION PHASE ---
-        let usefulDaysCount = 22; // Default assumption for standard work month
+        let usefulDaysCount = 22; 
         let blockingFound = false;
         let blockingTypes: string[] = [];
         let notes = "";
@@ -777,13 +765,11 @@ export async function runMonthlyAccrualCalculation(params: {
         if (usefulDaysMode === "manual" && manualUsefulDays !== undefined) {
           usefulDaysCount = manualUsefulDays;
         } else {
-          // Estimate from time off
           monthRequests.forEach(r => {
             if (rules.blockingAbsenceTypes?.includes(r.requestType)) {
               blockingFound = true;
               blockingTypes.push(r.requestType);
             }
-            // Simple useful days logic: subtract approved blocking days or unpaid days
             if (["unpaid_leave", "unjustified_absence"].includes(r.requestType)) {
                usefulDaysCount -= r.durationDays;
             }
@@ -792,7 +778,6 @@ export async function runMonthlyAccrualCalculation(params: {
 
         const isQualified = usefulDaysCount >= (rules.usefulDaysThreshold || 14) && !blockingFound;
 
-        // Proration check
         let prorationFactor = 1.0;
         if (employee.hireDate && rules.prorationMethod === "hired_before_15_full_month") {
           const hireDate = new Date(employee.hireDate);
@@ -804,16 +789,9 @@ export async function runMonthlyAccrualCalculation(params: {
           }
         }
 
-        // Entitlement resolution hierarchy: Level -> Root -> 0
         const annualPaidLeave = levelData?.annualPaidLeaveDays || ccnlData?.annualPaidLeaveDays || 0;
         const annualRol = levelData?.annualRolHours || ccnlData?.annualRolHours || 0;
         const annualExHolidays = levelData?.annualExHolidayHours || ccnlData?.annualExHolidayHours || 0;
-
-        if (isQualified) {
-          if (rules.accrualPaidLeaveEnabled && annualPaidLeave === 0) notes += "Droits annuels CCNL manquants pour congés. ";
-          if (rules.accrualRolEnabled && annualRol === 0) notes += "Droits annuels CCNL manquants pour ROL. ";
-          if (rules.accrualExHolidaysEnabled && annualExHolidays === 0) notes += "Droits annuels CCNL manquants pour ex festività. ";
-        }
 
         const accrued = {
           paid_leave: isQualified && rules.accrualPaidLeaveEnabled ? (annualPaidLeave / 12) * prorationFactor : 0,
@@ -821,11 +799,6 @@ export async function runMonthlyAccrualCalculation(params: {
           ex_holidays: isQualified && rules.accrualExHolidaysEnabled ? (annualExHolidays / 12) * prorationFactor : 0
         };
 
-        if (rules.prorationMethod === "pro_rata_temporis") {
-           notes += "Prorata détaillé non appliqué dans Phase 2H. ";
-        }
-
-        // --- WRITE PHASE ---
         const payload: MonthlyAccrual = {
           id: accrualId,
           entityId,
@@ -854,8 +827,8 @@ export async function runMonthlyAccrualCalculation(params: {
           accrued,
           status: "draft",
           calculationNotes: notes.trim() || null,
-          needsReview: false, // Reset on re-calc
-          hasDiscrepancy: false, // Reset on re-calc
+          needsReview: false,
+          hasDiscrepancy: false,
           impactedByRequestIds: [],
           lastImpactDetectedAt: null,
           createdAt: serverTimestamp(),
@@ -864,7 +837,7 @@ export async function runMonthlyAccrualCalculation(params: {
           updatedByUid: actorUid
         };
 
-        transaction.set(accrualRef, payload, { merge: true });
+        transaction.set(accrualRef, sanitizePayload(payload), { merge: true });
         results.push({ empId, status: "calculated", qualified: isQualified });
       });
     } catch (err: any) {
@@ -886,8 +859,6 @@ export async function runMonthlyAccrualCalculation(params: {
 
 /**
  * Phase 2I: Posts a confirmed monthly accrual to the annual leave balance.
- * Uses a transaction to ensure atomicity and idempotency.
- * FORMULA: remaining = carriedOver + accrued - used
  */
 export async function postMonthlyAccrualToBalance(
   entityId: string,
@@ -900,7 +871,6 @@ export async function postMonthlyAccrualToBalance(
   const accrualRef = doc(db, `entities/${entityId}/monthlyAccruals`, accrualId);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const accrualSnap = await transaction.get(accrualRef);
     if (!accrualSnap.exists()) throw new Error("Maturation introuvable.");
     const accrualData = accrualSnap.data() as MonthlyAccrual;
@@ -909,12 +879,10 @@ export async function postMonthlyAccrualToBalance(
     const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
     const balanceSnap = await transaction.get(balanceRef);
 
-    // 2. VALIDATION PHASE
     if (accrualData.status === "posted") throw new Error("Cette maturation a déjà été postée au solde.");
     if (accrualData.status !== "confirmed") throw new Error("La maturation doit être confirmée avant d’être postée.");
     if (!accrualData.isAccrualQualified) throw new Error("Cette maturation n’est pas qualifiée.");
     
-    // Phase 2J-A: Posting Guard
     if (accrualData.needsReview) {
       throw new Error("Cette maturation doit être revue avant d’être postée.");
     }
@@ -922,7 +890,6 @@ export async function postMonthlyAccrualToBalance(
     const hasValues = (accrualData.accrued.paid_leave > 0 || accrualData.accrued.rol > 0 || accrualData.accrued.ex_holidays > 0);
     if (!hasValues) throw new Error("Aucune valeur de maturation à poster.");
 
-    // 3. BALANCE RESOLUTION
     let balance: LeaveBalance;
     if (!balanceSnap.exists()) {
        const initial = await getOrCreateLeaveBalance(transaction, entityId, accrualData.employeeId, accrualData.year, actorUid, actorRole);
@@ -931,10 +898,8 @@ export async function postMonthlyAccrualToBalance(
        balance = normalizeBalance(balanceSnap.data());
     }
 
-    // 4. COMPUTATION
     const counters = { ...balance.counters! };
     
-    // FORMULA: remaining = carriedOver + accrued - used
     const countersToProcess: (keyof typeof counters)[] = ["paid_leave", "rol", "ex_holidays"];
     countersToProcess.forEach(type => {
       const addedValue = accrualData.accrued[type as keyof typeof accrualData.accrued] || 0;
@@ -949,7 +914,6 @@ export async function postMonthlyAccrualToBalance(
       updatedAt: now,
       updatedByUid: actorUid,
       updatedByRole: actorRole,
-      // Legacy mirrors for paid_leave
       entitlementDays: counters.paid_leave.entitlement,
       carriedOverDays: counters.paid_leave.carriedOver,
       usedDays: counters.paid_leave.used,
@@ -957,8 +921,7 @@ export async function postMonthlyAccrualToBalance(
       remainingDays: counters.paid_leave.remaining,
     };
 
-    // 5. ALL WRITES AFTER
-    transaction.set(balanceRef, balanceUpdate, { merge: true });
+    transaction.set(balanceRef, sanitizePayload(balanceUpdate), { merge: true });
     transaction.update(accrualRef, {
       status: "posted",
       postedAt: now,
