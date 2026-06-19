@@ -255,7 +255,7 @@ export async function updateLeaveBalanceManual(
  * Phase 2J-A: Helper to mark existing monthly accruals as needing review 
  * when a request is modified in that period.
  */
-async function markMonthlyAccrualImpactedByRequest(entityId: string, request: TimeOffRequest) {
+export async function markMonthlyAccrualImpactedByRequest(entityId: string, request: TimeOffRequest) {
   if (!db) return;
   
   const start = parseISO(request.startDate);
@@ -307,7 +307,10 @@ export async function createTimeOffRequestForEmployee(
 
   const requestType = (data.requestType as TimeOffRequestType) || 'other';
   const counterType = getCounterTypeForRequestType(requestType);
-  const unit = (requestType === "paid_leave") ? "days" : "hours";
+  
+  // Mapping unit: only ROL and EX_HOLIDAY are hours
+  const hourlyTypes: TimeOffRequestType[] = ["rol_permission", "ex_holiday_permission"];
+  const unit = hourlyTypes.includes(requestType) ? "hours" : "days";
   
   const duration = (unit === "days") 
     ? calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day")

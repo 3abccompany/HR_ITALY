@@ -140,6 +140,21 @@ interface JournalMovement {
   unit: string;
 }
 
+/**
+ * Robust date conversion to ISO for sorting. Handles Timestamp, Date, and serialized JSON.
+ */
+function safeToIso(val: any): string {
+  if (!val) return "";
+  if (typeof val === 'string') return val;
+  if (val instanceof Date) return val.toISOString();
+  // Firestore Client SDK
+  if (typeof val.toDate === 'function') return val.toDate().toISOString();
+  // Serialized POJO
+  if (val.seconds !== undefined) return new Date(val.seconds * 1000).toISOString();
+  if (val._seconds !== undefined) return new Date(val._seconds * 1000).toISOString();
+  return String(val);
+}
+
 export default function TimeOffManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -589,22 +604,23 @@ export default function TimeOffManagementPage() {
                             </div>
                           )}
                         </div>
-                        {r.startTime && r.endTime && (
-                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
-                             <Clock className="w-2.5 h-2.5" />
-                             {r.startTime} - {r.endTime}
-                          </div>
-                        )}
                       </TableCell>
                       <TableCell>
-                         <div className="flex items-center gap-1.5 font-black text-primary">
-                            <Clock className="w-3.5 h-3.5 opacity-30" />
-                            {(() => {
-                              if (r.unit === "hours" || ['rol_permission', 'ex_holiday_permission'].includes(r.requestType)) {
-                                return r.durationHours !== undefined && r.durationHours !== null ? `${r.durationHours} h` : "—";
-                              }
-                              return r.durationDays !== undefined && r.durationDays !== null ? `${r.durationDays} j` : "—";
-                            })()}
+                         <div className="flex flex-col gap-0.5 font-black text-primary">
+                            <div className="flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 opacity-30" />
+                              {(() => {
+                                if (r.unit === "hours" || ['rol_permission', 'ex_holiday_permission'].includes(r.requestType)) {
+                                  return r.durationHours !== undefined && r.durationHours !== null ? `${r.durationHours} h` : "—";
+                                }
+                                return r.durationDays !== undefined && r.durationDays !== null ? `${r.durationDays} j` : "—";
+                              })()}
+                            </div>
+                            {r.unit === "hours" && r.startTime && r.endTime && (
+                              <div className="text-[9px] text-muted-foreground pl-5 uppercase font-bold tracking-tighter">
+                                {r.startTime} - {r.endTime}
+                              </div>
+                            )}
                          </div>
                       </TableCell>
                       <TableCell>
@@ -1294,7 +1310,7 @@ export default function TimeOffManagementPage() {
                     required
                    />
                    <div className="flex flex-col items-center gap-2">
-                      <div className="bg-white p-3 rounded-2xl shadow-sm text-primary/40 group-hover:text-primary transition-colors">
+                      <div className="bg-white p-3 rounded-2xl shadow-sm text-primary/60 group-hover:text-primary transition-colors">
                         <Upload className="w-6 h-6" />
                       </div>
                       {uploadFile ? (
@@ -1392,22 +1408,7 @@ export default function TimeOffManagementPage() {
 }
 
 function formatValToIso(val: any): string {
-  if (!val) return "";
-  
-  // Robust conversion for union type FieldValue | Date | Timestamp Map
-  if (val instanceof Date) return val.toISOString();
-  if (typeof val.toDate === "function") return val.toDate().toISOString();
-  
-  // Handle standard Timestamp POJO { seconds, nanoseconds }
-  const s = val.seconds ?? val._seconds;
-  if (typeof s === "number") {
-    return new Date(s * 1000).toISOString();
-  }
-
-  // Handle ISO string
-  if (typeof val === "string") return val;
-
-  return String(val);
+  return safeToIso(val);
 }
 
 function AnnualJournalContent({ balance, accruals, requests }: { balance: LeaveBalance, accruals: MonthlyAccrual[], requests: TimeOffRequest[] }) {
@@ -1525,6 +1526,198 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
   }, [balance, counterType, accruals, requests, unit]);
 
   // Diagnostics
+  const diag = useMemo(() => {
+    const carriedOver = balance.counters?.[counterType]?.carriedOver || 0;
+    const registeredAccrued = balance.counters?.[counterType]?.accrued || 0;
+    const registeredUsed = balance.counters?.[counterType]?.used || 0;
+    const registeredRemaining = balance.counters?.[counterType]?.remaining || 0;
+
+    const reconstructedAccrued = movements.filter(m => m.source === "maturation").reduce((s, m) => s + m.movement, 0);
+    const reconstructedUsed = Math.abs(movements.filter(m => m.source === "request").reduce((s, m) => s + m.movement, 0));
+    const reconstructedRemaining = carriedOver + reconstructedAccrued - reconstructedUsed;
+
+    const hasMismatch = Math.abs(registeredRemaining - reconstructedRemaining) > 0.01 || 
+                        Math.abs(registeredAccrued - reconstructedAccrued) > 0.01 ||
+                        Math.abs(registeredUsed - reconstructedUsed) > 0.01;
+
+    return { 
+      hasMismatch,
+      registered: { accrued: registeredAccrued, used: registeredUsed, remaining: registeredRemaining },
+      reconstructed: { accrued: reconstructedAccrued, used: reconstructedUsed, remaining: reconstructedRemaining }
+    };
+  }, [movements, balance, counterType]);
+
+  return (
+    <div className="space-y-6">
+       {diag.hasMismatch && (
+         <Alert className="bg-orange-50 border-orange-200 text-orange-800 rounded-2xl py-4">
+            <AlertCircle className="h-5 w-5 text-orange-600" />
+            <div className="ml-2">
+               <AlertTitle className="font-black uppercase text-xs tracking-widest">Diagnostic : Écart détecté</AlertTitle>
+               <AlertDescription className="text-xs mt-1 leading-relaxed">
+                  Le solde reconstruit ne correspond pas exactement au solde enregistré. Une mise à jour manuelle ou une donnée historique non journalisée peut expliquer cet écart.
+                  <div className="mt-2 grid grid-cols-3 gap-4 border-t border-orange-100 pt-2 font-bold uppercase tracking-tighter text-[10px]">
+                     <div>Acquis: {diag.registered.accrued.toFixed(2)} vs {diag.reconstructed.accrued.toFixed(2)}</div>
+                     <div>Utilisé: {diag.registered.used.toFixed(2)} vs {diag.reconstructed.used.toFixed(2)}</div>
+                     <div>Restant: {diag.registered.remaining.toFixed(2)} vs {diag.reconstructed.remaining.toFixed(2)}</div>
+                  </div>
+               </AlertDescription>
+            </div>
+         </Alert>
+       )}
+
+       <Card className="overflow-hidden border-primary/5 rounded-2xl shadow-sm">
+          <Table>
+             <TableHeader className="bg-slate-50/50">
+                <TableRow>
+                   <TableHead className="pl-6 text-[10px] font-black uppercase tracking-widest">Date</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Libellé</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Mouvement</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Solde progressif</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right pr-6">Acteur</TableHead>
+                </TableRow>
+             </TableHeader>
+             <TableBody>
+                {movements.length === 0 ? (
+                   <TableRow><TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">Aucun mouvement trouvé.</TableCell></TableRow>
+                ) : (
+                  movements.map((m, idx) => (
+                    <TableRow key={idx} className="hover:bg-slate-50/30 transition-colors">
+                       <TableCell className="pl-6 py-4">
+                          <div className="flex flex-col">
+                             <span className="text-xs font-bold text-slate-800">{formatDate(m.date)}</span>
+                             <span className="text-[8px] font-black text-muted-foreground uppercase opacity-50">{m.status}</span>
+                          </div>
+                       </TableCell>
+                       <TableCell>
+                          <div className="flex items-center gap-2">
+                             {m.source === 'opening' && <ListRestart className="w-3 h-3 text-muted-foreground" />}
+                             {m.source === 'maturation' && <RefreshCw className="w-3 h-3 text-blue-500" />}
+                             {m.source === 'request' && <Plane className="w-3 h-3 text-orange-500" />}
+                             <span className="text-xs font-medium text-slate-700">{m.label}</span>
+                          </div>
+                       </TableCell>
+                       <TableCell>
+                          <span className={cn("font-black text-sm", m.movement > 0 ? "text-green-600" : m.movement < 0 ? "text-red-600" : "text-slate-400")}>
+                             {m.movement > 0 ? '+' : ''}{m.movement.toFixed(2)} {m.unit}
+                          </span>
+                       </TableCell>
+                       <TableCell>
+                          <Badge variant="outline" className="font-mono text-[10px] bg-white border-primary/5">
+                             {m.runningBalance.toFixed(2)} {m.unit}
+                          </Badge>
+                       </TableCell>
+                       <TableCell className="text-right pr-6">
+                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{m.actor}</span>
+                       </TableCell>
+                    </TableRow>
+                  ))
+                )}
+             </TableBody>
+          </Table>
+       </Card>
+
+       <div className="flex items-start gap-4 p-6 bg-primary/5 rounded-[2rem] border border-primary/10">
+          <div className="bg-white p-2 rounded-xl shadow-sm text-primary">
+             <InfoIcon className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+             <p className="text-xs font-black uppercase text-primary tracking-widest">Informations sur le solde</p>
+             <p className="text-[11px] text-slate-600 leading-relaxed">
+                Ce journal affiche l'historique chronologique des transactions affectant le solde. 
+                Les mouvements de maturation sont ajoutés lors du posting mensuel, tandis que les demandes approuvées sont déduites immédiatement lors de leur validation.
+             </p>
+          </div>
+       </div>
+    </div>
+  );
+}
+
+function JournalTabTable({ balance, counterType, accruals, requests, unit }: { balance: LeaveBalance, counterType: BalanceCounterType, accruals: MonthlyAccrual[], requests: TimeOffRequest[], unit: string }) {
+  const movements = useMemo(() => {
+    const list: JournalMovement[] = [];
+    const year = balance.year;
+
+    // 1. Opening Balance
+    const opening = balance.counters?.[counterType]?.carriedOver || 0;
+    list.push({
+      date: `${year}-01-01`,
+      source: "opening",
+      label: "Report N-1",
+      movement: opening,
+      runningBalance: 0, // calculated later
+      status: "Ouverture",
+      actor: "Système",
+      unit
+    });
+
+    // 2. Accruals
+    accruals.filter(a => a.employeeId === balance.employeeId && a.year === year && a.status === "posted").forEach(a => {
+      const val = a.accrued[counterType] || 0;
+      if (val !== 0) {
+        let dateStr = `${a.year}-${a.month.toString().padStart(2, '0')}-01`;
+        if (a.postedAt) {
+          dateStr = formatValToIso(a.postedAt);
+        } else if (a.updatedAt) {
+          dateStr = formatValToIso(a.updatedAt);
+        }
+
+        list.push({
+          date: dateStr,
+          source: "maturation",
+          label: `Maturation ${format(new Date(a.year, a.month - 1), 'MMMM', { locale: fr })} ${a.year}`,
+          movement: val,
+          runningBalance: 0,
+          status: "Posté",
+          actor: a.postedByUid === 'server' ? 'Système' : 'RH',
+          unit
+        });
+      }
+    });
+
+    // 3. Requests
+    requests.filter(r => {
+      const matchEmp = r.employeeId === balance.employeeId;
+      const matchStatus = r.status === "approved";
+      const matchYear = r.startDate.startsWith(year.toString());
+      
+      let rCounter = r.balanceCounterType;
+      if (!rCounter) {
+        if (r.requestType === "paid_leave") rCounter = "paid_leave";
+        else if (r.requestType === "rol_permission") rCounter = "rol";
+        else if (r.requestType === "ex_holiday_permission") rCounter = "ex_holidays";
+      }
+
+      return matchEmp && matchStatus && matchYear && rCounter === counterType;
+    }).forEach(r => {
+      const val = r.unit === "days" ? (r.durationDays || 0) : (r.durationHours || 0);
+      if (val !== 0) {
+        const dateStr = r.approvedAt ? formatValToIso(r.approvedAt) : r.startDate;
+
+        list.push({
+          date: dateStr,
+          source: "request",
+          label: `${TIME_OFF_TYPE_LABELS[r.requestType] || 'Demande'} du ${formatDate(r.startDate)} au ${formatDate(r.endDate)}`,
+          movement: -val,
+          runningBalance: 0,
+          status: "Approuvé",
+          actor: r.approvedByRole === 'companyHR' ? 'RH' : 'Manager',
+          unit
+        });
+      }
+    });
+
+    list.sort((a, b) => a.date.localeCompare(b.date));
+    
+    let rb = 0;
+    list.forEach(m => {
+      rb += m.movement;
+      m.runningBalance = rb;
+    });
+
+    return list;
+  }, [balance, counterType, accruals, requests, unit]);
+
   const diag = useMemo(() => {
     const carriedOver = balance.counters?.[counterType]?.carriedOver || 0;
     const registeredAccrued = balance.counters?.[counterType]?.accrued || 0;
