@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   ArrowLeft, Printer, Download, FileBadge, 
@@ -15,6 +16,8 @@ import { JobProfile } from "@/types/job-profile";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { PDFDownloadLink } from "@react-pdf/renderer";
+import { JobProfilePdfTemplate } from "@/components/job-profiles/JobProfilePdfTemplate";
 
 /**
  * Job Profile High-Fidelity Preview & Print Page.
@@ -26,6 +29,12 @@ export default function JobProfilePreviewPage() {
   const entityId = params.entityId as string;
   const jobProfileId = params.jobProfileId as string;
   const { db } = useFirebase();
+
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const profileRef = useMemo(() => {
     if (!db || !entityId || !jobProfileId) return null;
@@ -103,9 +112,28 @@ export default function JobProfilePreviewPage() {
           <Button variant="outline" size="sm" onClick={handlePrint} className="gap-2 rounded-xl font-bold bg-white">
             <Printer className="w-4 h-4" /> Imprimer
           </Button>
-          <Button size="sm" onClick={handlePrint} className="gap-2 bg-primary rounded-xl font-bold shadow-lg shadow-primary/20">
-            <Download className="w-4 h-4" /> Enregistrer / PDF
-          </Button>
+
+          {isClient ? (
+            <PDFDownloadLink
+              document={<JobProfilePdfTemplate profile={profile} />}
+              fileName={`fiche-de-poste-${profile.jobTitleName.toLowerCase().replace(/\s+/g, '-')}.pdf`}
+            >
+              {({ loading: pdfLoading }) => (
+                <Button 
+                  size="sm" 
+                  className="gap-2 bg-primary rounded-xl font-bold shadow-lg shadow-primary/20"
+                  disabled={pdfLoading}
+                >
+                  {pdfLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  Télécharger / PDF
+                </Button>
+              )}
+            </PDFDownloadLink>
+          ) : (
+            <Button size="sm" className="gap-2 bg-primary rounded-xl font-bold opacity-50" disabled>
+              <Download className="w-4 h-4" /> Préparation PDF...
+            </Button>
+          )}
         </div>
       </header>
 
