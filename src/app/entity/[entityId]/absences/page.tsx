@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -716,7 +715,7 @@ export default function TimeOffManagementPage() {
                            <TableCell className="font-bold">{a.accrued.rol.toFixed(2)}</TableCell>
                            <TableCell className="font-bold">{a.accrued.ex_holidays.toFixed(2)}</TableCell>
                            <TableCell>
-                              {getAccrualStatusBadge(a.status)}
+                              {getAccrualStatusBadge(a)}
                            </TableCell>
                            <TableCell className="text-right pr-6">
                               {a.status === 'draft' && (
@@ -727,7 +726,13 @@ export default function TimeOffManagementPage() {
                               )}
                               {a.status === 'confirmed' && (
                                 <div className="flex justify-end gap-2">
-                                   <Button variant="secondary" size="sm" className="h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 gap-1.5" onClick={() => setAccrualToPost(a)}>
+                                   <Button 
+                                     variant="secondary" 
+                                     size="sm" 
+                                     disabled={!!a.needsReview}
+                                     className={cn("h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 gap-1.5", a.needsReview && "opacity-50")} 
+                                     onClick={() => setAccrualToPost(a)}
+                                   >
                                       <Send className="w-3.5 h-3.5" /> Poster au solde
                                    </Button>
                                    <Button variant="ghost" size="icon" className="text-red-600" onClick={() => handleUpdateAccrualStatus(a.id, 'cancelled')}><Trash2 className="w-4 h-4" /></Button>
@@ -1644,7 +1649,21 @@ function getStatusBadge(status: string) {
   }
 }
 
-function getAccrualStatusBadge(status: string) {
+function getAccrualStatusBadge(a: MonthlyAccrual) {
+  const { status, needsReview, hasDiscrepancy } = a;
+
+  if (status === 'posted' && hasDiscrepancy) {
+    return <Badge variant="destructive" className="bg-red-600 text-white border-none text-[9px] animate-pulse">ÉCART DÉTECTÉ</Badge>;
+  }
+
+  if (status === 'confirmed' && needsReview) {
+    return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[9px]">À REVOIR</Badge>;
+  }
+
+  if (status === 'draft' && needsReview) {
+    return <Badge variant="outline" className="bg-orange-50 text-orange-400 border-orange-100 text-[9px]">SAISIE PÉRIMÉE</Badge>;
+  }
+
   switch (status) {
     case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-400">Brouillon</Badge>;
     case 'confirmed': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Confirmé</Badge>;

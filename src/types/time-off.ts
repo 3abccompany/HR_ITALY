@@ -152,6 +152,13 @@ export interface MonthlyAccrual {
   status: MonthlyAccrualStatus;
   calculationNotes?: string | null;
 
+  // Impact & Safety Flags (Phase 2J-A)
+  needsReview?: boolean;
+  hasDiscrepancy?: boolean;
+  impactedByRequestIds?: string[];
+  lastImpactDetectedAt?: Date | FieldValue | null;
+  reviewReason?: string | null;
+
   // Posting metadata (Phase 2I)
   postedAt?: Date | FieldValue | null;
   postedByUid?: string | null;

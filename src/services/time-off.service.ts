@@ -30,7 +30,7 @@ import {
   MonthlyAccrual,
   MonthlyAccrualStatus
 } from "@/types/time-off";
-import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth } from "date-fns";
+import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth, eachMonthOfInterval } from "date-fns";
 import { createAuditLog } from "./audit.service";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.service";
@@ -193,7 +193,7 @@ export async function updateLeaveBalanceManual(
        ex_holidays: { used: 0, pending: 0 }
     };
 
-    // FORMULA FIX: remaining = carriedOver + accrued - used
+    // FORMULA: remaining = carriedOver + accrued - used
     const counters: Record<string, LeaveBalanceCounter> = {
       paid_leave: {
         ...data.paid_leave,
@@ -249,6 +249,49 @@ export async function updateLeaveBalanceManual(
     });
     return res;
   });
+}
+
+/**
+ * Phase 2J-A: Helper to mark existing monthly accruals as needing review 
+ * when a request is modified in that period.
+ */
+async function markMonthlyAccrualImpactedByRequest(entityId: string, request: TimeOffRequest) {
+  if (!db) return;
+  
+  const start = parseISO(request.startDate);
+  const end = parseISO(request.endDate);
+  
+  const impactedMonths = eachMonthOfInterval({ start, end });
+  const employeeId = request.employeeId;
+
+  for (const mDate of impactedMonths) {
+    const year = mDate.getFullYear();
+    const month = mDate.getMonth() + 1;
+    const accrualId = `${employeeId}_${year}_${month.toString().padStart(2, '0')}`;
+    const accrualRef = doc(db, `entities/${entityId}/monthlyAccruals`, accrualId);
+    
+    try {
+      const snap = await getDoc(accrualRef);
+      if (snap.exists()) {
+        const data = snap.data() as MonthlyAccrual;
+        if (data.status === 'cancelled') continue;
+
+        const isPosted = data.status === 'posted';
+        const reason = `Modification de la demande ${request.requestId} (${request.requestType})`;
+
+        await updateDoc(accrualRef, {
+          needsReview: true,
+          hasDiscrepancy: isPosted ? true : (data.hasDiscrepancy || false),
+          impactedByRequestIds: arrayUnion(request.requestId),
+          lastImpactDetectedAt: serverTimestamp(),
+          reviewReason: reason,
+          updatedAt: serverTimestamp()
+        });
+      }
+    } catch (e) {
+      console.warn(`[Impact Detection] Failed for ${accrualId}:`, e);
+    }
+  }
 }
 
 /**
@@ -392,7 +435,7 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       throw new Error("Justificatif requis avant approbation.");
     }
 
-    // FORMULA FIX: Only check remaining balance based on accrued + carriedOver
+    // FORMULA: remaining = carriedOver + accrued - used
     if (counterType && normalizedBalance?.counters) {
       const currentCounter = normalizedBalance.counters[counterType];
       const actualAvailable = currentCounter.carriedOver + currentCounter.accrued;
@@ -433,7 +476,12 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
 
       transaction.update(balanceRef, balanceUpdate);
     }
-  }).then(async () => {
+
+    return request;
+  }).then(async (req) => {
+    // Phase 2J-A: Detect impact on monthly accruals
+    await markMonthlyAccrualImpactedByRequest(entityId, req as TimeOffRequest);
+
     await createAuditLog({
       userId: actorUid,
       entityId,
@@ -578,7 +626,12 @@ export async function cancelTimeOffRequest(entityId: string, requestId: string, 
       
       transaction.update(balanceRef, balanceUpdate);
     }
-  }).then(async () => {
+
+    return request;
+  }).then(async (req) => {
+    // Phase 2J-A: Detect impact on monthly accruals
+    await markMonthlyAccrualImpactedByRequest(entityId, req as TimeOffRequest);
+
     await createAuditLog({
       userId: actorUid,
       entityId,
@@ -798,6 +851,10 @@ export async function runMonthlyAccrualCalculation(params: {
           accrued,
           status: "draft",
           calculationNotes: notes.trim() || null,
+          needsReview: false, // Reset on re-calc
+          hasDiscrepancy: false, // Reset on re-calc
+          impactedByRequestIds: [],
+          lastImpactDetectedAt: null,
           createdAt: serverTimestamp(),
           createdByUid: actorUid,
           updatedAt: serverTimestamp(),
@@ -827,7 +884,7 @@ export async function runMonthlyAccrualCalculation(params: {
 /**
  * Phase 2I: Posts a confirmed monthly accrual to the annual leave balance.
  * Uses a transaction to ensure atomicity and idempotency.
- * FORMULA FIX: remaining = carriedOver + accrued - used
+ * FORMULA: remaining = carriedOver + accrued - used
  */
 export async function postMonthlyAccrualToBalance(
   entityId: string,
@@ -854,6 +911,11 @@ export async function postMonthlyAccrualToBalance(
     if (accrualData.status !== "confirmed") throw new Error("La maturation doit être confirmée avant d’être postée.");
     if (!accrualData.isAccrualQualified) throw new Error("Cette maturation n’est pas qualifiée.");
     
+    // Phase 2J-A: Posting Guard
+    if (accrualData.needsReview) {
+      throw new Error("Cette maturation doit être revue avant d’être postée.");
+    }
+
     const hasValues = (accrualData.accrued.paid_leave > 0 || accrualData.accrued.rol > 0 || accrualData.accrued.ex_holidays > 0);
     if (!hasValues) throw new Error("Aucune valeur de maturation à poster.");
 
@@ -869,7 +931,7 @@ export async function postMonthlyAccrualToBalance(
     // 4. COMPUTATION
     const counters = { ...balance.counters! };
     
-    // FORMULA FIX: remaining = carriedOver + accrued - used
+    // FORMULA: remaining = carriedOver + accrued - used
     const countersToProcess: (keyof typeof counters)[] = ["paid_leave", "rol", "ex_holidays"];
     countersToProcess.forEach(type => {
       const addedValue = accrualData.accrued[type as keyof typeof accrualData.accrued] || 0;
