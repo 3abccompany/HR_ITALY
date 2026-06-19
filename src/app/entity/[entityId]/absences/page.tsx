@@ -10,7 +10,7 @@ import {
   XCircle, Ban, FileWarning, Paperclip, Upload,
   Download, Eye, Euro, Settings2, Calculator, Save,
   BarChart, Trash2, ShieldCheck, RefreshCw, CheckCircle,
-  Check, ListRestart, Info as InfoIcon
+  Check, ListRestart, Info as InfoIcon, Plane
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,7 +70,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -154,6 +154,8 @@ function safeToIso(val: any): string {
   if (val._seconds !== undefined) return new Date(val._seconds * 1000).toISOString();
   return String(val);
 }
+
+const isHourlyType = (type: string) => ["rol_permission", "ex_holiday_permission"].includes(type);
 
 export default function TimeOffManagementPage() {
   const params = useParams();
@@ -246,7 +248,7 @@ export default function TimeOffManagementPage() {
       ...p, 
       requestType: type, 
       requiresJustification: requires,
-      requestKind: (type === "rol_permission" || type === "ex_holiday_permission") ? "leave" : p.requestKind
+      requestKind: isHourlyType(type) ? "leave" : p.requestKind
     }));
   };
 
@@ -259,7 +261,7 @@ export default function TimeOffManagementPage() {
       return;
     }
 
-    const isHourly = ["rol_permission", "ex_holiday_permission"].includes(formData.requestType);
+    const isHourly = isHourlyType(formData.requestType);
     let finalDurationHours = undefined;
 
     if (isHourly) {
@@ -495,8 +497,6 @@ export default function TimeOffManagementPage() {
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
-  const isHourly = ["rol_permission", "ex_holiday_permission"].includes(formData.requestType);
-
   return (
     <div className="p-8 max-w-7xl mx-auto pb-24">
       <header className="flex items-center justify-between mb-8">
@@ -572,7 +572,9 @@ export default function TimeOffManagementPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredRequests.map((r) => (
+                  filteredRequests.map((r) => {
+                    const isHourly = isHourlyType(r.requestType);
+                    return (
                     <TableRow key={r.requestId} className="hover:bg-muted/50 transition-colors">
                       <TableCell className="pl-6 py-4">
                         <div className="flex items-center gap-3">
@@ -609,14 +611,13 @@ export default function TimeOffManagementPage() {
                          <div className="flex flex-col gap-0.5 font-black text-primary">
                             <div className="flex items-center gap-1.5">
                               <Clock className="w-3.5 h-3.5 opacity-30" />
-                              {(() => {
-                                if (r.unit === "hours" || ['rol_permission', 'ex_holiday_permission'].includes(r.requestType)) {
-                                  return r.durationHours !== undefined && r.durationHours !== null ? `${r.durationHours} h` : "—";
-                                }
-                                return r.durationDays !== undefined && r.durationDays !== null ? `${r.durationDays} j` : "—";
-                              })()}
+                              {isHourly ? (
+                                `${r.durationHours ?? 0} h`
+                              ) : (
+                                `${r.durationDays ?? 0} j`
+                              )}
                             </div>
-                            {r.unit === "hours" && r.startTime && r.endTime && (
+                            {isHourly && r.startTime && r.endTime && (
                               <div className="text-[9px] text-muted-foreground pl-5 uppercase font-bold tracking-tighter">
                                 {r.startTime} - {r.endTime}
                               </div>
@@ -678,7 +679,7 @@ export default function TimeOffManagementPage() {
                          </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))
+                  )})
                 )}
               </TableBody>
             </Table>
@@ -1135,7 +1136,7 @@ export default function TimeOffManagementPage() {
 
       {/* Creation Modal */}
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-        <DialogContent className="sm:max-w-[550px] flex flex-col overflow-hidden p-0 rounded-[2rem]">
+        <DialogContent className="sm:max-w-[550px] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden p-0 rounded-[2rem]">
           <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-xl font-black text-primary">Nouvelle demande (RH)</DialogTitle>
             <DialogDescription>Créez manuellement une absence ou un congé pour un collaborateur.</DialogDescription>
@@ -1197,7 +1198,7 @@ export default function TimeOffManagementPage() {
                </div>
 
                {/* Conditional Fields based on Request Type */}
-               {isHourly ? (
+               {isHourlyType(formData.requestType) ? (
                   <>
                     <div className="space-y-2">
                       <Label className="text-[10px] font-black uppercase text-muted-foreground">Date</Label>
@@ -1480,13 +1481,12 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
       }
     });
 
-    // 3. Requests (Improved filtering with fallback mapping)
+    // 3. Requests
     requests.filter(r => {
       const matchEmp = r.employeeId === balance.employeeId;
       const matchStatus = r.status === "approved";
       const matchYear = r.startDate.startsWith(year.toString());
       
-      // Map request to counter based on balanceCounterType field with robust requestType fallback
       let rCounter = r.balanceCounterType;
       if (!rCounter) {
         if (r.requestType === "paid_leave") rCounter = "paid_leave";
@@ -1636,7 +1636,7 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
 function formatDate(val: string) {
   if (!val) return "-";
   try {
-    return format(new Date(val), "dd/MM/yyyy", { locale: fr });
+    return format(parseISO(val), "dd/MM/yyyy", { locale: fr });
   } catch (e) { return "-"; }
 }
 
@@ -1669,7 +1669,7 @@ function getAccrualStatusBadge(a: MonthlyAccrual) {
     case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-400">Brouillon</Badge>;
     case 'confirmed': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Confirmé</Badge>;
     case 'posted': return <Badge className="bg-green-600 text-white border-none">Posté</Badge>;
-    case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700">Annulé</Badge>;
+    case 'cancelled': return <Badge variant="destructive" className="bg-red-700">Annulé</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
   }
 }
@@ -1700,23 +1700,4 @@ function renderJustificationStatus(r: TimeOffRequest) {
     default:
       return <span className="text-[10px] text-muted-foreground uppercase">N/A</span>;
   }
-}
-
-function Plane(props: any) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 4 4 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />
-    </svg>
-  )
 }
