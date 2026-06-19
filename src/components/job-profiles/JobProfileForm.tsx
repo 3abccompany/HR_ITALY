@@ -70,6 +70,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   
   const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
+  const [loadingRequester, setLoadingRequester] = useState(false);
   const [newCatalogLabels, setNewCatalogLabels] = useState<Record<CatalogItemType, string>>({
     missionResponsibility: "",
     objective: "",
@@ -146,7 +147,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
       defaultLevelId: "none_clear", 
       defaultLevelCode: "",
       defaultLevelLabel: "",
-      defaultWeeklyHours: ccnl?.standardWeeklyHours || p.defaultWeeklyHours
+      defaultWeeklyHours: foundCcnl?.standardWeeklyHours || p.defaultWeeklyHours
     }));
   };
 
@@ -164,7 +165,6 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
     const foundLevel = activeLevels?.find(l => l.levelId === levelId);
     setFormData(p => {
       const monthly = foundLevel?.minimumGrossMonthly || 0;
-      const payments = p.monthlyPayments || 13;
       return {
         ...p,
         defaultLevelId: levelId,
@@ -223,6 +223,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
 
     setLoading(true);
     try {
+      const profile = activeProfiles.find(p => p.jobProfileId === formData.jobProfileId);
       const dept = departments?.find(d => d.departmentId === formData.departmentId);
       const title = jobTitles?.find(j => j.jobTitleId === formData.jobTitleId);
       const supervisor = jobTitles?.find(j => j.jobTitleId === formData.directSupervisorJobTitleId);
@@ -255,10 +256,10 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   const toggleArrayItem = (field: keyof typeof initialForm, value: string) => {
     setFormData(prev => {
       const current = prev[field] as string[];
-      if (current.includes(value)) {
+      if (Array.isArray(current) && current.includes(value)) {
         return { ...prev, [field]: current.filter(i => i !== value) };
       }
-      return { ...prev, [field]: [...current, value] };
+      return { ...prev, [field]: [...((current || []) as string[]), value] };
     });
   };
 
@@ -267,12 +268,14 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
     if (!label) return;
     
     const current = formData[field] as string[];
-    if (!current.includes(label)) {
-      setFormData(prev => ({ ...prev, [field]: [...(prev[field] as string[]), label] }));
+    if (Array.isArray(current) && !current.includes(label)) {
+      setFormData(prev => ({ ...prev, [field]: [...((prev[field] as string[]) || []), label] }));
     }
     
     setNewCatalogLabels(prev => ({ ...prev, [type]: "" }));
   };
+
+  const activeProfiles = useMemo(() => jobProfiles?.filter(p => p.status === "active") || [], [jobProfiles]);
 
   return (
     <form onSubmit={handleSave} className="space-y-8 max-w-5xl mx-auto pb-24">
@@ -628,8 +631,8 @@ function CatalogSection({
         </div>
 
         <div className="flex flex-wrap gap-2 min-h-[50px] p-4 border rounded-xl bg-secondary/5">
-          {selectedValues.length === 0 && <span className="text-xs text-muted-foreground italic">Aucun élément sélectionné.</span>}
-          {selectedValues.map(v => (
+          {(!Array.isArray(selectedValues) || selectedValues.length === 0) && <span className="text-xs text-muted-foreground italic">Aucun élément sélectionné.</span>}
+          {Array.isArray(selectedValues) && selectedValues.map(v => (
             <Badge key={v} variant="default" className="gap-2 py-1.5 px-3 bg-primary text-white hover:bg-primary/90 transition-all">
               {v}
               <button type="button" onClick={() => onToggle(v)} className="hover:bg-white/20 rounded-full p-0.5">
@@ -643,7 +646,7 @@ function CatalogSection({
           <div className="space-y-2 pt-2">
             <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest border-b pb-1">Réutiliser du catalogue</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              {filteredCatalog.filter((c: any) => !selectedValues.includes(c.label)).map((c: any) => (
+              {filteredCatalog.filter((c: any) => !Array.isArray(selectedValues) || !selectedValues.includes(c.label)).map((c: any) => (
                 <button
                   key={c.itemId}
                   type="button"
