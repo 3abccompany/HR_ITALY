@@ -83,6 +83,8 @@ import {
   SheetTitle, 
   SheetDescription 
 } from "@/components/ui/sheet";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import React from "react";
 
 const initialForm = {
@@ -1377,6 +1379,16 @@ export default function TimeOffManagementPage() {
   );
 }
 
+function formatValToIso(val: any): string {
+  if (!val) return "";
+  if (typeof val.toDate === "function") return val.toDate().toISOString();
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  const s = val.seconds ?? val._seconds;
+  if (typeof s === "number") return new Date(s * 1000).toISOString();
+  return String(val);
+}
+
 function AnnualJournalContent({ balance, accruals, requests }: { balance: LeaveBalance, accruals: MonthlyAccrual[], requests: TimeOffRequest[] }) {
   const tabs = [
     { id: "paid_leave", label: "Ferie / Congés", unit: "j", counter: "paid_leave" },
@@ -1426,8 +1438,15 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
     accruals.filter(a => a.employeeId === balance.employeeId && a.year === year && a.status === "posted").forEach(a => {
       const val = a.accrued[counterType] || 0;
       if (val !== 0) {
+        let dateStr = `${a.year}-${a.month.toString().padStart(2, '0')}-01`;
+        if (a.postedAt) {
+          dateStr = formatValToIso(a.postedAt);
+        } else if (a.updatedAt) {
+          dateStr = formatValToIso(a.updatedAt);
+        }
+
         list.push({
-          date: a.postedAt ? (a.postedAt.toDate ? a.postedAt.toDate().toISOString() : a.postedAt) : (a.updatedAt ? (a.updatedAt.toDate ? a.updatedAt.toDate().toISOString() : a.updatedAt) : `${a.year}-${a.month.toString().padStart(2, '0')}-01`),
+          date: dateStr,
           source: "maturation",
           label: `Maturation ${format(new Date(a.year, a.month - 1), 'MMMM', { locale: fr })} ${a.year}`,
           movement: val,
@@ -1443,8 +1462,10 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
     requests.filter(r => r.employeeId === balance.employeeId && r.status === "approved" && r.balanceCounterType === counterType && r.startDate.startsWith(year.toString())).forEach(r => {
       const val = r.unit === "days" ? (r.durationDays || 0) : (r.durationHours || 0);
       if (val !== 0) {
+        const dateStr = r.approvedAt ? formatValToIso(r.approvedAt) : r.startDate;
+
         list.push({
-          date: r.approvedAt ? (r.approvedAt.toDate ? r.approvedAt.toDate().toISOString() : r.approvedAt) : r.startDate,
+          date: dateStr,
           source: "request",
           label: `${TIME_OFF_TYPE_LABELS[r.requestType] || 'Demande'} du ${formatDate(r.startDate)} au ${formatDate(r.endDate)}`,
           movement: -val,
@@ -1466,7 +1487,7 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
     });
 
     return list;
-  }, [balance, accruals, requests, counterType, unit]);
+  }, [balance, counterType, accruals, requests, unit]);
 
   // Diagnostics
   const diag = useMemo(() => {
