@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -10,7 +11,7 @@ import {
   XCircle, Ban, FileWarning, Paperclip, Upload,
   Download, Eye, Euro, Settings2, Calculator, Save,
   BarChart, Trash2, ShieldCheck, RefreshCw, CheckCircle,
-  Check
+  Check, ListRestart, Info as InfoIcon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +23,17 @@ import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy, Query, where, getDoc, doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { TimeOffRequest, TimeOffRequestType, TimeOffRequestKind, TIME_OFF_TYPE_LABELS, LeaveBalance, normalizeBalance, MonthlyAccrual } from "@/types/time-off";
+import { 
+  TimeOffRequest, 
+  DayPart, 
+  TimeOffRequestType, 
+  TimeOffRequestKind, 
+  TIME_OFF_TYPE_LABELS, 
+  LeaveBalance, 
+  normalizeBalance, 
+  MonthlyAccrual,
+  BalanceCounterType 
+} from "@/types/time-off";
 import { HRDocumentType } from "@/types/hr-document";
 import { 
   createTimeOffRequestForEmployee, 
@@ -65,6 +76,13 @@ import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { 
+  Sheet, 
+  SheetContent, 
+  SheetHeader, 
+  SheetTitle, 
+  SheetDescription 
+} from "@/components/ui/sheet";
 import React from "react";
 
 const initialForm = {
@@ -109,6 +127,18 @@ function calculateDecimalHours(start: string, end: string): string {
   return hours.toFixed(2).replace(/\.00$/, "");
 }
 
+interface JournalMovement {
+  date: string;
+  source: "opening" | "maturation" | "request";
+  label: string;
+  movement: number;
+  runningBalance: number;
+  status: string;
+  actor: string;
+  notes?: string;
+  unit: string;
+}
+
 export default function TimeOffManagementPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -126,6 +156,9 @@ export default function TimeOffManagementPage() {
   const [balanceForm, setBalanceForm] = useState(initialBalanceForm);
   const [accrualForm, setAccrualForm] = useState(initialAccrualForm);
   const [statusFilter, setStatusFilter] = useState("all");
+
+  // Journal State (Phase 2I-B)
+  const [journalTarget, setJournalTarget] = useState<{ balance: LeaveBalance, employeeName: string } | null>(null);
 
   // Posting State (Phase 2I)
   const [accrualToPost, setAccrualToPost] = useState<MonthlyAccrual | null>(null);
@@ -728,13 +761,15 @@ export default function TimeOffManagementPage() {
                    ) : balances?.length === 0 ? (
                      <TableRow><TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">Aucun solde initialisé.</TableCell></TableRow>
                    ) : (
-                     balances?.map(b => (
+                     balances?.map(b => {
+                        const empName = activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId;
+                        return (
                        <React.Fragment key={`${b.employeeId}_${b.year}`}>
                          {/* Paid Leave Row */}
                          <TableRow className="border-t-2">
                             <TableCell rowSpan={3} className="pl-6 py-4 bg-slate-50/30 align-top">
                               <div className="flex flex-col">
-                                <span className="font-bold text-slate-900">{activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId}</span>
+                                <span className="font-bold text-slate-900">{empName}</span>
                                 <Badge variant="outline" className="w-fit mt-1">{b.year}</Badge>
                                 {b.ccnlSnapshot?.ccnlName && (
                                   <span className="text-[9px] text-muted-foreground uppercase font-bold mt-2">
@@ -755,18 +790,29 @@ export default function TimeOffManagementPage() {
                             <TableCell className="text-xs font-medium text-orange-600">{b.counters?.paid_leave.pending ?? 0}j</TableCell>
                             <TableCell><Badge className="bg-primary text-white font-black">{b.counters?.paid_leave.remaining.toFixed(2)}j</Badge></TableCell>
                             <TableCell rowSpan={3} className="text-right pr-6 bg-slate-50/30 align-top py-4">
-                               <Button variant="ghost" size="icon" onClick={() => {
-                                 setBalanceForm({
-                                   employeeId: b.employeeId,
-                                   year: b.year,
-                                   paid_leave: { entitlement: b.counters?.paid_leave.entitlement || 0, carriedOver: b.counters?.paid_leave.carriedOver || 0, accrued: b.counters?.paid_leave.accrued || 0 },
-                                   rol: { entitlement: b.counters?.rol.entitlement || 0, carriedOver: b.counters?.rol.carriedOver || 0, accrued: b.counters?.rol.accrued || 0 },
-                                   ex_holidays: { entitlement: b.counters?.ex_holidays.entitlement || 0, carriedOver: b.counters?.ex_holidays.carriedOver || 0, accrued: b.counters?.ex_holidays.accrued || 0 }
-                                 });
-                                 setIsBalanceModalOpen(true);
-                               }}>
-                                 <Settings2 className="w-4 h-4" />
-                               </Button>
+                               <div className="flex flex-col gap-2 items-end">
+                                 <Button variant="ghost" size="icon" onClick={() => {
+                                   setBalanceForm({
+                                     employeeId: b.employeeId,
+                                     year: b.year,
+                                     paid_leave: { entitlement: b.counters?.paid_leave.entitlement || 0, carriedOver: b.counters?.paid_leave.carriedOver || 0, accrued: b.counters?.paid_leave.accrued || 0 },
+                                     rol: { entitlement: b.counters?.rol.entitlement || 0, carriedOver: b.counters?.rol.carriedOver || 0, accrued: b.counters?.rol.accrued || 0 },
+                                     ex_holidays: { entitlement: b.counters?.ex_holidays.entitlement || 0, carriedOver: b.counters?.ex_holidays.carriedOver || 0, accrued: b.counters?.ex_holidays.accrued || 0 }
+                                   });
+                                   setIsBalanceModalOpen(true);
+                                 }}>
+                                   <Settings2 className="w-4 h-4" />
+                                 </Button>
+                                 <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-primary"
+                                  onClick={() => setJournalTarget({ balance: b, employeeName: empName })}
+                                  title="Journal annuel"
+                                 >
+                                    <ListRestart className="w-4 h-4" />
+                                 </Button>
+                               </div>
                             </TableCell>
                          </TableRow>
                          {/* ROL Row */}
@@ -798,13 +844,46 @@ export default function TimeOffManagementPage() {
                             <TableCell><Badge variant="outline" className="font-black border-teal-200 text-teal-700">{b.counters?.ex_holidays.remaining.toFixed(2)}h</Badge></TableCell>
                          </TableRow>
                        </React.Fragment>
-                     ))
+                      )})
                    )}
                 </TableBody>
               </Table>
            </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Annual Balance Journal Drawer (Phase 2I-B) */}
+      <Sheet open={!!journalTarget} onOpenChange={(o) => !o && setJournalTarget(null)}>
+        <SheetContent side="right" className="sm:max-w-[800px] p-0 flex flex-col gap-0 border-l shadow-2xl">
+           <SheetHeader className="px-8 py-6 border-b shrink-0">
+              <div className="flex items-center gap-3">
+                 <div className="bg-primary p-2.5 rounded-xl text-white shadow-lg shadow-primary/10">
+                    <ListRestart className="w-5 h-5" />
+                 </div>
+                 <div>
+                    <SheetTitle className="text-xl font-black text-primary">Journal annuel des soldes</SheetTitle>
+                    <SheetDescription className="text-xs font-bold uppercase text-muted-foreground mt-1">
+                       {journalTarget?.employeeName} — {journalTarget?.balance.year}
+                    </SheetDescription>
+                 </div>
+              </div>
+           </SheetHeader>
+           
+           <div className="flex-1 min-h-0">
+              <ScrollArea className="h-full">
+                 <div className="p-8 pb-32">
+                    {journalTarget && (
+                      <AnnualJournalContent 
+                        balance={journalTarget.balance} 
+                        accruals={accruals || []} 
+                        requests={requests || []} 
+                      />
+                    )}
+                 </div>
+              </ScrollArea>
+           </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Posting Confirmation Dialog (Phase 2I) */}
       <AlertDialog open={!!accrualToPost} onOpenChange={(open) => !open && setAccrualToPost(null)}>
@@ -1298,9 +1377,210 @@ export default function TimeOffManagementPage() {
   );
 }
 
+function AnnualJournalContent({ balance, accruals, requests }: { balance: LeaveBalance, accruals: MonthlyAccrual[], requests: TimeOffRequest[] }) {
+  const tabs = [
+    { id: "paid_leave", label: "Ferie / Congés", unit: "j", counter: "paid_leave" },
+    { id: "rol", label: "ROL", unit: "h", counter: "rol" },
+    { id: "ex_holidays", label: "Ex Festività", unit: "h", counter: "ex_holidays" }
+  ];
+
+  return (
+    <Tabs defaultValue="paid_leave" className="w-full">
+       <TabsList className="bg-slate-100/50 p-1 h-12 rounded-xl mb-6">
+          {tabs.map(t => <TabsTrigger key={t.id} value={t.id} className="rounded-lg px-6 font-bold">{t.label}</TabsTrigger>)}
+       </TabsList>
+       {tabs.map(t => (
+         <TabsContent key={t.id} value={t.id} className="mt-0 space-y-6">
+            <JournalTabTable 
+              balance={balance} 
+              counterType={t.counter as BalanceCounterType} 
+              accruals={accruals} 
+              requests={requests} 
+              unit={t.unit}
+            />
+         </TabsContent>
+       ))}
+    </Tabs>
+  );
+}
+
+function JournalTabTable({ balance, counterType, accruals, requests, unit }: { balance: LeaveBalance, counterType: BalanceCounterType, accruals: MonthlyAccrual[], requests: TimeOffRequest[], unit: string }) {
+  const movements = useMemo(() => {
+    const list: JournalMovement[] = [];
+    const year = balance.year;
+
+    // 1. Opening Balance
+    const opening = balance.counters?.[counterType]?.carriedOver || 0;
+    list.push({
+      date: `${year}-01-01`,
+      source: "opening",
+      label: "Report N-1",
+      movement: opening,
+      runningBalance: 0, // calculated later
+      status: "Ouverture",
+      actor: "Système",
+      unit
+    });
+
+    // 2. Accruals
+    accruals.filter(a => a.employeeId === balance.employeeId && a.year === year && a.status === "posted").forEach(a => {
+      const val = a.accrued[counterType] || 0;
+      if (val !== 0) {
+        list.push({
+          date: a.postedAt ? (a.postedAt.toDate ? a.postedAt.toDate().toISOString() : a.postedAt) : (a.updatedAt ? (a.updatedAt.toDate ? a.updatedAt.toDate().toISOString() : a.updatedAt) : `${a.year}-${a.month.toString().padStart(2, '0')}-01`),
+          source: "maturation",
+          label: `Maturation ${format(new Date(a.year, a.month - 1), 'MMMM', { locale: fr })} ${a.year}`,
+          movement: val,
+          runningBalance: 0,
+          status: "Posté",
+          actor: a.postedByUid === 'server' ? 'Système' : 'RH',
+          unit
+        });
+      }
+    });
+
+    // 3. Requests
+    requests.filter(r => r.employeeId === balance.employeeId && r.status === "approved" && r.balanceCounterType === counterType && r.startDate.startsWith(year.toString())).forEach(r => {
+      const val = r.unit === "days" ? (r.durationDays || 0) : (r.durationHours || 0);
+      if (val !== 0) {
+        list.push({
+          date: r.approvedAt ? (r.approvedAt.toDate ? r.approvedAt.toDate().toISOString() : r.approvedAt) : r.startDate,
+          source: "request",
+          label: `${TIME_OFF_TYPE_LABELS[r.requestType] || 'Demande'} du ${formatDate(r.startDate)} au ${formatDate(r.endDate)}`,
+          movement: -val,
+          runningBalance: 0,
+          status: "Approuvé",
+          actor: r.approvedByRole === 'companyHR' ? 'RH' : 'Manager',
+          unit
+        });
+      }
+    });
+
+    // Final sorting and running balance
+    list.sort((a, b) => a.date.localeCompare(b.date));
+    
+    let rb = 0;
+    list.forEach(m => {
+      rb += m.movement;
+      m.runningBalance = rb;
+    });
+
+    return list;
+  }, [balance, accruals, requests, counterType, unit]);
+
+  // Diagnostics
+  const diag = useMemo(() => {
+    const carriedOver = balance.counters?.[counterType]?.carriedOver || 0;
+    const registeredAccrued = balance.counters?.[counterType]?.accrued || 0;
+    const registeredUsed = balance.counters?.[counterType]?.used || 0;
+    const registeredRemaining = balance.counters?.[counterType]?.remaining || 0;
+
+    const reconstructedAccrued = movements.filter(m => m.source === "maturation").reduce((s, m) => s + m.movement, 0);
+    const reconstructedUsed = Math.abs(movements.filter(m => m.source === "request").reduce((s, m) => s + m.movement, 0));
+    const reconstructedRemaining = carriedOver + reconstructedAccrued - reconstructedUsed;
+
+    const hasMismatch = Math.abs(registeredRemaining - reconstructedRemaining) > 0.01 || 
+                        Math.abs(registeredAccrued - reconstructedAccrued) > 0.01 ||
+                        Math.abs(registeredUsed - reconstructedUsed) > 0.01;
+
+    return { 
+      hasMismatch,
+      registered: { accrued: registeredAccrued, used: registeredUsed, remaining: registeredRemaining },
+      reconstructed: { accrued: reconstructedAccrued, used: reconstructedUsed, remaining: reconstructedRemaining }
+    };
+  }, [movements, balance, counterType]);
+
+  return (
+    <div className="space-y-6">
+       {diag.hasMismatch && (
+         <Alert className="bg-orange-50 border-orange-200 text-orange-800 rounded-2xl py-4">
+            <AlertCircle className="h-5 w-5 text-orange-600" />
+            <div className="ml-2">
+               <AlertTitle className="font-black uppercase text-xs tracking-widest">Diagnostic : Écart détecté</AlertTitle>
+               <AlertDescription className="text-xs mt-1 leading-relaxed">
+                  Le solde reconstruit ne correspond pas exactement au solde enregistré. Une mise à jour manuelle ou une donnée historique non journalisée peut expliquer cet écart.
+                  <div className="mt-2 grid grid-cols-3 gap-4 border-t border-orange-100 pt-2 font-bold uppercase tracking-tighter text-[10px]">
+                     <div>Acquis: {diag.registered.accrued.toFixed(2)} vs {diag.reconstructed.accrued.toFixed(2)}</div>
+                     <div>Utilisé: {diag.registered.used.toFixed(2)} vs {diag.reconstructed.used.toFixed(2)}</div>
+                     <div>Restant: {diag.registered.remaining.toFixed(2)} vs {diag.reconstructed.remaining.toFixed(2)}</div>
+                  </div>
+               </AlertDescription>
+            </div>
+         </Alert>
+       )}
+
+       <Card className="overflow-hidden border-primary/5 rounded-2xl shadow-sm">
+          <Table>
+             <TableHeader className="bg-slate-50/50">
+                <TableRow>
+                   <TableHead className="pl-6 text-[10px] font-black uppercase tracking-widest">Date</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Libellé</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Mouvement</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Solde progressif</TableHead>
+                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right pr-6">Acteur</TableHead>
+                </TableRow>
+             </TableHeader>
+             <TableBody>
+                {movements.length === 0 ? (
+                   <TableRow><TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">Aucun mouvement trouvé.</TableCell></TableRow>
+                ) : (
+                  movements.map((m, idx) => (
+                    <TableRow key={idx} className="hover:bg-slate-50/30 transition-colors">
+                       <TableCell className="pl-6 py-4">
+                          <div className="flex flex-col">
+                             <span className="text-xs font-bold text-slate-800">{formatDate(m.date)}</span>
+                             <span className="text-[8px] font-black text-muted-foreground uppercase opacity-50">{m.status}</span>
+                          </div>
+                       </TableCell>
+                       <TableCell>
+                          <div className="flex items-center gap-2">
+                             {m.source === 'opening' && <ListRestart className="w-3 h-3 text-muted-foreground" />}
+                             {m.source === 'maturation' && <RefreshCw className="w-3 h-3 text-blue-500" />}
+                             {m.source === 'request' && <Plane className="w-3 h-3 text-orange-500" />}
+                             <span className="text-xs font-medium text-slate-700">{m.label}</span>
+                          </div>
+                       </TableCell>
+                       <TableCell>
+                          <span className={cn("font-black text-sm", m.movement > 0 ? "text-green-600" : m.movement < 0 ? "text-red-600" : "text-slate-400")}>
+                             {m.movement > 0 ? '+' : ''}{m.movement.toFixed(2)} {m.unit}
+                          </span>
+                       </TableCell>
+                       <TableCell>
+                          <Badge variant="outline" className="font-mono text-[10px] bg-white border-primary/5">
+                             {m.runningBalance.toFixed(2)} {m.unit}
+                          </Badge>
+                       </TableCell>
+                       <TableCell className="text-right pr-6">
+                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{m.actor}</span>
+                       </TableCell>
+                    </TableRow>
+                  ))
+                )}
+             </TableBody>
+          </Table>
+       </Card>
+
+       <div className="flex items-start gap-4 p-6 bg-primary/5 rounded-[2rem] border border-primary/10">
+          <div className="bg-white p-2 rounded-xl shadow-sm text-primary">
+             <InfoIcon className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+             <p className="text-xs font-black uppercase text-primary tracking-widest">Informations sur le solde</p>
+             <p className="text-[11px] text-slate-600 leading-relaxed">
+                Ce journal affiche l'historique chronologique des transactions affectant le solde. 
+                Les mouvements de maturation sont ajoutés lors du posting mensuel, tandis que les demandes approuvées sont déduites immédiatement lors de leur validation.
+             </p>
+          </div>
+       </div>
+    </div>
+  );
+}
+
 function formatDate(val: string) {
   if (!val) return "-";
-  return format(new Date(val), "dd/MM/yyyy", { locale: fr });
+  try {
+    return format(new Date(val), "dd/MM/yyyy", { locale: fr });
+  } catch (e) { return "-"; }
 }
 
 function getStatusBadge(status: string) {
@@ -1349,4 +1629,23 @@ function renderJustificationStatus(r: TimeOffRequest) {
     default:
       return <span className="text-[10px] text-muted-foreground uppercase">N/A</span>;
   }
+}
+
+function Plane(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 4 4 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />
+    </svg>
+  )
 }
