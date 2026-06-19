@@ -141,16 +141,16 @@ async function getOrCreateLeaveBalance(transaction: any, entityId: string, emplo
     year,
     ccnlSnapshot,
     counters: {
-      paid_leave: { entitlement: defaultFerie, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: defaultFerie, unit: "days" },
-      rol: { entitlement: defaultRol, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: defaultRol, unit: "hours" },
-      ex_holidays: { entitlement: defaultExHolidays, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: defaultExHolidays, unit: "hours" }
+      paid_leave: { entitlement: defaultFerie, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: 0, unit: "days" },
+      rol: { entitlement: defaultRol, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: 0, unit: "hours" },
+      ex_holidays: { entitlement: defaultExHolidays, carriedOver: 0, accrued: 0, used: 0, pending: 0, remaining: 0, unit: "hours" }
     },
     // Mirror flat fields for legacy support
     entitlementDays: defaultFerie,
     carriedOverDays: 0,
     usedDays: 0,
     pendingDays: 0,
-    remainingDays: defaultFerie,
+    remainingDays: 0,
     updatedAt: serverTimestamp(),
     updatedByUid: actorUid,
     updatedByRole: actorRole
@@ -193,26 +193,27 @@ export async function updateLeaveBalanceManual(
        ex_holidays: { used: 0, pending: 0 }
     };
 
+    // FORMULA FIX: remaining = carriedOver + accrued - used
     const counters: Record<string, LeaveBalanceCounter> = {
       paid_leave: {
         ...data.paid_leave,
         used: existing.paid_leave?.used || 0,
         pending: existing.paid_leave?.pending || 0,
-        remaining: data.paid_leave.entitlement + data.paid_leave.carriedOver + data.paid_leave.accrued - (existing.paid_leave?.used || 0),
+        remaining: data.paid_leave.carriedOver + data.paid_leave.accrued - (existing.paid_leave?.used || 0),
         unit: "days"
       },
       rol: {
         ...data.rol,
         used: existing.rol?.used || 0,
         pending: existing.rol?.pending || 0,
-        remaining: data.rol.entitlement + data.rol.carriedOver + data.rol.accrued - (existing.rol?.used || 0),
+        remaining: data.rol.carriedOver + data.rol.accrued - (existing.rol?.used || 0),
         unit: "hours"
       },
       ex_holidays: {
         ...data.ex_holidays,
         used: existing.ex_holidays?.used || 0,
         pending: existing.ex_holidays?.pending || 0,
-        remaining: data.ex_holidays.entitlement + data.ex_holidays.carriedOver + data.ex_holidays.accrued - (existing.ex_holidays?.used || 0),
+        remaining: data.ex_holidays.carriedOver + data.ex_holidays.accrued - (existing.ex_holidays?.used || 0),
         unit: "hours"
       }
     };
@@ -224,8 +225,8 @@ export async function updateLeaveBalanceManual(
       ccnlSnapshot,
       counters,
       // Mirror legacy fields
-      entitlementDays: counters.paid_leave.entitlement,
-      carriedOverDays: counters.paid_leave.carriedOver,
+      entitlementDays: data.paid_leave.entitlement,
+      carriedOverDays: data.paid_leave.carriedOver,
       usedDays: counters.paid_leave.used,
       pendingDays: counters.paid_leave.pending,
       remainingDays: counters.paid_leave.remaining,
@@ -391,10 +392,11 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
       throw new Error("Justificatif requis avant approbation.");
     }
 
+    // FORMULA FIX: Only check remaining balance based on accrued + carriedOver
     if (counterType && normalizedBalance?.counters) {
       const currentCounter = normalizedBalance.counters[counterType];
-      const totalEntitlement = currentCounter.entitlement + currentCounter.carriedOver + currentCounter.accrued;
-      const newRemaining = totalEntitlement - (currentCounter.used + duration);
+      const actualAvailable = currentCounter.carriedOver + currentCounter.accrued;
+      const newRemaining = actualAvailable - (currentCounter.used + duration);
       
       if (newRemaining < 0) {
          throw new Error(`Solde ${counterType === 'paid_leave' ? 'de congé' : counterType.toUpperCase()} insuffisant.`);
@@ -825,6 +827,7 @@ export async function runMonthlyAccrualCalculation(params: {
 /**
  * Phase 2I: Posts a confirmed monthly accrual to the annual leave balance.
  * Uses a transaction to ensure atomicity and idempotency.
+ * FORMULA FIX: remaining = carriedOver + accrued - used
  */
 export async function postMonthlyAccrualToBalance(
   entityId: string,
@@ -866,13 +869,13 @@ export async function postMonthlyAccrualToBalance(
     // 4. COMPUTATION
     const counters = { ...balance.counters! };
     
-    // Add accrued values and recalculate remaining
+    // FORMULA FIX: remaining = carriedOver + accrued - used
     const countersToProcess: (keyof typeof counters)[] = ["paid_leave", "rol", "ex_holidays"];
     countersToProcess.forEach(type => {
       const addedValue = accrual.accrued[type as keyof typeof accrual.accrued] || 0;
       const c = counters[type];
       c.accrued += addedValue;
-      c.remaining = c.entitlement + c.carriedOver + c.accrued - c.used;
+      c.remaining = c.carriedOver + c.accrued - c.used;
     });
 
     const now = serverTimestamp();

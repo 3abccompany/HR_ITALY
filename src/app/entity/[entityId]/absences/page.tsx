@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
   Plus, Loader2, Calendar, User, Briefcase, 
@@ -65,6 +65,7 @@ import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import React from "react";
 
 const initialForm = {
   employeeId: "",
@@ -711,10 +712,10 @@ export default function TimeOffManagementPage() {
               <Table>
                 <TableHeader className="bg-secondary/20">
                    <TableRow>
-                      <TableHead className="pl-6">Employé</TableHead>
+                      <TableHead className="pl-6">Embauché (Matricule)</TableHead>
                       <TableHead>Type</TableHead>
-                      <TableHead>Droits / Report</TableHead>
-                      <TableHead>Acquis</TableHead>
+                      <TableHead>Droit CCNL / Report N-1</TableHead>
+                      <TableHead>Acquis (Maturation)</TableHead>
                       <TableHead>Utilisé</TableHead>
                       <TableHead>Attente</TableHead>
                       <TableHead>Restant</TableHead>
@@ -743,7 +744,12 @@ export default function TimeOffManagementPage() {
                               </div>
                             </TableCell>
                             <TableCell className="font-black text-xs text-blue-700">Ferie (Congés)</TableCell>
-                            <TableCell className="text-xs">{(b.counters?.paid_leave.entitlement ?? 0) + (b.counters?.paid_leave.carriedOver ?? 0)}j</TableCell>
+                            <TableCell className="text-xs">
+                               <div className="flex flex-col">
+                                  <span className="text-muted-foreground">Annuel: {b.counters?.paid_leave.entitlement ?? 0}j</span>
+                                  <span className="font-bold">Report: {b.counters?.paid_leave.carriedOver ?? 0}j</span>
+                               </div>
+                            </TableCell>
                             <TableCell className="text-xs">{b.counters?.paid_leave.accrued.toFixed(2)}j</TableCell>
                             <TableCell className="text-xs font-bold text-red-600">{b.counters?.paid_leave.used ?? 0}j</TableCell>
                             <TableCell className="text-xs font-medium text-orange-600">{b.counters?.paid_leave.pending ?? 0}j</TableCell>
@@ -766,7 +772,12 @@ export default function TimeOffManagementPage() {
                          {/* ROL Row */}
                          <TableRow>
                             <TableCell className="font-black text-xs text-indigo-700">ROL</TableCell>
-                            <TableCell className="text-xs">{(b.counters?.rol.entitlement ?? 0) + (b.counters?.rol.carriedOver ?? 0)}h</TableCell>
+                            <TableCell className="text-xs">
+                               <div className="flex flex-col">
+                                  <span className="text-muted-foreground">Annuel: {b.counters?.rol.entitlement ?? 0}h</span>
+                                  <span className="font-bold">Report: {b.counters?.rol.carriedOver ?? 0}h</span>
+                               </div>
+                            </TableCell>
                             <TableCell className="text-xs">{b.counters?.rol.accrued.toFixed(2)}h</TableCell>
                             <TableCell className="text-xs font-bold text-red-600">{b.counters?.rol.used ?? 0}h</TableCell>
                             <TableCell className="text-xs font-medium text-orange-600">{b.counters?.rol.pending ?? 0}h</TableCell>
@@ -775,7 +786,12 @@ export default function TimeOffManagementPage() {
                          {/* Ex Holidays Row */}
                          <TableRow>
                             <TableCell className="font-black text-xs text-teal-700">Ex Festività</TableCell>
-                            <TableCell className="text-xs">{(b.counters?.ex_holidays.entitlement ?? 0) + (b.counters?.ex_holidays.carriedOver ?? 0)}h</TableCell>
+                            <TableCell className="text-xs">
+                               <div className="flex flex-col">
+                                  <span className="text-muted-foreground">Annuel: {b.counters?.ex_holidays.entitlement ?? 0}h</span>
+                                  <span className="font-bold">Report: {b.counters?.ex_holidays.carriedOver ?? 0}h</span>
+                               </div>
+                            </TableCell>
                             <TableCell className="text-xs">{b.counters?.ex_holidays.accrued.toFixed(2)}h</TableCell>
                             <TableCell className="text-xs font-bold text-red-600">{b.counters?.ex_holidays.used ?? 0}h</TableCell>
                             <TableCell className="text-xs font-medium text-orange-600">{b.counters?.ex_holidays.pending ?? 0}h</TableCell>
@@ -947,7 +963,7 @@ export default function TimeOffManagementPage() {
                    <p className="text-[11px] font-black text-blue-700 uppercase border-b pb-1">Congés (Jours)</p>
                    <div className="space-y-3">
                       <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droits</Label>
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
                          <Input type="number" value={balanceForm.paid_leave.entitlement} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
                       </div>
                       <div className="space-y-1">
@@ -966,7 +982,7 @@ export default function TimeOffManagementPage() {
                    <p className="text-[11px] font-black text-indigo-700 uppercase border-b pb-1">ROL (Heures)</p>
                    <div className="space-y-3">
                       <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droits</Label>
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
                          <Input type="number" step="0.01" value={balanceForm.rol.entitlement} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
                       </div>
                       <div className="space-y-1">
@@ -985,7 +1001,7 @@ export default function TimeOffManagementPage() {
                    <p className="text-[11px] font-black text-teal-700 uppercase border-b pb-1">Ex Fest. (Heures)</p>
                    <div className="space-y-3">
                       <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droits</Label>
+                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
                          <Input type="number" step="0.01" value={balanceForm.ex_holidays.entitlement} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
                       </div>
                       <div className="space-y-1">
