@@ -71,9 +71,11 @@ export default function JobProfilePreviewPage() {
   if (!profile) {
     return (
       <div className="p-8 text-center mt-20">
-        <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
-        <h2 className="text-xl font-bold">Document introuvable.</h2>
-        <Button variant="link" onClick={() => router.back()}>Retour</Button>
+        <div className="bg-destructive/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+           <Info className="w-8 h-8 text-destructive" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">Document introuvable.</h2>
+        <Button variant="link" onClick={() => router.back()} className="mt-4">Retour au registre</Button>
       </div>
     );
   }
@@ -86,8 +88,8 @@ export default function JobProfilePreviewPage() {
       {/* Action Bar - Hidden on print */}
       <header className="sticky top-0 z-50 h-16 bg-white/80 backdrop-blur border-b px-8 flex items-center justify-between print:hidden">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2 rounded-xl font-bold">
-            <ArrowLeft className="w-4 h-4" /> Retour
+          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
+            <ArrowLeft className="w-5 h-5" />
           </Button>
           <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-2">
@@ -102,7 +104,7 @@ export default function JobProfilePreviewPage() {
             <Printer className="w-4 h-4" /> Imprimer
           </Button>
           <Button size="sm" onClick={handlePrint} className="gap-2 bg-primary rounded-xl font-bold shadow-lg shadow-primary/20">
-            <Download className="w-4 h-4" /> Télécharger / PDF
+            <Download className="w-4 h-4" /> Enregistrer / PDF
           </Button>
         </div>
       </header>
