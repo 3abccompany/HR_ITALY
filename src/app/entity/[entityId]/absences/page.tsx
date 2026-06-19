@@ -933,329 +933,336 @@ export default function TimeOffManagementPage() {
 
       {/* Accrual Calculation Modal */}
       <Dialog open={isAccrualModalOpen} onOpenChange={setIsAccrualModalOpen}>
-        <DialogContent className="sm:max-w-[500px] rounded-[2rem]">
-           <DialogHeader>
+        <DialogContent className="sm:max-w-[500px] flex flex-col overflow-hidden p-0 rounded-[2rem]">
+           <DialogHeader className="p-8 pb-4 shrink-0">
               <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
                  <RefreshCw className="w-5 h-5 text-accent" /> Calculer maturation mensuelle
               </DialogTitle>
               <DialogDescription>Générez les acquisitions de congés et ROL pour une période donnée.</DialogDescription>
            </DialogHeader>
 
-           <form onSubmit={handleRunAccrual} className="space-y-6 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase">Année</Label>
-                    <Input type="number" value={accrualForm.year} onChange={(e) => setAccrualForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl h-11" />
-                 </div>
-                 <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase">Mois</Label>
-                    <Select value={accrualForm.month.toString()} onValueChange={(v) => setAccrualForm(p => ({...p, month: parseInt(v)}))}>
-                       <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                       <SelectContent>
-                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
-                            <SelectItem key={m} value={m.toString()}>{format(new Date(2000, m-1), 'MMMM', { locale: fr })}</SelectItem>
-                          ))}
-                       </SelectContent>
-                    </Select>
-                 </div>
-              </div>
+           <div className="flex-1 overflow-y-auto px-8 py-4 min-h-0">
+             <form id="accrual-form" onSubmit={handleRunAccrual} className="space-y-6 pb-8">
+                <div className="grid grid-cols-2 gap-4">
+                   <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase">Année</Label>
+                      <Input type="number" value={accrualForm.year} onChange={(e) => setAccrualForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl h-11" />
+                   </div>
+                   <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase">Mois</Label>
+                      <Select value={accrualForm.month.toString()} onValueChange={(v) => setAccrualForm(p => ({...p, month: parseInt(v)}))}>
+                         <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                         <SelectContent>
+                            {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+                              <SelectItem key={m} value={m.toString()}>{format(new Date(2000, m-1), 'MMMM', { locale: fr })}</SelectItem>
+                            ))}
+                         </SelectContent>
+                      </Select>
+                   </div>
+                </div>
 
-              <div className="space-y-2">
-                 <Label className="text-[10px] font-black uppercase">Collaborateur (Optionnel)</Label>
-                 <Select value={accrualForm.employeeId} onValueChange={(v) => setAccrualForm(p => ({...p, employeeId: v}))}>
-                    <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Tous les actifs" /></SelectTrigger>
-                    <SelectContent>
-                       <SelectItem value="all">Calcul groupé (Tous les actifs)</SelectItem>
-                       {activeEmployees.map(e => (
-                         <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>
-                       ))}
-                    </SelectContent>
-                 </Select>
-              </div>
+                <div className="space-y-2">
+                   <Label className="text-[10px] font-black uppercase">Collaborateur (Optionnel)</Label>
+                   <Select value={accrualForm.employeeId} onValueChange={(v) => setAccrualForm(p => ({...p, employeeId: v}))}>
+                      <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Tous les actifs" /></SelectTrigger>
+                      <SelectContent>
+                         <SelectItem value="all">Calcul groupé (Tous les actifs)</SelectItem>
+                         {activeEmployees.map(e => (
+                           <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>
+                         ))}
+                      </SelectContent>
+                   </Select>
+                </div>
 
-              <Separator />
+                <Separator />
 
-              <div className="space-y-4">
-                 <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase">Mode jours utiles</Label>
-                    <Select value={accrualForm.usefulDaysMode} onValueChange={(v: any) => setAccrualForm(p => ({...p, usefulDaysMode: v}))}>
-                       <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                       <SelectContent>
-                          <SelectItem value="time_off_estimate">Estimation système (via absences)</SelectItem>
-                          <SelectItem value="manual">Saisie manuelle fixe</SelectItem>
-                       </SelectContent>
-                    </Select>
-                 </div>
+                <div className="space-y-4">
+                   <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase">Mode jours utiles</Label>
+                      <Select value={accrualForm.usefulDaysMode} onValueChange={(v: any) => setAccrualForm(p => ({...p, usefulDaysMode: v}))}>
+                         <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                         <SelectContent>
+                            <SelectItem value="time_off_estimate">Estimation système (via absences)</SelectItem>
+                            <SelectItem value="manual">Saisie manuelle fixe</SelectItem>
+                         </SelectContent>
+                      </Select>
+                   </div>
 
-                 {accrualForm.usefulDaysMode === 'manual' && (
-                    <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
-                       <Label className="text-[10px] font-black uppercase">Jours utiles à appliquer</Label>
-                       <Input type="number" value={accrualForm.manualUsefulDays} onChange={(e) => setAccrualForm(p => ({...p, manualUsefulDays: parseInt(e.target.value)}))} className="rounded-xl h-11" />
-                       <p className="text-[9px] text-muted-foreground italic">Standard : 22j pour une semaine de 5j.</p>
-                    </div>
-                 )}
-              </div>
+                   {accrualForm.usefulDaysMode === 'manual' && (
+                      <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+                         <Label className="text-[10px] font-black uppercase">Jours utiles à appliquer</Label>
+                         <Input type="number" value={accrualForm.manualUsefulDays} onChange={(e) => setAccrualForm(p => ({...p, manualUsefulDays: parseInt(e.target.value)}))} className="rounded-xl h-11" />
+                         <p className="text-[9px] text-muted-foreground italic">Standard : 22j pour une semaine de 5j.</p>
+                      </div>
+                   )}
+                </div>
+             </form>
+           </div>
 
-              <DialogFooter>
-                 <Button type="button" variant="ghost" onClick={() => setIsAccrualModalOpen(false)} disabled={loading}>Annuler</Button>
-                 <Button type="submit" disabled={loading} className="rounded-xl font-black px-8">
-                    {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Lancer le calcul
-                 </Button>
-              </DialogFooter>
-           </form>
+           <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
+              <Button type="button" variant="ghost" onClick={() => setIsAccrualModalOpen(false)} disabled={loading}>Annuler</Button>
+              <Button form="accrual-form" type="submit" disabled={loading} className="rounded-xl font-black px-8">
+                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Lancer le calcul
+              </Button>
+           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Manual Balance Dialog */}
       <Dialog open={isBalanceModalOpen} onOpenChange={setIsBalanceModalOpen}>
-        <DialogContent className="sm:max-w-[650px] rounded-[2rem]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[650px] flex flex-col overflow-hidden p-0 rounded-[2rem]">
+          <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-xl font-black text-primary">Définir solde annuel</DialogTitle>
             <DialogDescription>Initialisez ou ajustez les droits annuels d'un collaborateur.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleUpdateBalance} className="space-y-6 py-4">
-             <div className="grid grid-cols-2 gap-4">
-               <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
-                  <Select value={balanceForm.employeeId} onValueChange={(v) => setBalanceForm(p => ({...p, employeeId: v}))}>
-                    <SelectTrigger className="h-11 rounded-xl">
-                        <SelectValue placeholder="Sélectionner..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {activeEmployees.map(e => (
-                          <SelectItem key={e.employeeId} value={e.employeeId}>
-                            {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+          
+          <div className="flex-1 overflow-y-auto px-8 py-4 min-h-0">
+            <form id="balance-form" onSubmit={handleUpdateBalance} className="space-y-6 pb-8">
+               <div className="grid grid-cols-2 gap-4">
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
+                    <Select value={balanceForm.employeeId} onValueChange={(v) => setBalanceForm(p => ({...p, employeeId: v}))}>
+                      <SelectTrigger className="h-11 rounded-xl">
+                          <SelectValue placeholder="Sélectionner..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                          {activeEmployees.map(e => (
+                            <SelectItem key={e.employeeId} value={e.employeeId}>
+                              {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                 </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Année</Label>
+                    <Input type="number" value={balanceForm.year} onChange={(e) => setBalanceForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl h-11" />
+                 </div>
                </div>
-               <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Année</Label>
-                  <Input type="number" value={balanceForm.year} onChange={(e) => setBalanceForm(p => ({...p, year: parseInt(e.target.value)}))} className="rounded-xl h-11" />
+
+               <Separator />
+
+               <div className="grid grid-cols-3 gap-8">
+                  {/* Paid Leave Column */}
+                  <div className="space-y-4">
+                     <p className="text-[11px] font-black text-blue-700 uppercase border-b pb-1">Congés (Jours)</p>
+                     <div className="space-y-3">
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
+                           <Input type="number" value={balanceForm.paid_leave.entitlement} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
+                           <Input type="number" value={balanceForm.paid_leave.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
+                           <Input type="number" value={balanceForm.paid_leave.accrued} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                     </div>
+                  </div>
+
+                  {/* ROL Column */}
+                  <div className="space-y-4">
+                     <p className="text-[11px] font-black text-indigo-700 uppercase border-b pb-1">ROL (Heures)</p>
+                     <div className="space-y-3">
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
+                           <Input type="number" step="0.01" value={balanceForm.rol.entitlement} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
+                           <Input type="number" step="0.01" value={balanceForm.rol.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
+                           <Input type="number" step="0.01" value={balanceForm.rol.accrued} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                     </div>
+                  </div>
+
+                  {/* Ex Holidays Column */}
+                  <div className="space-y-4">
+                     <p className="text-[11px] font-black text-teal-700 uppercase border-b pb-1">Ex Fest. (Heures)</p>
+                     <div className="space-y-3">
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
+                           <Input type="number" step="0.01" value={balanceForm.ex_holidays.entitlement} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
+                           <Input type="number" step="0.01" value={balanceForm.ex_holidays.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                        <div className="space-y-1">
+                           <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
+                           <Input type="number" step="0.01" value={balanceForm.ex_holidays.accrued} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                        </div>
+                     </div>
+                  </div>
                </div>
-             </div>
+            </form>
+          </div>
 
-             <Separator />
-
-             <div className="grid grid-cols-3 gap-8">
-                {/* Paid Leave Column */}
-                <div className="space-y-4">
-                   <p className="text-[11px] font-black text-blue-700 uppercase border-b pb-1">Congés (Jours)</p>
-                   <div className="space-y-3">
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
-                         <Input type="number" value={balanceForm.paid_leave.entitlement} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
-                         <Input type="number" value={balanceForm.paid_leave.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
-                         <Input type="number" value={balanceForm.paid_leave.accrued} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                   </div>
-                </div>
-
-                {/* ROL Column */}
-                <div className="space-y-4">
-                   <p className="text-[11px] font-black text-indigo-700 uppercase border-b pb-1">ROL (Heures)</p>
-                   <div className="space-y-3">
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
-                         <Input type="number" step="0.01" value={balanceForm.rol.entitlement} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
-                         <Input type="number" step="0.01" value={balanceForm.rol.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
-                         <Input type="number" step="0.01" value={balanceForm.rol.accrued} onChange={(e) => setBalanceForm(p => ({...p, rol: {...p.rol, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                   </div>
-                </div>
-
-                {/* Ex Holidays Column */}
-                <div className="space-y-4">
-                   <p className="text-[11px] font-black text-teal-700 uppercase border-b pb-1">Ex Fest. (Heures)</p>
-                   <div className="space-y-3">
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Droit CCNL</Label>
-                         <Input type="number" step="0.01" value={balanceForm.ex_holidays.entitlement} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, entitlement: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Report N-1</Label>
-                         <Input type="number" step="0.01" value={balanceForm.ex_holidays.carriedOver} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, carriedOver: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                      <div className="space-y-1">
-                         <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
-                         <Input type="number" step="0.01" value={balanceForm.ex_holidays.accrued} onChange={(e) => setBalanceForm(p => ({...p, ex_holidays: {...p.ex_holidays, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
-                      </div>
-                   </div>
-                </div>
-             </div>
-
-             <DialogFooter>
-                <Button type="button" variant="ghost" onClick={() => setIsBalanceModalOpen(false)} disabled={loading}>Annuler</Button>
-                <Button type="submit" disabled={loading || !balanceForm.employeeId} className="rounded-xl font-black px-8">
-                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Enregistrer
-                </Button>
-             </DialogFooter>
-          </form>
+          <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
+            <Button type="button" variant="ghost" onClick={() => setIsBalanceModalOpen(false)} disabled={loading}>Annuler</Button>
+            <Button form="balance-form" type="submit" disabled={loading || !balanceForm.employeeId} className="rounded-xl font-black px-8">
+               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Enregistrer
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Creation Modal */}
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-        <DialogContent className="sm:max-w-[550px] rounded-[2rem]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[550px] flex flex-col overflow-hidden p-0 rounded-[2rem]">
+          <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-xl font-black text-primary">Nouvelle demande (RH)</DialogTitle>
             <DialogDescription>Créez manuellement une absence ou un congé pour un collaborateur.</DialogDescription>
           </DialogHeader>
           
-          <form onSubmit={handleSave} className="space-y-6 py-4">
-             <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
-                <Select value={formData.employeeId} onValueChange={(v) => setFormData(p => ({...p, employeeId: v}))}>
-                  <SelectTrigger className="h-11 rounded-xl">
-                    <SelectValue placeholder="Sélectionner un employé actif..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeEmployees.map(e => (
-                      <SelectItem key={e.employeeId} value={e.employeeId}>
-                        {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''} {e.jobTitle ? `— ${e.jobTitle}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-             </div>
-
-             <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Type global</Label>
-                  <Select value={formData.requestKind} onValueChange={(v: any) => setFormData(p => ({...p, requestKind: v, requestType: v === 'leave' ? 'paid_leave' : 'sickness'}))}>
-                    <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+          <div className="flex-1 overflow-y-auto px-8 py-4 min-h-0">
+            <form id="request-form" onSubmit={handleSave} className="space-y-6 pb-8">
+               <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
+                  <Select value={formData.employeeId} onValueChange={(v) => setFormData(p => ({...p, employeeId: v}))}>
+                    <SelectTrigger className="h-11 rounded-xl">
+                      <SelectValue placeholder="Sélectionner un employé actif..." />
+                    </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="leave">Congé (Vacances/Permis)</SelectItem>
-                      <SelectItem value="absence">Absence (Maladie/Autre)</SelectItem>
+                      {activeEmployees.map(e => (
+                        <SelectItem key={e.employeeId} value={e.employeeId}>
+                          {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''} {e.jobTitle ? `— ${e.jobTitle}` : ''}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Motif précis</Label>
-                  <Select value={formData.requestType} onValueChange={(v: any) => handleTypeChange(v)}>
-                    <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {formData.requestKind === 'leave' ? (
-                        <>
-                          <SelectItem value="paid_leave">Congé payé (Ferie)</SelectItem>
-                          <SelectItem value="rol_permission">Permission ROL</SelectItem>
-                          <SelectItem value="ex_holiday_permission">Permission Ex Festività</SelectItem>
-                          <SelectItem value="unpaid_leave">Congé sans solde</SelectItem>
-                          <SelectItem value="permission">Autre Permission / RTT</SelectItem>
-                        </>
-                      ) : (
-                        <>
-                          <SelectItem value="sickness">Maladie</SelectItem>
-                          <SelectItem value="work_accident">Accident du travail</SelectItem>
-                          <SelectItem value="unjustified_absence">Absence injustifiée</SelectItem>
-                          <SelectItem value="other">Autre motif</SelectItem>
-                        </>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-             </div>
+               </div>
 
-             {/* Conditional Fields based on Request Type */}
-             {isHourly ? (
-                <>
+               <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Date</Label>
-                    <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value, endDate: e.target.value}))} required className="rounded-xl h-11" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure début</Label>
-                      <Input type="time" value={formData.startTime} onChange={(e) => setFormData(p => ({...p, startTime: e.target.value}))} required className="rounded-xl h-11" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure fin</Label>
-                      <Input type="time" value={formData.endTime} onChange={(e) => setFormData(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
-                    </div>
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Type global</Label>
+                    <Select value={formData.requestKind} onValueChange={(v: any) => setFormData(p => ({...p, requestKind: v, requestType: v === 'leave' ? 'paid_leave' : 'sickness'}))}>
+                      <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="leave">Congé (Vacances/Permis)</SelectItem>
+                        <SelectItem value="absence">Absence (Maladie/Autre)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Durée estimée (Heures)</Label>
-                    <div className="h-11 px-3 bg-secondary/20 border rounded-xl flex items-center text-sm font-bold text-primary">
-                       {calculateDecimalHours(formData.startTime, formData.endTime)} h
-                    </div>
-                    <p className="text-[9px] text-muted-foreground italic">Exemple : 09:00 → 11:30 = 2.5 h</p>
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Motif précis</Label>
+                    <Select value={formData.requestType} onValueChange={(v: any) => handleTypeChange(v)}>
+                      <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {formData.requestKind === 'leave' ? (
+                          <>
+                            <SelectItem value="paid_leave">Congé payé (Ferie)</SelectItem>
+                            <SelectItem value="rol_permission">Permission ROL</SelectItem>
+                            <SelectItem value="ex_holiday_permission">Permission Ex Festività</SelectItem>
+                            <SelectItem value="unpaid_leave">Congé sans solde</SelectItem>
+                            <SelectItem value="permission">Autre Permission / RTT</SelectItem>
+                          </>
+                        ) : (
+                          <>
+                            <SelectItem value="sickness">Maladie</SelectItem>
+                            <SelectItem value="work_accident">Accident du travail</SelectItem>
+                            <SelectItem value="unjustified_absence">Absence injustifiée</SelectItem>
+                            <SelectItem value="other">Autre motif</SelectItem>
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
                   </div>
-                </>
-             ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
+               </div>
+
+               {/* Conditional Fields based on Request Type */}
+               {isHourly ? (
+                  <>
                     <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de début</Label>
-                      <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Date</Label>
+                      <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value, endDate: e.target.value}))} required className="rounded-xl h-11" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure début</Label>
+                        <Input type="time" value={formData.startTime} onChange={(e) => setFormData(p => ({...p, startTime: e.target.value}))} required className="rounded-xl h-11" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure fin</Label>
+                        <Input type="time" value={formData.endTime} onChange={(e) => setFormData(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
+                      </div>
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de fin (incluse)</Label>
-                      <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Durée estimée (Heures)</Label>
+                      <div className="h-11 px-3 bg-secondary/20 border rounded-xl flex items-center text-sm font-bold text-primary">
+                         {calculateDecimalHours(formData.startTime, formData.endTime)} h
+                      </div>
+                      <p className="text-[9px] text-muted-foreground italic">Exemple : 09:00 → 11:30 = 2.5 h</p>
                     </div>
+                  </>
+               ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de début</Label>
+                        <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de fin (incluse)</Label>
+                        <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {formData.requestType === "paid_leave" ? (
+                         <div className="space-y-1">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">Partie de la journée</Label>
+                            <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
+                              <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="full_day">Journée entière</SelectItem>
+                                <SelectItem value="morning">Matinée</SelectItem>
+                                <SelectItem value="afternoon">Après-midi</SelectItem>
+                              </SelectContent>
+                            </Select>
+                         </div>
+                      ) : null}
+                    </div>
+                  </>
+               )}
+
+               <div className="space-y-2">
+                  <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border">
+                     <div className="space-y-0.5">
+                        <Label className="text-xs font-bold text-primary">Justificatif requis ?</Label>
+                        <p className="text-[10px] text-muted-foreground">Activez si un document GED est nécessaire.</p>
+                     </div>
+                     <Switch 
+                      checked={formData.requiresJustification} 
+                      onCheckedChange={(v) => setFormData(p => ({...p, requiresJustification: v}))}
+                      disabled={["sickness", "work_accident"].includes(formData.requestType)}
+                     />
                   </div>
-                  <div className="space-y-2">
-                    {formData.requestType === "paid_leave" ? (
-                       <div className="space-y-1">
-                          <Label className="text-[10px] font-black uppercase text-muted-foreground">Partie de la journée</Label>
-                          <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
-                            <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="full_day">Journée entière</SelectItem>
-                              <SelectItem value="morning">Matinée</SelectItem>
-                              <SelectItem value="afternoon">Après-midi</SelectItem>
-                            </SelectContent>
-                          </Select>
-                       </div>
-                    ) : null}
-                  </div>
-                </>
-             )}
+               </div>
 
-             <div className="space-y-2">
-                <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border">
-                   <div className="space-y-0.5">
-                      <Label className="text-xs font-bold text-primary">Justificatif requis ?</Label>
-                      <p className="text-[10px] text-muted-foreground">Activez si un document GED est nécessaire.</p>
-                   </div>
-                   <Switch 
-                    checked={formData.requiresJustification} 
-                    onCheckedChange={(v) => setFormData(p => ({...p, requiresJustification: v}))}
-                    disabled={["sickness", "work_accident"].includes(formData.requestType)}
-                   />
-                </div>
-             </div>
+               <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Observations / Commentaires (RH)</Label>
+                  <Textarea 
+                    value={formData.reason} 
+                    onChange={(e) => setFormData(p => ({...p, reason: e.target.value}))} 
+                    placeholder="Notes internes sur cette absence..."
+                    className="rounded-xl min-h-[100px]"
+                  />
+               </div>
+            </form>
+          </div>
 
-             <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground">Observations / Commentaires (RH)</Label>
-                <Textarea 
-                  value={formData.reason} 
-                  onChange={(e) => setFormData(p => ({...p, reason: e.target.value}))} 
-                  placeholder="Notes internes sur cette absence..."
-                  className="rounded-xl min-h-[100px]"
-                />
-             </div>
-
-             <DialogFooter className="pt-4 border-t gap-2">
-                <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
-                <Button type="submit" disabled={loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/20">
-                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-                   Enregistrer la demande
-                </Button>
-             </DialogFooter>
-          </form>
+          <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
+             <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
+             <Button form="request-form" type="submit" disabled={loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/20">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                Enregistrer la demande
+             </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1381,11 +1388,20 @@ export default function TimeOffManagementPage() {
 
 function formatValToIso(val: any): string {
   if (!val) return "";
-  if (typeof val.toDate === "function") return val.toDate().toISOString();
+  
+  // Robust conversion for union type FieldValue | Date | Timestamp Map
   if (val instanceof Date) return val.toISOString();
-  if (typeof val === "string") return val;
+  if (typeof val.toDate === "function") return val.toDate().toISOString();
+  
+  // Handle standard Timestamp POJO { seconds, nanoseconds }
   const s = val.seconds ?? val._seconds;
-  if (typeof s === "number") return new Date(s * 1000).toISOString();
+  if (typeof s === "number") {
+    return new Date(s * 1000).toISOString();
+  }
+
+  // Handle ISO string
+  if (typeof val === "string") return val;
+
   return String(val);
 }
 
@@ -1458,8 +1474,22 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
       }
     });
 
-    // 3. Requests
-    requests.filter(r => r.employeeId === balance.employeeId && r.status === "approved" && r.balanceCounterType === counterType && r.startDate.startsWith(year.toString())).forEach(r => {
+    // 3. Requests (Improved filtering)
+    requests.filter(r => {
+      const matchEmp = r.employeeId === balance.employeeId;
+      const matchStatus = r.status === "approved";
+      const matchYear = r.startDate.startsWith(year.toString());
+      
+      // Map request to counter based on type or existing counter field
+      let rCounter = r.balanceCounterType;
+      if (!rCounter) {
+        if (r.requestType === "paid_leave") rCounter = "paid_leave";
+        else if (r.requestType === "rol_permission") rCounter = "rol";
+        else if (r.requestType === "ex_holiday_permission") rCounter = "ex_holidays";
+      }
+
+      return matchEmp && matchStatus && matchYear && rCounter === counterType;
+    }).forEach(r => {
       const val = r.unit === "days" ? (r.durationDays || 0) : (r.durationHours || 0);
       if (val !== 0) {
         const dateStr = r.approvedAt ? formatValToIso(r.approvedAt) : r.startDate;
