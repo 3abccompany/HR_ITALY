@@ -843,24 +843,24 @@ export async function postMonthlyAccrualToBalance(
     // 1. ALL READS FIRST
     const accrualSnap = await transaction.get(accrualRef);
     if (!accrualSnap.exists()) throw new Error("Maturation introuvable.");
-    const accrual = accrualSnap.data() as MonthlyAccrual;
+    const accrualData = accrualSnap.data() as MonthlyAccrual;
 
-    const balanceId = `${accrual.employeeId}_${accrual.year}`;
+    const balanceId = `${accrualData.employeeId}_${accrualData.year}`;
     const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
     const balanceSnap = await transaction.get(balanceRef);
 
     // 2. VALIDATION PHASE
-    if (accrual.status === "posted") throw new Error("Cette maturation a déjà été postée au solde.");
-    if (accrual.status !== "confirmed") throw new Error("La maturation doit être confirmée avant d’être postée.");
-    if (!accrual.isAccrualQualified) throw new Error("Cette maturation n’est pas qualifiée.");
+    if (accrualData.status === "posted") throw new Error("Cette maturation a déjà été postée au solde.");
+    if (accrualData.status !== "confirmed") throw new Error("La maturation doit être confirmée avant d’être postée.");
+    if (!accrualData.isAccrualQualified) throw new Error("Cette maturation n’est pas qualifiée.");
     
-    const hasValues = (accrual.accrued.paid_leave > 0 || accrual.accrued.rol > 0 || accrual.accrued.ex_holidays > 0);
+    const hasValues = (accrualData.accrued.paid_leave > 0 || accrualData.accrued.rol > 0 || accrualData.accrued.ex_holidays > 0);
     if (!hasValues) throw new Error("Aucune valeur de maturation à poster.");
 
     // 3. BALANCE RESOLUTION
     let balance: LeaveBalance;
     if (!balanceSnap.exists()) {
-       const initial = await getOrCreateLeaveBalance(transaction, entityId, accrual.employeeId, accrual.year, actorUid, actorRole);
+       const initial = await getOrCreateLeaveBalance(transaction, entityId, accrualData.employeeId, accrualData.year, actorUid, actorRole);
        balance = initial.data;
     } else {
        balance = normalizeBalance(balanceSnap.data());
@@ -872,7 +872,7 @@ export async function postMonthlyAccrualToBalance(
     // FORMULA FIX: remaining = carriedOver + accrued - used
     const countersToProcess: (keyof typeof counters)[] = ["paid_leave", "rol", "ex_holidays"];
     countersToProcess.forEach(type => {
-      const addedValue = accrual.accrued[type as keyof typeof accrual.accrued] || 0;
+      const addedValue = accrualData.accrued[type as keyof typeof accrualData.accrued] || 0;
       const c = counters[type];
       c.accrued += addedValue;
       c.remaining = c.carriedOver + c.accrued - c.used;
@@ -899,12 +899,12 @@ export async function postMonthlyAccrualToBalance(
       postedAt: now,
       postedByUid: actorUid,
       postedToBalanceId: balanceId,
-      postedValues: accrual.accrued,
+      postedValues: accrualData.accrued,
       updatedAt: now,
       updatedByUid: actorUid
     });
 
-    return { balanceId };
+    return { balanceId, year: accrualData.year, month: accrualData.month };
   }).then(async (res) => {
     await createAuditLog({
       userId: actorUid,
@@ -912,7 +912,7 @@ export async function postMonthlyAccrualToBalance(
       action: "monthlyAccrual.posted",
       resourceType: "monthlyAccrual",
       resourceId: accrualId,
-      details: { balanceId: res.balanceId, year: accrual.year, month: accrual.month }
+      details: { balanceId: res.balanceId, year: res.year, month: res.month }
     });
   });
 }
