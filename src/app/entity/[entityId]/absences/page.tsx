@@ -766,8 +766,8 @@ export default function TimeOffManagementPage() {
         <TabsContent value="balances" className="mt-0">
            <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
               <Table>
-                <TableHeader className="bg-secondary/20">
-                   <TableRow>
+                <TableHeader>
+                   <TableRow className="bg-secondary/20">
                       <TableHead className="pl-6">Embauché (Matricule)</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Droit CCNL / Report N-1</TableHead>
@@ -1480,13 +1480,13 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
       }
     });
 
-    // 3. Requests (Improved filtering)
+    // 3. Requests (Improved filtering with fallback mapping)
     requests.filter(r => {
       const matchEmp = r.employeeId === balance.employeeId;
       const matchStatus = r.status === "approved";
       const matchYear = r.startDate.startsWith(year.toString());
       
-      // Map request to counter based on type or existing counter field
+      // Map request to counter based on balanceCounterType field with robust requestType fallback
       let rCounter = r.balanceCounterType;
       if (!rCounter) {
         if (r.requestType === "paid_leave") rCounter = "paid_leave";
@@ -1550,199 +1550,7 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
   return (
     <div className="space-y-6">
        {diag.hasMismatch && (
-         <Alert className="bg-orange-50 border-orange-200 text-orange-800 rounded-2xl py-4">
-            <AlertCircle className="h-5 w-5 text-orange-600" />
-            <div className="ml-2">
-               <AlertTitle className="font-black uppercase text-xs tracking-widest">Diagnostic : Écart détecté</AlertTitle>
-               <AlertDescription className="text-xs mt-1 leading-relaxed">
-                  Le solde reconstruit ne correspond pas exactement au solde enregistré. Une mise à jour manuelle ou une donnée historique non journalisée peut expliquer cet écart.
-                  <div className="mt-2 grid grid-cols-3 gap-4 border-t border-orange-100 pt-2 font-bold uppercase tracking-tighter text-[10px]">
-                     <div>Acquis: {diag.registered.accrued.toFixed(2)} vs {diag.reconstructed.accrued.toFixed(2)}</div>
-                     <div>Utilisé: {diag.registered.used.toFixed(2)} vs {diag.reconstructed.used.toFixed(2)}</div>
-                     <div>Restant: {diag.registered.remaining.toFixed(2)} vs {diag.reconstructed.remaining.toFixed(2)}</div>
-                  </div>
-               </AlertDescription>
-            </div>
-         </Alert>
-       )}
-
-       <Card className="overflow-hidden border-primary/5 rounded-2xl shadow-sm">
-          <Table>
-             <TableHeader className="bg-slate-50/50">
-                <TableRow>
-                   <TableHead className="pl-6 text-[10px] font-black uppercase tracking-widest">Date</TableHead>
-                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Libellé</TableHead>
-                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Mouvement</TableHead>
-                   <TableHead className="text-[10px] font-black uppercase tracking-widest">Solde progressif</TableHead>
-                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right pr-6">Acteur</TableHead>
-                </TableRow>
-             </TableHeader>
-             <TableBody>
-                {movements.length === 0 ? (
-                   <TableRow><TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">Aucun mouvement trouvé.</TableCell></TableRow>
-                ) : (
-                  movements.map((m, idx) => (
-                    <TableRow key={idx} className="hover:bg-slate-50/30 transition-colors">
-                       <TableCell className="pl-6 py-4">
-                          <div className="flex flex-col">
-                             <span className="text-xs font-bold text-slate-800">{formatDate(m.date)}</span>
-                             <span className="text-[8px] font-black text-muted-foreground uppercase opacity-50">{m.status}</span>
-                          </div>
-                       </TableCell>
-                       <TableCell>
-                          <div className="flex items-center gap-2">
-                             {m.source === 'opening' && <ListRestart className="w-3 h-3 text-muted-foreground" />}
-                             {m.source === 'maturation' && <RefreshCw className="w-3 h-3 text-blue-500" />}
-                             {m.source === 'request' && <Plane className="w-3 h-3 text-orange-500" />}
-                             <span className="text-xs font-medium text-slate-700">{m.label}</span>
-                          </div>
-                       </TableCell>
-                       <TableCell>
-                          <span className={cn("font-black text-sm", m.movement > 0 ? "text-green-600" : m.movement < 0 ? "text-red-600" : "text-slate-400")}>
-                             {m.movement > 0 ? '+' : ''}{m.movement.toFixed(2)} {m.unit}
-                          </span>
-                       </TableCell>
-                       <TableCell>
-                          <Badge variant="outline" className="font-mono text-[10px] bg-white border-primary/5">
-                             {m.runningBalance.toFixed(2)} {m.unit}
-                          </Badge>
-                       </TableCell>
-                       <TableCell className="text-right pr-6">
-                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{m.actor}</span>
-                       </TableCell>
-                    </TableRow>
-                  ))
-                )}
-             </TableBody>
-          </Table>
-       </Card>
-
-       <div className="flex items-start gap-4 p-6 bg-primary/5 rounded-[2rem] border border-primary/10">
-          <div className="bg-white p-2 rounded-xl shadow-sm text-primary">
-             <InfoIcon className="w-5 h-5" />
-          </div>
-          <div className="space-y-1">
-             <p className="text-xs font-black uppercase text-primary tracking-widest">Informations sur le solde</p>
-             <p className="text-[11px] text-slate-600 leading-relaxed">
-                Ce journal affiche l'historique chronologique des transactions affectant le solde. 
-                Les mouvements de maturation sont ajoutés lors du posting mensuel, tandis que les demandes approuvées sont déduites immédiatement lors de leur validation.
-             </p>
-          </div>
-       </div>
-    </div>
-  );
-}
-
-function JournalTabTable({ balance, counterType, accruals, requests, unit }: { balance: LeaveBalance, counterType: BalanceCounterType, accruals: MonthlyAccrual[], requests: TimeOffRequest[], unit: string }) {
-  const movements = useMemo(() => {
-    const list: JournalMovement[] = [];
-    const year = balance.year;
-
-    // 1. Opening Balance
-    const opening = balance.counters?.[counterType]?.carriedOver || 0;
-    list.push({
-      date: `${year}-01-01`,
-      source: "opening",
-      label: "Report N-1",
-      movement: opening,
-      runningBalance: 0, // calculated later
-      status: "Ouverture",
-      actor: "Système",
-      unit
-    });
-
-    // 2. Accruals
-    accruals.filter(a => a.employeeId === balance.employeeId && a.year === year && a.status === "posted").forEach(a => {
-      const val = a.accrued[counterType] || 0;
-      if (val !== 0) {
-        let dateStr = `${a.year}-${a.month.toString().padStart(2, '0')}-01`;
-        if (a.postedAt) {
-          dateStr = formatValToIso(a.postedAt);
-        } else if (a.updatedAt) {
-          dateStr = formatValToIso(a.updatedAt);
-        }
-
-        list.push({
-          date: dateStr,
-          source: "maturation",
-          label: `Maturation ${format(new Date(a.year, a.month - 1), 'MMMM', { locale: fr })} ${a.year}`,
-          movement: val,
-          runningBalance: 0,
-          status: "Posté",
-          actor: a.postedByUid === 'server' ? 'Système' : 'RH',
-          unit
-        });
-      }
-    });
-
-    // 3. Requests
-    requests.filter(r => {
-      const matchEmp = r.employeeId === balance.employeeId;
-      const matchStatus = r.status === "approved";
-      const matchYear = r.startDate.startsWith(year.toString());
-      
-      let rCounter = r.balanceCounterType;
-      if (!rCounter) {
-        if (r.requestType === "paid_leave") rCounter = "paid_leave";
-        else if (r.requestType === "rol_permission") rCounter = "rol";
-        else if (r.requestType === "ex_holiday_permission") rCounter = "ex_holidays";
-      }
-
-      return matchEmp && matchStatus && matchYear && rCounter === counterType;
-    }).forEach(r => {
-      const val = r.unit === "days" ? (r.durationDays || 0) : (r.durationHours || 0);
-      if (val !== 0) {
-        const dateStr = r.approvedAt ? formatValToIso(r.approvedAt) : r.startDate;
-
-        list.push({
-          date: dateStr,
-          source: "request",
-          label: `${TIME_OFF_TYPE_LABELS[r.requestType] || 'Demande'} du ${formatDate(r.startDate)} au ${formatDate(r.endDate)}`,
-          movement: -val,
-          runningBalance: 0,
-          status: "Approuvé",
-          actor: r.approvedByRole === 'companyHR' ? 'RH' : 'Manager',
-          unit
-        });
-      }
-    });
-
-    list.sort((a, b) => a.date.localeCompare(b.date));
-    
-    let rb = 0;
-    list.forEach(m => {
-      rb += m.movement;
-      m.runningBalance = rb;
-    });
-
-    return list;
-  }, [balance, counterType, accruals, requests, unit]);
-
-  const diag = useMemo(() => {
-    const carriedOver = balance.counters?.[counterType]?.carriedOver || 0;
-    const registeredAccrued = balance.counters?.[counterType]?.accrued || 0;
-    const registeredUsed = balance.counters?.[counterType]?.used || 0;
-    const registeredRemaining = balance.counters?.[counterType]?.remaining || 0;
-
-    const reconstructedAccrued = movements.filter(m => m.source === "maturation").reduce((s, m) => s + m.movement, 0);
-    const reconstructedUsed = Math.abs(movements.filter(m => m.source === "request").reduce((s, m) => s + m.movement, 0));
-    const reconstructedRemaining = carriedOver + reconstructedAccrued - reconstructedUsed;
-
-    const hasMismatch = Math.abs(registeredRemaining - reconstructedRemaining) > 0.01 || 
-                        Math.abs(registeredAccrued - reconstructedAccrued) > 0.01 ||
-                        Math.abs(registeredUsed - reconstructedUsed) > 0.01;
-
-    return { 
-      hasMismatch,
-      registered: { accrued: registeredAccrued, used: registeredUsed, remaining: registeredRemaining },
-      reconstructed: { accrued: reconstructedAccrued, used: reconstructedUsed, remaining: reconstructedRemaining }
-    };
-  }, [movements, balance, counterType]);
-
-  return (
-    <div className="space-y-6">
-       {diag.hasMismatch && (
-         <Alert className="bg-orange-50 border-orange-200 text-orange-800 rounded-2xl py-4">
+         <Alert variant="destructive" className="bg-orange-50 border-orange-200 text-orange-800 rounded-2xl py-4">
             <AlertCircle className="h-5 w-5 text-orange-600" />
             <div className="ml-2">
                <AlertTitle className="font-black uppercase text-xs tracking-widest">Diagnostic : Écart détecté</AlertTitle>
