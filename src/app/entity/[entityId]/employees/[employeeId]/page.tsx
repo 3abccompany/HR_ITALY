@@ -20,7 +20,8 @@ import {
   UserPlus,
   Globe,
   GraduationCap,
-  Send
+  Send,
+  ClipboardList
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -53,6 +54,7 @@ import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { Person } from "@/types/person";
 import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
+import { PreHireDossier } from "@/types/pre-hire-dossier";
 
 /**
  * Robust date parser for mixed formats.
@@ -160,6 +162,32 @@ export default function Employee360HubPage() {
   [db, entityId, employee?.sourceOfferId, canReadContracts, canReadCandidates]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef, "employee360.offer");
 
+  const dossierQuery = useMemo(() => {
+    if (!db || !entityId || !permissionsReady || !employee) return null;
+
+    // 1. Try by Offer ID (Standard recruited employee)
+    if (employee.sourceOfferId) {
+      return query(
+        collection(db, `entities/${entityId}/preHireDossiers`),
+        where("employmentOfferId", "==", employee.sourceOfferId)
+      ) as Query<PreHireDossier>;
+    }
+
+    // 2. Fallback for direct intake (Historical)
+    const isHistorical = employee.source === 'historical_import' || employee.source === 'direct_hr_creation';
+    if (isHistorical && employee.employeeId) {
+      return query(
+        collection(db, `entities/${entityId}/preHireDossiers`),
+        where("employeeId", "==", employee.employeeId)
+      ) as Query<PreHireDossier>;
+    }
+
+    return null;
+  }, [db, entityId, employee, permissionsReady]);
+
+  const { data: dossiers } = useCollection<PreHireDossier>(dossierQuery, "employee360.dossiers");
+  const dossier = dossiers?.[0];
+
   const cpiRef = useMemo(() => 
     db && entityId && employee?.sourceOfferId && canReadCPI ? (doc(db, `entities/${entityId}/employmentRequests`, `unilav_${employee.sourceOfferId}`) as DocumentReference<any>) : null,
   [db, entityId, employee?.sourceOfferId, canReadCPI]);
@@ -237,8 +265,8 @@ export default function Employee360HubPage() {
     docsByPers.forEach(d => { if (!map.has(d.id)) map.set(d.id, d); });
     docsByCand.forEach(d => { if (!map.has(d.id)) map.set(d.id, d); });
     return Array.from(map.values()).sort((a, b) => {
-       const da = parseSafeDate(a.uploadedAt || a.createdAt)?.getTime() || 0;
-       const db = parseSafeDate(b.uploadedAt || b.createdAt)?.getTime() || 0;
+       const da = parseSafeDate(a.uploadedAt || a.createdAt || 0)?.getTime() || 0;
+       const db = parseSafeDate(b.uploadedAt || b.createdAt || 0)?.getTime() || 0;
        return db - da;
     });
   }, [docsByEmp, docsByPers, docsByCand]);
@@ -644,6 +672,26 @@ export default function Employee360HubPage() {
                         )}
                       </>
                     )}
+
+                    {/* Fallback for Historical Dossier visibility */}
+                    {!candidate && !offer && dossier && (
+                      <div className="space-y-4 pt-4 border-t border-dashed">
+                        <div className="flex items-center justify-between">
+                           <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Dossier RH de reprise</p>
+                           <Badge variant="outline" className="bg-slate-50 text-[9px] uppercase font-black border-primary/10">Importé</Badge>
+                        </div>
+                        <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
+                           <div className="flex items-center gap-4">
+                              <div className="bg-white p-2.5 rounded-xl shadow-sm"><ClipboardList className="w-5 h-5 text-primary/40" /></div>
+                              <div>
+                                 <p className="text-sm font-bold text-slate-900">{dossier.title || "Dossier de reprise"}</p>
+                                 <p className="text-[10px] text-muted-foreground font-medium uppercase">Statut: {dossier.status.replace(/_/g, ' ')}</p>
+                              </div>
+                           </div>
+                           <p className="text-[10px] font-bold text-muted-foreground text-right italic">Initié le {formatDateSafe(dossier.createdAt)}</p>
+                        </div>
+                      </div>
+                    )}
                  </CardContent>
               </Card>
 
@@ -956,4 +1004,3 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
     </Table>
   );
 }
-

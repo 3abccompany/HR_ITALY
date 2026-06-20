@@ -12,7 +12,7 @@ import {
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
   ChevronDown, ChevronRight, FolderOpen, FileCheck,
-  Plus, ShieldCheck
+  Plus, ShieldCheck, ClipboardList
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -757,7 +757,7 @@ export default function ContractDetailPage() {
 
     setProcessing(true);
     try {
-      const result = await prepareContractRenewalAction(entityId, contractId, {
+      const result = await prepareContractRenewalAction(entityId, oldContractId, {
         newStartDate: renewalForm.newStartDate,
         newEndDate: renewalForm.newEndDate,
         renewalReason: renewalForm.renewalReason,
@@ -1057,6 +1057,12 @@ export default function ContractDetailPage() {
                         Ce contrat est déjà actif car il provient d’une reprise historique. Aucun PDF généré par le système n’est requis. 
                         Vous pouvez rattacher le contrat signé existant depuis les documents de l’employé.
                      </p>
+                     {contract.preHireDossierId && (
+                        <div className="mt-4 pt-4 border-t border-primary/10 flex items-center gap-2 text-[10px] font-bold text-primary/60">
+                           <ClipboardList className="w-3.5 h-3.5" />
+                           <span>Dossier RH de reprise lié : {contract.preHireDossierId}</span>
+                        </div>
+                     )}
                   </div>
                </CardContent>
             </Card>
@@ -1848,7 +1854,7 @@ function DocumentRow({
              <div className="flex flex-col items-end">
                 <p className="text-[8px] font-black uppercase text-muted-foreground tracking-tighter">Échéance</p>
                 <div className="flex items-center gap-1.5">
-                   <span className={cn("text-[10px] font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                   <span className={cn("text-[10px] font-black", isExpired ? "text-red-600" : "isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
                      {formatDateSafe(doc.expiresAt)}
                    </span>
                    {isExpired ? (
