@@ -452,8 +452,8 @@ export default function ContractDetailPage() {
     const amount = parseFloat(val) || 0;
     setFormData(p => ({
       ...p,
-      grossMonthly: amount,
-      grossAnnual: amount * (p.monthlyPayments || 13)
+      proposedGrossMonthly: amount,
+      proposedGrossAnnual: amount * (p.monthlyPayments || 13)
     }));
   };
 
@@ -546,7 +546,7 @@ export default function ContractDetailPage() {
       try {
         await updateContract(entityId, contractId, effectiveData, user!.uid);
         await sendContractToSignature(entityId, contractId, user!.uid);
-        toast({ title: "Succès", description: "Contrat prêt pour signature." });
+        toast({ title: "Succès", description: "Contrat prêt for signature." });
       } catch (err: any) {
         toast({ variant: "destructive", title: "Erreur", description: err.message });
       } finally {
@@ -786,6 +786,7 @@ export default function ContractDetailPage() {
   const isTerminated = contract?.status === 'terminated';
   const isRenewed = contract?.status === 'renewed';
   const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
+  const isImported = contract.source === 'direct_hr_creation' || contract.source === 'historical_import';
   
   const today = startOfDay(new Date());
   const contractStartDate = parseSafeDate(contract?.startDate);
@@ -1041,77 +1042,97 @@ export default function ContractDetailPage() {
             </Card>
           )}
 
-          {/* Generated PDF Section */}
-          <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", contract.generatedPdfStoragePath ? "border-primary/10" : "border-orange-100 bg-orange-50/5")}>
-             <CardHeader className="bg-primary/5 border-b py-4 px-8 flex flex-row items-center justify-between">
-                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <FileCode className="w-4 h-4" /> Document de travail (PDF)
-                </CardTitle>
-                {contract.generatedPdfStoragePath && (
-                  <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black text-primary border-primary/20">
-                    PDF Généré V{contract.generatedPdfVersion}
-                  </Badge>
-                )}
-             </CardHeader>
-             <CardContent className="p-8">
-                {!contract.generatedPdfStoragePath ? (
-                   <div className="space-y-4">
-                      <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl flex items-start gap-3">
-                         <AlertTriangle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
-                         <div>
-                            <p className="text-sm font-bold text-orange-800">PDF du contratto non généré</p>
-                            <p className="text-xs text-orange-700">Vous devez générer the version préparée du contrat avant de pouvoir l'envoyer en signature.</p>
-                         </div>
-                      </div>
-                      <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing || isTerminated || isRenewed} className="w-full h-12 rounded-xl font-black gap-2">
-                         {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCode className="w-4 h-4" />}
-                         Générer le PDF du contratto
-                      </Button>
-                   </div>
-                ) : (
-                   <div className="space-y-6">
-                      <div className="flex items-center justify-between gap-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                         <div className="flex items-center gap-4">
-                            <div className="bg-primary text-white p-3 rounded-2xl shadow-lg shadow-primary/20"><FileText className="w-6 h-6" /></div>
-                            <div>
-                               <p className="text-sm font-black text-slate-800">{contract.generatedPdfFileName}</p>
-                               <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">
-                                 Généré le {formatDateTime(contract.generatedPdfAt)} par {getUserLabel(contract.generatedPdfBy)}
-                               </p>
-                            </div>
-                         </div>
-                         {contract.generatedPdfUrl && (
-                           <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2 shadow-sm">
-                              <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer">
-                                 <ExternalLink className="w-4 h-4" /> Consulter le PDF
-                              </a>
-                           </Button>
-                         )}
-                      </div>
+          {/* Imported Contract Info Card (E1-Fix) */}
+          {isImported && isActive && (
+            <Card className="border-primary/20 bg-primary/5 rounded-[2rem] overflow-hidden shadow-md">
+               <CardContent className="p-8 flex items-start gap-5">
+                  <div className="bg-primary text-white p-3 rounded-2xl shadow-lg shadow-primary/20">
+                     <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                     <h3 className="text-lg font-black text-primary">Contrat importé / reprise historique</h3>
+                     <p className="text-sm text-slate-600 leading-relaxed">
+                        Ce contrat est déjà actif car il provient d’une reprise historique. Aucun PDF généré par le système n’est requis. 
+                        Vous pouvez rattacher le contrat signé existant depuis les documents de l’employé.
+                     </p>
+                  </div>
+               </CardContent>
+            </Card>
+          )}
 
-                      {isPdfOutdated && !isTerminated && !isRenewed && (
-                        <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
-                           <AlertTriangle className="h-4 w-4 text-orange-600" />
-                           <AlertTitle className="text-sm font-bold text-orange-800">PDF obsolète</AlertTitle>
-                           <AlertDescription className="text-xs text-orange-700">
-                             Des modifications ont été apportées au contrat après sa génération. Veuillez régénérer le document pour refléter les derniers termes.
-                           </AlertDescription>
-                        </Alert>
-                      )}
-
-                      {(isDraft || isPendingSignature) && (
-                        <Button variant="outline" onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="w-full h-11 border-primary/20 text-primary font-bold rounded-xl gap-2 hover:bg-primary/5">
-                           {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
-                           {isPdfOutdated ? "Régénérer le PDF mis à jour" : "Régénérer une nouvelle version"}
+          {/* Generated PDF Section - Hidden for Imported Active Contracts */}
+          {!isImported && (
+            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", contract.generatedPdfStoragePath ? "border-primary/10" : "border-orange-100 bg-orange-50/5")}>
+              <CardHeader className="bg-primary/5 border-b py-4 px-8 flex flex-row items-center justify-between">
+                  <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                    <FileCode className="w-4 h-4" /> Document de travail (PDF)
+                  </CardTitle>
+                  {contract.generatedPdfStoragePath && (
+                    <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black text-primary border-primary/20">
+                      PDF Généré V{contract.generatedPdfVersion}
+                    </Badge>
+                  )}
+              </CardHeader>
+              <CardContent className="p-8">
+                  {!contract.generatedPdfStoragePath ? (
+                    <div className="space-y-4">
+                        <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl flex items-start gap-3">
+                          <AlertTriangle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
+                          <div>
+                              <p className="text-sm font-bold text-orange-800">PDF du contratto non généré</p>
+                              <p className="text-xs text-orange-700">Vous devez générer the version préparée du contrat avant de pouvoir l'envoyer en signature.</p>
+                          </div>
+                        </div>
+                        <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing || isTerminated || isRenewed} className="w-full h-12 rounded-xl font-black gap-2">
+                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCode className="w-4 h-4" />}
+                          Générer le PDF du contratto
                         </Button>
-                      )}
-                   </div>
-                )}
-             </CardContent>
-          </Card>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                        <div className="flex items-center justify-between gap-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                          <div className="flex items-center gap-4">
+                              <div className="bg-primary text-white p-3 rounded-2xl shadow-lg shadow-primary/20"><FileText className="w-6 h-6" /></div>
+                              <div>
+                                <p className="text-sm font-black text-slate-800">{contract.generatedPdfFileName}</p>
+                                <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">
+                                  Généré le {formatDateTime(contract.generatedPdfAt)} par {getUserLabel(contract.generatedPdfBy)}
+                                </p>
+                              </div>
+                          </div>
+                          {contract.generatedPdfUrl && (
+                            <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2 shadow-sm">
+                                <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer">
+                                  <ExternalLink className="w-4 h-4" /> Consulter le PDF
+                                </a>
+                            </Button>
+                          )}
+                        </div>
 
-          {/* Signed Document Section */}
-          {(isPendingSignature || isPendingActivation || !isDraft) && (
+                        {isPdfOutdated && !isTerminated && !isRenewed && (
+                          <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
+                            <AlertTriangle className="h-4 w-4 text-orange-600" />
+                            <AlertTitle className="text-sm font-bold text-orange-800">PDF obsolète</AlertTitle>
+                            <AlertDescription className="text-xs text-orange-700">
+                              Des modifications ont été apportées au contrat après sa génération. Veuillez régénérer le document pour refléter les derniers termes.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+
+                        {(isDraft || isPendingSignature) && (
+                          <Button variant="outline" onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="w-full h-11 border-primary/20 text-primary font-bold rounded-xl gap-2 hover:bg-primary/5">
+                            {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+                            {isPdfOutdated ? "Régénérer le PDF mis à jour" : "Régénérer une nouvelle version"}
+                          </Button>
+                        )}
+                    </div>
+                  )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Signed Document Section - Hidden for Imported Active Contracts */}
+          {(isPendingSignature || isPendingActivation || (!isDraft && !isImported)) && (
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-orange-100 bg-orange-50/5")}>
               <CardHeader className="py-4 border-b px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
