@@ -260,12 +260,12 @@ export default function ContractDetailPage() {
   const { data: employee } = useDoc<Employee>(employeeRef);
 
   const personRef = useMemo(() => 
-    db && contract?.personId ? doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person> : null,
+    db && entityId && contract?.personId ? doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person> : null,
   [db, entityId, contract?.personId]);
   const { data: person } = useDoc<Person>(personRef);
 
   const offerRef = useMemo(() => 
-    db && contract?.sourceOfferId ? doc(db, `entities/${entityId}/employmentOffers`, contract.sourceOfferId) as DocumentReference<EmploymentOffer> : null,
+    db && entityId && contract?.sourceOfferId ? doc(db, `entities/${entityId}/employmentOffers`, contract.sourceOfferId) as DocumentReference<EmploymentOffer> : null,
   [db, entityId, contract?.sourceOfferId]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
@@ -757,7 +757,7 @@ export default function ContractDetailPage() {
 
     setProcessing(true);
     try {
-      const result = await prepareContractRenewalAction(entityId, oldContractId, {
+      const result = await prepareContractRenewalAction(entityId, contractId, {
         newStartDate: renewalForm.newStartDate,
         newEndDate: renewalForm.newEndDate,
         renewalReason: renewalForm.renewalReason,
@@ -1854,7 +1854,7 @@ function DocumentRow({
              <div className="flex flex-col items-end">
                 <p className="text-[8px] font-black uppercase text-muted-foreground tracking-tighter">Échéance</p>
                 <div className="flex items-center gap-1.5">
-                   <span className={cn("text-[10px] font-black", isExpired ? "text-red-600" : "isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                   <span className={cn("text-[10px] font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
                      {formatDateSafe(doc.expiresAt)}
                    </span>
                    {isExpired ? (
