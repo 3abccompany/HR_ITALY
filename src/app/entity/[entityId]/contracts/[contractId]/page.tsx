@@ -774,6 +774,46 @@ export default function ContractDetailPage() {
     }
   };
 
+  const handleUploadHistoricalContract = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !contract) return;
+
+    if (file.type !== "application/pdf") {
+      toast({ variant: "destructive", title: "Format invalide", description: "Veuillez uploader un fichier PDF." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      await uploadHRDocument(
+        entityId,
+        file,
+        {
+          title: "Contrat signé historique",
+          documentType: "signed_contract",
+          status: "valid",
+          relatedModule: "contracts",
+          relatedId: contractId,
+          contractId: contractId,
+          employeeId: contract.employeeId,
+          personId: contract.personId,
+          preHireDossierId: contract.preHireDossierId || null,
+          source: contract.source,
+          isSensitive: true,
+          isRequired: true
+        },
+        user.uid,
+        membership?.userDisplayName || "Utilisateur"
+      );
+
+      toast({ title: "Document rattaché", description: "Le contrat signé a été ajouté au dossier historique." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
@@ -1055,8 +1095,25 @@ export default function ContractDetailPage() {
                      <h3 className="text-lg font-black text-primary">Contrat importé / reprise historique</h3>
                      <p className="text-sm text-slate-600 leading-relaxed">
                         Ce contrat est déjà actif car il provient d’une reprise historique. Aucun PDF généré par le système n’est requis. 
-                        Vous pouvez rattacher le contrat signé existant depuis les documents de l’employé.
+                        Vous pouvez rattacher le contrat signé existant ci-dessous ou depuis les documents de l’employé.
                      </p>
+
+                     <div className="pt-6">
+                        <div className="relative inline-block">
+                          <Button disabled={processing} className="gap-2 rounded-xl font-bold bg-white text-primary hover:bg-white/90 border border-primary/10 shadow-sm">
+                            {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                            Ajouter le contrat signé historique
+                          </Button>
+                          <input 
+                            type="file" 
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
+                            accept=".pdf"
+                            onChange={handleUploadHistoricalContract}
+                            disabled={processing}
+                          />
+                        </div>
+                     </div>
+
                      {contract.preHireDossierId && (
                         <div className="mt-4 pt-4 border-t border-primary/10 flex items-center gap-2 text-[10px] font-bold text-primary/60">
                            <ClipboardList className="w-3.5 h-3.5" />
