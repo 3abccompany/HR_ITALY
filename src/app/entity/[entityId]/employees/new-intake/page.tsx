@@ -17,7 +17,7 @@ import { collection, query, orderBy, where, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { executeEmployeeIntake, findExistingPersonForIntake } from "@/services/employee-intake.service";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
-import { Department, JobTitle } from "@/types/organization";
+import { Department } from "@/types/organization";
 import { Worksite } from "@/types/worksite";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { JobProfile } from "@/types/job-profile";
@@ -25,7 +25,6 @@ import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const initialForm = {
@@ -84,16 +83,16 @@ export default function EmployeeIntakePage() {
   const [existingPerson, setExistingPerson] = useState<any>(null);
   const [searchAttempted, setSearchAttempted] = useState(false);
 
-  // Masters with index-safe ordering
+  // Masters with index-safe ordering (no multi-field filters)
   const deptsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/departments`), orderBy("name", "asc")) as Query<Department> : null, [db, entityId]);
   const worksitesQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/worksites`), orderBy("name", "asc")) as Query<Worksite> : null, [db, entityId]);
   const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), orderBy("name", "asc")) as Query<CCNL> : null, [db, entityId]);
   const profilesQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("jobTitleName", "asc")) as Query<JobProfile> : null, [db, entityId]);
 
-  const { data: rawDepartments } = useCollection<Department>(deptsQuery);
-  const { data: rawWorksites } = useCollection<Worksite>(worksitesQuery);
-  const { data: rawCcnls } = useCollection<CCNL>(ccnlsQuery);
-  const { data: rawJobProfiles } = useCollection<JobProfile>(profilesQuery);
+  const { data: rawDepartments } = useCollection<Department>(deptsQuery, "intake.departments");
+  const { data: rawWorksites } = useCollection<Worksite>(worksitesQuery, "intake.worksites");
+  const { data: rawCcnls } = useCollection<CCNL>(ccnlsQuery, "intake.ccnls");
+  const { data: rawJobProfiles } = useCollection<JobProfile>(profilesQuery, "intake.jobProfiles");
 
   // In-memory robust active filtering
   const isActiveStatus = (status?: string) => ['active', 'actif', 'ACTIVE'].includes(status || '');
@@ -187,6 +186,35 @@ export default function EmployeeIntakePage() {
       monthlyPayments: profile.defaultMonthlyPayments || p.monthlyPayments,
       grossMonthly: profile.defaultMinimumGrossMonthly || p.grossMonthly,
       grossAnnual: (profile.defaultMinimumGrossMonthly || p.grossMonthly) * (profile.defaultMonthlyPayments || p.monthlyPayments)
+    }));
+  };
+
+  const handleWorksiteChange = (id: string) => {
+    const w = worksites.find(item => item.worksiteId === id);
+    setFormData(p => ({...p, worksiteId: id, worksiteName: w?.name || ""}));
+  };
+
+  const handleCcnlChange = (ccnlId: string) => {
+    const ccnl = ccnls.find(c => c.ccnlId === ccnlId);
+    setFormData(p => ({
+      ...p,
+      ccnlId,
+      ccnlName: ccnl?.name || "",
+      levelId: "",
+      levelCode: "",
+      weeklyHours: ccnl?.standardWeeklyHours || p.weeklyHours,
+      monthlyPayments: ccnl?.monthlyPayments || p.monthlyPayments
+    }));
+  };
+
+  const handleLevelChange = (levelId: string) => {
+    const level = activeLevels.find(l => l.levelId === levelId);
+    setFormData(p => ({
+      ...p,
+      levelId,
+      levelCode: level?.levelCode || "",
+      grossMonthly: level?.minimumGrossMonthly || p.grossMonthly,
+      grossAnnual: (level?.minimumGrossMonthly || p.grossMonthly) * p.monthlyPayments
     }));
   };
 
@@ -367,7 +395,7 @@ export default function EmployeeIntakePage() {
                   <Select value={formData.jobProfileId} onValueChange={handleJobProfileChange}>
                     <SelectTrigger className="rounded-xl"><SelectValue placeholder="Choisir une fiche de poste..." /></SelectTrigger>
                     <SelectContent>
-                      {jobProfiles.map(jp => <SelectItem key={p.jobProfileId} value={jp.jobProfileId}>{jp.jobTitleName} ({jp.versionLabel})</SelectItem>)}
+                      {jobProfiles.map(jp => <SelectItem key={jp.jobProfileId} value={jp.jobProfileId}>{jp.jobTitleName} ({jp.versionLabel})</SelectItem>)}
                       {jobProfiles.length === 0 && <SelectItem value="none" disabled>Aucune fiche de poste active</SelectItem>}
                     </SelectContent>
                   </Select>
@@ -380,7 +408,7 @@ export default function EmployeeIntakePage() {
         <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden">
           <CardHeader className="bg-primary/5 border-b py-6 px-8">
             <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-              <FileSignature className="w-4 h-4" /> 3. Contrat Actif (Classification mandatory)
+              <FileSignature className="w-4 h-4" /> 3. Contrat Actif (Classification obligatoire)
             </CardTitle>
           </CardHeader>
           <CardContent className="p-8 space-y-8">
@@ -534,33 +562,4 @@ export default function EmployeeIntakePage() {
       </form>
     </div>
   );
-
-  function handleWorksiteChange(id: string) {
-    const w = worksites.find(item => item.worksiteId === id);
-    setFormData(p => ({...p, worksiteId: id, worksiteName: w?.name || ""}));
-  }
-
-  function handleCcnlChange(ccnlId: string) {
-    const ccnl = ccnls.find(c => c.ccnlId === ccnlId);
-    setFormData(p => ({
-      ...p,
-      ccnlId,
-      ccnlName: ccnl?.name || "",
-      levelId: "",
-      levelCode: "",
-      weeklyHours: ccnl?.standardWeeklyHours || p.weeklyHours,
-      monthlyPayments: ccnl?.monthlyPayments || p.monthlyPayments
-    }));
-  }
-
-  function handleLevelChange(levelId: string) {
-    const level = activeLevels.find(l => l.levelId === levelId);
-    setFormData(p => ({
-      ...p,
-      levelId,
-      levelCode: level?.levelCode || "",
-      grossMonthly: level?.minimumGrossMonthly || p.grossMonthly,
-      grossAnnual: (level?.minimumGrossMonthly || p.grossMonthly) * p.monthlyPayments
-    }));
-  }
 }
