@@ -12,7 +12,7 @@ import {
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
   ChevronDown, ChevronRight, FolderOpen, FileCheck,
-  Plus
+  Plus, ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -117,6 +117,36 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
   return format(date, formatStr, { locale: fr });
 }
 
+/**
+ * Renders the contract lifecycle context for a document.
+ */
+function renderContractContext(doc: HRDocument, employee?: Employee) {
+  const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType);
+  if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
+  if (!doc.contractId) return null;
+
+  let label = doc.contractType || "Contrat";
+  let color = "bg-slate-50 text-slate-500 border-slate-200";
+
+  if (employee) {
+    if (employee.activeContractId === doc.contractId) {
+      label = "Contrat actif";
+      color = "bg-blue-50 text-blue-700 border-blue-200";
+    } else if (employee.pendingContractId === doc.contractId) {
+      label = "Contrat futur";
+      color = "bg-teal-50 text-teal-700 border-teal-200";
+    } else {
+      label = "Contrat précédent";
+    }
+  }
+
+  return (
+    <Badge variant="outline" className={cn("text-[8px] h-4 px-1.5 font-black uppercase", color)}>
+       {label}
+    </Badge>
+  );
+}
+
 export default function ContractDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -169,7 +199,6 @@ export default function ContractDetailPage() {
   [db, entityId, contractId]);
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
-  // Relocated useMemo hook to the top level
   const isRenewalOverlap = useMemo(() => {
     if (!contract?.endDate || !renewalForm.newStartDate) return false;
     const oldEnd = parseSafeDate(contract.endDate);
@@ -270,7 +299,6 @@ export default function ContractDetailPage() {
         const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
         setActiveLevels(levels);
 
-        // Auto-link legacy name to ID if possible
         if (!formData.ccnlId && formData.ccnlName && activeCcnls) {
            const match = activeCcnls.find((c: any) => c.name === formData.ccnlName);
            if (match) setFormData(p => ({...p, ccnlId: match.ccnlId}));
@@ -287,14 +315,12 @@ export default function ContractDetailPage() {
     }
   }, [formData.ccnlId, isEditing, contract?.status, entityId, user, activeCcnls, auth.currentUser]);
 
-  // Helper to build effective values with fallbacks
   const getEffectiveValue = (field: keyof Contract, fallback?: any) => {
     const val = contract?.[field];
     if (val !== undefined && val !== null && val !== "") return val;
     return fallback;
   };
 
-  // Pre-fill Logic for Display & Edit
   const effectiveData = useMemo(() => {
     if (!contract) return {} as any;
 
@@ -302,14 +328,12 @@ export default function ContractDetailPage() {
     const employeeAddress = person ? `${person.address || ""}, ${person.postalCode || ""} ${person.city || ""} (${person.province || ""})` : "";
 
     return {
-      // Employer
       entityLegalName: getEffectiveValue('entityLegalName', entity?.raisonSociale || entity?.legalName),
       entityName: getEffectiveValue('entityName', entity?.nomEntreprise || entity?.name),
       entityVatNumber: getEffectiveValue('entityVatNumber', entity?.numeroTVA),
       companyAddressSnapshot: getEffectiveValue('companyAddressSnapshot', companyAddress),
       legalRepresentativeName: getEffectiveValue('legalRepresentativeName', entity?.referentEntreprise),
       
-      // Employee
       employeeDisplayName: getEffectiveValue('employeeDisplayName', employee?.displayName || person?.displayName),
       employeeCode: getEffectiveValue('employeeCode', employee?.employeeCode),
       taxCode: getEffectiveValue('taxCode', employee?.taxCode || person?.codiceFiscale),
@@ -317,7 +341,6 @@ export default function ContractDetailPage() {
       dateOfBirth: getEffectiveValue('dateOfBirth', person?.dateOfBirth || (person as any)?.birthDate),
       placeOfBirth: getEffectiveValue('placeOfBirth', person?.placeOfBirth),
 
-      // Job & Terms
       jobTitleName: getEffectiveValue('jobTitleName', offer?.jobTitleName || employee?.jobTitle),
       departmentName: getEffectiveValue('departmentName', offer?.departmentName || employee?.departmentName),
       worksiteName: getEffectiveValue('worksiteName', offer?.worksiteName || employee?.worksiteName),
@@ -328,7 +351,6 @@ export default function ContractDetailPage() {
       trialPeriodDays: getEffectiveValue('trialPeriodDays', offer?.trialPeriodDays),
       isPartTime: getEffectiveValue('isPartTime', offer?.workingTime?.toLowerCase().includes('part')),
 
-      // Classification
       ccnlId: getEffectiveValue('ccnlId', offer?.ccnlId),
       ccnlName: getEffectiveValue('ccnlName', offer?.ccnlName),
       levelId: getEffectiveValue('levelId', offer?.levelId),
@@ -336,12 +358,10 @@ export default function ContractDetailPage() {
       levelLabel: getEffectiveValue('levelLabel', offer?.levelLabel),
       qualificationCategory: getEffectiveValue('qualificationCategory', offer?.qualificationLabel),
 
-      // Salary
       grossMonthly: getEffectiveValue('grossMonthly', offer?.proposedGrossMonthly),
       grossAnnual: getEffectiveValue('grossAnnual', offer?.proposedGrossAnnual),
       monthlyPayments: getEffectiveValue('monthlyPayments', offer?.monthlyPayments || 13),
 
-      // Compliance
       uniLavProtocolNumber: getEffectiveValue('uniLavProtocolNumber', mandatoryCommunication?.protocolNumber),
       uniLavSubmissionDate: getEffectiveValue('uniLavSubmissionDate', mandatoryCommunication?.submittedAt ? 
         (mandatoryCommunication.submittedAt.seconds ? new Date(mandatoryCommunication.submittedAt.seconds * 1000).toISOString().split('T')[0] : mandatoryCommunication.submittedAt) : ""),
@@ -352,7 +372,6 @@ export default function ContractDetailPage() {
     };
   }, [contract, entity, employee, person, offer, mandatoryCommunication]);
 
-  // Set default renewal start date
   useEffect(() => {
     if (contract && contract.endDate) {
       const nextDay = addDays(parseSafeDate(contract.endDate) || new Date(), 1);
@@ -363,7 +382,6 @@ export default function ContractDetailPage() {
     }
   }, [contract]);
 
-  // Handle PDF Generation
   const handleGeneratePdf = async () => {
     if (!user || !entityId || !contractId) return;
     setGeneratingPdf(true);
@@ -397,7 +415,6 @@ export default function ContractDetailPage() {
     }
   };
 
-  // Sync formData with best available data when entering edit mode
   const handleEnterEditMode = () => {
     if (contract) {
       setFormData({
@@ -496,7 +513,6 @@ export default function ContractDetailPage() {
     const missing: string[] = [];
     const data = effectiveData;
 
-    // Check Source-controlled mandatory fields
     if (!data.employeeDisplayName) missing.push("Nom salarié manquant — à corriger depuis la fiche employé.");
     if (!data.taxCode) missing.push("Code fiscal manquant — à corriger depuis la fiche employé.");
     if (!data.contractType) missing.push("Type de contrat manquant — à corriger depuis la proposition source.");
@@ -507,7 +523,6 @@ export default function ContractDetailPage() {
     if (!data.weeklyHours) missing.push("Temps de travail manquant — à corriger depuis la proposition source.");
     if (!data.grossMonthly && !data.grossAnnual) missing.push("Rémunération manquante — à corriger depuis la proposition source.");
 
-    // Check Completion fields
     if (!data.entityLegalName) missing.push("Raison sociale de l'employeur manquante — à compléter dans le contrat ou la fiche entreprise.");
     if (!data.companyAddressSnapshot) missing.push("Adresse du siège manquante — à compléter dans le contrat ou la fiche entreprise.");
     if (!data.employeeAddressSnapshot) missing.push("Adresse de résidence manquante — à compléter dans le contrat.");
@@ -523,14 +538,12 @@ export default function ContractDetailPage() {
       return;
     }
 
-    // PDF Check - Rely on Storage Path as the URL is temporary and can expire
     if (!contract?.generatedPdfStoragePath) {
       setValidationErrors(["Veuillez générer le PDF du contrat avant de l’envoyer en signature."]);
       setIsValidationDialogOpen(true);
       return;
     }
 
-    // Outdated Check (Content vs PDF)
     const pdfDate = parseSafeDate(contract?.generatedPdfAt);
     const contentDate = parseSafeDate(contract?.contentUpdatedAt);
 
@@ -540,7 +553,6 @@ export default function ContractDetailPage() {
       return;
     }
 
-    // Persist any effective values (fallbacks) to the contract document before transitioning
     if (contract) {
       setProcessing(true);
       try {
@@ -581,7 +593,6 @@ export default function ContractDetailPage() {
 
     const isDraftStatus = contract.status === 'draft';
 
-    // Validation for Draft edits
     if (isDraftStatus) {
        const isFixedTerm = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
        if (isFixedTerm && !formData.endDate) {
@@ -616,7 +627,6 @@ export default function ContractDetailPage() {
     }
 
     try {
-      // Build restricted update payload
       const allowedKeys = [
         "entityLegalName", "entityVatNumber", "companyAddressSnapshot", 
         "legalRepresentativeName", "legalRepresentativeTitle",
@@ -627,7 +637,6 @@ export default function ContractDetailPage() {
         "notes"
       ];
 
-      // Unlock core fields if in draft
       if (isDraftStatus) {
         allowedKeys.push(
           "startDate", "jobTitleName", "departmentName", "worksiteName",
@@ -804,12 +813,10 @@ export default function ContractDetailPage() {
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
   const isPdfOutdated = Boolean(pdfDate && contentDate && isBefore(pdfDate, contentDate));
 
-  // Expiry Logic
   const contractExpiryDate = parseSafeDate(contract?.endDate);
   const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
   const isContractExpiringSoon = isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30));
 
-  // Renewal Logic
   const isFixedTermCDD = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
   const canShowRenewButton = isFixedTermCDD && 
     ['active', 'terminated', 'suspended', 'pending_signature', 'pending_activation', 'expired'].includes(contract.status) && 
@@ -910,7 +917,7 @@ export default function ContractDetailPage() {
                    disabled={processing}
                    className="gap-2 bg-primary text-white font-black rounded-xl"
                  >
-                   {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                   {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                    Activer maintenant
                  </Button>
                ) : (
@@ -939,7 +946,6 @@ export default function ContractDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <div className="lg:col-span-3 space-y-8">
           
-          {/* Expiry Banners */}
           {isContractExpired && (
             <Alert variant="destructive" className="rounded-2xl border-none shadow-lg bg-red-600 text-white animate-in fade-in slide-in-from-top-2">
               <AlertTriangle className="h-5 w-5 text-white" />
@@ -963,7 +969,6 @@ export default function ContractDetailPage() {
             </Alert>
           )}
 
-          {/* Renewal Banner if pending */}
           {contract.pendingRenewalContractId && !isRenewed && (
              <Alert className="rounded-2xl border-accent/20 bg-accent/5 shadow-md">
                 <RefreshCcw className="h-5 w-5 text-accent" />
@@ -979,7 +984,6 @@ export default function ContractDetailPage() {
              </Alert>
           )}
 
-          {/* Renewal Banner if finished */}
           {isRenewed && contract.renewedByContractId && (
              <Alert className="rounded-2xl border-blue-100 bg-blue-50/50 shadow-sm">
                 <CheckCircle2 className="h-5 w-5 text-blue-600" />
@@ -995,7 +999,6 @@ export default function ContractDetailPage() {
              </Alert>
           )}
 
-          {/* Termination Info if terminated */}
           {isTerminated && (
             <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm">
                <CardHeader className="bg-red-50 border-b py-4 px-8 flex flex-row items-center justify-between">
@@ -1042,7 +1045,6 @@ export default function ContractDetailPage() {
             </Card>
           )}
 
-          {/* Imported Contract Info Card (E1-Fix) */}
           {isImported && isActive && (
             <Card className="border-primary/20 bg-primary/5 rounded-[2rem] overflow-hidden shadow-md">
                <CardContent className="p-8 flex items-start gap-5">
@@ -1060,7 +1062,6 @@ export default function ContractDetailPage() {
             </Card>
           )}
 
-          {/* Generated PDF Section - Hidden for Imported Active Contracts */}
           {!isImported && (
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", contract.generatedPdfStoragePath ? "border-primary/10" : "border-orange-100 bg-orange-50/5")}>
               <CardHeader className="bg-primary/5 border-b py-4 px-8 flex flex-row items-center justify-between">
@@ -1131,7 +1132,6 @@ export default function ContractDetailPage() {
             </Card>
           )}
 
-          {/* Signed Document Section - Hidden for Imported Active Contracts */}
           {(isPendingSignature || isPendingActivation || (!isDraft && !isImported)) && (
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-orange-100 bg-orange-50/5")}>
               <CardHeader className="py-4 border-b px-8">
@@ -1207,7 +1207,6 @@ export default function ContractDetailPage() {
             </Card>
           )}
 
-          {/* Registry Documents History Section */}
           {canReadDocs && (
             <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
                <CardHeader className="bg-secondary/10 border-b py-4 px-8">
@@ -1268,7 +1267,6 @@ export default function ContractDetailPage() {
             </Card>
           )}
 
-          {/* Employer Card */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1286,7 +1284,6 @@ export default function ContractDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Employee Card */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1313,7 +1310,6 @@ export default function ContractDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Job & workplace */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1351,7 +1347,6 @@ export default function ContractDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Terms & Classification */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1426,7 +1421,6 @@ export default function ContractDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Remuneration */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1443,7 +1437,6 @@ export default function ContractDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Compliance */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1459,7 +1452,6 @@ export default function ContractDetailPage() {
           </Card>
         </div>
 
-        {/* Audit Sidebar */}
         <div className="space-y-8">
           <Card className="border-primary/10 rounded-[2rem] shadow-lg bg-secondary/5 overflow-hidden">
              <CardHeader className="py-4 border-b bg-secondary/10">
@@ -1515,7 +1507,6 @@ export default function ContractDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Renewal Modal */}
       <Dialog open={isRenewalModalOpen} onOpenChange={setIsRenewalModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <DialogHeader>
@@ -1574,7 +1565,6 @@ export default function ContractDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Signed Doc Modal */}
       <Dialog open={isSignedDocModalOpen} onOpenChange={setIsSignedDocModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <DialogHeader>
@@ -1630,7 +1620,6 @@ export default function ContractDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Termination Modal */}
       <Dialog open={isTerminationModalOpen} onOpenChange={setIsTerminationModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <DialogHeader>
