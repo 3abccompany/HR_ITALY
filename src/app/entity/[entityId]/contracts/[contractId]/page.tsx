@@ -77,7 +77,7 @@ import {
   Collapsible, 
   CollapsibleContent, 
   CollapsibleTrigger 
-} from "@/collapsible";
+} from "@/components/ui/collapsible";
 import { format, isBefore, startOfDay, differenceInDays, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
