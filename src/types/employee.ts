@@ -31,6 +31,14 @@ export interface Employee {
   pendingContractId?: string;
   status: EmployeeStatus;
   
+  /** 
+   * Origin of the employee record 
+   * "recruitment": via standard funnel (Offer Acceptance)
+   * "direct_hr_creation": manual entry by HR
+   * "historical_import": batch or manual intake of pre-existing staff
+   */
+  source?: "recruitment" | "direct_hr_creation" | "historical_import";
+
   // Espace Employé / Account Metadata (Phase 1A)
   userId?: string;
   accountEmail?: string;

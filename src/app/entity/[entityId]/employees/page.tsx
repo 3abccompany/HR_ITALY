@@ -7,7 +7,7 @@ import {
   ChevronRight, ListFilter, Filter, X,
   Building2, MapPin, Calendar, Briefcase, Eye,
   ArrowUpRight, AlertCircle, UserX, LayoutDashboard,
-  RefreshCcw, Mail, Fingerprint
+  RefreshCcw, Mail, Fingerprint, Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +66,7 @@ export default function EmployeesManagementPage() {
   const [pagination, setPagination] = useState({ page: 1, pageSize: 25 });
 
   const canRead = hasPermission("employees.read");
+  const canCreate = hasPermission("employees.create");
 
   // Main real-time query
   const employeesQuery = useMemo(() => {
@@ -161,6 +162,17 @@ export default function EmployeesManagementPage() {
         <div className="space-y-1">
           <h1 className="text-3xl font-black text-primary tracking-tight">Gestion des Employés</h1>
           <p className="text-muted-foreground text-sm font-medium">Consultez, recherchez et filtrez les employés par poste, statut et site de travail.</p>
+        </div>
+        <div className="flex items-center gap-3">
+           {canCreate && (
+             <Button 
+               onClick={() => router.push(`/entity/${entityId}/employees/new-intake`)} 
+               variant="outline" 
+               className="gap-2 bg-white rounded-xl font-bold border-primary/20 hover:bg-primary/5 shadow-sm"
+             >
+                <Plus className="w-4 h-4" /> Ajouter un employé existant
+             </Button>
+           )}
         </div>
       </header>
 

@@ -8,6 +8,9 @@ export interface Contract {
   personId: string;
   employeeId: string;
   sourceOfferId?: string;
+  
+  /** Origin of the contract document */
+  source?: "recruitment" | "direct_hr_creation" | "historical_import";
 
   // --- Identity Snapshots (Denormalized) ---
   employeeDisplayName?: string;
@@ -64,6 +67,7 @@ export interface Contract {
   generatedPdfUrl?: string;
   generatedPdfStoragePath?: string;
   generatedPdfFileName?: string;
+  generatedPdfFileName_old?: string;
   generatedPdfVersion?: number;
   generatedPdfAt?: Date | FieldValue;
   generatedPdfBy?: string;
@@ -102,6 +106,9 @@ export interface Contract {
   isRenewal?: boolean;
   renewalDraftCreatedAt?: Date | FieldValue;
   renewalDraftCreatedBy?: string;
+
+  // --- Dossier Link (Phase E1) ---
+  preHireDossierId?: string;
 
   // --- Lifecycle & Audit ---
   status: ContractStatus;
