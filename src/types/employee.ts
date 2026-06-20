@@ -10,6 +10,7 @@ export interface Employee {
   sourceInterviewId?: string | null;
   sourceOfferId?: string | null;
   recruitmentNeedId?: string | null;
+  jobProfileId?: string | null;
   employeeCode: string;
   firstName: string;
   lastName: string;

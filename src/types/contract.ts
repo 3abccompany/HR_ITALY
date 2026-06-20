@@ -8,6 +8,7 @@ export interface Contract {
   personId: string;
   employeeId: string;
   sourceOfferId?: string;
+  jobProfileId?: string | null;
   
   /** Origin of the contract document */
   source?: "recruitment" | "direct_hr_creation" | "historical_import";

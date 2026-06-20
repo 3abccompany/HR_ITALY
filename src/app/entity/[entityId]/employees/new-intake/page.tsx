@@ -20,6 +20,7 @@ import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 import { Department, JobTitle } from "@/types/organization";
 import { Worksite } from "@/types/worksite";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
+import { JobProfile } from "@/types/job-profile";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -44,6 +45,7 @@ const initialForm = {
   employeeCode: "",
   departmentId: "",
   departmentName: "",
+  jobProfileId: "",
   jobTitle: "",
   worksiteId: "",
   worksiteName: "",
@@ -82,14 +84,24 @@ export default function EmployeeIntakePage() {
   const [existingPerson, setExistingPerson] = useState<any>(null);
   const [searchAttempted, setSearchAttempted] = useState(false);
 
-  // Masters
-  const deptsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/departments`), where("status", "==", "active"), orderBy("name", "asc")) as Query<Department> : null, [db, entityId]);
-  const worksitesQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/worksites`), where("status", "==", "active"), orderBy("name", "asc")) as Query<Worksite> : null, [db, entityId]);
-  const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active"), orderBy("name", "asc")) as Query<CCNL> : null, [db, entityId]);
+  // Masters with index-safe ordering
+  const deptsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/departments`), orderBy("name", "asc")) as Query<Department> : null, [db, entityId]);
+  const worksitesQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/worksites`), orderBy("name", "asc")) as Query<Worksite> : null, [db, entityId]);
+  const ccnlsQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/ccnls`), orderBy("name", "asc")) as Query<CCNL> : null, [db, entityId]);
+  const profilesQuery = useMemo(() => db ? query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("jobTitleName", "asc")) as Query<JobProfile> : null, [db, entityId]);
 
-  const { data: departments } = useCollection<Department>(deptsQuery);
-  const { data: worksites } = useCollection<Worksite>(worksitesQuery);
-  const { data: ccnls } = useCollection<CCNL>(ccnlsQuery);
+  const { data: rawDepartments } = useCollection<Department>(deptsQuery);
+  const { data: rawWorksites } = useCollection<Worksite>(worksitesQuery);
+  const { data: rawCcnls } = useCollection<CCNL>(ccnlsQuery);
+  const { data: rawJobProfiles } = useCollection<JobProfile>(profilesQuery);
+
+  // In-memory robust active filtering
+  const isActiveStatus = (status?: string) => ['active', 'actif', 'ACTIVE'].includes(status || '');
+
+  const departments = useMemo(() => rawDepartments?.filter(d => isActiveStatus(d.status)) || [], [rawDepartments]);
+  const worksites = useMemo(() => rawWorksites?.filter(w => isActiveStatus(w.status)) || [], [rawWorksites]);
+  const ccnls = useMemo(() => rawCcnls?.filter(c => isActiveStatus(c.status)) || [], [rawCcnls]);
+  const jobProfiles = useMemo(() => rawJobProfiles?.filter(p => isActiveStatus(p.status)) || [], [rawJobProfiles]);
 
   const [activeLevels, setActiveLevels] = useState<any[]>([]);
   const [loadingLevels, setLoadingLevels] = useState(false);
@@ -156,6 +168,28 @@ export default function EmployeeIntakePage() {
     }
   };
 
+  const handleJobProfileChange = (profileId: string) => {
+    const profile = jobProfiles.find(p => p.jobProfileId === profileId);
+    if (!profile) return;
+
+    setFormData(p => ({
+      ...p,
+      jobProfileId: profileId,
+      jobTitle: profile.jobTitleName,
+      departmentId: profile.departmentId || p.departmentId,
+      departmentName: profile.departmentName || p.departmentName,
+      // Prefill recommendations
+      ccnlId: profile.defaultCcnlId || p.ccnlId,
+      ccnlName: profile.defaultCcnlName || p.ccnlName,
+      levelId: profile.defaultLevelId || p.levelId,
+      levelCode: profile.defaultLevelCode || p.levelCode,
+      weeklyHours: profile.defaultWeeklyHours || p.weeklyHours,
+      monthlyPayments: profile.defaultMonthlyPayments || p.monthlyPayments,
+      grossMonthly: profile.defaultMinimumGrossMonthly || p.grossMonthly,
+      grossAnnual: (profile.defaultMinimumGrossMonthly || p.grossMonthly) * (profile.defaultMonthlyPayments || p.monthlyPayments)
+    }));
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !entityId) return;
@@ -180,7 +214,7 @@ export default function EmployeeIntakePage() {
         departmentName: departments?.find(d => d.departmentId === formData.departmentId)?.name || "",
         worksiteName: worksites?.find(w => w.worksiteId === formData.worksiteId)?.name || "",
         ccnlName: ccnls?.find(c => c.ccnlId === formData.ccnlId)?.name || "",
-        levelCode: activeLevels.find(l => l.levelId === formData.levelId)?.levelCode || ""
+        levelCode: activeLevels.find(l => l.levelId === formData.levelId)?.levelCode || formData.levelCode
       };
 
       await executeEmployeeIntake(entityId, payload, user.uid);
@@ -312,10 +346,10 @@ export default function EmployeeIntakePage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Lieu de travail</Label>
-                  <Select value={formData.worksiteId} onValueChange={(v) => setFormData(p => ({...p, worksiteId: v}))}>
+                  <Select value={formData.worksiteId} onValueChange={(v) => handleWorksiteChange(v)}>
                     <SelectTrigger className="rounded-xl"><SelectValue placeholder="Choisir site..." /></SelectTrigger>
                     <SelectContent>
-                      {worksites?.map(w => <SelectItem key={w.worksiteId} value={w.worksiteId}>{w.name}</SelectItem>)}
+                      {worksites.map(w => <SelectItem key={w.worksiteId} value={w.worksiteId}>{w.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -324,13 +358,19 @@ export default function EmployeeIntakePage() {
                   <Select value={formData.departmentId} onValueChange={(v) => setFormData(p => ({...p, departmentId: v}))}>
                     <SelectTrigger className="rounded-xl"><SelectValue placeholder="Choisir dépt..." /></SelectTrigger>
                     <SelectContent>
-                      {departments?.map(d => <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>)}
+                      {departments.map(d => <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2 col-span-2">
-                  <Label className="text-[10px] uppercase font-black">Intitulé du poste</Label>
-                  <Input value={formData.jobTitle} onChange={(e) => setFormData(p => ({...p, jobTitle: e.target.value}))} required className="rounded-xl" />
+                  <Label className="text-[10px] uppercase font-black">Intitulé du poste (Fiche de Poste)</Label>
+                  <Select value={formData.jobProfileId} onValueChange={handleJobProfileChange}>
+                    <SelectTrigger className="rounded-xl"><SelectValue placeholder="Choisir une fiche de poste..." /></SelectTrigger>
+                    <SelectContent>
+                      {jobProfiles.map(jp => <SelectItem key={p.jobProfileId} value={jp.jobProfileId}>{jp.jobTitleName} ({jp.versionLabel})</SelectItem>)}
+                      {jobProfiles.length === 0 && <SelectItem value="none" disabled>Aucune fiche de poste active</SelectItem>}
+                    </SelectContent>
+                  </Select>
                 </div>
              </div>
           </CardContent>
@@ -359,7 +399,7 @@ export default function EmployeeIntakePage() {
                   <Select value={formData.ccnlId} onValueChange={(v) => handleCcnlChange(v)}>
                     <SelectTrigger className="rounded-xl"><SelectValue placeholder="Sélectionner CCNL..." /></SelectTrigger>
                     <SelectContent>
-                      {ccnls?.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
+                      {ccnls.map(c => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -495,8 +535,13 @@ export default function EmployeeIntakePage() {
     </div>
   );
 
+  function handleWorksiteChange(id: string) {
+    const w = worksites.find(item => item.worksiteId === id);
+    setFormData(p => ({...p, worksiteId: id, worksiteName: w?.name || ""}));
+  }
+
   function handleCcnlChange(ccnlId: string) {
-    const ccnl = ccnls?.find(c => c.ccnlId === ccnlId);
+    const ccnl = ccnls.find(c => c.ccnlId === ccnlId);
     setFormData(p => ({
       ...p,
       ccnlId,
