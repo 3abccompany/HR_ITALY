@@ -77,7 +77,7 @@ import {
   Collapsible, 
   CollapsibleContent, 
   CollapsibleTrigger 
-} from "@/components/ui/collapsible";
+} from "@/collapsible";
 import { format, isBefore, startOfDay, differenceInDays, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
@@ -785,7 +785,7 @@ export default function ContractDetailPage() {
 
     setProcessing(true);
     try {
-      await uploadHRDocument(
+      const docId = await uploadHRDocument(
         entityId,
         file,
         {

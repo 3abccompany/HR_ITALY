@@ -57,6 +57,7 @@ export interface HRDocument {
   candidateId?: string | null;
   candidateDisplayName?: string | null;
   contractId?: string | null;
+  preHireDossierId?: string | null;
   relatedModule?: RelatedModule | null;
   relatedId?: string | null;
   relatedLabel?: string | null;
