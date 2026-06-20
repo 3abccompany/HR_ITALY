@@ -36,6 +36,7 @@ export interface PreHireDossier {
   dossierId: string;
   entityId: string;
   entityName?: string;
+  title?: string;
   personId: string;
   candidateId: string;
   employmentOfferId: string;

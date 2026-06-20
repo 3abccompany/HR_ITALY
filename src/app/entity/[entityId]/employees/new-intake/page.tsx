@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, Building2, MapPin, 
   Calendar, Briefcase, ShieldCheck, Search, AlertCircle,
-  Link as LinkIcon, Euro, Clock, Save, Info, Plus
+  Link as LinkIcon, Euro, Clock, Save, Info, Plus, FileSignature
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -212,7 +212,7 @@ export default function EmployeeIntakePage() {
   return (
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
+        <Button variant="ghost" size="icon" type="button" onClick={() => router.back()} className="rounded-full">
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
@@ -264,7 +264,7 @@ export default function EmployeeIntakePage() {
                        {existingPerson ? `Identité existante trouvée : ${existingPerson.displayName}` : "Nouvelle identité (création d'une fiche Personne)"}
                     </p>
                     <p className="text-[10px] text-muted-foreground uppercase font-medium">
-                       {existingPerson ? "Les données seront synchronisées avec le profil existant." : "Une fiche Personne sera créée automatiquement."}
+                       {existingPerson ? "Les données seront synchronisées with le profil existant." : "Une fiche Personne sera créée automatiquement."}
                     </p>
                   </div>
                </div>

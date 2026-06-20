@@ -117,6 +117,7 @@ export interface Contract {
   sentForSignatureAt?: Date | FieldValue;
   signedAt?: Date | FieldValue;
   activatedAt?: Date | FieldValue;
+  activatedBy?: string;
   terminatedAt_old?: Date | FieldValue; // Keeping for compatibility if needed
   archivedAt?: Date | FieldValue;
 
