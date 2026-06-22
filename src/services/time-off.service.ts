@@ -338,6 +338,8 @@ export async function createTimeOffRequestForEmployee(
   const balanceId = `${data.employeeId}_${year}`;
   const balanceRef = doc(db!, `entities/${entityId}/leaveBalances`, balanceId);
 
+  const resolvedSource = data.source || (actorRole === 'employee' ? "employee_created" : "hr_created");
+
   return await runTransaction(db, async (transaction) => {
     const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate);
     if (isOverlapping) {
@@ -360,7 +362,7 @@ export async function createTimeOffRequestForEmployee(
       ...data,
       requestId,
       entityId,
-      source: data.source || (actorRole === 'employee' ? "employee_created" : "hr_created"),
+      source: resolvedSource,
       status: "submitted",
       durationDays: isHourly ? 0 : duration,
       durationHours: isHourly ? duration : undefined,
@@ -399,7 +401,7 @@ export async function createTimeOffRequestForEmployee(
     await createAuditLog({
       userId: actorUid,
       entityId,
-      action: payload.source === 'employee_created' ? "timeOff.created_by_employee" : "timeOff.created_by_hr",
+      action: resolvedSource === 'employee_created' ? "timeOff.created_by_employee" : "timeOff.created_by_hr",
       resourceType: "timeOffRequest",
       resourceId: reqId,
       details: { employeeId: data.employeeId, duration, unit, requestType }

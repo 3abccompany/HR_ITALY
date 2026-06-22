@@ -15,7 +15,8 @@ export type PreHireDocumentStatus =
   | "uploaded" 
   | "approved" 
   | "rejected" 
-  | "not_required";
+  | "not_required"
+  | "not_applicable";
 
 export interface PreHireDocument {
   itemId: string;
