@@ -1,5 +1,5 @@
 import React from 'react';
-import { Page, Text, View, Document, StyleSheet, Font } from '@react-pdf/renderer';
+import { Page, Text, View, Document, StyleSheet } from '@react-pdf/renderer';
 import { Contract } from '@/types/contract';
 
 // Register standard fonts
@@ -95,6 +95,8 @@ export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
     return `${d}/${m}/${y}`;
   };
 
+  const companyName = contract.entityLegalName || contract.entityName || "L'azienda";
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -120,7 +122,7 @@ export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
             residente in <Text style={styles.bold}>{contract.employeeAddressSnapshot}</Text>, 
             C.F. <Text style={styles.bold}>{contract.taxCode}</Text> (di seguito "Lavoratore")
           </Text>
-          <Text style={styles.text}>Si stipula il presente contratto individuale di lavoro subordinato.</Text>
+          <Text style={styles.text}>Si stipula il presente contratto individuale di l lavoro subordinato.</Text>
         </View>
 
         {/* Art 2 - Inquadramento */}
@@ -198,6 +200,77 @@ export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
           </View>
         )}
 
+        {/* Standard Clauses Art 8 - 17 */}
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 8 — Ferie, Permessi, ROL ed ex Festività</Text>
+          <Text style={styles.text}>
+            Il diritto alle ferie matura in proporzione alla durata del rapporto. Ferie, permessi, ROL ed ex festività sono regolati dal CCNL applicato. Le richieste devono essere presentate con congruo anticipo e sono soggette ad autorizzazione aziendale.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 9 — Malattia e Infortunio</Text>
+          <Text style={styles.text}>
+            In caso di malattia o infortunio, il Lavoratore dovrà darne tempestiva comunicazione al Datore di Lavoro e attenersi alle disposizioni di legge e del CCNL applicato in materia di certificazione e reperibilità.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 10 — Formazione e Sicurezza sul Lavoro</Text>
+          <Text style={styles.text}>
+            Il Datore di Lavoro garantisce la formazione obbligatoria in materia di salute e sicurezza sul lavoro ai sensi del D.Lgs. 81/2008. Il Lavoratore è tenuto a rispettare tutte le disposizioni aziendali in materia di sicurezza e prevenzione.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 11 — Contributi e Assicurazioni</Text>
+          <Text style={styles.text}>
+            Il Datore di Lavoro provvede agli adempimenti contributivi e assicurativi obbligatori nei confronti di INPS e INAIL, secondo la normativa vigente.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 12 — Comunicazioni Aziendali</Text>
+          <Text style={styles.text}>
+            Le comunicazioni di servizio potranno avvenire anche tramite posta elettronica all'indirizzo indicato dal Lavoratore. Restano esclusi gli atti per i quali la legge o il CCNL richiedono forme specifiche.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 13 — Obbligo di Fedeltà</Text>
+          <Text style={styles.text}>
+            Il Lavoratore è tenuto al rispetto dell'art. 2105 c.c., astenendosi da attività in concorrenza o comunque lesive degli interessi del Datore di Lavoro.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 14 — Riservatezza</Text>
+          <Text style={styles.text}>
+            Il Lavoratore si impegna a mantenere la massima riservatezza su dati, informazioni e notizie aziendali di cui venga a conoscenza nello svolgimento dell'attività lavorativa.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 15 — Regolamento interno, Codice disciplinare e Procedure Aziendali</Text>
+          <Text style={styles.text}>
+            Il Lavoratore dichiara di aver preso visione del Regolamento interno, del Codice disciplinare e delle procedure aziendali, di conoscerne il contenuto e di impegnarsi a rispettarli integralmente per tutta la durata del rapporto di lavoro. Tali documenti costituiscono parte integrante del presente contratto.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 16 — Trattamento dei Dati Personali</Text>
+          <Text style={styles.text}>
+            Il trattamento dei dati personali avverrà nel rispetto del Regolamento UE 2016/679 (GDPR) e della normativa nazionale applicabile, esclusivamente per finalità connesse alla gestione del rapporto di lavoro.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.articleTitle}>Art. 17 — Clausola Finale</Text>
+          <Text style={styles.text}>
+            Per quanto non espressamente previsto dal presente contratto si applicano le disposizioni di legge, il CCNL applicato, il Regolamento interno e gli eventuali accordi aziendali vigenti.
+          </Text>
+        </View>
+
         {/* Signatures */}
         <View style={{ marginTop: 40 }}>
           <Text style={styles.text}>Letto, confermato e sottoscritto.</Text>
@@ -215,7 +288,7 @@ export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
 
         {/* Footer */}
         <Text style={styles.footer}>
-          Documento generato automaticamente da HR Nexus Studio per {contract.entityName}. 
+          Documento generato automaticamente da HR Nexus Studio per {companyName}. 
           ID Documento: {contract.contractId} - Versione PDF: {contract.generatedPdfVersion || 1}
         </Text>
       </Page>
