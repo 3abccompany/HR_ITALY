@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useFirebase, useUser, useCollection } from "@/firebase";
+import { useFirebase, useUser, useCollection, useAuth } from "@/firebase";
 import { collection, query, where, limit, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Employee } from "@/types/employee";
@@ -24,7 +24,7 @@ import {
   TimeOffRequestType,
   TIME_OFF_TYPE_LABELS
 } from "@/types/time-off";
-import { createTimeOffRequestForEmployee, cancelTimeOffRequest } from "@/services/time-off.service";
+import { submitTimeOffRequestAction, cancelTimeOffRequestAction } from "@/app/actions/time-off-actions";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +66,7 @@ export default function MySpacePage() {
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
+  const auth = useAuth();
   const { toast } = useToast();
   const { loading: membershipLoading, entity, membership } = useActiveMembership(entityId);
 
@@ -117,42 +118,22 @@ export default function MySpacePage() {
   // --- Handlers ---
   const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !entityId || !employee || !membership) return;
-
-    const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestForm.requestType);
-    
-    // Simple frontend validation
-    if (!isHourly && requestForm.endDate < requestForm.startDate) {
-      toast({ variant: "destructive", title: "Dates invalides", description: "La fin doit être après le début." });
-      return;
-    }
+    if (!user || !entityId || !employee) return;
 
     setLoading(true);
     try {
-      const payload: any = {
-        ...requestForm,
-        employeeId: employee.employeeId,
-        personId: employee.personId,
-        employeeName: employee.displayName,
-        source: "employee_created",
-      };
-
-      if (isHourly) {
-        payload.endDate = requestForm.startDate;
-      }
-
-      await createTimeOffRequestForEmployee(
+      const idToken = await auth.currentUser!.getIdToken();
+      await submitTimeOffRequestAction({
         entityId,
-        payload,
-        user.uid,
-        "employee"
-      );
+        idToken,
+        payload: requestForm
+      });
 
       toast({ title: "Demande envoyée", description: "Votre demande est en attente de validation RH." });
       setIsFormOpen(false);
       setRequestForm(initialRequestForm);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
+      toast({ variant: "destructive", title: "Erreur de soumission", description: err.message });
     } finally {
       setLoading(false);
     }
@@ -162,7 +143,12 @@ export default function MySpacePage() {
     if (!user || !entityId || !cancellingId) return;
     setLoading(true);
     try {
-      await cancelTimeOffRequest(entityId, cancellingId, user.uid, "employee", "Annulé par l'employé");
+      const idToken = await auth.currentUser!.getIdToken();
+      await cancelTimeOffRequestAction({
+        entityId,
+        idToken,
+        requestId: cancellingId
+      });
       toast({ title: "Demande annulée" });
       setCancellingId(null);
     } catch (err: any) {

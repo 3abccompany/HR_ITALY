@@ -167,7 +167,8 @@ service cloud.firestore {
       match /documents/{docId} {
         allow read: if hasPermission(entityId, 'documents.read') 
                      || hasPermission(entityId, 'contracts.read') 
-                     || isPlatformAdmin();
+                     || isPlatformAdmin()
+                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
         
         allow create: if (hasPermission(entityId, 'documents.upload') 
                       || hasPermission(entityId, 'contracts.create') 
@@ -177,7 +178,6 @@ service cloud.firestore {
                       && request.resource.data.title != null
                       && request.resource.data.documentType != null
                       && request.resource.data.status != null
-                      // Flexible shape check: either storagePath or external source (reference/url)
                       && (request.resource.data.storagePath != null || request.resource.data.externalUrl != null || request.resource.data.externalReference != null);
         
         allow update: if hasPermission(entityId, 'documents.archive') 
@@ -225,7 +225,6 @@ service cloud.firestore {
       }
 
       match /ccnls/{ccnlId} {
-        // Optimized reference data rule using recursive match to bypass deep get() limits
         allow read: if isEntityMember(entityId) || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
 
@@ -265,14 +264,13 @@ service cloud.firestore {
                      || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
         
         allow create: if hasPermission(entityId, 'leaveRequests.create') 
-                      || isPlatformAdmin()
-                      || (isAuthenticated() && request.resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(request.resource.data.employeeId)).data.userId == request.auth.uid);
+                      || isPlatformAdmin();
+                      // Self-creation handled by server action to securely update balances
 
         allow update: if hasPermission(entityId, 'leaveRequests.update') 
                       || hasPermission(entityId, 'leaveRequests.approve') 
-                      || isPlatformAdmin()
-                      || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid 
-                          && request.resource.data.status == 'cancelled' && resource.data.status == 'submitted');
+                      || isPlatformAdmin();
+                      // Self-cancellation handled by server action
         
         allow delete: if false;
       }
@@ -281,6 +279,7 @@ service cloud.firestore {
         allow read: if hasPermission(entityId, 'leaveRequests.read') 
                     || isPlatformAdmin()
                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
+        
         allow write: if hasPermission(entityId, 'leaveRequests.update') || isPlatformAdmin();
       }
 
