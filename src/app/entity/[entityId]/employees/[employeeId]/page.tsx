@@ -272,6 +272,11 @@ export default function Employee360HubPage() {
     });
   }, [docsByEmp, docsByPers, docsByCand]);
 
+  // Detected if a historical UniLav receipt document exists for the overview card
+  const hasHistoricalUniLav = useMemo(() => {
+    return allDocs?.some(d => d.documentType === 'unilav_receipt' && d.status === 'valid');
+  }, [allDocs]);
+
   // --- Handlers ---
   const handleOpenDoc = async (storagePath: string, id: string) => {
     setLoadingActionId(id);
@@ -346,6 +351,9 @@ export default function Employee360HubPage() {
     );
   }
 
+  const cpiValue = !canReadCPI ? "Accès restreint" : (hasHistoricalUniLav ? "Reçu UniLav importé" : (cpi ? (STATUS_LABELS_CPI[cpi.status] || cpi.status) : "Non requis"));
+  const cpiSubtitle = !canReadCPI ? "Permission requise" : (hasHistoricalUniLav ? "Valide" : (cpi?.protocolCode ? `Prot: ${cpi.protocolCode}` : "En attente"));
+
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
       {/* Navigation */}
@@ -406,11 +414,11 @@ export default function Employee360HubPage() {
               />
               <OverviewCard 
                 title="Status CPI / UniLav" 
-                value={!canReadCPI ? "Accès restreint" : (cpi ? (STATUS_LABELS_CPI[cpi.status] || cpi.status) : "Non requis")} 
-                subtitle={!canReadCPI ? "Permission requise" : (cpi?.protocolCode ? `Prot: ${cpi.protocolCode}` : "En attente")}
+                value={cpiValue} 
+                subtitle={cpiSubtitle}
                 icon={ShieldCheck}
                 color="orange"
-                status={cpi?.status}
+                status={hasHistoricalUniLav ? 'completed' : cpi?.status}
               />
               <OverviewCard 
                 title="Documents GED" 
@@ -710,7 +718,7 @@ export default function Employee360HubPage() {
                         <>
                           <div className="flex items-center justify-between">
                              <div className="space-y-1">
-                                <p className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">Statut communication</p>
+                                <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Statut communication</p>
                                 <p className="font-bold text-primary">{STATUS_LABELS_CPI[cpi.status] || cpi.status}</p>
                              </div>
                              <Badge variant="outline" className="h-6 px-3 bg-green-50 text-green-700 border-green-200">
