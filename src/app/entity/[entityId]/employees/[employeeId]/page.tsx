@@ -90,18 +90,19 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
   if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
   if (!doc.contractId) return null;
 
+  const isCoreContract = ['signed_contract', 'generated_contract_pdf'].includes(doc.documentType);
   let label = doc.contractType || "Contrat";
   let color = "bg-slate-50 text-slate-500 border-slate-200";
 
   if (employee) {
     if (employee.activeContractId === doc.contractId) {
-      label = "Contrat actif";
+      label = isCoreContract ? "Contrat actif" : "Lié au contrat actif";
       color = "bg-blue-50 text-blue-700 border-blue-200";
     } else if (employee.pendingContractId === doc.contractId) {
-      label = "Contrat futur";
+      label = isCoreContract ? "Contrat futur" : "Lié au contrat futur";
       color = "bg-teal-50 text-teal-700 border-teal-100";
     } else {
-      label = "Contrat précédent";
+      label = isCoreContract ? "Contrat précédent" : "Contrat précédent";
     }
   }
 
@@ -819,7 +820,7 @@ function OverviewCard({ title, value, subtitle, icon: Icon, color, status }: any
     orange: "bg-orange-50 text-orange-600 border-orange-100",
     red: "bg-red-50 text-red-600 border-red-100",
     indigo: "bg-indigo-50 text-indigo-600 border-indigo-100",
-    teal: "bg-teal-50 text-teal-600 border-teal-100"
+    teal: "bg-teal-50 text-teal-700 border-teal-100"
   };
 
   return (

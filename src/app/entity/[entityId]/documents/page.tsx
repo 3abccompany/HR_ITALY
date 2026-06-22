@@ -113,18 +113,19 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
   if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
   if (!doc.contractId) return null;
 
+  const isCoreContract = ['signed_contract', 'generated_contract_pdf'].includes(doc.documentType);
   let label = doc.contractType || "Contrat";
   let color = "bg-slate-50 text-slate-500 border-slate-200";
 
   if (employee) {
     if (employee.activeContractId === doc.contractId) {
-      label = "Contrat actif";
+      label = isCoreContract ? "Contrat actif" : "Lié au contrat actif";
       color = "bg-blue-50 text-blue-700 border-blue-200";
     } else if (employee.pendingContractId === doc.contractId) {
-      label = "Contrat futur";
-      color = "bg-teal-50 text-teal-700 border-teal-200";
+      label = isCoreContract ? "Contrat futur" : "Lié au contrat futur";
+      color = "bg-teal-50 text-teal-700 border-teal-100";
     } else {
-      label = "Contrat précédent";
+      label = isCoreContract ? "Contrat précédent" : "Contrat précédent";
     }
   }
 
@@ -468,7 +469,7 @@ export default function DocumentsRegistryPage() {
           <div className="py-20 text-center"><Loader2 className="w-10 h-10 animate-spin mx-auto text-primary" /></div>
         ) : documents?.length === 0 ? (
           <Card className="border-dashed border-2 rounded-[2rem] py-20 bg-secondary/5">
-             <div className="text-center max-w-sm mx-auto space-y-4">
+             <div className="text-center max-sm mx-auto space-y-4">
                 <div className="bg-white p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto shadow-sm">
                    <FolderOpen className="w-10 h-10 text-muted-foreground/30" />
                 </div>
