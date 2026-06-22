@@ -310,7 +310,7 @@ export async function markMonthlyAccrualImpactedByRequest(entityId: string, requ
 }
 
 /**
- * Creates a time-off request (RH/Admin source).
+ * Creates a time-off request (RH/Admin or Employee source).
  */
 export async function createTimeOffRequestForEmployee(
   entityId: string, 
@@ -360,7 +360,7 @@ export async function createTimeOffRequestForEmployee(
       ...data,
       requestId,
       entityId,
-      source: "hr_created",
+      source: data.source || (actorRole === 'employee' ? "employee_created" : "hr_created"),
       status: "submitted",
       durationDays: isHourly ? 0 : duration,
       durationHours: isHourly ? duration : undefined,
@@ -399,7 +399,7 @@ export async function createTimeOffRequestForEmployee(
     await createAuditLog({
       userId: actorUid,
       entityId,
-      action: "timeOff.created_by_hr",
+      action: payload.source === 'employee_created' ? "timeOff.created_by_employee" : "timeOff.created_by_hr",
       resourceType: "timeOffRequest",
       resourceId: reqId,
       details: { employeeId: data.employeeId, duration, unit, requestType }
