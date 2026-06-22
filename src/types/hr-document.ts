@@ -5,6 +5,8 @@ export type HRDocumentStatus = "valid" | "expiring_soon" | "expired" | "replaced
 export type HRDocumentType = 
   | "identity_document"
   | "fiscal_code"
+  | "health_card"
+  | "hiring_request"
   | "residence_permit"
   | "work_permit"
   | "cv"
@@ -102,8 +104,10 @@ export interface HRDocument {
 }
 
 export const DOCUMENT_TYPE_LABELS: Record<HRDocumentType, string> = {
-  identity_document: "Pièce d’identité",
+  identity_document: "Carte d’identité",
   fiscal_code: "Code fiscal",
+  health_card: "Tessera sanitaria",
+  hiring_request: "Richiesta assunzione",
   residence_permit: "Permis de séjour",
   work_permit: "Permis de travail",
   cv: "CV",

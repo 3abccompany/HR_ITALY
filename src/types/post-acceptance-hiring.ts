@@ -34,6 +34,8 @@ export type ConsultantEmailMode = "draft_only" | "test" | "production";
 export type PreHireDocumentKey =
   | "identity_document"
   | "tax_code_health_card"
+  | "health_card"
+  | "hiring_request"
   | "residence_permit"
   | "iban"
   | "residence_address"

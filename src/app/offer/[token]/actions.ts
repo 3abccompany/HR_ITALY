@@ -252,15 +252,13 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         `- RAL: ${offerData.proposedGrossAnnual || "-"} €`,
         "",
         "Documenti da verificare:",
-        "- Documento di identità",
-        "- Codice fiscale / tessera sanitaria",
-        "- IBAN",
-        "- Residenza / domicilio",
-        "- Permesso di soggiorno se applicabile",
+        "- Carte d’identità: da verificare",
+        "- Tessera sanitaria: da verificare",
+        "- Richiesta assunzione: da verificare",
         "",
         "Si prega di confermare eventuali dati mancanti.",
         "",
-        "Nota: questa email è una requête operative di préparation. Non constitue confirmation d'envoi officiel UniLav.",
+        "Nota: questa email è una richiesta operativa di preparazione. Non costituisce conferma di invio ufficiale UniLav.",
         "",
         "Cordiali saluti.",
       ].join("\n");
@@ -288,26 +286,20 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
     
       const defaultDocs = [
         {
-          label: "Documento d’identità",
-          type: "id",
+          label: "Carte d’identità",
+          type: "identity_document",
+          isRequired: true,
         },
         {
-          label: "Codice Fiscale / Tessera sanitaria",
-          type: "tax_code",
+          label: "Tessera sanitaria",
+          type: "health_card",
+          isRequired: true,
         },
         {
-          label: "IBAN",
-          type: "iban",
-        },
-        {
-          label: "Residenza / Domicilio",
-          type: "residence",
-        },
-        {
-          label: "Permesso di soggiorno, se applicabile",
-          type: "residence_permit",
-          isRequired: false,
-        },
+          label: "Richiesta assunzione",
+          type: "hiring_request",
+          isRequired: true,
+        }
       ];
     
       defaultDocs.forEach((d) => {
@@ -321,8 +313,8 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
     
           type: d.type,
           label: d.label,
-          status: d.isRequired === false ? "not_applicable" : "missing",
-          isRequired: d.isRequired ?? true,
+          status: "missing",
+          isRequired: d.isRequired,
     
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -407,7 +399,7 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
       entityId: tokenData.entityId,
       personId: offer.personId,
       type: response === "accepted" ? "employment_offer.accepted" : "employment_offer.declined",
-      label: response === "accepted" ? "Proposition acceptée" : "Proposition refusée",
+      label: "Proposition acceptée",
       description: response === "accepted" ? "Dossier d'embauche initié." : reason,
       sourceCollection: "employmentOffers",
       sourceId: tokenData.offerId,

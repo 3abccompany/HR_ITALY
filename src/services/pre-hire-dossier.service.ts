@@ -55,10 +55,9 @@ export async function ensurePreHireDossier(entityId: string, offer: EmploymentOf
   batch.set(dossierRef, dossierData);
 
   const defaultItems = [
-    { type: "id_card", label: "Documento d’identità (Fronte/Retro)", required: true },
-    { type: "tax_code", label: "Codice fiscale / Tessera sanitaria", required: true },
-    { type: "iban", label: "Coordinate bancarie (IBAN)", required: true },
-    { type: "residence", label: "Certificato di residenza o autocertificazione", required: true },
+    { type: "identity_document", label: "Carte d’identité", required: true },
+    { type: "health_card", label: "Tessera sanitaria", required: true },
+    { type: "hiring_request", label: "Richiesta assunzione", required: true },
   ];
 
   defaultItems.forEach((item, i) => {
@@ -132,9 +131,10 @@ async function evaluateDossierReadiness(entityId: string, dossierId: string, act
   const itemsSnap = await getDocs(collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`));
   const items = itemsSnap.docs.map(d => d.data() as PreHireDocument);
 
-  const allRequiredApproved = items
-    .filter(i => i.isRequired)
-    .every(i => i.status === "approved");
+  const itemsToEvaluate = items.filter(i => i.isRequired && i.status !== "not_required");
+
+  const allRequiredApproved = itemsToEvaluate.length > 0 && itemsToEvaluate
+    .every(i => i.status === "approved" || i.status === "not_applicable");
 
   const dossierRef = doc(db, `entities/${entityId}/preHireDossiers`, dossierId);
   
@@ -180,7 +180,7 @@ export async function sendDocumentRequestEmail(entityId: string, dossierId: stri
   const offer = offerSnap.data() as EmploymentOffer;
 
   const itemsSnap = await getDocs(collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`));
-  const items = itemsSnap.docs.map(d => d.data() as PreHireDocument).filter(i => i.isRequired);
+  const items = itemsSnap.docs.map(d => d.data() as PreHireDocument).filter(i => i.isRequired && i.status !== "not_required" && i.status !== "approved");
 
   const result = await sendDocumentRequestEmailAction({
     entityId,
