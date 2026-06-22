@@ -814,6 +814,46 @@ export default function ContractDetailPage() {
     }
   };
 
+  const handleUploadHistoricalUniLav = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !contract) return;
+
+    if (file.type !== "application/pdf") {
+      toast({ variant: "destructive", title: "Format invalide", description: "Veuillez uploader un fichier PDF." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const docId = await uploadHRDocument(
+        entityId,
+        file,
+        {
+          title: "Reçu UniLav historique",
+          documentType: "unilav_receipt",
+          status: "valid",
+          relatedModule: "contracts",
+          relatedId: contractId,
+          contractId: contractId,
+          employeeId: contract.employeeId,
+          personId: contract.personId,
+          preHireDossierId: contract.preHireDossierId || null,
+          source: contract.source,
+          isSensitive: true,
+          isRequired: true
+        },
+        user.uid,
+        membership?.userDisplayName || "Utilisateur"
+      );
+
+      toast({ title: "Document rattaché", description: "Le reçu UniLav historique a été ajouté au dossier." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   if (membershipLoading || loadingContract) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
   if (!contract) {
@@ -1091,15 +1131,15 @@ export default function ContractDetailPage() {
                   <div className="bg-primary text-white p-3 rounded-2xl shadow-lg shadow-primary/20">
                      <ShieldCheck className="w-6 h-6" />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1 flex-1">
                      <h3 className="text-lg font-black text-primary">Contrat importé / reprise historique</h3>
                      <p className="text-sm text-slate-600 leading-relaxed">
                         Ce contrat est déjà actif car il provient d’une reprise historique. Aucun PDF généré par le système n’est requis. 
-                        Vous pouvez rattacher le contrat signé existant ci-dessous ou depuis les documents de l’employé.
+                        Vous pouvez rattacher le contrat signé existant et le reçu UniLav ci-dessous.
                      </p>
 
-                     <div className="pt-6">
-                        <div className="relative inline-block">
+                     <div className="pt-6 flex flex-wrap gap-4">
+                        <div className="relative">
                           <Button disabled={processing} className="gap-2 rounded-xl font-bold bg-white text-primary hover:bg-white/90 border border-primary/10 shadow-sm">
                             {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                             Ajouter le contrat signé historique
@@ -1109,6 +1149,20 @@ export default function ContractDetailPage() {
                             className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
                             accept=".pdf"
                             onChange={handleUploadHistoricalContract}
+                            disabled={processing}
+                          />
+                        </div>
+
+                        <div className="relative">
+                          <Button disabled={processing} variant="outline" className="gap-2 rounded-xl font-bold bg-white text-primary hover:bg-white/90 border border-primary/10 shadow-sm">
+                            {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                            Ajouter le reçu UniLav historique
+                          </Button>
+                          <input 
+                            type="file" 
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
+                            accept=".pdf"
+                            onChange={handleUploadHistoricalUniLav}
                             disabled={processing}
                           />
                         </div>
@@ -1420,7 +1474,7 @@ export default function ContractDetailPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                    <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v) => setFormData(p => ({...p, contractType: v}))} />
                    <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v) => setFormData(p => ({...p, startDate: v}))} />
-                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v) => setFormData(p => ({...p, endDate: v}))} />
+                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v) => setFormData(p => ({...p, endDate: v}))} />
                    <DetailEditable label="Période d'essai (jours)" value={effectiveData.trialPeriodDays} editValue={formData.trialPeriodDays} isEditing={isEditing} id="trialPeriodDays" type="number" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, trialPeriodDays: parseInt(v) || 0}))} />
                 </div>
                 
