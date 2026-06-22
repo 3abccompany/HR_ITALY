@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo } from "react";
@@ -6,7 +7,7 @@ import {
   Loader2, User, Calendar, Clock, FolderOpen, 
   ShieldCheck, UserCircle, Briefcase, 
   MapPin, Building2, Fingerprint, Info,
-  Calculator, Plane, Plus
+  Calculator, Plane, Plus, ListRestart, RefreshCw
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +15,7 @@ import { useFirebase, useUser, useCollection } from "@/firebase";
 import { collection, query, where, limit } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Employee } from "@/types/employee";
-import { LeaveBalance, normalizeBalance } from "@/types/time-off";
+import { LeaveBalance, normalizeBalance, LeaveBalanceCounter } from "@/types/time-off";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
@@ -102,25 +103,29 @@ export default function MySpacePage() {
             </CardContent>
           </Card>
 
-          {/* Leave Balances */}
+          {/* Main Leave Balances - Congés Payés (Ferie) */}
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
              <CardHeader className="bg-primary/5 border-b py-6 px-8 flex flex-row items-center justify-between">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
                    <Plane className="w-4 h-4" /> Solde Congés {currentYear}
                 </CardTitle>
-                <Badge variant="outline" className="bg-white border-primary/10">Congés Payés</Badge>
+                <Badge variant="outline" className="bg-white border-primary/10 font-bold uppercase text-[10px]">Ferie (Congés)</Badge>
              </CardHeader>
              <CardContent className="p-8">
                 {loadingBalance ? (
                    <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-primary/20" /></div>
-                ) : balance ? (
-                   <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-                      <BalanceStat label="Total Acquis" value={(balance.entitlementDays ?? 0) + (balance.carriedOverDays ?? 0)} unit="jours" />
-                      <BalanceStat label="Déjà Pris" value={balance.usedDays ?? 0} unit="jours" color="red" />
-                      <BalanceStat label="En attente" value={balance.pendingDays ?? 0} unit="jours" color="orange" />
-                      <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center">
-                         <p className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-1">Restant</p>
-                         <p className="text-3xl font-black text-primary">{balance.remainingDays ?? 0}</p>
+                ) : balance?.counters?.paid_leave ? (
+                   <div className="space-y-8">
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                        <BalanceStat label="Report N-1" value={balance.counters.paid_leave.carriedOver} unit="j" />
+                        <BalanceStat label="Acquis" value={balance.counters.paid_leave.accrued} unit="j" />
+                        <BalanceStat label="Déjà Pris" value={balance.counters.paid_leave.used} unit="j" color="red" />
+                        <BalanceStat label="En attente" value={balance.counters.paid_leave.pending} unit="j" color="orange" />
+                        <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center">
+                           <p className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-1">Restant (Net)</p>
+                           <p className="text-3xl font-black text-primary">{(balance.counters.paid_leave.remaining - balance.counters.paid_leave.pending).toFixed(1)}</p>
+                           <p className="text-[8px] font-bold text-primary/40 uppercase">jours</p>
+                        </div>
                       </div>
                    </div>
                 ) : (
@@ -131,6 +136,24 @@ export default function MySpacePage() {
                 )}
              </CardContent>
           </Card>
+
+          {/* ROL & Ex-Festività secondary balances */}
+          {balance?.counters && (balance.counters.rol.carriedOver > 0 || balance.counters.rol.accrued > 0 || balance.counters.ex_holidays.carriedOver > 0 || balance.counters.ex_holidays.accrued > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+               <SecondaryBalanceCard 
+                 title="ROL (Heures)" 
+                 counter={balance.counters.rol} 
+                 icon={RefreshCw} 
+                 color="indigo" 
+               />
+               <SecondaryBalanceCard 
+                 title="Ex Festività (Heures)" 
+                 counter={balance.counters.ex_holidays} 
+                 icon={Calendar} 
+                 color="teal" 
+               />
+            </div>
+          )}
 
           {/* Placeholders for future modules */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -178,17 +201,57 @@ export default function MySpacePage() {
   );
 }
 
-function BalanceStat({ label, value, unit, color }: any) {
+function BalanceStat({ label, value, unit, color }: { label: string, value: number, unit: string, color?: string }) {
    return (
-      <div className="text-center">
+      <div className="text-center p-2 rounded-xl bg-slate-50/50 border border-slate-100/50">
          <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest mb-1">{label}</p>
-         <p className={cn("text-2xl font-black", 
+         <p className={cn("text-xl font-black", 
            color === 'red' ? "text-red-600" : 
-           color === 'orange' ? "text-orange-600" : "text-slate-800"
-         )}>{value}</p>
-         <p className="text-[8px] font-bold text-muted-foreground uppercase">{unit}</p>
+           color === 'orange' ? "text-orange-600" : "text-slate-700"
+         )}>{(value || 0).toFixed(1)}</p>
+         <p className="text-[8px] font-bold text-muted-foreground uppercase opacity-50">{unit}</p>
       </div>
    );
+}
+
+function SecondaryBalanceCard({ title, counter, icon: Icon, color }: { title: string, counter: LeaveBalanceCounter, icon: any, color: string }) {
+  const colorMap: Record<string, string> = {
+    indigo: "text-indigo-600 bg-indigo-50 border-indigo-100",
+    teal: "text-teal-600 bg-teal-50 border-teal-100"
+  };
+
+  const netRemaining = counter.remaining - counter.pending;
+
+  return (
+    <Card className="rounded-3xl border-primary/5 bg-white shadow-sm overflow-hidden">
+      <CardHeader className="py-4 px-6 bg-slate-50/50 border-b">
+         <CardTitle className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2 text-muted-foreground">
+            <Icon className="w-3.5 h-3.5" /> {title}
+         </CardTitle>
+      </CardHeader>
+      <CardContent className="p-6">
+         <div className="flex items-center justify-between">
+            <div className="space-y-3">
+               <div className="flex items-center gap-4">
+                  <div className="text-center">
+                     <p className="text-[8px] font-black text-muted-foreground uppercase">Droit (N-1 + YTD)</p>
+                     <p className="text-sm font-bold text-slate-700">{(counter.carriedOver + counter.accrued).toFixed(1)}</p>
+                  </div>
+                  <div className="text-center">
+                     <p className="text-[8px] font-black text-muted-foreground uppercase">Utilisé</p>
+                     <p className="text-sm font-bold text-red-600">{(counter.used + counter.pending).toFixed(1)}</p>
+                  </div>
+               </div>
+            </div>
+            <div className={cn("px-4 py-2 rounded-2xl border text-center min-w-[80px]", colorMap[color])}>
+               <p className="text-[8px] font-black uppercase opacity-60">Restant</p>
+               <p className="text-xl font-black">{netRemaining.toFixed(1)}</p>
+               <p className="text-[7px] font-black uppercase">heures</p>
+            </div>
+         </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function DetailItem({ label, value, icon: Icon }: any) {
