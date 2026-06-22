@@ -118,15 +118,22 @@ export default function MySpacePage() {
                    <div className="space-y-8">
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                         <BalanceStat label="Report N-1" value={balance.counters.paid_leave.carriedOver} unit="j" />
-                        <BalanceStat label="Acquis" value={balance.counters.paid_leave.accrued} unit="j" />
+                        <BalanceStat label={`Acquis ${currentYear}`} value={balance.counters.paid_leave.accrued} unit="j" />
                         <BalanceStat label="Déjà Pris" value={balance.counters.paid_leave.used} unit="j" color="red" />
-                        <BalanceStat label="En attente" value={balance.counters.paid_leave.pending} unit="j" color="orange" />
+                        <BalanceStat label="En attente RH" value={balance.counters.paid_leave.pending} unit="j" color="orange" />
                         <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center">
-                           <p className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-1">Restant (Net)</p>
-                           <p className="text-3xl font-black text-primary">{(balance.counters.paid_leave.remaining - balance.counters.paid_leave.pending).toFixed(1)}</p>
+                           <p className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-1">Restant</p>
+                           <p className="text-3xl font-black text-primary">{balance.counters.paid_leave.remaining.toFixed(1)}</p>
                            <p className="text-[8px] font-bold text-primary/40 uppercase">jours</p>
                         </div>
                       </div>
+
+                      {balance.counters.paid_leave.pending > 0 && (
+                        <div className="p-4 bg-orange-50/50 rounded-2xl border border-orange-100 flex items-center justify-between">
+                           <p className="text-xs font-bold text-orange-800 uppercase tracking-tight">Disponible si demandes en attente acceptées</p>
+                           <span className="text-sm font-black text-orange-600">{(balance.counters.paid_leave.remaining - balance.counters.paid_leave.pending).toFixed(1)} j</span>
+                        </div>
+                      )}
                    </div>
                 ) : (
                    <div className="py-8 text-center bg-secondary/5 rounded-2xl border border-dashed">
@@ -145,12 +152,14 @@ export default function MySpacePage() {
                  counter={balance.counters.rol} 
                  icon={RefreshCw} 
                  color="indigo" 
+                 year={currentYear}
                />
                <SecondaryBalanceCard 
                  title="Ex Festività (Heures)" 
                  counter={balance.counters.ex_holidays} 
                  icon={Calendar} 
                  color="teal" 
+                 year={currentYear}
                />
             </div>
           )}
@@ -204,7 +213,7 @@ export default function MySpacePage() {
 function BalanceStat({ label, value, unit, color }: { label: string, value: number, unit: string, color?: string }) {
    return (
       <div className="text-center p-2 rounded-xl bg-slate-50/50 border border-slate-100/50">
-         <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest mb-1">{label}</p>
+         <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest mb-1 whitespace-nowrap overflow-hidden text-ellipsis">{label}</p>
          <p className={cn("text-xl font-black", 
            color === 'red' ? "text-red-600" : 
            color === 'orange' ? "text-orange-600" : "text-slate-700"
@@ -214,13 +223,13 @@ function BalanceStat({ label, value, unit, color }: { label: string, value: numb
    );
 }
 
-function SecondaryBalanceCard({ title, counter, icon: Icon, color }: { title: string, counter: LeaveBalanceCounter, icon: any, color: string }) {
+function SecondaryBalanceCard({ title, counter, icon: Icon, color, year }: { title: string, counter: LeaveBalanceCounter, icon: any, color: string, year: number }) {
   const colorMap: Record<string, string> = {
     indigo: "text-indigo-600 bg-indigo-50 border-indigo-100",
     teal: "text-teal-600 bg-teal-50 border-teal-100"
   };
 
-  const netRemaining = counter.remaining - counter.pending;
+  const netAvailable = counter.remaining - counter.pending;
 
   return (
     <Card className="rounded-3xl border-primary/5 bg-white shadow-sm overflow-hidden">
@@ -230,23 +239,37 @@ function SecondaryBalanceCard({ title, counter, icon: Icon, color }: { title: st
          </CardTitle>
       </CardHeader>
       <CardContent className="p-6">
-         <div className="flex items-center justify-between">
-            <div className="space-y-3">
-               <div className="flex items-center gap-4">
-                  <div className="text-center">
-                     <p className="text-[8px] font-black text-muted-foreground uppercase">Droit (N-1 + YTD)</p>
-                     <p className="text-sm font-bold text-slate-700">{(counter.carriedOver + counter.accrued).toFixed(1)}</p>
-                  </div>
-                  <div className="text-center">
-                     <p className="text-[8px] font-black text-muted-foreground uppercase">Utilisé</p>
-                     <p className="text-sm font-bold text-red-600">{(counter.used + counter.pending).toFixed(1)}</p>
-                  </div>
+         <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+               <div className="text-center">
+                  <p className="text-[8px] font-black text-muted-foreground uppercase">Report N-1</p>
+                  <p className="text-sm font-bold text-slate-700">{counter.carriedOver.toFixed(1)}</p>
+               </div>
+               <div className="text-center">
+                  <p className="text-[8px] font-black text-muted-foreground uppercase">Acquis {year}</p>
+                  <p className="text-sm font-bold text-slate-700">{counter.accrued.toFixed(1)}</p>
+               </div>
+               <div className="text-center">
+                  <p className="text-[8px] font-black text-muted-foreground uppercase">Déjà pris</p>
+                  <p className="text-sm font-bold text-red-600">{counter.used.toFixed(1)}</p>
+               </div>
+               <div className="text-center">
+                  <p className="text-[8px] font-black text-muted-foreground uppercase">En attente RH</p>
+                  <p className="text-sm font-bold text-orange-600">{counter.pending.toFixed(1)}</p>
                </div>
             </div>
-            <div className={cn("px-4 py-2 rounded-2xl border text-center min-w-[80px]", colorMap[color])}>
-               <p className="text-[8px] font-black uppercase opacity-60">Restant</p>
-               <p className="text-xl font-black">{netRemaining.toFixed(1)}</p>
-               <p className="text-[7px] font-black uppercase">heures</p>
+            
+            <div className="flex items-center justify-between pt-4 border-t border-dashed">
+               <div className="space-y-0.5">
+                  <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">Restant</p>
+                  <p className="text-sm font-black text-primary">{counter.remaining.toFixed(1)} {counter.unit}</p>
+               </div>
+               {counter.pending > 0 && (
+                  <div className={cn("px-3 py-1 rounded-xl border text-right", colorMap[color])}>
+                     <p className="text-[7px] font-black uppercase opacity-60 leading-none">Disponible si validé</p>
+                     <p className="text-sm font-black leading-none mt-1">{netAvailable.toFixed(1)} {counter.unit}</p>
+                  </div>
+               )}
             </div>
          </div>
       </CardContent>
