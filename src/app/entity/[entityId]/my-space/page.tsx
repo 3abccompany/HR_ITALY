@@ -123,7 +123,7 @@ export default function MySpacePage() {
                         <BalanceStat label="En attente RH" value={balance.counters.paid_leave.pending} unit="j" color="orange" />
                         <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center">
                            <p className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-1">Restant</p>
-                           <p className="text-3xl font-black text-primary">{balance.counters.paid_leave.remaining.toFixed(1)}</p>
+                           <p className="text-3xl font-black text-primary">{(balance.counters.paid_leave.remaining).toFixed(1)}</p>
                            <p className="text-[8px] font-bold text-primary/40 uppercase">jours</p>
                         </div>
                       </div>
