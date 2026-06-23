@@ -247,10 +247,13 @@ export default function MembershipsManagementPage() {
     }
   };
 
-  const filteredMemberships = memberships?.filter(m => 
-    m.userDisplayName.toLowerCase().includes(search.toLowerCase()) || 
-    m.userEmail.toLowerCase().includes(search.toLowerCase()) ||
-    m.entityName.toLowerCase().includes(search.toLowerCase())
+  const normalizeSearchValue = (value: unknown) => 
+    String(value ?? '').toLowerCase(); 
+  const normalizedSearch = normalizeSearchValue(search); 
+  const filteredMemberships = memberships?.filter((m) => 
+    normalizeSearchValue(m.userDisplayName).includes(normalizedSearch) || 
+    normalizeSearchValue(m.userEmail).includes(normalizedSearch) || 
+    normalizeSearchValue(m.entityName).includes(normalizedSearch) 
   ) || [];
 
   if (missingVars.length > 0) {
