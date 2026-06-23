@@ -1,0 +1,67 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Next.js / build outputs
+.next/
+out/
+dist/
+build/
+coverage/
+.vercel/
+
+# TypeScript / cache
+*.tsbuildinfo
+.turbo/
+.cache/
+.parcel-cache/
+
+# Git / local metadata
+.git/
+.gitignore
+.modified
+
+# Firebase / local emulator / debug outputs
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Lock files / package manager noise
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+
+# IDE / workspace
+.idx/
+.vscode/
+.idea/
+.DS_Store
+
+# Generated reports / local exports
+project-tree.txt
+*.log
+*.tmp
+*.bak
+*.backup
+*.zip
+*.tar
+*.gz
+
+# Local backup / obsolete files found in project tree
+documents-page-810091.tsx
+src/app/entity/[entityId]/documents/page.backup.tsx
+
+# Large or generated docs/data, keep Markdown docs if needed
+docs/backend.json
+
+# Optional: debug-only pages, uncomment if Gemini still hits quota
+# src/app/debug/
