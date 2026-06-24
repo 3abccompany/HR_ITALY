@@ -4,8 +4,7 @@ import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
-  Mail, Phone, Fingerprint, Calendar,
-  Briefcase, Building2, MapPin, FileSignature,
+  Briefcase, Building2, FileSignature,
   Info, Euro, Clock, History, 
   ShieldCheck, 
   FileText, AlertTriangle, FolderOpen, 
@@ -38,8 +37,10 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, query, collection, where, Query } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
-import { Contract } from "@/types/contract";
+import { Person } from "@/types/person";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { Candidate } from "@/types/candidate";
 import { EmploymentRequest } from "@/types/employment-request";
@@ -95,14 +96,20 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
   let color = "bg-slate-50 text-slate-500 border-slate-200";
 
   if (employee) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startDate = parseSafeDate(doc.contractStartDate);
+    const isFuture = startDate && startDate > today;
+
     if (employee.activeContractId === doc.contractId) {
       label = isCoreContract ? "Contrat actif" : "Lié au contrat actif";
       color = "bg-blue-50 text-blue-700 border-blue-200";
-    } else if (employee.pendingContractId === doc.contractId) {
-      label = isCoreContract ? "Contrat futur" : "Lié au contrat futur";
+    } else if (employee.pendingContractId === doc.contractId || isFuture) {
+      label = isCoreContract ? "Contrat à venir" : "Lié au contrat à venir";
       color = "bg-teal-50 text-teal-700 border-teal-100";
     } else {
-      label = isCoreContract ? "Contrat précédent" : "Contrat précédent";
+      label = isCoreContract ? "Contrat précédent" : "Lié au contrat précédent";
+      color = "bg-slate-50 text-slate-500 border-slate-200";
     }
   }
 
@@ -252,7 +259,7 @@ export default function Employee360HubPage() {
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
-      where("candidateId", "==", employee.sourceCandidateId)
+      where("personId", "==", employee.personId)
     ) as Query<HRDocument>;
   }, [db, entityId, employee?.sourceCandidateId, permissionsReady, canReadDocs]);
 

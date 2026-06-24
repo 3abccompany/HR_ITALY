@@ -118,14 +118,20 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
   let color = "bg-slate-50 text-slate-500 border-slate-200";
 
   if (employee) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startDate = parseSafeDate(doc.contractStartDate);
+    const isFuture = startDate && startDate > today;
+
     if (employee.activeContractId === doc.contractId) {
       label = isCoreContract ? "Contrat actif" : "Lié au contrat actif";
       color = "bg-blue-50 text-blue-700 border-blue-200";
-    } else if (employee.pendingContractId === doc.contractId) {
-      label = isCoreContract ? "Contrat futur" : "Lié au contrat futur";
+    } else if (employee.pendingContractId === doc.contractId || isFuture) {
+      label = isCoreContract ? "Contrat à venir" : "Lié au contrat à venir";
       color = "bg-teal-50 text-teal-700 border-teal-100";
     } else {
-      label = isCoreContract ? "Contrat précédent" : "Contrat précédent";
+      label = isCoreContract ? "Contrat précédent" : "Lié au contrat précédent";
+      color = "bg-slate-50 text-slate-500 border-slate-200";
     }
   }
 
@@ -1063,7 +1069,7 @@ function DocRow({
       </TableCell>
       <TableCell className={cn("py-3", isHistory && "pl-8")}>
         <div className="flex items-center gap-2">
-           <div className="font-bold text-primary text-sm truncate max-w-[200px]">{doc.title}</div>
+           <div className="font-bold text-slate-800 text-sm truncate max-w-[250px]">{doc.title}</div>
            {renderContractContext(doc, employee)}
            <Badge variant="outline" className="text-[8px] h-4 px-1 font-black bg-slate-50">V{doc.version || 1}</Badge>
            {isHistory && <Badge variant="secondary" className="text-[8px] h-4 px-1 font-bold uppercase opacity-70">Ancienne version</Badge>}
@@ -1104,7 +1110,7 @@ function DocRow({
       </TableCell>
       <TableCell className="text-right pr-6">
          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {isContractDoc && doc.contractId && (
+            {isContractDoc && d.contractId && (
               <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
                  <Link href={`/entity/${entityId}/contracts/${doc.contractId}`}>
                     <Briefcase className="w-4 h-4" />
