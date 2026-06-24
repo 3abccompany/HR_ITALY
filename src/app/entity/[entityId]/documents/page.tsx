@@ -230,8 +230,11 @@ export default function DocumentsRegistryPage() {
     filteredDocs.forEach(d => {
       const key = d.employeeId || "none";
       if (!groups[key]) {
+        const emp = employeesMap.get(key);
+        const resolvedName = d.employeeDisplayName || (emp ? (emp.displayName || `${emp.firstName} ${emp.lastName}`) : null);
+
         groups[key] = { 
-          name: d.employeeDisplayName || (key === "none" ? "Documents non liés à un employé" : "Employé inconnu"), 
+          name: resolvedName || (key === "none" ? "Documents non liés à un employé" : "Employé inconnu"), 
           docs: [] 
         };
       }
@@ -242,7 +245,7 @@ export default function DocumentsRegistryPage() {
       if (b[0] === "none") return -1;
       return a[1].name.localeCompare(b[1].name);
     });
-  }, [filteredDocs]);
+  }, [filteredDocs, employeesMap]);
 
   const docsByType = useMemo(() => {
     const groups: Record<string, HRDocument[]> = {};
@@ -1092,7 +1095,7 @@ function DocRow({
            {doc.contractStartDate && (
              <>
                <span className="text-slate-200 text-[8px]">•</span>
-               <span className="text-[9px] font-bold text-muted-foreground/60 italic">
+               <span className="text-[9px] font-bold text-muted-foreground/50 italic">
                  Période: {formatDateSafe(doc.contractStartDate)} {doc.contractEndDate ? `- ${formatDateSafe(doc.contractEndDate)}` : ''}
                </span>
              </>
