@@ -232,6 +232,17 @@ export default function EmployeeIntakePage() {
       return;
     }
 
+    const isFixedTerm = formData.contractType !== "Tempo indeterminato";
+    if (isFixedTerm && !formData.contractEndDate) {
+      toast({ variant: "destructive", title: "Date manquante", description: "La date de fin est obligatoire pour un contrat à durée déterminée." });
+      return;
+    }
+
+    if (isFixedTerm && formData.contractEndDate && new Date(formData.contractEndDate) <= new Date(formData.hireDate)) {
+      toast({ variant: "destructive", title: "Dates incohérentes", description: "La date de fin doit être postérieure à la date d'embauche." });
+      return;
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -446,6 +457,18 @@ export default function EmployeeIntakePage() {
                   <Label className="text-[10px] uppercase font-black">Heures hebdomadaires</Label>
                   <Input type="number" step="0.5" value={formData.weeklyHours} onChange={(e) => setFormData(p => ({...p, weeklyHours: parseFloat(e.target.value)}))} className="rounded-xl" />
                 </div>
+                {formData.contractType !== "Tempo indeterminato" && (
+                   <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+                     <Label className="text-[10px] uppercase font-black">Date de fin du contrat *</Label>
+                     <Input 
+                       type="date" 
+                       value={formData.contractEndDate} 
+                       onChange={(e) => setFormData(p => ({...p, contractEndDate: e.target.value}))} 
+                       required 
+                       className="rounded-xl" 
+                     />
+                   </div>
+                )}
              </div>
 
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-dashed">
