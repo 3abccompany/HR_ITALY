@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
@@ -12,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { PublicFormRenderer } from "@/components/application-forms/PublicFormRenderer";
-import { getPublicFormBySlug } from "@/services/application-form.service";
+import { getPublicFormBySlugAction } from "@/app/apply/actions";
 
 export default function PublicApplicationPage() {
   const params = useParams();
@@ -27,7 +26,7 @@ export default function PublicApplicationPage() {
       if (!publicSlug) return;
       setLoading(true);
       try {
-        const data = await getPublicFormBySlug(publicSlug);
+        const data = await getPublicFormBySlugAction(publicSlug);
         if (!data) {
           setError("unavailable");
         } else {
@@ -59,7 +58,7 @@ export default function PublicApplicationPage() {
   if (!form || !isAvailable || error) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <Card className="max-w-md w-full shadow-xl border-none text-center p-12">
+        <Card className="max-w-md w-full shadow-xl border-none text-center p-12 rounded-[2rem]">
           <div className="mx-auto bg-destructive/10 w-16 h-16 rounded-full flex items-center justify-center mb-6">
             <AlertCircle className="w-8 h-8 text-destructive" />
           </div>
