@@ -93,7 +93,8 @@ function parseSafeDate(val: any): Date | null {
   
   if (typeof val === 'string' || typeof val === 'number') {
     const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
+    if (isNaN(d.getTime())) return null;
+    return d;
   }
   
   return null;
@@ -1110,7 +1111,7 @@ function DocRow({
       </TableCell>
       <TableCell className="text-right pr-6">
          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {isContractDoc && d.contractId && (
+            {isContractDoc && doc.contractId && (
               <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
                  <Link href={`/entity/${entityId}/contracts/${doc.contractId}`}>
                     <Briefcase className="w-4 h-4" />
