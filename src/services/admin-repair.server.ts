@@ -1,3 +1,4 @@
+
 /**
  * @fileOverview Server-side administration and data repair services using Firebase Admin SDK.
  * Bypasses client-side security rules for global scans and deterministic repairs.
@@ -133,7 +134,7 @@ export async function repairEntityDataLinkageServer(params: {
        return;
     }
 
-    if (isMissingEmployeeId(data.employeeId) && (matchesIdentity(data.personId, exactIdentityIds, identityKeys) || matchesIdentity(data.candidateId, exactIdentityIds, identityKeys))) {
+    if (isMissingEmployeeId(data.employeeId) && (matchesIdentity(data.personId, exactIdentityIds, identityKeys) || matchesIdentity(item.data.candidateId, exactIdentityIds, identityKeys))) {
       docsToUpdate.push({ id: docSnap.id, ref: docSnap.ref, data });
       results.matchedDocumentIds.push(docSnap.id);
       results.documentsRepaired++;
@@ -194,4 +195,80 @@ export async function repairEntityDataLinkageServer(params: {
   }
 
   return results;
+}
+
+/**
+ * Scans the entire memberships collection and repairs missing display metadata.
+ * Uses Admin SDK to bypass client-side limitations.
+ */
+export async function repairMembershipMetadataServer(params: {
+  actorUid: string;
+  dryRun: boolean;
+}) {
+  const { actorUid, dryRun } = params;
+  
+  const results = {
+    scanned: 0,
+    repaired: 0,
+    dryRun,
+    logs: [] as string[]
+  };
+
+  try {
+    const membershipsSnap = await adminDb.collection("memberships").get();
+    results.scanned = membershipsSnap.size;
+
+    for (const mDoc of membershipsSnap.docs) {
+      const m = mDoc.data();
+      const needsUserRepair = !m.userDisplayName || !m.userEmail;
+      const needsEntityRepair = !m.entityName || m.entityName === "Entreprise";
+      const needsRoleRepair = !m.roleLabel;
+
+      if (needsUserRepair || needsEntityRepair || needsRoleRepair) {
+        results.repaired++;
+        
+        if (dryRun) {
+          results.logs.push(`WOULD REPAIR: Membership ${mDoc.id} (User: ${m.uid}, Entity: ${m.entityId})`);
+          continue;
+        }
+
+        const updateData: any = {
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid
+        };
+
+        // 1. Fetch User Data
+        if (needsUserRepair) {
+          const uSnap = await adminDb.collection("users").doc(m.uid).get();
+          if (uSnap.exists) {
+            const u = uSnap.data()!;
+            updateData.userDisplayName = u.displayName || u.email || "Utilisateur";
+            updateData.userEmail = u.email;
+          }
+        }
+
+        // 2. Fetch Entity Data
+        if (needsEntityRepair) {
+          const eSnap = await adminDb.collection("entities").doc(m.entityId).get();
+          if (eSnap.exists) {
+            const e = eSnap.data()!;
+            updateData.entityName = e.nomEntreprise || e.name || e.legalName || "Entreprise";
+          }
+        }
+
+        // 3. Role Label Fallback
+        if (needsRoleRepair && m.roleId === 'employee') {
+          updateData.roleLabel = "Employé";
+        }
+
+        await mDoc.ref.update(updateData);
+        results.logs.push(`REPAIRED: Membership ${mDoc.id}`);
+      }
+    }
+
+    return results;
+  } catch (err: any) {
+    console.error("[Membership Repair Service] Failed:", err);
+    throw err;
+  }
 }

@@ -1,3 +1,4 @@
+
 'use server';
 
 /**
@@ -6,7 +7,7 @@
  */
 
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
-import { repairEntityDataLinkageServer, RepairResults } from "@/services/admin-repair.server";
+import { repairEntityDataLinkageServer, repairMembershipMetadataServer, RepairResults } from "@/services/admin-repair.server";
 
 interface RepairActionParams {
   entityId: string;
@@ -48,5 +49,26 @@ export async function repairEntityDataLinkageAction(params: RepairActionParams):
       success: false, 
       error: err.message || "Une erreur technique est survenue lors de la réparation." 
     };
+  }
+}
+
+export async function repairMembershipsAction(params: { dryRun: boolean; idToken: string }) {
+  const { dryRun, idToken } = params;
+
+  try {
+    const decodedToken = await adminAuth.verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    const userSnap = await adminDb.collection("users").doc(uid).get();
+    if (userSnap.data()?.platformRole !== "superAdmin") throw new Error("Forbidden");
+
+    const results = await repairMembershipMetadataServer({
+      actorUid: uid,
+      dryRun
+    });
+
+    return { success: true, results };
+  } catch (err: any) {
+    return { success: false, error: err.message };
   }
 }

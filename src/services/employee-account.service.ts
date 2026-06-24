@@ -197,14 +197,17 @@ export async function activateEmployeeAccountAction(rawToken: string, password: 
       const membershipId = `${uid}_${entityId}`;
       const membershipRef = adminDb.collection("memberships").doc(membershipId);
       const employeeRef = adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId);
+      const entityRef = adminDb.collection("entities").doc(entityId);
       
-      const [userSnap, employeeSnap] = await Promise.all([
+      const [userSnap, employeeSnap, entitySnap] = await Promise.all([
         transaction.get(userRef),
-        transaction.get(employeeRef)
+        transaction.get(employeeRef),
+        transaction.get(entityRef)
       ]);
 
       if (!employeeSnap.exists) throw new Error("Document employé cible introuvable.");
       const empData = employeeSnap.data()!;
+      const entityData = entitySnap.exists ? entitySnap.data() : null;
 
       // A. Global User Profile
       if (!userSnap.exists) {
@@ -212,6 +215,8 @@ export async function activateEmployeeAccountAction(rawToken: string, password: 
           uid,
           email,
           displayName: empData.displayName || `${empData.firstName} ${empData.lastName}`,
+          firstName: empData.firstName || "",
+          lastName: empData.lastName || "",
           platformRole: "user",
           status: "active",
           createdAt: FieldValue.serverTimestamp(),
@@ -221,12 +226,16 @@ export async function activateEmployeeAccountAction(rawToken: string, password: 
       }
 
       // B. Entity Membership
+      const resolvedEntityName = entityData?.nomEntreprise || entityData?.name || invite.entityName || "Entreprise";
+      
       transaction.set(membershipRef, {
         membershipId,
         uid,
         userId: uid,
         entityId,
-        entityName: invite.entityName || "Entreprise",
+        entityName: resolvedEntityName,
+        userDisplayName: empData.displayName || `${empData.firstName} ${empData.lastName}` || "Employé",
+        userEmail: email,
         roleId: "employee",
         roleLabel: "Employé",
         permissions: ["self.profile.read", "self.leaves.read", "self.leaves.create"],
