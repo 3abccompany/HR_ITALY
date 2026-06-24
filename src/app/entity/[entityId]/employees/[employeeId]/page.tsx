@@ -20,7 +20,12 @@ import {
   Globe,
   GraduationCap,
   Send,
-  ClipboardList
+  ClipboardList,
+  Fingerprint,
+  Calendar,
+  Mail,
+  Phone,
+  MapPin
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -37,7 +42,6 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, query, collection, where, Query } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
@@ -53,7 +57,6 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
-import { Person } from "@/types/person";
 import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
 
@@ -700,7 +703,7 @@ export default function Employee360HubPage() {
                            <div className="flex items-center gap-4">
                               <div className="bg-white p-2.5 rounded-xl shadow-sm"><ClipboardList className="w-5 h-5 text-primary/40" /></div>
                               <div>
-                                 <p className="text-sm font-bold text-slate-900">{dossier.title || "Dossier de reprise"}</p>
+                                 <p className="text-sm font-bold text-slate-800">{dossier.title || "Dossier de reprise"}</p>
                                  <p className="text-[10px] text-muted-foreground font-medium uppercase">Statut: {dossier.status.replace(/_/g, ' ')}</p>
                               </div>
                            </div>
