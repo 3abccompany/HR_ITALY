@@ -54,7 +54,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, isBefore, startOfDay, addDays, differenceInDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
@@ -89,7 +89,7 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
 /**
  * Renders the contract lifecycle context for a document.
  */
-function renderContractContext(doc: HRDocument, employee?: Employee) {
+function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = false) {
   const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType);
   if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
   if (!doc.contractId) return null;
@@ -102,12 +102,12 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const startDate = parseSafeDate(doc.contractStartDate);
-    const isFuture = startDate && startDate > today;
+    const isFuture = (startDate && startDate > today) || employee.pendingContractId === doc.contractId;
 
     if (employee.activeContractId === doc.contractId) {
       label = isCoreContract ? "Contrat actif" : "Lié au contrat actif";
       color = "bg-blue-50 text-blue-700 border-blue-200";
-    } else if (employee.pendingContractId === doc.contractId || isFuture) {
+    } else if (isFuture) {
       label = isCoreContract ? "Contrat à venir" : "Lié au contrat à venir";
       color = "bg-teal-50 text-teal-700 border-teal-100";
     } else {
@@ -115,6 +115,8 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
       color = "bg-slate-50 text-slate-500 border-slate-200";
     }
   }
+
+  if (onlyText) return label;
 
   return (
     <Badge variant="outline" className={cn("text-[8px] h-4 px-1.5 font-black uppercase", color)}>
@@ -963,6 +965,7 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
         <TableRow>
           <TableHead className="text-[10px] font-black uppercase tracking-widest pl-8">Document</TableHead>
           <TableHead className="text-[10px] font-black uppercase tracking-widest">Type</TableHead>
+          <TableHead className="text-[10px] font-black uppercase tracking-widest">Échéance</TableHead>
           <TableHead className="text-[10px] font-black uppercase tracking-widest">Statut</TableHead>
           <TableHead className="text-[10px] font-black uppercase tracking-widest">Ajouté le</TableHead>
           <TableHead className="text-right pr-8 text-[10px] font-black uppercase tracking-widest">Actions</TableHead>
@@ -970,11 +973,19 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
       </TableHeader>
       <TableBody>
         {!docs || docs.length === 0 ? (
-          <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document rattaché.</TableCell></TableRow>
+          <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document rattaché.</TableCell></TableRow>
         ) : docs.map(d => {
           const isLoading = loadingId === d.id;
           const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(d.documentType) || d.relatedModule === 'contracts';
           
+          const contractLabel = renderContractContext(d, employee, true) as string | null;
+          const subtitle = contractLabel || d.employeeDisplayName || "Général";
+
+          const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
+          const expiryDate = parseSafeDate(rawExpiry);
+          const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
+          const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 60;
+
           return (
             <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
               <TableCell className="pl-8 py-4">
@@ -982,7 +993,11 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                    <div className="font-bold text-slate-800 text-sm truncate max-w-[250px]">{d.title}</div>
                    {renderContractContext(d, employee)}
                 </div>
-                <div className="text-[9px] text-muted-foreground font-mono mt-0.5">{d.fileName}</div>
+                <div className="flex items-center gap-2 mt-0.5">
+                   <div className="text-[9px] text-muted-foreground font-mono truncate max-w-[150px]">{d.fileName}</div>
+                   <span className="text-slate-200 text-[8px]">•</span>
+                   <div className="text-[9px] text-muted-foreground font-medium">{subtitle}</div>
+                </div>
               </TableCell>
               <TableCell>
                  <div className="flex flex-col gap-0.5">
@@ -993,6 +1008,16 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                        </span>
                     )}
                  </div>
+              </TableCell>
+              <TableCell>
+                 {expiryDate ? (
+                   <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                      {formatDateSafe(rawExpiry)}
+                      {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
+                   </div>
+                 ) : (
+                   <span className="text-[10px] text-muted-foreground/30">—</span>
+                 )}
               </TableCell>
               <TableCell>
                  <Badge variant="outline" className={cn("text-[8px] uppercase font-black h-4", d.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50")}>

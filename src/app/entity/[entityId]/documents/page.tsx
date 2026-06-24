@@ -107,9 +107,9 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
 }
 
 /**
- * Renders the contract lifecycle context (Active/Future/Historical) for a document.
+ * Renders the contract lifecycle context for a document.
  */
-function renderContractContext(doc: HRDocument, employee?: Employee) {
+function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = false) {
   const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType);
   if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
   if (!doc.contractId) return null;
@@ -122,12 +122,12 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const startDate = parseSafeDate(doc.contractStartDate);
-    const isFuture = startDate && startDate > today;
+    const isFuture = (startDate && startDate > today) || employee.pendingContractId === doc.contractId;
 
     if (employee.activeContractId === doc.contractId) {
       label = isCoreContract ? "Contrat actif" : "Lié au contrat actif";
       color = "bg-blue-50 text-blue-700 border-blue-200";
-    } else if (employee.pendingContractId === doc.contractId || isFuture) {
+    } else if (isFuture) {
       label = isCoreContract ? "Contrat à venir" : "Lié au contrat à venir";
       color = "bg-teal-50 text-teal-700 border-teal-100";
     } else {
@@ -135,6 +135,8 @@ function renderContractContext(doc: HRDocument, employee?: Employee) {
       color = "bg-slate-50 text-slate-500 border-slate-200";
     }
   }
+
+  if (onlyText) return label;
 
   return (
     <Badge variant="outline" className={cn("text-[8px] h-4 px-1.5 font-black uppercase", color)}>
@@ -264,7 +266,8 @@ export default function DocumentsRegistryPage() {
     };
 
     filteredDocs.forEach(d => {
-      const expiry = parseSafeDate(d.expiresAt);
+      const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
+      const expiry = parseSafeDate(rawExpiry);
       if (!expiry) {
         groups.no_expiry.push(d);
         return;
@@ -296,7 +299,8 @@ export default function DocumentsRegistryPage() {
       acc.total++;
       if (d.isSensitive) acc.sensitive++;
       
-      const expiry = parseSafeDate(d.expiresAt);
+      const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
+      const expiry = parseSafeDate(rawExpiry);
       if (expiry) {
         if (isBefore(expiry, today)) {
           acc.expired++;
@@ -1046,7 +1050,11 @@ function DocRow({
   const params = useParams();
   const entityId = params?.entityId as string;
   const isLoading = loadingId === doc.id;
-  const expiryDate = parseSafeDate(doc.expiresAt);
+  
+  // FIX: Support alternate expiry date fields
+  const rawExpiry = doc.expiresAt || (doc as any).expirationDate || (doc as any).dueDate || (doc as any).deadline;
+  const expiryDate = parseSafeDate(rawExpiry);
+  
   const today = startOfDay(new Date());
   const isExpired = expiryDate && isBefore(expiryDate, today);
   const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
@@ -1055,6 +1063,10 @@ function DocRow({
   
   // UI replacement rule: Only allow renewal/replacement on current documents (not historical versions) AND NOT on contract docs
   const isRenewable = !isHistory && !isContractDoc && doc.status === 'valid' && !doc.replacedById && expiryDate && (isExpired || isExpiringSoon);
+
+  // FIX: Resolve contract context for subtitle
+  const contractLabel = renderContractContext(doc, employee, true) as string | null;
+  const subtitle = contractLabel || doc.employeeDisplayName || "Général";
 
   return (
     <TableRow className={cn(
@@ -1086,13 +1098,13 @@ function DocRow({
              </>
            )}
            <span className="text-slate-200 text-[8px]">•</span>
-           <div className="text-[9px] text-muted-foreground font-medium">{doc.employeeDisplayName || "Général"}</div>
+           <div className="text-[9px] text-muted-foreground font-medium">{subtitle}</div>
         </div>
       </TableCell>
       <TableCell>
         {expiryDate ? (
           <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
-            {formatDateSafe(doc.expiresAt)}
+            {formatDateSafe(rawExpiry)}
             {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
           </div>
         ) : (
