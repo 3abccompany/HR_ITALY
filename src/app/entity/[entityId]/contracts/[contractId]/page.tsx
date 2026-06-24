@@ -797,6 +797,9 @@ export default function ContractDetailPage() {
           contractId: contractId,
           employeeId: contract.employeeId,
           personId: contract.personId,
+          contractStartDate: contract.startDate,
+          contractEndDate: contract.endDate || null,
+          expiresAt: contract.endDate || null,
           preHireDossierId: contract.preHireDossierId || null,
           source: contract.source,
           isSensitive: true,
@@ -837,6 +840,8 @@ export default function ContractDetailPage() {
           contractId: contractId,
           employeeId: contract.employeeId,
           personId: contract.personId,
+          contractStartDate: contract.startDate,
+          contractEndDate: contract.endDate || null,
           preHireDossierId: contract.preHireDossierId || null,
           source: contract.source,
           isSensitive: true,
@@ -1080,7 +1085,7 @@ export default function ContractDetailPage() {
           )}
 
           {isTerminated && (
-            <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm">
+            <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm mb-8">
                <CardHeader className="bg-red-50 border-b py-4 px-8 flex flex-row items-center justify-between">
                   <CardTitle className="text-xs font-black uppercase tracking-widest text-red-700 flex items-center gap-2">
                      <Ban className="w-4 h-4" /> Détails de la clôture
@@ -1906,7 +1911,7 @@ function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, lo
 function DocumentRow({ 
   doc, 
   onOpen, 
-  onReplace,
+  onReplace, 
   loadingId, 
   isMain, 
   compactVersion, 
