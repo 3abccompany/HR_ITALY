@@ -97,13 +97,13 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
   const { data: submission, loading: loadingSubmission } = useDoc<ApplicationSubmission>(submissionRef);
 
   const handleStatusChange = async (nextStatus: CandidateStatus, reason?: string) => {
-    if (!user) return;
+    if (!user || !candidate) return;
     setLoadingAction(true);
     try {
       await updateCandidateStatus({
         entityId,
-        candidateId: candidate!.candidateId,
-        personId: candidate!.personId,
+        candidateId: candidate.candidateId,
+        personId: candidate.personId,
         nextStatus,
         rejectionReason: reason,
         actorUid: user.uid
@@ -114,7 +114,12 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
       setRejectionReason("");
       
       if (onStatusUpdate) {
-        onStatusUpdate({ ...candidate!, status: nextStatus, rejectionReason: reason });
+        onStatusUpdate({ ...candidate, status: nextStatus, rejectionReason: reason });
+      }
+
+      // UX Improvement: Direct redirect to interview planning if requested
+      if (nextStatus === "interview_to_schedule") {
+        router.push(`/entity/${entityId}/interviews?candidateId=${candidate.candidateId}&action=schedule`);
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });

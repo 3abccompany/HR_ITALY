@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { 
   Calendar, Search, Plus, Edit, PowerOff, RefreshCcw, 
   Loader2, User, Briefcase, MapPin, CheckCircle2, 
@@ -204,6 +204,7 @@ function getDecisionLabel(decision: string | undefined) {
 
 export default function InterviewsManagementPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
@@ -259,6 +260,17 @@ export default function InterviewsManagementPage() {
   const eligibleCandidates = useMemo(() => {
     return candidates?.filter(c => c.status === "interview_to_schedule") || [];
   }, [candidates]);
+
+  // Context Handling from query params
+  useEffect(() => {
+    const candidateId = searchParams.get("candidateId");
+    const action = searchParams.get("action");
+
+    if (action === "schedule" && candidateId && canCreate) {
+      setFormData(prev => ({ ...prev, candidateId }));
+      setIsFormVisible(true);
+    }
+  }, [searchParams, canCreate]);
 
   // --- Logic Chains ---
 
