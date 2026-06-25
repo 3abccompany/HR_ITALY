@@ -67,6 +67,10 @@ export default function EntityDashboardPage() {
     const today = startOfDay(new Date());
     const thirtyDaysOut = addDays(today, 30);
 
+    // Create a lookup map for contracts to check their status/renewal state efficiently
+    const contractMap = new Map<string, any>();
+    contracts?.forEach(c => contractMap.set(c.contractId || c.id, c));
+
     const s = {
       expiringContracts: [] as any[],
       expiredContracts: [] as any[],
@@ -75,8 +79,14 @@ export default function EntityDashboardPage() {
       totalEmployees: employees?.length || 0
     };
 
+    // 1. Process Contracts
     contracts?.forEach(c => {
-      if (c.status !== 'active') return;
+      // Exclude contracts that are explicitly renewed or have a renewal link
+      if (c.renewedByContractId || c.status === 'renewed') return;
+      
+      // Exclude other terminal or non-alert statuses
+      if (['terminated', 'archived', 'cancelled', 'draft'].includes(c.status)) return;
+      
       const endDate = parseSafeDate(c.endDate);
       if (!endDate) return;
 
@@ -87,9 +97,24 @@ export default function EntityDashboardPage() {
       }
     });
 
+    // 2. Process Documents
     documents?.forEach(d => {
       if (d.status !== 'valid') return;
-      const expiry = parseSafeDate(d.expiresAt);
+
+      // Safety: If linked to a contract, check the contract state
+      if (d.contractId) {
+        const linkedContract = contractMap.get(d.contractId);
+        if (linkedContract) {
+          // Hide alerts for documents belonging to contracts that are renewed or terminal
+          if (linkedContract.renewedByContractId || 
+              ['renewed', 'terminated', 'archived', 'cancelled'].includes(linkedContract.status)) {
+            return;
+          }
+        }
+      }
+
+      const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
+      const expiry = parseSafeDate(rawExpiry);
       if (!expiry) return;
 
       if (isBefore(expiry, today)) {
@@ -106,7 +131,7 @@ export default function EntityDashboardPage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
-        <p className="text-muted-foreground font-medium">Chargement du dashboard...</p>
+        <p className="text-muted-foreground font-medium animate-pulse">Chargement du dashboard...</p>
       </div>
     );
   }
