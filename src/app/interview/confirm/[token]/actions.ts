@@ -48,9 +48,9 @@ export async function getPublicInterviewAction(rawToken: string): Promise<{ succ
 }
 
 /**
- * Marks the interview attendance as confirmed by the candidate.
+ * Marks the interview invitation response (Confirm or Decline).
  */
-export async function confirmInterviewAttendanceAction(rawToken: string): Promise<{ success: boolean; error?: string }> {
+export async function confirmInterviewAttendanceAction(rawToken: string, response: "confirmed" | "declined" = "confirmed"): Promise<{ success: boolean; error?: string }> {
   if (!rawToken) throw new Error("Token manquant.");
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
@@ -69,32 +69,43 @@ export async function confirmInterviewAttendanceAction(rawToken: string): Promis
 
       if (!interviewSnap.exists) throw new Error("Entretien introuvable.");
 
-      // Atomic updates
-      transaction.update(interviewRef, {
-        confirmationStatus: "confirmed",
-        confirmedAt: FieldValue.serverTimestamp(),
+      // Update Payload
+      const updatePayload: any = {
+        confirmationStatus: response,
         updatedAt: FieldValue.serverTimestamp(),
-      });
+      };
+
+      if (response === "confirmed") {
+        updatePayload.confirmedAt = FieldValue.serverTimestamp();
+      } else {
+        updatePayload.declinedAt = FieldValue.serverTimestamp();
+      }
+
+      // Atomic updates
+      transaction.update(interviewRef, updatePayload);
 
       transaction.update(tokenRef, {
         status: "used",
         updatedAt: FieldValue.serverTimestamp()
       });
 
-      // Record Timeline Event
-      const timelineRef = adminDb.collection("entities").doc(tokenData.entityId).collection("personTimeline").doc();
-      transaction.set(timelineRef, {
-        eventId: timelineRef.id,
-        entityId: tokenData.entityId,
-        personId: interviewSnap.data()?.personId,
-        type: "interview.attendance_confirmed",
-        label: "Présence confirmée",
-        description: "Le candidat a confirmé sa présence à l'entretien via le lien sécurisé.",
-        sourceCollection: "interviews",
-        sourceId: tokenData.interviewId,
-        createdAt: FieldValue.serverTimestamp(),
-        createdBy: "candidate_portal"
-      });
+      // Record Timeline Event ONLY for confirmations (as per instructions: do not add personTimeline in this fix)
+      // Existing timeline logic is preserved for 'confirmed' but not extended to 'declined' to stay strict.
+      if (response === "confirmed") {
+        const timelineRef = adminDb.collection("entities").doc(tokenData.entityId).collection("personTimeline").doc();
+        transaction.set(timelineRef, {
+          eventId: timelineRef.id,
+          entityId: tokenData.entityId,
+          personId: interviewSnap.data()?.personId,
+          type: "interview.attendance_confirmed",
+          label: "Présence confirmée",
+          description: "Le candidat a confirmé sa présence à l'entretien via le lien sécurisé.",
+          sourceCollection: "interviews",
+          sourceId: tokenData.interviewId,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: "candidate_portal"
+        });
+      }
 
       return { success: true };
     });

@@ -1064,7 +1064,7 @@ export default function InterviewsManagementPage() {
                    return da - db;
                 }).map((i) => (
                   <div key={i.interviewId} className="group relative pl-8 border-l-2 border-primary/10 pb-8 last:pb-0">
-                     <div className="absolute left-[-9px] top-0 w-4 h-4 rounded-full border-2 border-white bg-primary shadow-sm" />
+                     <div className="absolute left-[-26px] top-0 w-4 h-4 rounded-full border-2 border-white bg-primary shadow-sm" />
                      <div className="space-y-3">
                         <div className="flex items-center justify-between">
                            <div className="flex items-center gap-2">
@@ -1407,8 +1407,8 @@ function getConfirmationBadge(interview: Interview) {
    const s = interview.confirmationStatus || "pending";
    switch (s) {
      case 'confirmed': return <Badge variant="secondary" className="bg-green-600 text-white border-none text-[9px] font-black gap-1"><ThumbsUp className="w-2.5 h-2.5" /> Confirmé</Badge>;
-     case 'expired': return <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-400 font-bold">Lien expiré</Badge>;
      case 'declined': return <Badge variant="destructive" className="text-[9px] font-black">Refusé</Badge>;
+     case 'expired': return <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-400 font-bold">Lien expiré</Badge>;
      default: return <Badge variant="secondary" className="bg-blue-50 text-blue-500 border-blue-100 text-[9px] font-black uppercase tracking-tighter">Attente candidat</Badge>;
    }
 }

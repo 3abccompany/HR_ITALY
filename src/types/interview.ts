@@ -52,6 +52,7 @@ export interface Interview {
   confirmationTokenHash?: string;
   confirmationExpiresAt?: Date | FieldValue | any;
   confirmedAt?: Date | FieldValue | any;
+  declinedAt?: Date | FieldValue | any;
   confirmationViewedAt?: Date | FieldValue | any;
 
   // Email Notification Tracking

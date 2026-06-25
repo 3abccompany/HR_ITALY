@@ -213,6 +213,28 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
     const renderedSubject = renderTemplate(subject, finalTemplateData);
     const renderedBody = renderTemplate(message, finalTemplateData);
 
+    const htmlContent = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.6;">
+        <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 20px;">Invitation à un entretien</h1>
+        </div>
+        <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
+          <div style="white-space: pre-wrap; margin-bottom: 30px; color: #334155;">${renderedBody}</div>
+          
+          <div style="text-align: center; margin: 40px 0;">
+            <a href="${confirmationLink}" style="background-color: #1F1F66; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 12px rgba(31, 31, 102, 0.2);">
+              Répondre à l'invitation
+            </a>
+          </div>
+
+          <p style="font-size: 11px; color: #94A3B8; text-align: center;">
+            Si le bouton ne fonctionne pas, copiez ce lien :<br>
+            <span style="word-break: break-all;">${confirmationLink}</span>
+          </p>
+        </div>
+      </div>
+    `;
+
     // 5. SMTP Dispatch
     const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
     
@@ -225,7 +247,7 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
         to,
         replyTo: replyTo || undefined,
         subject: renderedSubject,
-        html: renderedBody.replace(/\n/g, '<br>'),
+        html: htmlContent,
         text: renderedBody,
       });
     } else {
