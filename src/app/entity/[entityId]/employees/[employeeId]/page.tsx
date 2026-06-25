@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -817,7 +818,7 @@ export default function Employee360HubPage() {
         </TabsContent>
 
         <TabsContent value="timeline" className="mt-0 animate-in fade-in slide-in-from-bottom-2">
-           <div className="max-w-3xl mx-auto py-8">
+           <div className="max-w-3xl auto py-8">
               {!permissionsReady ? (
                  <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
               ) : !canReadPersons ? (

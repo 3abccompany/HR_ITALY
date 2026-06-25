@@ -134,7 +134,7 @@ export async function repairEntityDataLinkageServer(params: {
        return;
     }
 
-    if (isMissingEmployeeId(data.employeeId) && (matchesIdentity(data.personId, exactIdentityIds, identityKeys) || matchesIdentity(item.data.candidateId, exactIdentityIds, identityKeys))) {
+    if (isMissingEmployeeId(data.employeeId) && (matchesIdentity(data.personId, exactIdentityIds, identityKeys) || matchesIdentity(data.candidateId, exactIdentityIds, identityKeys))) {
       docsToUpdate.push({ id: docSnap.id, ref: docSnap.ref, data });
       results.matchedDocumentIds.push(docSnap.id);
       results.documentsRepaired++;

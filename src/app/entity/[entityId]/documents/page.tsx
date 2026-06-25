@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -226,24 +227,33 @@ export default function DocumentsRegistryPage() {
   // --- Grouping Logic ---
 
   const docsByEmployee = useMemo(() => {
-    const groups: Record<string, { name: string, docs: HRDocument[] }> = {};
-    filteredDocs.forEach(d => {
-      const key = d.employeeId || "none";
-      if (!groups[key]) {
-        const emp = employeesMap.get(key);
-        const resolvedName = d.employeeDisplayName || (emp ? (emp.displayName || `${emp.firstName} ${emp.lastName}`) : null);
+    const groups = new Map<string, { employeeId: string; employeeName: string; docs: HRDocument[] }>();
+  
+    filteredDocs.forEach((doc) => {
+      const key = doc.employeeId || "none";
+      const emp = employeesMap.get(key);
 
-        groups[key] = { 
-          name: resolvedName || (key === "none" ? "Documents non liés à un employé" : "Employé inconnu"), 
-          docs: [] 
-        };
+      const employeeName =
+        doc.employeeDisplayName ||
+        emp?.displayName ||
+        (emp ? `${emp.firstName} ${emp.lastName}` : null) ||
+        (key === "none" ? "Documents non liés à un employé" : "Employé inconnu");
+  
+      if (!groups.has(key)) {
+        groups.set(key, {
+          employeeId: key,
+          employeeName,
+          docs: [],
+        });
       }
-      groups[key].docs.push(d);
+  
+      groups.get(key)!.docs.push(doc);
     });
-    return Object.entries(groups).sort((a, b) => {
-      if (a[0] === "none") return 1;
-      if (b[0] === "none") return -1;
-      return a[1].name.localeCompare(b[1].name);
+  
+    return Array.from(groups.values()).sort((a, b) => {
+      if (a.employeeId === "none") return 1;
+      if (b.employeeId === "none") return -1;
+      return a.employeeName.localeCompare(b.employeeName, "fr");
     });
   }, [filteredDocs, employeesMap]);
 
@@ -525,15 +535,15 @@ export default function DocumentsRegistryPage() {
             </TabsContent>
 
             <TabsContent value="employee" className="mt-0 space-y-6">
-              {docsByEmployee.map(([key, group]) => (
-                <div key={key} className="space-y-3">
+              {docsByEmployee.map(({ employeeId, employeeName, docs }) => (
+                <div key={employeeId} className="space-y-3">
                    <div className="flex items-center gap-3 px-2">
-                      <h3 className="font-black text-xs uppercase tracking-wider text-primary">{group.name}</h3>
-                      <Badge variant="secondary" className="bg-primary/5 text-primary text-[10px] font-black h-5">{group.docs.length}</Badge>
+                      <h3 className="font-black text-xs uppercase tracking-wider text-primary">{employeeName}</h3>
+                      <Badge variant="secondary" className="bg-primary/5 text-primary text-[10px] font-black h-5">{docs.length}</Badge>
                    </div>
                    <Card className="rounded-3xl border-primary/5 overflow-hidden shadow-sm bg-white">
                       <DocumentsTable 
-                        docs={group.docs} 
+                        docs={docs} 
                         employeesMap={employeesMap}
                         loadingId={loadingAction} 
                         onOpen={handleOpenDoc} 
@@ -1054,20 +1064,20 @@ function DocRow({
   const entityId = params?.entityId as string;
   const isLoading = loadingId === doc.id;
   
-  // FIX: Support alternate expiry date fields
+  // Unified expiry logic support
   const rawExpiry = doc.expiresAt || (doc as any).expirationDate || (doc as any).dueDate || (doc as any).deadline;
   const expiryDate = parseSafeDate(rawExpiry);
   
   const today = startOfDay(new Date());
   const isExpired = expiryDate && isBefore(expiryDate, today);
-  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
+  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 60;
   
   const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType) || doc.relatedModule === 'contracts';
   
   // UI replacement rule: Only allow renewal/replacement on current documents (not historical versions) AND NOT on contract docs
   const isRenewable = !isHistory && !isContractDoc && doc.status === 'valid' && !doc.replacedById && expiryDate && (isExpired || isExpiringSoon);
 
-  // FIX: Resolve contract context for subtitle
+  // Resolved contract context for subtitle
   const contractLabel = renderContractContext(doc, employee, true) as string | null;
   const subtitle = contractLabel || doc.employeeDisplayName || "Général";
 
@@ -1105,14 +1115,14 @@ function DocRow({
         </div>
       </TableCell>
       <TableCell>
-        {expiryDate ? (
-          <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
-            {formatDateSafe(rawExpiry)}
-            {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
-          </div>
-        ) : (
-          <span className="text-[10px] text-muted-foreground/30">—</span>
-        )}
+         {expiryDate ? (
+           <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+              {formatDateSafe(rawExpiry)}
+              {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
+           </div>
+         ) : (
+           <span className="text-[10px] text-muted-foreground/30">—</span>
+         )}
       </TableCell>
       <TableCell>
          <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/5", 
