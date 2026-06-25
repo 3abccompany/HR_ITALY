@@ -1,109 +1,36 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { useFirebase } from "@/firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import { AlertCircle, Lock } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { CheckCircle2, AlertCircle, ShieldPlus } from "lucide-react";
 
-export default function SeedAdminPage() {
-  const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  
-  const { db } = useFirebase();
-
-  const handleSeed = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setSuccess(false);
-
-    if (!db) {
-      setError("Firestore is not initialized.");
-      setLoading(false);
-      return;
-    }
-
-    if (!email) {
-      setError("Please provide an email.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const adminUid = "3vhiKfy0L0dtNJNbWV7uaZiC4IZ2";
-      const adminRef = doc(db, "users", adminUid);
-      
-      await setDoc(adminRef, {
-        uid: adminUid,
-        displayName: "Super Admin",
-        email: email,
-        platformRole: "superAdmin",
-        status: "active",
-        createdBy: "system",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      setSuccess(true);
-    } catch (err: any) {
-      console.error("Seed error:", err);
-      setError(err.message || "Failed to seed admin user.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+/**
+ * Disabled Legacy Seed Page.
+ * This tool is obsolete and has been deactivated to prevent unauthorized writes.
+ */
+export default function DisabledSeedPage() {
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <div className="mx-auto bg-primary w-12 h-12 rounded-xl flex items-center justify-center mb-4">
-            <ShieldPlus className="text-white w-6 h-6" />
+    <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
+      <Card className="w-full max-w-md shadow-xl border-orange-200">
+        <CardHeader className="bg-orange-50 border-b text-center pb-8">
+          <div className="mx-auto bg-orange-500 w-12 h-12 rounded-xl flex items-center justify-center mb-4 text-white shadow-lg shadow-orange-200">
+            <Lock className="w-6 h-6" />
           </div>
-          <CardTitle className="text-2xl font-bold text-center">Seed Super Admin</CardTitle>
-          <CardDescription className="text-center">
-            Crée le profil Firestore pour l'UID: <span className="font-mono text-primary">3vhiKfy0L0dtNJNbWV7uaZiC4IZ2</span>
+          <CardTitle className="text-2xl font-black text-orange-900">Outil Désactivé</CardTitle>
+          <CardDescription className="text-orange-700">
+            Cette page de bootstrap n'est plus opérationnelle.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSeed} className="space-y-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Erreur</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            {success && (
-              <Alert className="border-green-500 text-green-600 bg-green-50">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <AlertTitle>Succès</AlertTitle>
-                <AlertDescription>Profil Super Admin créé avec succès !</AlertDescription>
-              </Alert>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="email">Email de l'admin</Label>
-              <Input 
-                id="email" 
-                type="email" 
-                placeholder="admin@hrexample.com" 
-                required 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={loading}
-              />
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Création..." : "Initialiser le profil Admin"}
-            </Button>
-          </form>
+        <CardContent className="pt-6">
+          <Alert variant="destructive" className="border-orange-200 bg-white rounded-xl">
+            <AlertCircle className="h-4 w-4 text-orange-600" />
+            <AlertTitle className="text-orange-900 font-bold uppercase text-[10px] tracking-widest">Avertissement</AlertTitle>
+            <AlertDescription className="text-xs text-orange-800 leading-relaxed">
+              Cette page héritée (legacy seed page) a été désactivée. Elle était uniquement utilisée pour l'initialisation du premier Super Admin dans Firestore.
+              <br /><br />
+              Veuillez utiliser les outils d'administration sécurisés ou des scripts locaux contrôlés pour toute opération de maintenance.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
     </div>
