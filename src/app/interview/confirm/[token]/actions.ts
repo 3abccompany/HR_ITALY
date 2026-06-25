@@ -1,13 +1,13 @@
 'use server';
 
 import { adminDb } from "@/lib/firebase/admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import crypto from "crypto";
 
 /**
  * Server action to securely retrieve interview details for public confirmation.
  */
-export async function getPublicInterviewAction(rawToken: string) {
+export async function getPublicInterviewAction(rawToken: string): Promise<{ success: boolean; interview?: any; error?: string }> {
   if (!rawToken) return { success: false, error: "Token manquant." };
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
@@ -50,7 +50,7 @@ export async function getPublicInterviewAction(rawToken: string) {
 /**
  * Marks the interview attendance as confirmed by the candidate.
  */
-export async function confirmInterviewAttendanceAction(rawToken: string) {
+export async function confirmInterviewAttendanceAction(rawToken: string): Promise<{ success: boolean; error?: string }> {
   if (!rawToken) throw new Error("Token manquant.");
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 

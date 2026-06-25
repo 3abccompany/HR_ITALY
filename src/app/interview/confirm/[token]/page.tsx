@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { getPublicInterviewAction, confirmInterviewAttendanceAction } from "./actions";
 
 export default function InterviewConfirmationPage() {
@@ -48,7 +47,7 @@ export default function InterviewConfirmationPage() {
       if (result.success) {
         setSuccess(true);
       } else {
-        alert("Erreur: " + result.error);
+        alert("Erreur: " + (result.error || "Une erreur est survenue."));
       }
     } catch (err: any) {
       alert("Erreur technique lors de la confirmation.");
@@ -70,11 +69,11 @@ export default function InterviewConfirmationPage() {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <Card className="max-w-md w-full shadow-xl border-none text-center p-12 rounded-[2.5rem]">
-          <div className="mx-auto bg-destructive/10 w-16 h-16 rounded-full flex items-center justify-center mb-6">
-            <AlertCircle className="w-8 h-8 text-destructive" />
+          <div className="mx-auto bg-destructive/10 w-16 h-16 rounded-full flex items-center justify-center mb-6 text-destructive">
+            <AlertCircle className="w-8 h-8" />
           </div>
           <h1 className="text-2xl font-black text-slate-900 mb-2">Lien invalide</h1>
-          <p className="text-slate-500 mb-8">{error}</p>
+          <p className="text-slate-500 mb-8 leading-relaxed">{error}</p>
         </Card>
       </div>
     );
