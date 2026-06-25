@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -166,7 +165,7 @@ export async function scheduleInterview(
       return { interviewId, candidateDisplayName: candidateData.displayName };
     });
 
-    // Post-Transaction: Trigger Email Send
+    // Post-Transaction: Trigger Email Send (Updated with confirmation logic)
     if (emailConfig?.enabled && candidateEmail) {
       console.debug("[Interview Service] Step 7: Triggering async server email send");
       const dateObj = new Date(data.scheduledAt || "");
@@ -187,6 +186,7 @@ export async function scheduleInterview(
           interviewTime,
           locationOrLink: data.location || "Sur site",
           recruiterName: data.interviewerName || "Équipe RH",
+          confirmationLink: "" // Will be generated inside the server action
         }
       }).catch(err => {
         console.error("[Interview Service] Non-critical email trigger failure:", err);

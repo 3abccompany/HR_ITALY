@@ -23,6 +23,8 @@ export type InterviewType =
   | "hr"
   | "final";
 
+export type ConfirmationStatus = "pending" | "confirmed" | "expired" | "declined";
+
 export type EmailNotificationStatus = "not_requested" | "queued" | "sent" | "failed";
 
 export interface Interview {
@@ -44,6 +46,13 @@ export interface Interview {
   notes?: string;
   hiredEmployeeId: string | null;
   previousStatus?: InterviewStatus;
+
+  // Confirmation Tracking (Candidate intent)
+  confirmationStatus?: ConfirmationStatus;
+  confirmationTokenHash?: string;
+  confirmationExpiresAt?: Date | FieldValue | any;
+  confirmedAt?: Date | FieldValue | any;
+  confirmationViewedAt?: Date | FieldValue | any;
 
   // Email Notification Tracking
   emailNotificationEnabled: boolean;

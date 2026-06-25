@@ -5,9 +5,10 @@
  */
 
 import { adminDb } from "@/lib/firebase/admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import nodemailer from 'nodemailer';
 import { resolveEmailTransportForEntity } from "./email-settings.service";
+import crypto from 'crypto';
 
 export interface SendInterviewEmailParams {
   entityId: string;
@@ -23,6 +24,7 @@ export interface SendInterviewEmailParams {
     interviewTime: string;
     locationOrLink: string;
     recruiterName: string;
+    confirmationLink: string;
   };
 }
 
@@ -160,16 +162,58 @@ Ufficio Risorse Umane — ${data.companyName}`;
 /**
  * Server Action to send an interview notification.
  * Integrates Entity SMTP with global fallback.
+ * Generates secure confirmation token for candidates.
  */
 export async function sendInterviewEmailAction(params: SendInterviewEmailParams) {
   const { entityId, interviewId, to, subject, message, templateData } = params;
 
   if (!adminDb) throw new Error("Firestore Admin not initialized");
 
-  const renderedSubject = renderTemplate(subject, templateData);
-  const renderedBody = renderTemplate(message, templateData);
-
   try {
+    // 1. Generate Secure Attendance Confirmation Token
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    const interviewRef = adminDb.collection("entities").doc(entityId).collection("interviews").doc(interviewId);
+    const interviewSnap = await interviewRef.get();
+    if (!interviewSnap.exists) throw new Error("Interview not found");
+    const interviewData = interviewSnap.data()!;
+
+    const scheduledAt = interviewData.scheduledAt;
+    const expiresAt = scheduledAt ? (typeof scheduledAt === 'string' ? Timestamp.fromDate(new Date(scheduledAt)) : scheduledAt) : Timestamp.fromDate(new Date());
+
+    // 2. Store Token in Global Registry
+    const tokenRef = adminDb.collection("publicInterviewTokens").doc(tokenHash);
+    await tokenRef.set({
+      tokenHash,
+      entityId,
+      interviewId,
+      expiresAt,
+      status: "active",
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    // 3. Update Interview Record
+    await interviewRef.update({
+      confirmationStatus: "pending",
+      confirmationTokenHash: tokenHash,
+      confirmationExpiresAt: expiresAt,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    // 4. Prepare Link and Render Template
+    const baseUrl = process.env.APP_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
+    const confirmationLink = `${baseUrl}/interview/confirm/${rawToken}`;
+    
+    const finalTemplateData = {
+      ...templateData,
+      confirmationLink
+    };
+
+    const renderedSubject = renderTemplate(subject, finalTemplateData);
+    const renderedBody = renderTemplate(message, finalTemplateData);
+
+    // 5. SMTP Dispatch
     const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
     
     const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
@@ -188,7 +232,6 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
       console.log(`[Email Service] SMTP not configured for ${source}. Log only: to=${to}, subject=${renderedSubject}`);
     }
 
-    const interviewRef = adminDb.collection("entities").doc(entityId).collection("interviews").doc(interviewId);
     await interviewRef.update({
       emailStatus: "sent",
       emailSentAt: FieldValue.serverTimestamp(),

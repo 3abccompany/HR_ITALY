@@ -9,7 +9,7 @@ import {
   Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
   Clock, MapPinned, UserCircle, HandMetal,
   X, ListFilter, Download, ChevronUp, ChevronDown,
-  Mail
+  Mail, ThumbsUp
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -127,6 +127,9 @@ Détails de votre rendez-vous :
 - Format/Lieu : {{locationOrLink}}
 
 Votre interlocuteur sera : {{recruiterName}}.
+
+Veuillez confirmer votre participation via le lien sécurisé ci-dessous :
+{{confirmationLink}}
 
 Nous restons à votre disposition pour toute information complémentaire.
 
@@ -427,7 +430,7 @@ export default function InterviewsManagementPage() {
     const headers = [
       "Candidat", "Email candidat", "Poste", "Département", 
       "Recruteur", "Mode d'entretien", "Date entretien", "Heure entretien", 
-      "Statut entretien", "Réponse recruteur", "Localisation/Lien"
+      "Statut entretien", "Confirmation", "Réponse recruteur", "Localisation/Lien"
     ];
 
     const rows = sortedInterviews.map(i => [
@@ -440,6 +443,7 @@ export default function InterviewsManagementPage() {
       parseSafeDate(i.scheduledAt) ? format(parseSafeDate(i.scheduledAt)!, "dd/MM/yyyy") : "N/A",
       parseSafeDate(i.scheduledAt) ? format(parseSafeDate(i.scheduledAt)!, "HH:mm") : "N/A",
       getStatusLabel(i.status),
+      i.confirmationStatus || "pending",
       getDecisionLabel(i.decision),
       i.location || ""
     ]);
@@ -518,7 +522,7 @@ export default function InterviewsManagementPage() {
           ...emailConfig,
           companyName: entity?.nomEntreprise || "Notre Entreprise"
         });
-        toast({ title: "Planifié", description: "L'entretien a été enregistré et le candidat notifié." });
+        toast({ title: "Planifié", description: "L'entretien a été enregistré et le candidat notifié avec un lien de confirmation." });
       }
       handleReset();
     } catch (err: any) {
@@ -583,7 +587,8 @@ export default function InterviewsManagementPage() {
       interviewDate: dateObj.toLocaleDateString('fr-FR', { dateStyle: 'long' }),
       interviewTime: dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       locationOrLink: formData.location || "[Lieu ou Lien]",
-      recruiterName: formData.interviewerName || "[Nom du recruteur]"
+      recruiterName: formData.interviewerName || "[Nom du recruteur]",
+      confirmationLink: "https://studio.hr-nexus.app/interview/confirm/TOKEN_SECURE_EXEMPLE"
     };
 
     let renderedSubject = emailConfig.subject;
@@ -767,6 +772,9 @@ export default function InterviewsManagementPage() {
                       <SortableHeader label="Rendez-vous" field="scheduledAt" currentSort={sort} onSort={handleToggleSort} />
                     </TableHead>
                     <TableHead>
+                      Confirmation
+                    </TableHead>
+                    <TableHead>
                       <SortableHeader label="Recruteur" field="interviewerName" currentSort={sort} onSort={handleToggleSort} />
                     </TableHead>
                     <TableHead>
@@ -780,10 +788,10 @@ export default function InterviewsManagementPage() {
                 </TableHeader>
                 <TableBody>
                   {loadingInterviews ? (
-                    <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
                   ) : filteredInterviews.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20">
+                      <TableCell colSpan={7} className="text-center py-20">
                         <div className="flex flex-col items-center gap-3 text-muted-foreground">
                           <ListFilter className="h-10 w-10 opacity-20" />
                           <p className="font-medium">Aucun entretien ne correspond à vos critères.</p>
@@ -809,6 +817,9 @@ export default function InterviewsManagementPage() {
                               {i.location && <span className="flex items-center gap-1"><MapPin className="w-2.5 h-2.5" /> {i.location}</span>}
                             </div>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                           {getConfirmationBadge(i)}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-xs">
@@ -1089,6 +1100,11 @@ export default function InterviewsManagementPage() {
 
                               <Separator className="bg-slate-50" />
 
+                              <div className="flex items-center gap-2 mb-2">
+                                 <span className="text-[10px] font-black uppercase text-muted-foreground">Confirmation :</span>
+                                 {getConfirmationBadge(i)}
+                              </div>
+
                               <div className="grid grid-cols-2 gap-3">
                                  <DetailMini label="Recruteur" value={i.interviewerName} icon={UserCircle} />
                                  <DetailMini label="Format" value={i.interviewType} icon={MapPinned} />
@@ -1197,7 +1213,7 @@ export default function InterviewsManagementPage() {
                           onChange={(e) => setEmailConfig(p => ({...p, message: e.target.value}))} 
                           className="min-h-[250px] text-xs font-mono"
                         />
-                        <p className="text-[10px] text-muted-foreground italic">Variables: {'{{candidateName}}, {{jobTitle}}, {{interviewDate}}, {{interviewTime}}, {{locationOrLink}}, {{recruiterName}}'}</p>
+                        <p className="text-[10px] text-muted-foreground italic">Variables: {'{{candidateName}}, {{jobTitle}}, {{interviewDate}}, {{interviewTime}}, {{locationOrLink}}, {{recruiterName}}, {{confirmationLink}}'}</p>
                       </div>
                     </div>
 
@@ -1385,6 +1401,16 @@ function getDecisionBadge(decision: string | undefined) {
     case 'stand_by': return <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-200 gap-1.5"><HandMetal className="w-3 h-3" /> Stand by</Badge>;
     default: return <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 gap-1.5"><HandMetal className="w-3 h-3 opacity-50" /> En attente</Badge>;
   }
+}
+
+function getConfirmationBadge(interview: Interview) {
+   const s = interview.confirmationStatus || "pending";
+   switch (s) {
+     case 'confirmed': return <Badge variant="secondary" className="bg-green-600 text-white border-none text-[9px] font-black gap-1"><ThumbsUp className="w-2.5 h-2.5" /> Confirmé</Badge>;
+     case 'expired': return <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-400 font-bold">Lien expiré</Badge>;
+     case 'declined': return <Badge variant="destructive" className="text-[9px] font-black">Refusé</Badge>;
+     default: return <Badge variant="secondary" className="bg-blue-50 text-blue-500 border-blue-100 text-[9px] font-black uppercase tracking-tighter">Attente candidat</Badge>;
+   }
 }
 
 function getEventClasses(i: Interview) {
