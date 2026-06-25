@@ -9,7 +9,8 @@ import {
   Info, Eye, ChevronLeft, ChevronRight, List as ListIcon,
   Clock, MapPinned, UserCircle, HandMetal,
   X, ListFilter, Download, ChevronUp, ChevronDown,
-  Mail, ThumbsUp
+  Mail, ThumbsUp,
+  ThumbsDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -128,8 +129,7 @@ Détails de votre rendez-vous :
 
 Votre interlocuteur sera : {{recruiterName}}.
 
-Veuillez confirmer votre participation via le lien sécurisé ci-dessous :
-{{confirmationLink}}
+Veuillez confirmer votre participation en cliquant sur le bouton ci-dessous.
 
 Nous restons à votre disposition pour toute information complémentaire.
 
@@ -1225,7 +1225,7 @@ export default function InterviewsManagementPage() {
                           onChange={(e) => setEmailConfig(p => ({...p, message: e.target.value}))} 
                           className="min-h-[250px] text-xs font-mono"
                         />
-                        <p className="text-[10px] text-muted-foreground italic">Variables: {'{{candidateName}}, {{jobTitle}}, {{interviewDate}}, {{interviewTime}}, {{locationOrLink}}, {{recruiterName}}, {{confirmationLink}}'}</p>
+                        <p className="text-[10px] text-muted-foreground italic">Variables: {'{{candidateName}}, {{jobTitle}}, {{interviewDate}}, {{interviewTime}}, {{locationOrLink}}, {{recruiterName}}'}</p>
                       </div>
                     </div>
 
@@ -1419,7 +1419,7 @@ function getConfirmationBadge(interview: Interview) {
    const s = interview.confirmationStatus || "pending";
    switch (s) {
      case 'confirmed': return <Badge variant="secondary" className="bg-green-600 text-white border-none text-[9px] font-black gap-1"><ThumbsUp className="w-2.5 h-2.5" /> Confirmé</Badge>;
-     case 'declined': return <Badge variant="destructive" className="text-[9px] font-black">Refusé</Badge>;
+     case 'declined': return <Badge variant="destructive" className="text-[9px] font-black"><ThumbsDown className="w-2.5 h-2.5 mr-1" /> Refusé</Badge>;
      case 'expired': return <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-400 font-bold">Lien expiré</Badge>;
      default: return <Badge variant="secondary" className="bg-blue-50 text-blue-500 border-blue-100 text-[9px] font-black uppercase tracking-tighter">Attente candidat</Badge>;
    }

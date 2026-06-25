@@ -227,8 +227,8 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
             </a>
           </div>
 
-          <p style="font-size: 11px; color: #94A3B8; text-align: center;">
-            Si le bouton ne fonctionne pas, copiez ce lien :<br>
+          <p style="font-size: 10px; color: #94A3B8; text-align: center; margin-top: 40px; opacity: 0.5;">
+            Si vous ne parvenez pas à cliquer sur le bouton, copiez ce lien :<br>
             <span style="word-break: break-all;">${confirmationLink}</span>
           </p>
         </div>
@@ -248,7 +248,7 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
         replyTo: replyTo || undefined,
         subject: renderedSubject,
         html: htmlContent,
-        text: renderedBody,
+        text: `${renderedBody}\n\nLien de confirmation : ${confirmationLink}`,
       });
     } else {
       console.log(`[Email Service] SMTP not configured for ${source}. Log only: to=${to}, subject=${renderedSubject}`);
