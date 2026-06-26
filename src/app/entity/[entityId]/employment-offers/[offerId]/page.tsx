@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -18,7 +19,9 @@ import {
   Scale,
   CheckCircle,
   Circle,
-  Trash2
+  Trash2,
+  Globe,
+  History
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -73,6 +76,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
+import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -419,6 +425,48 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const handleSendViaEmail = async () => {
+    if (!user || !entityId || !requestId || !offer) return;
+    if (!consultantForm.email) {
+      toast({ variant: "destructive", title: "Email manquant", description: "Veuillez renseigner l'email du consultant." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const result = await getConsultantCPIEmailPreviewAction({
+        entityId,
+        requestId,
+        templateData: {
+          consultantName: consultantForm.name || "Consulente",
+          candidateName: offer.candidateDisplayName || "Candidato",
+          candidateEmail: offer.candidateEmail || undefined,
+          candidatePhone: offer.candidatePhone || undefined,
+          jobTitle: offer.jobTitleName || "da definire",
+          companyName: entity?.nomEntreprise || "la nostra azienda",
+          plannedHireDate: offer.proposedStartDate || "da definire",
+          contractType: offer.contractType || "da definire",
+          requestId: requestId
+        }
+      });
+
+      if (!result.success) throw new Error((result as any).error || "Impossible de générer l'aperçu.");
+
+      setEditableSubject(result.preview!.subject);
+      setEditableBody(result.preview!.text);
+      setEmailPreview({
+        to: consultantForm.email,
+        subject: result.preview!.subject,
+        html: result.preview!.html
+      });
+      setIsPreviewOpen(true);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'aperçu", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleTestUniLav = () => {
     toast({ title: "Mode Test", description: "Simulation de conformité UniLav activée." });
   };
@@ -446,6 +494,16 @@ export default function EditEmploymentOfferPage() {
   const requiredCount = checklist?.filter(i => i.isRequired).length || 0;
 
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+
+  if (!offer) {
+    return (
+      <div className="p-8 text-center max-w-md mx-auto mt-20">
+        <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
+        <h2 className="text-xl font-bold mb-2">Offre introuvable</h2>
+        <Button onClick={() => router.back()}>Retour à la liste</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32 space-y-12">
@@ -500,7 +558,13 @@ export default function EditEmploymentOfferPage() {
                      <Button variant="outline" size="sm" onClick={() => setIsCustomDocOpen(true)} className="h-8 rounded-xl font-bold bg-white gap-2 border-dashed">
                         <Plus className="w-3.5 h-3.5" /> Ajouter demande
                      </Button>
-                     <Button variant="outline" size="sm" onClick={() => handleSendDocRequest(entityId, dossier.dossierId, user.uid)} disabled={saving} className="h-8 rounded-xl font-bold bg-white gap-2">
+                     <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => handleSendDocRequest(entityId, dossier!.dossierId, user?.uid || "")} 
+                        disabled={saving || !user} 
+                        className="h-8 rounded-xl font-bold bg-white gap-2"
+                      >
                         <Send className="w-3.5 h-3.5" /> Relancer candidat
                      </Button>
                    </div>
