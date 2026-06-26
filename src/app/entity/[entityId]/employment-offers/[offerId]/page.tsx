@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -21,7 +20,8 @@ import {
   Circle,
   Trash2,
   Globe,
-  History
+  History,
+  Mail
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -700,7 +700,7 @@ export default function EditEmploymentOfferPage() {
                 <div className="flex items-center gap-3">
                    <div className="bg-primary text-white p-2.5 rounded-xl"><Globe className="w-5 h-5" /></div>
                    <div>
-                     <CardTitle className="text-lg font-black text-primary">Compliance UniLav / CPI</CardTitle>
+                     <CardTitle className="text-lg font-black text-primary">Conformité UniLav / CPI</CardTitle>
                      <p className="text-[10px] uppercase font-bold text-muted-foreground">Communication obligatoire Italie</p>
                    </div>
                 </div>
@@ -1054,4 +1054,3 @@ function formatDateTime(val: any): string {
     return format(d, "dd/MM/yyyy", { locale: fr });
   } catch (e) { return "-"; }
 }
-
