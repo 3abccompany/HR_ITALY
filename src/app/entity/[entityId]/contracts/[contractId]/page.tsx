@@ -15,7 +15,8 @@ import {
   Plus, ShieldCheck, Mail, Send,
   MoreVertical,
   RotateCcw,
-  XCircle
+  XCircle,
+  Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -357,6 +358,8 @@ export default function ContractDetailPage() {
 
       jobTitleName: getEffectiveValue('jobTitleName', offer?.jobTitleName || employee?.jobTitle),
       departmentName: getEffectiveValue('departmentName', offer?.departmentName || employee?.departmentName),
+      jobTitleId: getEffectiveValue('jobTitleId', offer?.jobTitleId || employee?.jobRoleId),
+      departmentId: getEffectiveValue('departmentId', offer?.departmentId || employee?.departmentId),
       worksiteName: getEffectiveValue('worksiteName', offer?.worksiteName || employee?.worksiteName),
       contractType: getEffectiveValue('contractType', offer?.contractType),
       startDate: getEffectiveValue('startDate', offer?.proposedStartDate || employee?.hireDate),
@@ -400,8 +403,11 @@ export default function ContractDetailPage() {
     if (!user || !entityId || !contractId) return;
     setGeneratingPdf(true);
     try {
+      // Step 1: Save all effective content snapshots before generation
+      // This bumps contentUpdatedAt correctly.
       await updateContract(entityId, contractId, effectiveData, user.uid);
 
+      // Step 2: Trigger PDF generation API
       const idToken = await auth.currentUser?.getIdToken();
       const response = await fetch(`/api/entities/${entityId}/contracts/${contractId}/generate-pdf`, {
         method: "POST",
@@ -565,6 +571,7 @@ export default function ContractDetailPage() {
     const pdfDate = parseSafeDate(contract.generatedPdfAt);
     const contentDate = parseSafeDate(contract.contentUpdatedAt);
 
+    // Block if content is newer than PDF
     if (pdfDate && contentDate && isBefore(pdfDate, contentDate)) {
       setValidationErrors(["Le contrat a été modifié après la génération du PDF. Veuillez régénérer le PDF."]);
       setIsValidationDialogOpen(true);
@@ -573,6 +580,7 @@ export default function ContractDetailPage() {
 
     setProcessing(true);
     try {
+      // Step 2: Transition to signature status
       await sendContractToSignature(entityId, contractId, user!.uid);
       toast({ title: "Succès", description: "Contrat prêt pour signature." });
     } catch (err: any) {
@@ -1520,7 +1528,13 @@ function DetailEditable({ label, value, editValue, isEditing, id, type = "text",
       <Label htmlFor={id} className={cn("text-[10px] font-black uppercase tracking-tight mb-1 opacity-70", isMissing && "text-red-600 opacity-100")}>{label} {required && "*"}</Label>
       {isEditing ? (
         disabled ? <div className="h-10 px-3 bg-secondary/30 rounded-xl flex items-center text-xs font-bold text-muted-foreground border border-dashed cursor-not-allowed">{displayValue}</div> :
-        <Input id={id} type={type} value={editValue ?? ""} onChange={(v: string) => onChange(v)} className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300")} />
+        <Input 
+          id={id} 
+          type={type} 
+          value={editValue ?? ""} 
+          onChange={(e) => onChange(e.target.value)} 
+          className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300")} 
+        />
       ) : (
         <div className={cn("flex items-center gap-2 text-sm font-bold", isMissing ? "text-red-400 italic" : "text-slate-800")}>
            {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />} {displayValue}
