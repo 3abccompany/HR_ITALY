@@ -4,7 +4,7 @@
  * Handles template variable replacement and interacts with email providers.
  */
 
-import { adminDb } from "@/lib/firebase/admin";
+import { adminDb, adminBucket } from "@/lib/firebase/admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import nodemailer from 'nodemailer';
 import { resolveEmailTransportForEntity } from "./email-settings.service";
@@ -72,6 +72,16 @@ export interface SendEmployeeInvitationEmailParams {
   to: string;
   employeeName: string;
   activationLink: string;
+}
+
+export interface SendContractToEmployeeParams {
+  entityId: string;
+  contractId: string;
+  to: string;
+  employeeName: string;
+  companyName: string;
+  jobTitle: string;
+  storagePath: string;
 }
 
 /**
@@ -565,6 +575,79 @@ export async function sendEmployeeInvitationEmailAction(params: SendEmployeeInvi
     return { success: true };
   } catch (error: any) {
     console.error("[Email Service] Failed to send employee invitation:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Sends a secure short-lived download link for a contract to the employee.
+ * Strictly limited to fresh, generated PDFs.
+ */
+export async function sendContractToEmployeeAction(params: SendContractToEmployeeParams) {
+  const { entityId, contractId, to, employeeName, companyName, jobTitle, storagePath } = params;
+
+  try {
+    if (!adminBucket) throw new Error("Storage Admin not initialized");
+
+    // 1. Resolve Transport
+    const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+    
+    const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+    const canSend = source === 'entity' || isGlobalConfigured;
+
+    if (!canSend) {
+      throw new Error("SMTP service not configured for this entity or globally.");
+    }
+
+    // 2. Generate Secure Signed URL (48 hours expiry)
+    const file = adminBucket.file(storagePath);
+    const [signedUrl] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: Date.now() + 48 * 60 * 60 * 1000,
+    });
+
+    // 3. Render HTML
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.6;">
+        <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 20px;">Votre contrat de travail est prêt</h1>
+        </div>
+        <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
+          <p>Bonjour <strong>${employeeName}</strong>,</p>
+          <p>Nous avons le plaisir de vous informer que votre contrat de travail pour le poste de <strong>${jobTitle}</strong> chez <strong>${companyName}</strong> est prêt pour votre signature.</p>
+          
+          <div style="margin: 40px 0; text-align: center;">
+            <a href="${signedUrl}" style="background-color: #4DB3E6; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 12px rgba(77, 179, 230, 0.3);">
+              Consulter mon contrat
+            </a>
+          </div>
+
+          <p style="font-size: 13px; color: #475569; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+            Ce lien est sécurisé et personnel. Il restera valide pendant 48 heures.
+          </p>
+
+          <p style="font-size: 14px; font-weight: bold; border-top: 1px solid #EEEFF7; padding-top: 20px; margin-top: 40px;">
+            Cordialement,<br>
+            L’équipe Ressources Humaines — ${companyName}
+          </p>
+        </div>
+      </div>
+    `;
+
+    // 4. Dispatch
+    await transporter.sendMail({
+      from,
+      to,
+      replyTo: replyTo || undefined,
+      subject: `Votre contrat de travail — ${companyName}`,
+      html,
+      text: `Bonjour ${employeeName}, votre contrat de travail chez ${companyName} est prêt. Vous pouvez le consulter ici : ${signedUrl}`,
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send contract to employee:", error);
     return { success: false, error: error.message };
   }
 }

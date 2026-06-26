@@ -108,6 +108,11 @@ export interface Contract {
   renewalDraftCreatedAt?: Date | FieldValue;
   renewalDraftCreatedBy?: string;
 
+  // --- Dispatch tracking ---
+  sentToEmployeeAt?: Date | FieldValue;
+  sentToEmployeeBy?: string;
+  sentToEmployeeEmail?: string;
+
   // --- Dossier Link (Phase E1) ---
   preHireDossierId?: string;
 

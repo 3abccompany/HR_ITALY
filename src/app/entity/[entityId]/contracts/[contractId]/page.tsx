@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -13,7 +12,7 @@ import {
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
   ChevronDown, ChevronRight, FolderOpen, FileCheck,
-  Plus, ShieldCheck, ClipboardList, Mail
+  Plus, ShieldCheck, ClipboardList, Mail, Send
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +46,8 @@ import {
   recordSignedDocumentReference,
   prepareContractRenewalAction,
   markContractAsReadyForActivationAction,
-  executeContractTransitionTransaction
+  executeContractTransitionTransaction,
+  recordContractSentToEmployee
 } from "@/services/contract.service";
 import {
   Dialog,
@@ -82,6 +82,7 @@ import {
 import { format, isBefore, startOfDay, differenceInDays, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
+import { sendContractToEmployeeAction } from "@/services/email.service";
 
 const TERMINATION_REASONS = [
   { value: "resignation", label: "Démission" },
@@ -387,8 +388,8 @@ export default function ContractDetailPage() {
     if (!user || !entityId || !contractId) return;
     setGeneratingPdf(true);
     try {
-      // Finalize and save fallbacks to the contract record before generation
-      // This ensures the PDF is current and bumps contentUpdatedAt before generation sets generatedPdfAt.
+      // Save/Snapshot effective content to contract document before generation
+      // This bumps contentUpdatedAt to ensure generatedPdfAt is >= contentUpdatedAt
       await updateContract(entityId, contractId, effectiveData, user.uid);
 
       const idToken = await auth.currentUser?.getIdToken();
@@ -536,6 +537,8 @@ export default function ContractDetailPage() {
   };
 
   const handleTransitionToSignature = async () => {
+    if (!contract) return;
+
     const missing = validateContractForSignature();
     if (missing.length > 0) {
       setValidationErrors(missing);
@@ -543,14 +546,14 @@ export default function ContractDetailPage() {
       return;
     }
 
-    if (!contract?.generatedPdfStoragePath) {
+    if (!contract.generatedPdfStoragePath) {
       setValidationErrors(["Veuillez générer le PDF du contrat avant de l’envoyer en signature."]);
       setIsValidationDialogOpen(true);
       return;
     }
 
-    const pdfDate = parseSafeDate(contract?.generatedPdfAt);
-    const contentDate = parseSafeDate(contract?.contentUpdatedAt);
+    const pdfDate = parseSafeDate(contract.generatedPdfAt);
+    const contentDate = parseSafeDate(contract.contentUpdatedAt);
 
     if (pdfDate && contentDate && isBefore(pdfDate, contentDate)) {
       setValidationErrors(["Le contrat a été modifié après la génération du PDF. Veuillez régénérer le PDF."]);
@@ -558,17 +561,60 @@ export default function ContractDetailPage() {
       return;
     }
 
-    if (contract) {
-      setProcessing(true);
-      try {
-        // Redundant update removed to prevent bumping contentUpdatedAt right before status change
-        await sendContractToSignature(entityId, contractId, user!.uid);
-        toast({ title: "Succès", description: "Contrat prêt for signature." });
-      } catch (err: any) {
-        toast({ variant: "destructive", title: "Erreur", description: err.message });
-      } finally {
-        setProcessing(false);
+    setProcessing(true);
+    try {
+      // Strictly guard status transition: do not call updateContract here to avoid bumping contentUpdatedAt
+      await sendContractToSignature(entityId, contractId, user!.uid);
+      toast({ title: "Succès", description: "Contrat prêt for signature." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleSendToEmployee = async () => {
+    if (!user || !contract || !employee || !entityId) return;
+
+    if (!employee.email) {
+      toast({ variant: "destructive", title: "Email manquant", description: "Le salarié n'a pas d'adresse email configurée." });
+      return;
+    }
+
+    if (!contract.generatedPdfStoragePath) {
+      toast({ variant: "destructive", title: "Action bloquée", description: "Veuillez générer le PDF du contrat avant l’envoi." });
+      return;
+    }
+
+    const pdfDate = parseSafeDate(contract.generatedPdfAt);
+    const contentDate = parseSafeDate(contract.contentUpdatedAt);
+    if (pdfDate && contentDate && isBefore(pdfDate, contentDate)) {
+      toast({ variant: "destructive", title: "Action bloquée", description: "Le PDF est obsolète. Veuillez régénérer le contrat avant l’envoi." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const result = await sendContractToEmployeeAction({
+        entityId,
+        contractId,
+        to: employee.email,
+        employeeName: employee.displayName,
+        companyName: entity?.nomEntreprise || "Notre Entreprise",
+        jobTitle: contract.jobTitleName || "Poste",
+        storagePath: contract.generatedPdfStoragePath
+      });
+
+      if (result.success) {
+        await recordContractSentToEmployee(entityId, contractId, employee.email, user.uid);
+        toast({ title: "Email envoyé", description: `Le contrat a été transmis à ${employee.email}.` });
+      } else {
+        throw new Error(result.error);
       }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Échec de l'envoi", description: err.message });
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -791,8 +837,8 @@ export default function ContractDetailPage() {
     setProcessing(true);
     try {
       const docId = await uploadHRDocument(
-        entityId,
-        file,
+        entityId, 
+        file, 
         {
           title: "Contrat signé historique",
           documentType: "signed_contract",
@@ -827,15 +873,15 @@ export default function ContractDetailPage() {
     if (!file || !user || !contract) return;
 
     if (file.type !== "application/pdf") {
-      toast({ variant: "destructive", title: "Format invalide", description: "Veuillez uploader un fichier PDF." });
+      toast({ variant: "destructive", title: "Format invalide", description: "Veuillez envoyer un fichier PDF." });
       return;
     }
 
     setProcessing(true);
     try {
       const docId = await uploadHRDocument(
-        entityId,
-        file,
+        entityId, 
+        file, 
         {
           title: "Reçu UniLav historique",
           documentType: "unilav_receipt",
@@ -901,6 +947,7 @@ export default function ContractDetailPage() {
 
   const pdfDate = parseSafeDate(contract?.generatedPdfAt);
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
+  const isPdfObsolete = pdfDate && contentDate && isBefore(pdfDate, contentDate);
 
   const contractExpiryDate = parseSafeDate(contract?.endDate);
   const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
@@ -912,6 +959,8 @@ export default function ContractDetailPage() {
     !contract.renewedByContractId && 
     !contract.pendingRenewalContractId && 
     canUpdate;
+
+  const canSendToEmployee = !isEditing && !isImported && (isPendingSignature || isPendingActivation) && !!contract.generatedPdfStoragePath;
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
@@ -966,6 +1015,17 @@ export default function ContractDetailPage() {
                {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSignature className="w-4 h-4" />}
                Prêt pour signature
              </Button>
+           )}
+
+           {canSendToEmployee && (
+              <Button 
+                onClick={handleSendToEmployee} 
+                disabled={processing || generatingPdf || isPdfObsolete || !employee?.email}
+                className="gap-2 bg-primary text-white font-bold rounded-xl shadow-lg"
+              >
+                {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Envoyer au salarié
+              </Button>
            )}
 
            {!isEditing && canUpdate && isPendingSignature && (
@@ -1236,7 +1296,7 @@ export default function ContractDetailPage() {
                           )}
                         </div>
 
-                        {isBefore(parseSafeDate(contract?.generatedPdfAt) || new Date(0), parseSafeDate(contract?.contentUpdatedAt) || new Date(0)) && !isTerminated && !isRenewed && (
+                        {isPdfObsolete && !isTerminated && !isRenewed && (
                           <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
                             <AlertTriangle className="h-4 w-4 text-orange-600" />
                             <AlertTitle className="text-sm font-bold text-orange-800">PDF obsolète</AlertTitle>
@@ -1249,7 +1309,7 @@ export default function ContractDetailPage() {
                         {(isDraft || isPendingSignature) && (
                           <Button variant="outline" onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="w-full h-11 border-primary/20 text-primary font-bold rounded-xl gap-2 hover:bg-primary/5">
                             {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
-                            {isBefore(parseSafeDate(contract?.generatedPdfAt) || new Date(0), parseSafeDate(contract?.contentUpdatedAt) || new Date(0)) ? "Régénérer le PDF mis à jour" : "Régénérer une nouvelle version"}
+                            {isPdfObsolete ? "Régénérer le PDF mis à jour" : "Régénérer une nouvelle version"}
                           </Button>
                         )}
                     </div>
@@ -1582,7 +1642,7 @@ export default function ContractDetailPage() {
           <Card className="border-primary/10 rounded-[2rem] shadow-lg bg-secondary/5 overflow-hidden">
              <CardHeader className="py-4 border-b bg-secondary/10">
                 <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                   <History className="w-4 h-4" /> Historique & Audit
+                   <LucideHistory className="w-4 h-4" /> Historique & Audit
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-6 space-y-4">
@@ -1590,6 +1650,14 @@ export default function ContractDetailPage() {
                 <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
                 <Separator className="opacity-20" />
                 {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
+                {contract.sentToEmployeeAt && (
+                   <div className="space-y-1">
+                      <AuditRow label="Envoyé salarié" value={formatDateTime(contract.sentToEmployeeAt)} />
+                      <p className="text-[9px] text-accent font-bold text-right truncate" title={contract.sentToEmployeeEmail}>
+                        Vers: {contract.sentToEmployeeEmail}
+                      </p>
+                   </div>
+                )}
                 {contract.signedAt && <AuditRow label="Signé le" value={formatDateTime(contract.signedAt)} />}
                 {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
                 {contract.terminatedAt && <AuditRow label="Clôturé le" value={formatDateTime(contract.terminatedAt)} />}

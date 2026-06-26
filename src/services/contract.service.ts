@@ -79,7 +79,7 @@ export async function updateContract(entityId: string, contractId: string, data:
       'signedDocumentReplacedBy', 'signedDocumentReplacementReason', 'signedDocumentPreviousReferences',
       'actualEndDate', 'terminationReason', 'terminationNotes', 'terminationDocumentId', 'terminationDocumentUrl',
       'terminatedBy', 'previousContractId', 'renewedByContractId', 'pendingRenewalContractId', 'isRenewal',
-      'renewalDraftCreatedAt', 'renewalDraftCreatedBy'
+      'renewalDraftCreatedAt', 'renewalDraftCreatedBy', 'sentToEmployeeAt', 'sentToEmployeeBy', 'sentToEmployeeEmail'
     ];
 
     let hasContentChanges = false;
@@ -1007,5 +1007,30 @@ export async function executeContractTransitionTransaction(entityId: string, new
       details: { actor: actorUid }
     });
     return res;
+  });
+}
+
+/**
+ * Records that a contract has been sent to the employee.
+ */
+export async function recordContractSentToEmployee(entityId: string, contractId: string, email: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
+
+  await updateDoc(contractRef, sanitizePayload({
+    sentToEmployeeAt: serverTimestamp(),
+    sentToEmployeeBy: actorUid,
+    sentToEmployeeEmail: email,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  }));
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "contract.sent_to_employee",
+    resourceType: "contract",
+    resourceId: contractId,
+    details: { email }
   });
 }
