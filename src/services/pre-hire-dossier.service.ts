@@ -10,7 +10,8 @@ import {
   where, 
   serverTimestamp,
   writeBatch,
-  DocumentReference
+  deleteDoc,
+  Timestamp
 } from "firebase/firestore";
 import { PreHireDossier, PreHireDocument, PreHireDocumentStatus } from "@/types/pre-hire-dossier";
 import { EmploymentOffer } from "@/types/employment-offer";
@@ -60,7 +61,7 @@ export async function ensurePreHireDossier(entityId: string, offer: EmploymentOf
     { type: "hiring_request", label: "Richiesta assunzione", required: true },
   ];
 
-  defaultItems.forEach((item, i) => {
+  defaultItems.forEach((item) => {
     const itemRef = doc(collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`));
     const docData: PreHireDocument = {
       itemId: itemRef.id,
@@ -68,6 +69,7 @@ export async function ensurePreHireDossier(entityId: string, offer: EmploymentOf
       label: item.label,
       status: "missing",
       isRequired: item.required,
+      isCustom: false,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
@@ -86,6 +88,82 @@ export async function ensurePreHireDossier(entityId: string, offer: EmploymentOf
   });
 
   return dossierId;
+}
+
+/**
+ * Adds a custom document requirement to the dossier checklist.
+ */
+export async function addCustomPreHireDocumentRequest(params: {
+  entityId: string;
+  dossierId: string;
+  label: string;
+  type: string;
+  isRequired: boolean;
+  description?: string;
+  actorUid: string;
+}) {
+  const { entityId, dossierId, label, type, isRequired, description, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  // Duplicate prevention (case-insensitive)
+  const checklistRef = collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`);
+  const snap = await getDocs(checklistRef);
+  const exists = snap.docs.some(d => d.data().label.toLowerCase().trim() === label.toLowerCase().trim());
+  if (exists) throw new Error("Un document avec ce libellé est déjà présent dans la checklist.");
+
+  const itemRef = doc(checklistRef);
+  const docData: PreHireDocument = {
+    itemId: itemRef.id,
+    type: type || "other",
+    label: label.trim(),
+    description: description || undefined,
+    status: "missing",
+    isRequired,
+    isCustom: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(itemRef, docData);
+  await evaluateDossierReadiness(entityId, dossierId, actorUid);
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "preHireDocument.custom_added",
+    resourceType: "preHireDossier",
+    resourceId: dossierId,
+    details: { label: docData.label, isRequired }
+  });
+
+  return itemRef.id;
+}
+
+/**
+ * Removes a custom document request from the checklist.
+ * Allowed only if isCustom and no file uploaded.
+ */
+export async function deleteCustomPreHireDocumentRequest(entityId: string, dossierId: string, itemId: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const itemRef = doc(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`, itemId);
+  const snap = await getDoc(itemRef);
+  if (!snap.exists()) return;
+  const data = snap.data() as PreHireDocument;
+
+  if (!data.isCustom) throw new Error("Seuls les documents personnalisés peuvent être supprimés.");
+  if (data.fileId || data.status !== 'missing') throw new Error("Impossible de supprimer un document déjà reçu ou validé.");
+
+  await deleteDoc(itemRef);
+  await evaluateDossierReadiness(entityId, dossierId, actorUid);
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "preHireDocument.custom_deleted",
+    resourceType: "preHireDossier",
+    resourceId: dossierId,
+    details: { label: data.label }
+  });
 }
 
 /**
@@ -125,43 +203,46 @@ export async function updateDocumentStatus(
 
 /**
  * Evaluates if all required documents are approved to mark dossier as ready for conversion.
+ * Logic: only 'approved' or 'not_applicable' items allow readiness.
  */
 async function evaluateDossierReadiness(entityId: string, dossierId: string, actorUid: string) {
   if (!db) return;
   const itemsSnap = await getDocs(collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`));
   const items = itemsSnap.docs.map(d => d.data() as PreHireDocument);
 
-  const itemsToEvaluate = items.filter(i => i.isRequired && i.status !== "not_required");
-
-  const allRequiredApproved = itemsToEvaluate.length > 0 && itemsToEvaluate
-    .every(i => i.status === "approved" || i.status === "not_applicable");
+  const requiredItems = items.filter(i => i.isRequired);
+  
+  // A dossier is ready ONLY if all required items are either approved or not applicable
+  const allRequiredApproved = requiredItems.length > 0 && requiredItems.every(i => 
+    i.status === "approved" || i.status === "not_applicable"
+  );
 
   const dossierRef = doc(db, `entities/${entityId}/preHireDossiers`, dossierId);
+  const snap = await getDoc(dossierRef);
+  if (!snap.exists()) return;
+  const current = snap.data() as PreHireDossier;
   
-  if (allRequiredApproved) {
+  if (allRequiredApproved !== current.readyForConversion) {
     await updateDoc(dossierRef, {
-      status: "ready_for_conversion",
-      readyForConversion: true,
-      documentsValidatedAt: serverTimestamp(),
-      documentsValidatedBy: actorUid,
+      readyForConversion: allRequiredApproved,
+      status: allRequiredApproved ? "ready_for_conversion" : "documents_required",
+      ...(allRequiredApproved && { 
+        documentsValidatedAt: serverTimestamp(), 
+        documentsValidatedBy: actorUid 
+      }),
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
     });
 
-    await createAuditLog({
-      userId: actorUid,
-      entityId,
-      action: "preHireDossier.readyForConversion",
-      resourceType: "preHireDossier",
-      resourceId: dossierId,
-    });
-  } else {
-    // If it was ready but now a doc is rejected or marked missing
-    await updateDoc(dossierRef, {
-      readyForConversion: false,
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid,
-    });
+    if (allRequiredApproved) {
+      await createAuditLog({
+        userId: actorUid,
+        entityId,
+        action: "preHireDossier.readyForConversion",
+        resourceType: "preHireDossier",
+        resourceId: dossierId,
+      });
+    }
   }
 }
 
@@ -180,7 +261,7 @@ export async function sendDocumentRequestEmail(entityId: string, dossierId: stri
   const offer = offerSnap.data() as EmploymentOffer;
 
   const itemsSnap = await getDocs(collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`));
-  const items = itemsSnap.docs.map(d => d.data() as PreHireDocument).filter(i => i.isRequired && i.status !== "not_required" && i.status !== "approved");
+  const items = itemsSnap.docs.map(d => d.data() as PreHireDocument).filter(i => i.isRequired && i.status !== "not_required" && i.status !== "approved" && i.status !== "not_applicable");
 
   const result = await sendDocumentRequestEmailAction({
     entityId,
@@ -189,7 +270,7 @@ export async function sendDocumentRequestEmail(entityId: string, dossierId: stri
     companyName: offer.entityName || "L'azienda",
     jobTitle: offer.jobTitleName,
     requiredDocuments: items.map(i => i.label),
-    contactEmail: "hr@nexus-studio.com" // Placeholder for entity contact
+    contactEmail: "hr@nexus-studio.com" // Placeholder
   });
 
   if (result.success) {

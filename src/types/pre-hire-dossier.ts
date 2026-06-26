@@ -15,7 +15,7 @@ export type PreHireDocumentStatus =
   | "uploaded" 
   | "approved" 
   | "rejected" 
-  | "not_required"
+  | "not_required" 
   | "not_applicable";
 
 export interface PreHireDocument {
@@ -24,6 +24,8 @@ export interface PreHireDocument {
   label: string;
   status: PreHireDocumentStatus;
   isRequired: boolean;
+  isCustom?: boolean;
+  description?: string;
   fileId?: string;
   rejectionReason?: string;
   reviewedAt?: Date | FieldValue;
