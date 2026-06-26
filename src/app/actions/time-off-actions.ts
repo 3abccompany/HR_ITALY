@@ -1,4 +1,3 @@
-
 'use server';
 
 import { adminDb, adminAuth } from "@/lib/firebase/admin";
@@ -96,13 +95,16 @@ export async function submitTimeOffRequestAction(params: {
   return await adminDb.runTransaction(async (transaction) => {
     // 1. Check Balance
     const balanceSnap = await transaction.get(balanceRef);
-    if (!balanceSnap.exists) throw new Error("Solde non initialisé pour l'année en cours.");
-    const balance = balanceSnap.data()!;
-
-    if (counterType && balance.counters?.[counterType]) {
-      const remaining = balance.counters[counterType].remaining;
-      if (duration > remaining) {
-        throw new Error(`Solde insuffisant pour cette demande (${duration.toFixed(2)} ${isHourly ? 'h' : 'j'} demandés, ${remaining.toFixed(2)} disponibles).`);
+    // Sickness doesn't always have a balance initialized, but it should allowed recording
+    const isSickness = payload.requestType === 'sickness';
+    
+    if (counterType && balanceSnap.exists) {
+      const balance = balanceSnap.data()!;
+      if (balance.counters?.[counterType]) {
+        const remaining = balance.counters[counterType].remaining;
+        if (duration > remaining) {
+          throw new Error(`Solde insuffisant pour cette demande (${duration.toFixed(2)} ${isHourly ? 'h' : 'j'} demandés, ${remaining.toFixed(2)} disponibles).`);
+        }
       }
     }
 
@@ -135,7 +137,7 @@ export async function submitTimeOffRequestAction(params: {
       employeeId: employee.employeeId,
       personId: employee.personId,
       employeeName: employee.displayName,
-      requestKind: isHourly ? "leave" : "leave", // Standardized mapping
+      requestKind: isSickness ? "absence" : "leave", 
       requestType: payload.requestType,
       source: "employee_created",
       status: "submitted",
@@ -143,14 +145,14 @@ export async function submitTimeOffRequestAction(params: {
       endDate: isHourly ? payload.startDate : payload.endDate,
       startTime: isHourly ? (payload.startTime || null) : null,
       endTime: isHourly ? (payload.endTime || null) : null,
-      dayPart: payload.dayPart,
+      dayPart: isHourly ? "full_day" : payload.dayPart,
       durationDays: isHourly ? 0 : duration,
       durationHours: isHourly ? duration : null,
       unit: isHourly ? "hours" : "days",
       balanceCounterType: counterType,
       reason: payload.reason || null,
-      requiresJustification: false,
-      justificationStatus: "not_required",
+      requiresJustification: isSickness,
+      justificationStatus: isSickness ? "missing" : "not_required",
       justificationDocumentIds: [],
       createdByUid: uid,
       createdByRole: "employee",
@@ -161,7 +163,7 @@ export async function submitTimeOffRequestAction(params: {
     transaction.set(requestRef, requestData);
 
     // 4. Update Balance Pending Counter
-    if (counterType) {
+    if (counterType && balanceSnap.exists) {
       const fieldPath = `counters.${counterType}.pending`;
       const update: any = {
         [fieldPath]: FieldValue.increment(duration),
@@ -190,7 +192,7 @@ export async function cancelTimeOffRequestAction(params: {
 
   const requestRef = adminDb.collection("entities").doc(entityId).collection("timeOffRequests").doc(requestId);
 
-  return await adminDb.runTransaction(async (transaction) => {
+  return await runTransaction(async (transaction) => {
     const snap = await transaction.get(requestRef);
     if (!snap.exists) throw new Error("Demande introuvable.");
     const request = snap.data()!;
@@ -214,15 +216,18 @@ export async function cancelTimeOffRequestAction(params: {
 
     // 2. Decrement Pending Balance
     if (counterType) {
-      const fieldPath = `counters.${counterType}.pending`;
-      const update: any = {
-        [fieldPath]: FieldValue.increment(-duration),
-        updatedAt: FieldValue.serverTimestamp()
-      };
-      if (counterType === "paid_leave") {
-        update.pendingDays = FieldValue.increment(-duration);
+      const balanceSnap = await transaction.get(balanceRef);
+      if (balanceSnap.exists) {
+        const fieldPath = `counters.${counterType}.pending`;
+        const update: any = {
+          [fieldPath]: FieldValue.increment(-duration),
+          updatedAt: FieldValue.serverTimestamp()
+        };
+        if (counterType === "paid_leave") {
+          update.pendingDays = FieldValue.increment(-duration);
+        }
+        transaction.update(balanceRef, update);
       }
-      transaction.update(balanceRef, update);
     }
 
     return { success: true };

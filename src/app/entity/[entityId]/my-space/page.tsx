@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState } from "react";
@@ -50,7 +49,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, differenceInCalendarDays } from "date-fns";
 import { fr } from "date-fns/locale";
 
 const initialRequestForm = {
@@ -135,6 +134,19 @@ export default function MySpacePage() {
     if (!isHourly) return 0;
     return calculateDecimalHours(requestForm.startTime, requestForm.endTime);
   }, [isHourly, requestForm.startTime, requestForm.endTime]);
+
+  const calculatedDays = useMemo(() => {
+    if (isHourly) return 0;
+    const start = parseISO(requestForm.startDate);
+    const end = parseISO(requestForm.endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+    
+    if (requestForm.dayPart !== "full_day" && requestForm.startDate === requestForm.endDate) {
+      return 0.5;
+    }
+    
+    return Math.max(0, differenceInCalendarDays(end, start) + 1);
+  }, [isHourly, requestForm.startDate, requestForm.endDate, requestForm.dayPart]);
 
   const isFormValid = () => {
     if (!employee) return false;
@@ -412,6 +424,7 @@ export default function MySpacePage() {
                       <SelectItem value="paid_leave">Congé (Ferie)</SelectItem>
                       <SelectItem value="rol_permission">Permission ROL</SelectItem>
                       <SelectItem value="ex_holiday_permission">Ex Festività</SelectItem>
+                      <SelectItem value="sickness">Maladie</SelectItem>
                    </SelectContent>
                 </Select>
              </div>
@@ -429,17 +442,19 @@ export default function MySpacePage() {
                         <Input type="date" value={requestForm.endDate} onChange={(e) => setRequestForm(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
                       </div>
                     </div>
-                    <div className="space-y-2">
-                       <Label className="text-[10px] uppercase font-black">Partie de la journée</Label>
-                       <Select value={requestForm.dayPart} onValueChange={(v) => setRequestForm(p => ({...p, dayPart: v}))}>
-                          <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                             <SelectItem value="full_day">Journée entière</SelectItem>
-                             <SelectItem value="morning">Matinée</SelectItem>
-                             <SelectItem value="afternoon">Après-midi</SelectItem>
-                          </SelectContent>
-                       </Select>
-                    </div>
+                    {requestForm.requestType === "paid_leave" && (
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black">Partie de la journée</Label>
+                         <Select value={requestForm.dayPart} onValueChange={(v) => setRequestForm(p => ({...p, dayPart: v}))}>
+                            <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                               <SelectItem value="full_day">Journée entière</SelectItem>
+                               <SelectItem value="morning">Matinée</SelectItem>
+                               <SelectItem value="afternoon">Après-midi</SelectItem>
+                            </SelectContent>
+                         </Select>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="space-y-4">
@@ -457,14 +472,17 @@ export default function MySpacePage() {
                         <Input type="time" value={requestForm.endTime} onChange={(e) => setRequestForm(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
                       </div>
                     </div>
-                    <div className="p-4 bg-secondary/20 rounded-2xl border border-dashed flex justify-between items-center">
-                       <span className="text-[10px] font-black uppercase text-primary/60">Durée calculée</span>
-                       <span className={cn("text-sm font-black", calculatedHours <= 0 ? "text-red-500" : "text-primary")}>
-                          {calculatedHours.toFixed(2).replace(/\.00$/, "")} h
-                       </span>
-                    </div>
                   </div>
                 )}
+
+                <div className="p-4 bg-secondary/20 rounded-2xl border border-dashed flex justify-between items-center">
+                   <span className="text-[10px] font-black uppercase text-primary/60">Durée calculée</span>
+                   <span className={cn("text-sm font-black", 
+                     (isHourly ? calculatedHours : calculatedDays) <= 0 ? "text-red-500" : "text-primary"
+                   )}>
+                      {isHourly ? `${calculatedHours.toFixed(2).replace(/\.00$/, "")} h` : `${calculatedDays} j`}
+                   </span>
+                </div>
              </div>
 
              <div className="space-y-2">
