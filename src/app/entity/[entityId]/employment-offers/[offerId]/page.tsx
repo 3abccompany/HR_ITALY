@@ -76,7 +76,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
-import { format } from "date-fns";
+import { format, isBefore, startOfDay, differenceInDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
@@ -111,7 +111,7 @@ export default function EditEmploymentOfferPage() {
   const entityId = params?.entityId as string;
   const offerId = params?.offerId as string;
   
-  const { db } = useFirebase();
+  const { db, storage } = useFirebase();
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
@@ -131,7 +131,7 @@ export default function EditEmploymentOfferPage() {
   [db, entityId, offerId, canReadCPI]);
   const { data: standaloneRequest } = useDoc<any>(standaloneRequestRef);
 
-  // Dossier Checklist Query - with fix for missing orderBy import
+  // Dossier Checklist Query
   const checklistQuery = useMemo(() => {
     if (!dossier || !db || !entityId) return null;
     return query(collection(db, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`), orderBy("createdAt", "asc")) as Query<PreHireDocument>;
@@ -531,12 +531,8 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
-  const handleTestUniLav = () => {
-    toast({ title: "Mode Test", description: "Simulation de conformité UniLav activée." });
-  };
-
   const isAccepted = offer?.status === 'accepted';
-  const isUniLavDone = mandatoryCommunication?.status === "receipt_received" || mandatoryCommunication?.testMode === true;
+  const isUniLavDone = mandatoryCommunication?.status === "receipt_received";
   const isConverted = offer?.conversionStatus === 'converted';
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
 
@@ -745,12 +741,16 @@ export default function EditEmploymentOfferPage() {
                     </div>
                     
                     {!isConverted && (
-                      <div className="flex justify-between items-center gap-4">
-                         <div className="flex gap-2">
+                      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pt-2">
+                         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                            <Button variant="outline" onClick={handleSaveUniLav} disabled={savingUniLav} className="rounded-xl font-bold h-10 px-6">
                               {savingUniLav ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Sauvegarder
                            </Button>
-                           <Button variant="outline" onClick={handleTestUniLav} disabled={savingUniLav} className="rounded-xl border-orange-200 text-orange-700 font-bold h-10 px-6">Mode Test</Button>
+                           <Button asChild variant="outline" className="rounded-xl font-bold border-dashed border-2 gap-2 hover:bg-slate-50">
+                              <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
+                                 Accéder au dossier CPI <ChevronRight className="w-4 h-4" />
+                              </Link>
+                           </Button>
                          </div>
                          {mandatoryCommunication.emailBody && (
                             <Button variant="ghost" className="text-primary font-bold text-xs" onClick={() => { navigator.clipboard.writeText(mandatoryCommunication.emailBody); toast({ title: "Email copié" }); }}>Copier mail consultant</Button>
