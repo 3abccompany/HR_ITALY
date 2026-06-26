@@ -258,13 +258,13 @@ export default function TimeOffManagementPage() {
 
   const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
 
-  // Derived filter options
+  // Derived filter options with type safety
   const uniqueDepartments = useMemo(() => 
-    Array.from(new Set(activeEmployees.map(e => e.departmentName).filter(Boolean))).sort(), 
+    Array.from(new Set(activeEmployees.map(e => e.departmentName).filter((d): d is string => !!d))).sort(), 
   [activeEmployees]);
 
   const uniqueWorksites = useMemo(() => 
-    Array.from(new Set(activeEmployees.map(e => e.worksiteName).filter(Boolean))).sort(), 
+    Array.from(new Set(activeEmployees.map(e => e.worksiteName).filter((w): w is string => !!w))).sort(), 
   [activeEmployees]);
 
   // Main Filtering Logic
@@ -301,7 +301,7 @@ export default function TimeOffManagementPage() {
         if (filters.justification === "not_required" && r.requiresJustification) return false;
       }
 
-      // 6. Organization
+      // 6. Organisation
       if (filters.department !== "all" && emp?.departmentName !== filters.department) return false;
       if (filters.worksite !== "all" && emp?.worksiteName !== filters.worksite) return false;
 
@@ -1337,7 +1337,7 @@ export default function TimeOffManagementPage() {
       </Dialog>
 
       {/* Manual Balance Dialog */}
-      <Dialog open={isBalanceModalOpen} onValueChange={setIsBalanceModalOpen}>
+      <Dialog open={isBalanceModalOpen} onOpenChange={setIsBalanceModalOpen}>
         <DialogContent className="sm:max-w-[650px] flex flex-col overflow-hidden p-0 rounded-[2rem]">
           <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-xl font-black text-primary">Définir solde annuel</DialogTitle>
@@ -2021,4 +2021,3 @@ function renderJustificationStatus(r: TimeOffRequest) {
       return <span className="text-[10px] text-muted-foreground uppercase">N/A</span>;
   }
 }
-
