@@ -79,6 +79,7 @@ import { Switch } from "@/components/ui/switch";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
 const CONTRACT_TYPES = [
   "Tempo indeterminato",
@@ -118,11 +119,14 @@ export default function EditEmploymentOfferPage() {
   const standaloneRequestRef = useMemo(() => 
     db && entityId && offerId && canReadCPI ? doc(db, `entities/${entityId}/employmentRequests`, `unilav_${offerId}`) as DocumentReference<any> : null,
   [db, entityId, offerId, canReadCPI]);
-  const { data: standaloneRequest, loading: loadingStandalone } = useDoc<any>(standaloneRequestRef);
+  const { data: standaloneRequest } = useDoc<any>(standaloneRequestRef);
 
   // Dossier Checklist Query
-  const checklistQuery = useMemo(() => dossier && db && entityId ? query(collection(db, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`), orderBy("createdAt", "asc")) as Query<PreHireDocument> : null, [db, entityId, dossier]);
-  const { data: checklist, loading: loadingChecklist } = useCollection<PreHireDocument>(checklistQuery);
+  const checklistQuery = useMemo(() => {
+    if (!dossier || !db || !entityId) return null;
+    return query(collection(db, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`), orderBy("createdAt", "asc")) as Query<PreHireDocument>;
+  }, [db, entityId, dossier]);
+  const { data: checklist } = useCollection<PreHireDocument>(checklistQuery);
 
   const mandatoryCommunicationQuery = useMemo(
     () =>
@@ -154,6 +158,7 @@ export default function EditEmploymentOfferPage() {
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [converting, setConverting] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
@@ -169,6 +174,12 @@ export default function EditEmploymentOfferPage() {
   const [pendingExpiresAt, setPendingExpiresAt] = useState("");
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isUploadingPreHireDocument, setIsUploadingPreHireDocument] = useState(false);
+
+  // Email Preview States
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [emailPreview, setEmailPreview] = useState<{ to: string, subject: string, html: string } | null>(null);
+  const [editableSubject, setEditableSubject] = useState("");
+  const [editableBody, setEditableBody] = useState("");
 
   // UniLav Form State
   const [uniLavData, setUniLavData] = useState({
@@ -191,9 +202,11 @@ export default function EditEmploymentOfferPage() {
       }
       setLoadingLevels(true);
       try {
-        const idToken = await user.getIdToken();
-        const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
-        setActiveLevels(levels);
+        const idToken = await auth.currentUser?.getIdToken();
+        if (idToken) {
+          const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
+          setActiveLevels(levels);
+        }
       } catch (err) {
         console.error("Error fetching levels:", err);
       } finally {
@@ -201,7 +214,7 @@ export default function EditEmploymentOfferPage() {
       }
     }
     if (user) fetchLevels();
-  }, [formData.ccnlId, entityId, user]);
+  }, [formData.ccnlId, entityId, user, auth.currentUser]);
 
   useEffect(() => {
     if (offer) setFormData(offer);
@@ -426,9 +439,11 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleSendViaEmail = async () => {
-    if (!user || !entityId || !requestId || !offer) return;
-    if (!consultantForm.email) {
-      toast({ variant: "destructive", title: "Email manquant", description: "Veuillez renseigner l'email du consultant." });
+    if (!user || !entityId || !offerId || !offer || !mandatoryCommunication) return;
+    
+    const requestId = `unilav_${offerId}`;
+    if (!mandatoryCommunication.consultantEmail) {
+      toast({ variant: "destructive", title: "Email manquant", description: "Veuillez renseigner l'email du consultant dans la communication obligatoire." });
       return;
     }
 
@@ -438,7 +453,7 @@ export default function EditEmploymentOfferPage() {
         entityId,
         requestId,
         templateData: {
-          consultantName: consultantForm.name || "Consulente",
+          consultantName: mandatoryCommunication.consultantName || "Consulente",
           candidateName: offer.candidateDisplayName || "Candidato",
           candidateEmail: offer.candidateEmail || undefined,
           candidatePhone: offer.candidatePhone || undefined,
@@ -455,13 +470,50 @@ export default function EditEmploymentOfferPage() {
       setEditableSubject(result.preview!.subject);
       setEditableBody(result.preview!.text);
       setEmailPreview({
-        to: consultantForm.email,
+        to: mandatoryCommunication.consultantEmail,
         subject: result.preview!.subject,
         html: result.preview!.html
       });
       setIsPreviewOpen(true);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur d'aperçu", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const confirmAndSendEmail = async () => {
+    if (!user || !entityId || !offerId || !offer || !emailPreview) return;
+    const requestId = `unilav_${offerId}`;
+
+    setProcessing(true);
+    try {
+      const result = await sendConsultantCPIRequestAction({
+        entityId,
+        requestId,
+        to: emailPreview.to,
+        subject: emailPreview.subject,
+        subjectOverride: editableSubject,
+        bodyOverride: editableBody,
+        templateData: {
+          consultantName: mandatoryCommunication?.consultantName || "Consulente",
+          candidateName: offer.candidateDisplayName || "Candidato",
+          candidateEmail: offer.candidateEmail || undefined,
+          candidatePhone: offer.candidatePhone || undefined,
+          jobTitle: offer.jobTitleName || "da definire",
+          companyName: entity?.nomEntreprise || "la nostra azienda",
+          plannedHireDate: offer.proposedStartDate || "da definire",
+          contractType: offer.contractType || "da definire",
+          requestId: requestId
+        }
+      });
+
+      if (!result.success) throw new Error(result.error);
+
+      toast({ title: "Email envoyé", description: "Le dossier a été transmis au consultant." });
+      setIsPreviewOpen(false);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
     } finally {
       setProcessing(false);
     }
@@ -792,6 +844,57 @@ export default function EditEmploymentOfferPage() {
         </div>
       </div>
 
+      {/* CPI Email Preview & Edit Dialog */}
+      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <DialogContent className="sm:max-w-[650px] rounded-[2.5rem]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+              <Mail className="w-6 h-6" /> Préparer l'email au consultant
+            </DialogTitle>
+            <DialogDescription>Modifiez le contenu si nécessaire avant l'envoi officiel.</DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4 space-y-6">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-muted-foreground">Destinataire (Lecture seule)</p>
+              <p className="text-sm font-bold text-slate-800 bg-secondary/20 p-2 rounded-lg">{emailPreview?.to}</p>
+            </div>
+            
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-muted-foreground">Objet de l'email</p>
+              <Input 
+                value={editableSubject} 
+                onChange={(e) => setEditableSubject(e.target.value)}
+                placeholder="Objet..."
+                className="rounded-xl h-11 border-primary/10"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-muted-foreground mb-2">Corps du message (Texte)</p>
+              <Textarea 
+                value={editableBody} 
+                onChange={(e) => setEditableBody(e.target.value)}
+                className="min-h-[350px] w-full rounded-xl border bg-slate-50 p-4 text-xs leading-relaxed font-sans"
+                placeholder="Votre message..."
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="flex gap-2">
+            <Button variant="ghost" onClick={() => setIsPreviewOpen(false)} disabled={processing} className="rounded-xl font-bold">Annuler</Button>
+            <Button 
+              onClick={confirmAndSendEmail} 
+              disabled={processing || !editableSubject.trim() || !editableBody.trim()}
+              className="rounded-xl px-8 font-black shadow-lg"
+            >
+              {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+              Confirmer et envoyer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Add Custom Doc Dialog */}
       <Dialog open={isCustomDocOpen} onOpenChange={setIsCustomDocOpen}>
         <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
@@ -951,3 +1054,4 @@ function formatDateTime(val: any): string {
     return format(d, "dd/MM/yyyy", { locale: fr });
   } catch (e) { return "-"; }
 }
+
