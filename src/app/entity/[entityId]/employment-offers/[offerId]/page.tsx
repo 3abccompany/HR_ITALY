@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp, getDoc } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp, getDoc, orderBy } from "firebase/firestore";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { PreHireDossier, PreHireDocument, PreHireDocumentStatus } from "@/types/pre-hire-dossier";
 import { RecruitmentNeed } from "@/types/recruitment-need";
@@ -407,6 +407,23 @@ export default function EditEmploymentOfferPage() {
     } finally { setSavingUniLav(false); }
   };
 
+  const handleSendDocRequest = async (entityId: string, dossierId: string, actorUid: string) => {
+    try {
+      setSaving(true);
+      await sendDocumentRequestEmail(entityId, dossierId, actorUid);
+      toast({ title: "Email envoyé", description: "Le candidat a été relancé." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTestUniLav = () => {
+    toast({ title: "Mode Test", description: "Simulation de conformité UniLav activée." });
+  };
+
+  const isAccepted = offer?.status === 'accepted';
   const isUniLavDone = mandatoryCommunication?.status === "receipt_received" || mandatoryCommunication?.testMode === true;
   const isConverted = offer?.conversionStatus === 'converted';
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
@@ -870,4 +887,3 @@ function formatDateTime(val: any): string {
     return format(d, "dd/MM/yyyy", { locale: fr });
   } catch (e) { return "-"; }
 }
-import { format } from "date-fns";
