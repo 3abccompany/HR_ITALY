@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -56,10 +57,23 @@ const initialRequestForm = {
   requestType: "paid_leave" as TimeOffRequestType,
   startDate: new Date().toISOString().split('T')[0],
   endDate: new Date().toISOString().split('T')[0],
+  startTime: "09:00",
+  endTime: "10:00",
   durationHours: 1,
   dayPart: "full_day" as any,
   reason: ""
 };
+
+/**
+ * Calculates decimal hours from HH:mm strings.
+ */
+function calculateDecimalHours(start: string, end: string): number {
+  if (!start || !end) return 0;
+  const [sH, sM] = start.split(':').map(Number);
+  const [eH, eM] = end.split(':').map(Number);
+  const diff = (eH * 60 + eM) - (sH * 60 + sM);
+  return Math.max(0, diff / 60);
+}
 
 export default function MySpacePage() {
   const params = useParams();
@@ -115,6 +129,25 @@ export default function MySpacePage() {
 
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery as any, "my-space.requests");
 
+  const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestForm.requestType);
+
+  const calculatedHours = useMemo(() => {
+    if (!isHourly) return 0;
+    return calculateDecimalHours(requestForm.startTime, requestForm.endTime);
+  }, [isHourly, requestForm.startTime, requestForm.endTime]);
+
+  const isFormValid = () => {
+    if (!employee) return false;
+    if (isHourly) {
+      if (!requestForm.startTime || !requestForm.endTime) return false;
+      if (calculatedHours <= 0) return false;
+    } else {
+      if (!requestForm.startDate || !requestForm.endDate) return false;
+      if (requestForm.endDate < requestForm.startDate) return false;
+    }
+    return true;
+  };
+
   // --- Handlers ---
   const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,7 +159,10 @@ export default function MySpacePage() {
       await submitTimeOffRequestAction({
         entityId,
         idToken,
-        payload: requestForm
+        payload: {
+          ...requestForm,
+          durationHours: isHourly ? calculatedHours : undefined
+        }
       });
 
       toast({ title: "Demande envoyée", description: "Votre demande est en attente de validation RH." });
@@ -166,8 +202,6 @@ export default function MySpacePage() {
       </div>
     );
   }
-
-  const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestForm.requestType);
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-12 pb-32">
@@ -285,6 +319,11 @@ export default function MySpacePage() {
                                 <p className="text-[10px] text-muted-foreground mt-0.5">
                                    {formatDate(r.startDate)} {r.endDate !== r.startDate ? ` au ${formatDate(r.endDate)}` : ''}
                                 </p>
+                                {r.unit === 'hours' && r.startTime && r.endTime && (
+                                  <p className="text-[9px] font-bold text-primary/60 uppercase tracking-tighter mt-0.5">
+                                    Créneau : {r.startTime} — {r.endTime}
+                                  </p>
+                                )}
                              </TableCell>
                              <TableCell>
                                 <span className="font-black text-xs text-primary">
@@ -403,14 +442,26 @@ export default function MySpacePage() {
                     </div>
                   </>
                 ) : (
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-4">
                     <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Date</Label>
+                      <Label className="text-[10px] uppercase font-black">Date de la permission</Label>
                       <Input type="date" value={requestForm.startDate} onChange={(e) => setRequestForm(p => ({...p, startDate: e.target.value, endDate: e.target.value}))} required className="rounded-xl h-11" />
                     </div>
-                    <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Nombre d'heures</Label>
-                      <Input type="number" step="0.5" value={requestForm.durationHours} onChange={(e) => setRequestForm(p => ({...p, durationHours: parseFloat(e.target.value)}))} required className="rounded-xl h-11" />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-[10px] uppercase font-black">De (Heure début)</Label>
+                        <Input type="time" value={requestForm.startTime} onChange={(e) => setRequestForm(p => ({...p, startTime: e.target.value}))} required className="rounded-xl h-11" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-[10px] uppercase font-black">À (Heure fin)</Label>
+                        <Input type="time" value={requestForm.endTime} onChange={(e) => setRequestForm(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
+                      </div>
+                    </div>
+                    <div className="p-4 bg-secondary/20 rounded-2xl border border-dashed flex justify-between items-center">
+                       <span className="text-[10px] font-black uppercase text-primary/60">Durée calculée</span>
+                       <span className={cn("text-sm font-black", calculatedHours <= 0 ? "text-red-500" : "text-primary")}>
+                          {calculatedHours.toFixed(2).replace(/\.00$/, "")} h
+                       </span>
                     </div>
                   </div>
                 )}
@@ -423,7 +474,7 @@ export default function MySpacePage() {
 
              <DialogFooter className="pt-4 border-t gap-2">
                 <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
-                <Button type="submit" disabled={loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/20">
+                <Button type="submit" disabled={!isFormValid() || loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
                    {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />} Envoyer la demande
                 </Button>
              </DialogFooter>

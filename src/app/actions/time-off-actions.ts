@@ -1,3 +1,4 @@
+
 'use server';
 
 import { adminDb, adminAuth } from "@/lib/firebase/admin";
@@ -22,6 +23,17 @@ function calculateDuration(startDate: string, endDate: string, dayPart: string):
   
   const diffTime = Math.abs(end.getTime() - start.getTime());
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+}
+
+/**
+ * Server helper to calculate duration in hours.
+ */
+function calculateHourlyDuration(start: string, end: string): number {
+  const [sH, sM] = start.split(':').map(Number);
+  const [eH, eM] = end.split(':').map(Number);
+  const startMins = sH * 60 + sM;
+  const endMins = eH * 60 + eM;
+  return Math.max(0, (endMins - startMins) / 60);
 }
 
 /**
@@ -54,6 +66,8 @@ export async function submitTimeOffRequestAction(params: {
     requestType: TimeOffRequestType;
     startDate: string;
     endDate: string;
+    startTime?: string | null;
+    endTime?: string | null;
     durationHours?: number;
     dayPart: any;
     reason?: string;
@@ -66,7 +80,11 @@ export async function submitTimeOffRequestAction(params: {
 
   const counterType = getCounterTypeForRequestType(payload.requestType);
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(payload.requestType);
-  const duration = isHourly ? (payload.durationHours || 0) : calculateDuration(payload.startDate, payload.endDate, payload.dayPart);
+  
+  // Server-side duration calculation
+  const duration = isHourly 
+    ? calculateHourlyDuration(payload.startTime || "09:00", payload.endTime || "10:00") 
+    : calculateDuration(payload.startDate, payload.endDate, payload.dayPart);
 
   if (duration <= 0) throw new Error("Durée invalide.");
 
@@ -84,7 +102,7 @@ export async function submitTimeOffRequestAction(params: {
     if (counterType && balance.counters?.[counterType]) {
       const remaining = balance.counters[counterType].remaining;
       if (duration > remaining) {
-        throw new Error(`Solde insuffisant pour cette demande (${duration} ${isHourly ? 'h' : 'j'} demandés, ${remaining} disponibles).`);
+        throw new Error(`Solde insuffisant pour cette demande (${duration.toFixed(2)} ${isHourly ? 'h' : 'j'} demandés, ${remaining.toFixed(2)} disponibles).`);
       }
     }
 
@@ -94,12 +112,21 @@ export async function submitTimeOffRequestAction(params: {
       .where("status", "in", ["submitted", "approved"])
       .get();
 
-    const isOverlapping = overlapSnap.docs.some(doc => {
-      const r = doc.data();
-      return (r.startDate <= payload.endDate && r.endDate >= payload.startDate);
+    const isOverlapping = overlapSnap.docs.some(docSnap => {
+      const r = docSnap.data();
+      const datesOverlap = (r.startDate <= (isHourly ? payload.startDate : payload.endDate) && r.endDate >= payload.startDate);
+      if (!datesOverlap) return false;
+
+      // Both are hourly on the same date -> check for time intersection
+      if (r.unit === 'hours' && isHourly && r.startDate === payload.startDate) {
+         return (payload.startTime! < r.endTime && payload.endTime! > r.startTime);
+      }
+
+      // Any date overlap involving a day-based request (either existing or new) is a conflict
+      return true;
     });
 
-    if (isOverlapping) throw new Error("Une demande existe déjà pour cette période.");
+    if (isOverlapping) throw new Error("Une demande existe déjà pour cette période ou ce créneau.");
 
     // 3. Create Request
     const requestData = {
@@ -114,6 +141,8 @@ export async function submitTimeOffRequestAction(params: {
       status: "submitted",
       startDate: payload.startDate,
       endDate: isHourly ? payload.startDate : payload.endDate,
+      startTime: isHourly ? (payload.startTime || null) : null,
+      endTime: isHourly ? (payload.endTime || null) : null,
       dayPart: payload.dayPart,
       durationDays: isHourly ? 0 : duration,
       durationHours: isHourly ? duration : null,

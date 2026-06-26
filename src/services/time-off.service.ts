@@ -1,3 +1,4 @@
+
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -77,9 +78,29 @@ export function calculateDuration(startDate: string, endDate: string, dayPart: D
 }
 
 /**
- * Checks for overlapping requests for the same employee.
+ * Calculates duration in hours.
  */
-export async function checkTimeOffOverlap(entityId: string, employeeId: string, startDate: string, endDate: string, excludeRequestId?: string) {
+export function calculateHourlyDuration(start: string, end: string): number {
+  const [sH, sM] = start.split(':').map(Number);
+  const [eH, eM] = end.split(':').map(Number);
+  const startTotal = sH * 60 + sM;
+  const endTotal = eH * 60 + eM;
+  return Math.max(0, (endTotal - startTotal) / 60);
+}
+
+/**
+ * Checks for overlapping requests for the same employee.
+ * Now supports time-granular checks for hourly requests.
+ */
+export async function checkTimeOffOverlap(
+  entityId: string, 
+  employeeId: string, 
+  startDate: string, 
+  endDate: string, 
+  startTime?: string | null, 
+  endTime?: string | null,
+  excludeRequestId?: string
+) {
   if (!db) return false;
   
   const q = query(
@@ -91,9 +112,20 @@ export async function checkTimeOffOverlap(entityId: string, employeeId: string, 
   const snap = await getDocs(q);
   const requests = snap.docs.map(d => d.data());
   
-  return requests.some(req => {
-    if (excludeRequestId && req.requestId === excludeRequestId) return false;
-    return (req.startDate <= endDate && req.endDate >= startDate);
+  return requests.some(r => {
+    if (excludeRequestId && r.requestId === excludeRequestId) return false;
+    
+    const datesOverlap = (r.startDate <= endDate && r.endDate >= startDate);
+    if (!datesOverlap) return false;
+
+    // Both are hourly on the same date -> check for intersection
+    if (r.unit === 'hours' && startTime && endTime && r.startDate === startDate) {
+       // Conflict if (StartA < EndB) AND (EndA > StartB)
+       return (startTime < r.endTime! && endTime > r.startTime!);
+    }
+
+    // Any date overlap involving a day-based request (either existing or new) is a conflict
+    return true;
   });
 }
 
@@ -328,7 +360,7 @@ export async function createTimeOffRequestForEmployee(
   
   // Calculate specific duration
   const duration = isHourly 
-    ? Number(data.durationHours || 0)
+    ? (data.startTime && data.endTime ? calculateHourlyDuration(data.startTime, data.endTime) : 0)
     : calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
 
   const year = parseInt(data.startDate.split('-')[0]);
@@ -341,7 +373,7 @@ export async function createTimeOffRequestForEmployee(
   const resolvedSource = data.source || (actorRole === 'employee' ? "employee_created" : "hr_created");
 
   return await runTransaction(db, async (transaction) => {
-    const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate);
+    const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate, data.startTime, data.endTime);
     if (isOverlapping) {
       throw new Error("OVERLAP_DETECTED: L'employé a déjà une demande en cours ou validée sur cette période.");
     }
