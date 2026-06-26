@@ -12,7 +12,9 @@ import {
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
   ChevronDown, ChevronRight, FolderOpen, FileCheck,
-  Plus, ShieldCheck, ClipboardList, Mail, Send
+  Plus, ShieldCheck, ClipboardList, Mail, Send,
+  MoreVertical,
+  RotateCcw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +81,13 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator
+} from "@/components/ui/dropdown-menu";
 import { format, isBefore, startOfDay, differenceInDays, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
@@ -117,36 +126,6 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
   const date = parseSafeDate(val);
   if (!date) return "-";
   return format(date, formatStr, { locale: fr });
-}
-
-/**
- * Renders the contract lifecycle context for a document.
- */
-function renderContractContext(doc: HRDocument, employee?: Employee) {
-  const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType);
-  if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
-  if (!doc.contractId) return null;
-
-  let label = doc.contractType || "Contrat";
-  let color = "bg-slate-50 text-slate-500 border-slate-200";
-
-  if (employee) {
-    if (employee.activeContractId === doc.contractId) {
-      label = "Contrat actif";
-      color = "bg-blue-50 text-blue-700 border-blue-200";
-    } else if (employee.pendingContractId === doc.contractId) {
-      label = "Contrat futur";
-      color = "bg-teal-50 text-teal-700 border-teal-200";
-    } else {
-      label = "Contrat précédent";
-    }
-  }
-
-  return (
-    <Badge variant="outline" className={cn("text-[8px] h-4 px-1.5 font-black uppercase", color)}>
-       {label}
-    </Badge>
-  );
 }
 
 export default function ContractDetailPage() {
@@ -388,8 +367,6 @@ export default function ContractDetailPage() {
     if (!user || !entityId || !contractId) return;
     setGeneratingPdf(true);
     try {
-      // Save/Snapshot effective content to contract document before generation
-      // This bumps contentUpdatedAt to ensure generatedPdfAt is >= contentUpdatedAt
       await updateContract(entityId, contractId, effectiveData, user.uid);
 
       const idToken = await auth.currentUser?.getIdToken();
@@ -563,9 +540,8 @@ export default function ContractDetailPage() {
 
     setProcessing(true);
     try {
-      // Strictly guard status transition: do not call updateContract here to avoid bumping contentUpdatedAt
       await sendContractToSignature(entityId, contractId, user!.uid);
-      toast({ title: "Succès", description: "Contrat prêt for signature." });
+      toast({ title: "Succès", description: "Contrat prêt pour signature." });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -960,7 +936,31 @@ export default function ContractDetailPage() {
     !contract.pendingRenewalContractId && 
     canUpdate;
 
-  const canSendToEmployee = !isEditing && !isImported && (isPendingSignature || isPendingActivation) && !!contract.generatedPdfStoragePath;
+  const canSendToEmployee = !isEditing && !isImported && (isPendingSignature || isPendingActivation) && !!contract.generatedPdfStoragePath && !isPdfObsolete;
+
+  // Activation Guard Logic
+  const activationBlockers = useMemo(() => {
+    const list: { label: string; type: 'error' | 'warning' | 'info' }[] = [];
+    if (isImported) return list;
+
+    if (!contract.generatedPdfStoragePath) {
+      list.push({ label: "PDF du contrat non généré", type: 'error' });
+    } else if (isPdfObsolete) {
+      list.push({ label: "Le document est obsolète. Veuillez régénérer le PDF.", type: 'error' });
+    }
+
+    if (!hasSignedDoc) {
+      list.push({ label: "Signature du salarié manquante", type: 'error' });
+    }
+
+    if (!contract.sentToEmployeeAt) {
+      list.push({ label: "Contrat non encore envoyé au salarié par email", type: 'info' });
+    }
+
+    return list;
+  }, [contract, isPdfObsolete, hasSignedDoc, isImported]);
+
+  const canActivateNow = activationBlockers.filter(b => b.type === 'error').length === 0;
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
@@ -979,115 +979,45 @@ export default function ContractDetailPage() {
         </div>
 
         <div className="flex items-center gap-3">
-           {canShowRenewButton && !isEditing && (
-             <Button 
-               variant="outline" 
-               onClick={() => setIsRenewalModalOpen(true)} 
-               disabled={processing} 
-               className="gap-2 bg-white rounded-xl font-bold text-accent border-accent/20 hover:bg-accent/5"
-             >
-               <RefreshCcw className="w-4 h-4" /> Renouveler CDD
-             </Button>
-           )}
-
-           {(isDraft || isPendingSignature) && !isEditing && (
-             <Button variant="outline" onClick={handleEnterEditMode} className="gap-2 bg-white rounded-xl font-bold">
-                <Edit className="w-4 h-4" /> Éditer les informations
-             </Button>
-           )}
-
-           {isEditing && (
+           {isEditing ? (
              <>
                <Button variant="ghost" onClick={() => { setIsEditing(false); setFormData(contract); }} disabled={processing}>Annuler</Button>
-               <Button onClick={handleSave} disabled={processing} className="gap-2 bg-green-600 text-white font-bold rounded-xl">
+               <Button onClick={handleSave} disabled={processing} className="gap-2 bg-green-600 text-white font-bold rounded-xl px-6">
                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                 Enregistrer
+                 Enregistrer les modifications
                </Button>
              </>
-           )}
-
-           {!isEditing && canUpdate && isDraft && (
-             <Button 
-               onClick={handleTransitionToSignature}
-               disabled={processing || generatingPdf}
-               className="gap-2 bg-accent text-white font-bold rounded-xl"
-             >
-               {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSignature className="w-4 h-4" />}
-               Prêt pour signature
-             </Button>
-           )}
-
-           {canSendToEmployee && (
-              <Button 
-                onClick={handleSendToEmployee} 
-                disabled={processing || generatingPdf || isPdfObsolete || !employee?.email}
-                className="gap-2 bg-primary text-white font-bold rounded-xl shadow-lg"
-              >
-                {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Envoyer au salarié
-              </Button>
-           )}
-
-           {!isEditing && canUpdate && isPendingSignature && (
+           ) : (
              <>
-               <Button variant="outline" onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2 bg-white rounded-xl">
-                 <RefreshCcw className="w-4 h-4" /> Brouillon
-               </Button>
-               {isRenewalContract ? (
-                 <Button 
-                   onClick={() => handleTransition(() => markContractAsReadyForActivationAction(entityId, contractId, user!.uid), "Contrat validé et mis en attente d'activation.")}
-                   disabled={processing || !hasSignedDoc}
-                   className={cn("gap-2 text-white font-black rounded-xl", hasSignedDoc ? "bg-accent" : "bg-slate-300 opacity-70")}
-                 >
-                   {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCheck className="w-4 h-4" />}
-                   Mettre en attente d'activation
-                 </Button>
-               ) : (
-                 <Button 
-                   onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé avec succès.")} 
-                   disabled={processing || !contract.employeeId} 
-                   className={cn("gap-2 text-white font-black rounded-xl", hasSignedDoc ? "bg-primary" : "bg-slate-300 opacity-70")}
-                 >
-                   {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                   Confirmer signature et activer
-                 </Button>
-               )}
+                {isDraft && (
+                  <Button variant="outline" onClick={handleEnterEditMode} className="gap-2 bg-white rounded-xl font-bold">
+                    <Edit className="w-4 h-4" /> Éditer
+                  </Button>
+                )}
+                
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                     <Button variant="outline" size="icon" className="rounded-xl"><MoreVertical className="w-4 h-4" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                     {(isPendingSignature || isPendingActivation) && (
+                       <DropdownMenuItem onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2">
+                         <RotateCcw className="w-4 h-4" /> Retour en brouillon
+                       </DropdownMenuItem>
+                     )}
+                     {isActive && (
+                       <DropdownMenuItem onClick={() => setIsTerminationModalOpen(true)} disabled={processing} className="gap-2 text-destructive font-bold">
+                         <Ban className="w-4 h-4" /> Résilier / Terminer
+                       </DropdownMenuItem>
+                     )}
+                     {canUpdate && (isDraft || isTerminated) && (
+                        <DropdownMenuItem onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")} disabled={processing} className="gap-2">
+                           <Archive className="w-4 h-4" /> Archiver
+                        </DropdownMenuItem>
+                     )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
              </>
-           )}
-
-           {!isEditing && canUpdate && isPendingActivation && (
-             <>
-               <Button variant="outline" onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2 bg-white rounded-xl">
-                 <RefreshCcw className="w-4 h-4" /> Retour Brouillon
-               </Button>
-               {isStartDateReached ? (
-                 <Button 
-                   onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Activation du renouvellement effectuée.")}
-                   disabled={processing}
-                   className="gap-2 bg-primary text-white font-black rounded-xl"
-                 >
-                   {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-                   Activer maintenant
-                 </Button>
-               ) : (
-                 <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100 text-xs font-bold animate-in fade-in zoom-in-95">
-                    <Clock className="w-4 h-4" />
-                    Activation prévue le {formatDateSafe(contract.startDate)}
-                 </div>
-               )}
-             </>
-           )}
-
-           {!isEditing && canUpdate && isActive && (
-             <Button variant="destructive" onClick={() => setIsTerminationModalOpen(true)} disabled={processing} className="gap-2 font-bold rounded-xl">
-               <Ban className="w-4 h-4" /> Résilier / Terminer
-             </Button>
-           )}
-
-           {!isEditing && canUpdate && (isDraft || isTerminated) && (
-             <Button variant="ghost" size="icon" className="text-muted-foreground" onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")} disabled={processing}>
-               <Archive className="w-4 h-4" />
-             </Button>
            )}
         </div>
       </header>
@@ -1095,81 +1025,25 @@ export default function ContractDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <div className="lg:col-span-3 space-y-8">
           
+          {/* Alerts Area */}
           {isContractExpired && (
             <Alert variant="destructive" className="rounded-2xl border-none shadow-lg bg-red-600 text-white animate-in fade-in slide-in-from-top-2">
               <AlertTriangle className="h-5 w-5 text-white" />
               <div className="ml-2">
                 <AlertTitle className="font-black uppercase text-xs tracking-widest">Contrat arrivé à échéance</AlertTitle>
                 <AlertDescription className="text-sm opacity-90">
-                  Le terme du contrat ({formatDateSafe(contract.endDate)}) est dépassé. Veuillez régulariser la situation (renouvellement ou solde de tout compte).
+                  Le terme du contrat ({formatDateSafe(contract.endDate)}) est dépassé.
                 </AlertDescription>
               </div>
             </Alert>
           )}
-          {isContractExpiringSoon && (
-            <Alert className="rounded-2xl border-orange-200 bg-orange-50 shadow-md animate-in fade-in slide-in-from-top-2">
-              <Clock className="h-5 w-5 text-orange-600" />
-              <div className="ml-2">
-                <AlertTitle className="font-bold text-orange-800">Échéance proche</AlertTitle>
-                <AlertDescription className="text-sm text-orange-700">
-                  Ce contrat arrive à échéance le <span className="font-bold">{formatDateSafe(contract.endDate)}</span> (dans {differenceInDays(contractExpiryDate!, today)} jours).
-                </AlertDescription>
-              </div>
-            </Alert>
-          )}
-
-          {contract.pendingRenewalContractId && !isRenewed && (
-             <Alert className="rounded-2xl border-accent/20 bg-accent/5 shadow-md">
-                <RefreshCcw className="h-5 w-5 text-accent" />
-                <div className="ml-2">
-                   <AlertTitle className="font-bold text-accent-foreground">Renouvellement en cours</AlertTitle>
-                   <AlertDescription className="text-sm text-accent-foreground/70">
-                      Un brouillon de renouvellement pour ce contrat a été créé le {formatDateSafe(contract.renewalDraftCreatedAt)}.
-                      <Link href={`/entity/${entityId}/contracts/${contract.pendingRenewalContractId}`} className="ml-2 font-bold underline">
-                         Accéder au nouveau contrat <ChevronRight className="w-3 h-3 inline" />
-                      </Link>
-                   </AlertDescription>
-                </div>
-             </Alert>
-          )}
-
-          {isRenewed && contract.renewedByContractId && (
-             <Alert className="rounded-2xl border-blue-100 bg-blue-50/50 shadow-sm">
-                <CheckCircle2 className="h-5 w-5 text-blue-600" />
-                <div className="ml-2">
-                   <AlertTitle className="font-bold text-blue-800">Contrat Renouvelé</AlertTitle>
-                   <AlertDescription className="text-sm text-blue-700">
-                      Ce contrat a été prolongé. Le contrat actif prend le relais.
-                      <Link href={`/entity/${entityId}/contracts/${contract.renewedByContractId}`} className="ml-2 font-bold underline">
-                         Voir contrat suivant <ChevronRight className="w-3 h-3 inline" />
-                      </Link>
-                   </AlertDescription>
-                </div>
-             </Alert>
-          )}
-
+          
           {isTerminated && (
             <Card className="border-red-200 bg-red-50/10 rounded-[2rem] overflow-hidden shadow-sm mb-8">
                <CardHeader className="bg-red-50 border-b py-4 px-8 flex flex-row items-center justify-between">
                   <CardTitle className="text-xs font-black uppercase tracking-widest text-red-700 flex items-center gap-2">
                      <Ban className="w-4 h-4" /> Détails de la clôture
                   </CardTitle>
-                  {contract.terminationDocumentId && (
-                     <Button 
-                       variant="outline" 
-                       size="sm" 
-                       className="h-8 rounded-xl bg-white text-xs font-bold gap-2"
-                       onClick={() => {
-                         const foundDoc = contractDocs?.find(d => d.id === contract.terminationDocumentId);
-                         if (foundDoc) handleOpenDoc(foundDoc.storagePath, foundDoc.id);
-                         else toast({ variant: "destructive", title: "Erreur", description: "Le document est introuvable." });
-                       }}
-                       disabled={!!loadingActionId}
-                     >
-                       {loadingActionId === contract.terminationDocumentId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                       Consulter document de clôture
-                     </Button>
-                  )}
                </CardHeader>
                <CardContent className="p-8">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
@@ -1183,276 +1057,234 @@ export default function ContractDetailPage() {
                           {TERMINATION_REASONS.find(r => r.value === contract.terminationReason)?.label || contract.terminationReason || "Non renseigné"}
                         </p>
                      </div>
-                     {contract.terminationNotes && (
-                        <div className="col-span-full space-y-1">
-                           <p className="text-[10px] font-black uppercase text-red-600/60 tracking-widest">Notes de clôture</p>
-                           <p className="text-xs text-slate-600 bg-white p-4 rounded-xl border border-red-100">{contract.terminationNotes}</p>
-                        </div>
-                     )}
                   </div>
                </CardContent>
             </Card>
           )}
 
-          {isImported && isActive && (
-            <Card className="border-primary/20 bg-primary/5 rounded-[2rem] overflow-hidden shadow-md">
-               <CardContent className="p-8 flex items-start gap-5">
-                  <div className="bg-primary text-white p-3 rounded-2xl shadow-lg shadow-primary/20">
-                     <ShieldCheck className="w-6 h-6" />
-                  </div>
-                  <div className="space-y-1 flex-1">
-                     <h3 className="text-lg font-black text-primary">Contrat importé / reprise historique</h3>
-                     <p className="text-sm text-slate-600 leading-relaxed">
-                        Ce contrat est déjà actif car il provient d’une reprise historique. Aucun PDF généré par le système n’est requis. 
-                        Vous pouvez rattacher le contrat signé existant et le reçu UniLav ci-dessous.
-                     </p>
-
-                     <div className="pt-6 flex flex-wrap gap-4">
-                        <div className="relative">
-                          <Button disabled={processing} className="gap-2 rounded-xl font-bold bg-white text-primary hover:bg-white/90 border border-primary/10 shadow-sm">
-                            {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                            Ajouter le contrat signé historique
-                          </Button>
-                          <input 
-                            type="file" 
-                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
-                            accept=".pdf"
-                            onChange={handleUploadHistoricalContract}
-                            disabled={processing}
-                          />
-                        </div>
-
-                        <div className="relative">
-                          <Button disabled={processing} variant="outline" className="gap-2 rounded-xl font-bold bg-white text-primary hover:bg-white/90 border border-primary/10 shadow-sm">
-                            {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                            Ajouter le reçu UniLav historique
-                          </Button>
-                          <input 
-                            type="file" 
-                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
-                            accept=".pdf"
-                            onChange={handleUploadHistoricalUniLav}
-                            disabled={processing}
-                          />
-                        </div>
-                     </div>
-
-                     {contract.preHireDossierId && (
-                        <div className="mt-4 pt-4 border-t border-primary/10 flex items-center gap-2 text-[10px] font-bold text-primary/60">
-                           <ClipboardList className="w-3.5 h-3.5" />
-                           <span>Dossier RH de reprise lié : {contract.preHireDossierId}</span>
-                        </div>
-                     )}
-                  </div>
-               </CardContent>
-            </Card>
-          )}
-
-          {!isImported && (
-            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", contract.generatedPdfStoragePath ? "border-primary/10" : "border-orange-100 bg-orange-50/5")}>
-              <CardHeader className="bg-primary/5 border-b py-4 px-8 flex flex-row items-center justify-between">
+          {/* WORKFLOW SECTION 1: Document de travail (PDF) */}
+          {!isImported && (isDraft || isPendingSignature || isPendingActivation) && (
+            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", !contract.generatedPdfStoragePath ? "border-orange-100 bg-orange-50/5" : "border-primary/10")}>
+              <CardHeader className="bg-primary/5 border-b py-5 px-8 flex flex-row items-center justify-between">
                   <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                    <FileCode className="w-4 h-4" /> Document de travail (PDF)
+                    <FileCode className="w-4 h-4" /> 1. Préparation du document (PDF)
                   </CardTitle>
-                  {contract.generatedPdfStoragePath && (
-                    <Badge variant="secondary" className="bg-white text-[9px] uppercase font-black text-primary border-primary/20">
-                      PDF Généré V{contract.generatedPdfVersion}
-                    </Badge>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {isPdfObsolete ? (
+                      <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[8px] font-black uppercase">PDF Obsolète</Badge>
+                    ) : contract.generatedPdfStoragePath ? (
+                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase">PDF à jour</Badge>
+                    ) : (
+                      <Badge variant="outline" className="bg-slate-100 text-slate-400 border-slate-200 text-[8px] font-black uppercase">Non généré</Badge>
+                    )}
+                  </div>
               </CardHeader>
               <CardContent className="p-8">
-                  {!contract.generatedPdfStoragePath ? (
-                    <div className="space-y-4">
-                        <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl flex items-start gap-3">
-                          <AlertTriangle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
-                          <div>
-                              <p className="text-sm font-bold text-orange-800">PDF du contratto non généré</p>
-                              <p className="text-xs text-orange-700">Vous devez générer the version préparée du contrat avant de pouvoir l'envoyer en signature.</p>
-                          </div>
+                  <div className="space-y-6">
+                    {contract.generatedPdfStoragePath && (
+                      <div className="flex items-center justify-between gap-6 p-4 bg-white rounded-2xl border shadow-sm group">
+                        <div className="flex items-center gap-4 min-w-0">
+                            <div className="bg-primary/5 p-3 rounded-2xl text-primary"><FileText className="w-5 h-5" /></div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-black text-slate-800 truncate">{contract.generatedPdfFileName}</p>
+                              <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">V{contract.generatedPdfVersion} — {formatDateTime(contract.generatedPdfAt)}</p>
+                            </div>
                         </div>
-                        <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing || isTerminated || isRenewed} className="w-full h-12 rounded-xl font-black gap-2">
-                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCode className="w-4 h-4" />}
-                          Générer le PDF du contratto
+                        <Button variant="ghost" size="sm" asChild className="rounded-xl font-bold opacity-0 group-hover:opacity-100 transition-all">
+                            <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-4 h-4 mr-1.5" /> Voir</a>
                         </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-6">
-                        <div className="flex items-center justify-between gap-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                          <div className="flex items-center gap-4">
-                              <div className="bg-primary text-white p-3 rounded-2xl shadow-lg shadow-primary/20"><FileText className="w-6 h-6" /></div>
-                              <div>
-                                <p className="text-sm font-black text-slate-800">{contract.generatedPdfFileName}</p>
-                                <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">
-                                  Généré le {formatDateTime(contract.generatedPdfAt)} par {getUserLabel(contract.generatedPdfBy)}
-                                </p>
-                              </div>
-                          </div>
-                          {contract.generatedPdfUrl && (
-                            <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2 shadow-sm">
-                                <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer">
-                                  <ExternalLink className="w-4 h-4" /> Consulter le PDF
-                                </a>
-                            </Button>
-                          )}
-                        </div>
+                      </div>
+                    )}
 
-                        {isPdfObsolete && !isTerminated && !isRenewed && (
-                          <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
-                            <AlertTriangle className="h-4 w-4 text-orange-600" />
-                            <AlertTitle className="text-sm font-bold text-orange-800">PDF obsolète</AlertTitle>
-                            <AlertDescription className="text-xs text-orange-700">
-                              Des modifications ont été apportées au contrat après sa génération. Veuillez régénérer le document pour refléter les derniers termes.
-                            </AlertDescription>
-                          </Alert>
-                        )}
+                    {isPdfObsolete && (
+                      <Alert className="bg-orange-50 border-orange-200 rounded-xl">
+                        <AlertTriangle className="h-4 w-4 text-orange-600" />
+                        <AlertDescription className="text-xs font-bold text-orange-800">
+                          Le contrat a été modifié. Le PDF actuel ne reflète plus les données enregistrées.
+                        </AlertDescription>
+                      </Alert>
+                    )}
 
-                        {(isDraft || isPendingSignature) && (
-                          <Button variant="outline" onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="w-full h-11 border-primary/20 text-primary font-bold rounded-xl gap-2 hover:bg-primary/5">
-                            {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
-                            {isPdfObsolete ? "Régénérer le PDF mis à jour" : "Régénérer une nouvelle version"}
-                          </Button>
-                        )}
+                    <div className="flex flex-wrap gap-3">
+                       <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="h-11 rounded-xl font-black gap-2 px-6">
+                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                          {contract.generatedPdfStoragePath ? "Régénérer le PDF" : "Générer le PDF du contrat"}
+                       </Button>
+
+                       {isDraft && (
+                         <Button 
+                           onClick={handleTransitionToSignature}
+                           disabled={processing || generatingPdf || !contract.generatedPdfStoragePath || isPdfObsolete}
+                           variant="outline"
+                           className="h-11 rounded-xl font-bold text-accent border-accent/20 hover:bg-accent/5 gap-2"
+                         >
+                           <FileSignature className="w-4 h-4" /> Prêt pour signature
+                         </Button>
+                       )}
+
+                       {canSendToEmployee && (
+                         <Button 
+                           onClick={handleSendToEmployee}
+                           variant="outline"
+                           className="h-11 rounded-xl font-bold text-primary border-primary/20 hover:bg-primary/5 gap-2"
+                         >
+                           <Send className="w-4 h-4" /> Envoyer au salarié
+                         </Button>
+                       )}
                     </div>
-                  )}
+                  </div>
               </CardContent>
             </Card>
           )}
 
+          {/* WORKFLOW SECTION 2: Signature Placement */}
           {(isPendingSignature || isPendingActivation || (!isDraft && !isImported)) && (
-            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl", hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-orange-100 bg-orange-50/5")}>
-              <CardHeader className="py-4 border-b px-8">
+            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-primary/10")}>
+              <CardHeader className="bg-primary/5 border-b py-5 px-8 flex flex-row items-center justify-between">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                  <FileText className="w-4 h-4" /> Document contractuel signé
+                  <FileSignature className="w-4 h-4" /> 2. Signature du salarié
                 </CardTitle>
+                <div className="flex items-center gap-2">
+                   {hasSignedDoc ? (
+                     <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase">Document signé reçu</Badge>
+                   ) : contract.sentToEmployeeAt ? (
+                     <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[8px] font-black uppercase">Envoyé au salarié</Badge>
+                   ) : (
+                     <Badge variant="outline" className="bg-slate-100 text-slate-400 border-slate-200 text-[8px] font-black uppercase">Attente de signature</Badge>
+                   )}
+                </div>
               </CardHeader>
               <CardContent className="p-8">
                 {hasSignedDoc ? (
                   <div className="space-y-6">
-                    <div className="flex items-center justify-between gap-6">
+                    <div className="flex items-center justify-between gap-6 p-5 bg-white rounded-2xl border shadow-sm">
                       <div className="flex items-center gap-4">
                         <div className="bg-green-100 p-3 rounded-2xl text-green-600"><CheckCircle2 className="w-6 h-6" /></div>
                         <div>
                            <p className="text-sm font-black text-slate-800">{contract.signedDocumentTitle}</p>
-                           {contract.signedDocumentFileName && (
-                             <p className="text-[10px] font-bold text-accent uppercase flex items-center gap-1 mt-0.5">
-                               <Upload className="w-2.5 h-2.5" /> {contract.signedDocumentFileName}
-                             </p>
-                           )}
-                           <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">
-                             Enregistré le {formatDate(contract.signedDocumentUploadedAt)} par {getUserLabel(contract.signedDocumentUploadedBy)}
-                           </p>
+                           <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">Reçu le {formatDateTime(contract.signedDocumentUploadedAt)}</p>
                         </div>
                       </div>
-                      {contract.signedDocumentUrl && (
-                        <Button variant="outline" size="sm" asChild className="rounded-xl font-bold bg-white gap-2">
-                          <a href={contract.signedDocumentUrl} target="_blank" rel="noopener noreferrer">
-                             <ExternalLink className="w-4 h-4" /> Ouvrir le document
-                          </a>
-                        </Button>
-                      )}
+                      <div className="flex gap-2">
+                        {contract.signedDocumentUrl && (
+                          <Button variant="ghost" size="sm" asChild className="rounded-xl font-bold">
+                            <a href={contract.signedDocumentUrl} target="_blank" rel="noopener noreferrer"><Eye className="w-4 h-4 mr-1.5" /> Voir</a>
+                          </Button>
+                        )}
+                        {(isPendingSignature || isPendingActivation) && (
+                          <Button variant="outline" size="sm" onClick={() => setIsSignedDocModalOpen(true)} className="rounded-xl font-bold border-dashed h-9">Remplacer</Button>
+                        )}
+                      </div>
                     </div>
-                    
-                    {(isPendingSignature || isPendingActivation) && (
-                       <Button 
-                        variant="outline" 
-                        onClick={() => {
-                          setSignedDocForm({
-                            title: contract.signedDocumentTitle || "",
-                            url: contract.signedDocumentUrl || "",
-                            reference: contract.signedDocumentId || ""
-                          });
-                          setIsSignedDocModalOpen(true);
-                        }}
-                        className="w-full h-11 border-dashed border-2 rounded-xl font-bold gap-2 hover:bg-slate-50"
-                       >
-                         <RefreshCcw className="w-4 h-4" /> Remplacer le document signé
-                       </Button>
-                    )}
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
-                      <AlertTriangle className="h-4 w-4 text-orange-600" />
-                      <AlertTitle className="text-sm font-bold text-orange-800">Signature non enregistrée</AlertTitle>
-                      <AlertDescription className="text-xs text-orange-700">
-                        Veuillez enregistrer la référence du contrat signé avant de pouvoir procéder à l'activation.
-                      </AlertDescription>
-                    </Alert>
-                    {(isPendingSignature || isPendingActivation) && (
-                       <Button 
-                         variant="outline" 
-                         onClick={() => setIsSignedDocModalOpen(true)}
-                         className="w-full h-12 border-orange-200 text-orange-700 hover:bg-orange-50 font-black rounded-xl border-dashed border-2 gap-2"
-                       >
-                         <FileSignature className="w-4 h-4" /> Enregistrer le contrat signé
-                       </Button>
-                    )}
+                    <div className="bg-slate-50/50 border-2 border-dashed rounded-3xl p-10 flex flex-col items-center justify-center gap-4 text-center group hover:bg-slate-100 transition-all cursor-pointer" onClick={() => (isPendingSignature || isPendingActivation) && setIsSignedDocModalOpen(true)}>
+                       <div className="bg-white p-4 rounded-2xl shadow-sm text-primary/30 group-hover:text-primary transition-colors"><Upload className="w-8 h-8" /></div>
+                       <div className="space-y-1">
+                          <p className="text-sm font-black text-slate-600">Téléverser le contrat signé</p>
+                          <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">Obligatoire pour l'activation finale</p>
+                       </div>
+                    </div>
                   </div>
                 )}
               </CardContent>
             </Card>
           )}
 
-          {canReadDocs && (
-            <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
-               <CardHeader className="bg-secondary/10 border-b py-4 px-8">
-                  <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                     <FolderOpen className="w-4 h-4" /> Historique & Documents rattachés
-                  </CardTitle>
-               </CardHeader>
-               <CardContent className="p-8">
-                  {!contractDocs ? (
-                    <div className="py-12 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
-                  ) : contractDocs.length === 0 ? (
-                    <div className="py-8 text-center text-xs text-muted-foreground italic">Aucun document lié à ce contrat.</div>
-                  ) : (
-                    <div className="space-y-8">
-                       <DocumentGroup 
-                         title="Contrat Signé" 
-                         doc={groupedDocs.signed} 
-                         onOpen={handleOpenDoc} 
-                         loadingId={loadingActionId} 
-                         icon={CheckCircle2}
-                         colorClass="bg-green-50 text-green-600"
-                       />
-                       
-                       <DocumentGroup 
-                         title="Dernier PDF de travail" 
-                         doc={groupedDocs.latestGenerated} 
-                         history={groupedDocs.history}
-                         onOpen={handleOpenDoc} 
-                         loadingId={loadingActionId} 
-                         icon={FileCode}
-                         colorClass="bg-primary/5 text-primary"
-                       />
-
-                       {groupedDocs.termination.length > 0 && (
-                         <div className="space-y-3">
-                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Documents de clôture</p>
-                            <div className="grid gap-3">
-                               {groupedDocs.termination.map(d => (
-                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} onReplace={() => {}} loadingId={loadingActionId} compactVersion canReplace={false} />
-                               ))}
-                            </div>
+          {/* WORKFLOW SECTION 3: Finalisation & Activation */}
+          {!isActive && !isTerminated && !isRenewed && (isPendingSignature || isPendingActivation) && (
+             <Card className={cn("border-2 rounded-[2.5rem] shadow-2xl overflow-hidden transition-all", canActivateNow ? "border-green-500 ring-4 ring-green-50" : "border-primary/10 opacity-80")}>
+                <CardHeader className={cn("py-6 px-8 border-b", canActivateNow ? "bg-green-600 text-white" : "bg-primary/90 text-white")}>
+                   <div className="flex items-center gap-3">
+                      <div className="bg-white/20 p-2.5 rounded-xl"><ShieldCheck className="w-6 h-6" /></div>
+                      <CardTitle className="text-xl font-black">3. Finalisation & Activation</CardTitle>
+                   </div>
+                </CardHeader>
+                <CardContent className="p-8 space-y-6">
+                   {activationBlockers.length > 0 ? (
+                      <div className="space-y-3">
+                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Actions requises avant activation :</p>
+                         <div className="space-y-2">
+                            {activationBlockers.map((b, i) => (
+                              <div key={i} className={cn("flex items-start gap-3 text-xs font-bold p-3 rounded-xl border", 
+                                b.type === 'error' ? "text-red-600 bg-red-50 border-red-100" : "text-blue-700 bg-blue-50 border-blue-100")}>
+                                 {b.type === 'error' ? <XCircle className="w-4 h-4 shrink-0 mt-0.5" /> : <Info className="w-4 h-4 shrink-0 mt-0.5" />}
+                                 <span>{b.label}</span>
+                              </div>
+                            ))}
                          </div>
-                       )}
+                      </div>
+                   ) : (
+                      <div className="p-4 bg-green-50 border border-green-200 rounded-2xl flex items-start gap-3 animate-in zoom-in-95">
+                         <CheckCircle2 className="w-6 h-6 text-green-600 shrink-0" />
+                         <p className="text-sm font-bold text-green-800 leading-tight">Le dossier est prêt. Le contrat est signé et le PDF est à jour. Vous pouvez désormais activer l'engagement.</p>
+                      </div>
+                   )}
 
-                       {groupedDocs.others.length > 0 && (
-                         <div className="space-y-3">
-                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Autres documents liés</p>
-                            <div className="grid gap-3">
-                               {groupedDocs.others.map(d => (
-                                 <DocumentRow key={d.id} doc={d} onOpen={handleOpenDoc} loadingId={loadingActionId} canReplace={false} onReplace={() => {}} />
-                               ))}
-                            </div>
-                         </div>
+                   {isRenewalContract && isPendingActivation ? (
+                     isStartDateReached ? (
+                       <Button onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Renouvellement activé.")} disabled={processing || !canActivateNow} className="w-full h-16 rounded-2xl text-lg font-black bg-primary text-white shadow-xl">
+                          {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-6 h-6 mr-2" />}
+                          Activer le renouvellement maintenant
+                       </Button>
+                     ) : (
+                        <div className="flex flex-col items-center gap-4 py-4">
+                           <div className="bg-indigo-50 text-indigo-700 px-6 py-4 rounded-2xl border border-indigo-100 flex items-center gap-4 w-full">
+                              <Clock className="w-8 h-8 opacity-40" />
+                              <div>
+                                 <p className="text-xs font-black uppercase tracking-widest">Activation automatique prévue</p>
+                                 <p className="text-lg font-black">Le {formatDateSafe(contract.startDate)}</p>
+                              </div>
+                           </div>
+                        </div>
+                     )
+                   ) : (
+                     <Button 
+                       onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé.")}
+                       disabled={processing || !canActivateNow}
+                       className={cn("w-full h-16 rounded-2xl text-lg font-black shadow-xl transition-all", 
+                         canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
                        )}
-                    </div>
-                  )}
+                     >
+                        {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-6 h-6 mr-2" />}
+                        Activer le contrat
+                     </Button>
+                   )}
+                </CardContent>
+             </Card>
+          )}
+
+          {/* Historical Import Special Card */}
+          {isImported && isActive && (
+            <Card className="border-primary/20 bg-primary/5 rounded-[2rem] overflow-hidden shadow-md">
+               <CardContent className="p-8 flex items-start gap-5">
+                  <div className="bg-primary text-white p-3 rounded-2xl shadow-lg shadow-primary/20"><ShieldCheck className="w-6 h-6" /></div>
+                  <div className="space-y-1 flex-1">
+                     <h3 className="text-lg font-black text-primary">Contrat importé / reprise historique</h3>
+                     <p className="text-sm text-slate-600 leading-relaxed">
+                        Ce contrat est déjà actif car il provient d’une reprise historique.
+                     </p>
+                     <div className="pt-6 flex flex-wrap gap-4">
+                        <div className="relative">
+                          <Button disabled={processing} className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
+                            <Upload className="w-4 h-4" /> Ajouter le contrat signé historique
+                          </Button>
+                          <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalContract} />
+                        </div>
+                        <div className="relative">
+                          <Button disabled={processing} variant="outline" className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
+                            <FileText className="w-4 h-4" /> Ajouter reçu UniLav historique
+                          </Button>
+                          <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalUniLav} />
+                        </div>
+                     </div>
+                  </div>
                </CardContent>
             </Card>
           )}
 
+          {/* Standard Information Sections */}
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -1484,15 +1316,6 @@ export default function ContractDetailPage() {
                    <DetailEditable label="Lieu de Naissance" value={effectiveData.placeOfBirth} editValue={formData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v) => setFormData(p => ({...p, placeOfBirth: v}))} />
                    <DetailEditable label="Adresse de Résidence" value={effectiveData.employeeAddressSnapshot} editValue={formData.employeeAddressSnapshot} isEditing={isEditing} id="employeeAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, employeeAddressSnapshot: v}))} />
                 </div>
-                {!isEditing && contract.employeeId && (
-                  <div className="mt-8 pt-6 border-t flex gap-4">
-                     <Link href={`/entity/${entityId}/employees/${contract.employeeId}`}>
-                        <Button variant="outline" size="sm" className="h-9 rounded-xl font-bold gap-2 bg-white">
-                           <UserCheck className="w-3.5 h-3.5" /> Voir Profil Employé
-                        </Button>
-                     </Link>
-                  </div>
-                )}
              </CardContent>
           </Card>
 
@@ -1508,131 +1331,25 @@ export default function ContractDetailPage() {
                    <DetailEditable label="Département" value={effectiveData.departmentName} editValue={formData.departmentName} isEditing={isEditing} id="departmentName" disabled={!isDraft} icon={Building2} onChange={(v) => setFormData(p => ({...p, departmentName: v}))} />
                    <DetailEditable label="Site d'Affectation" value={effectiveData.worksiteName} editValue={formData.worksiteName} isEditing={isEditing} id="worksiteName" disabled={!isDraft} required icon={MapPin} className="col-span-full" onChange={(v) => setFormData(p => ({...p, worksiteName: v}))} />
                 </div>
-                {isEditing ? (
-                  <div className="space-y-2 pt-4">
-                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Missions Snapshot (Un par ligne)</Label>
-                    <Textarea 
-                      value={formData.missionsSnapshot?.join('\n') || ""} 
-                      onChange={(e) => setFormData(p => ({...p, missionsSnapshot: e.target.value.split('\n').filter(Boolean)}))}
-                      className="min-h-[120px] rounded-xl"
-                      disabled={!isDraft}
-                    />
-                  </div>
-                ) : (
-                  effectiveData.missionsSnapshot && effectiveData.missionsSnapshot.length > 0 && (
-                    <div className="space-y-3 pt-6 border-t">
-                       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Missions & Responsabilités</p>
-                       <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                          <ul className="list-disc pl-5 space-y-2 text-sm text-slate-700">
-                             {effectiveData.missionsSnapshot.map((m: string, i: number) => <li key={i}>{m}</li>)}
-                          </ul>
-                       </div>
-                    </div>
-                  )
-                )}
              </CardContent>
           </Card>
 
           <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8 flex flex-row items-center justify-between">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                    <ScrollText className="w-4 h-4" /> Conditions & Classification
                 </CardTitle>
+                {canShowRenewButton && !isEditing && (
+                  <Button variant="outline" size="sm" onClick={() => setIsRenewalModalOpen(true)} className="h-8 rounded-xl font-bold bg-white text-accent border-accent/20">
+                    <RefreshCcw className="w-3.5 h-3.5 mr-2" /> Renouveler CDD
+                  </Button>
+                )}
              </CardHeader>
              <CardContent className="p-8 space-y-12">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                    <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v) => setFormData(p => ({...p, contractType: v}))} />
                    <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v) => setFormData(p => ({...p, startDate: v}))} />
                    <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v) => setFormData(p => ({...p, endDate: v}))} />
-                   <DetailEditable label="Période d'essai (jours)" value={effectiveData.trialPeriodDays} editValue={formData.trialPeriodDays} isEditing={isEditing} id="trialPeriodDays" type="number" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, trialPeriodDays: parseInt(v) || 0}))} />
-                </div>
-                
-                <Separator className="bg-slate-100" />
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Temps de Travail Hebdo (h)" value={effectiveData.weeklyHours} editValue={formData.weeklyHours} isEditing={isEditing} id="weeklyHours" type="number" disabled={!isDraft} required icon={Clock} onChange={(v) => setFormData(p => ({...p, weeklyHours: parseFloat(v) || 0}))} />
-                   <DetailEditable label="Format Part-time ?" value={effectiveData.isPartTime ? "OUI" : "NON"} editValue={formData.isPartTime} isEditing={isEditing} id="isPartTime" type="checkbox" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, isPartTime: !!v}))} />
-                   <DetailEditable label="Notes Planning" value={effectiveData.workingScheduleNotes} editValue={formData.workingScheduleNotes} isEditing={isEditing} id="workingScheduleNotes" disabled={!isDraft} className="col-span-full" onChange={(v) => setFormData(p => ({...p, workingScheduleNotes: v}))} />
-                </div>
-
-                <Separator className="bg-slate-100" />
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <div className="space-y-1">
-                      <Label className="text-[10px] font-black uppercase tracking-tight opacity-70">Convention Collective (CCNL)</Label>
-                      {isEditing && isDraft ? (
-                        <Select value={formData.ccnlId} onValueChange={handleCcnlChange}>
-                          <SelectTrigger className="h-10 rounded-xl bg-white"><SelectValue placeholder="Sél. CCNL..." /></SelectTrigger>
-                          <SelectContent>
-                             <SelectItem value="none_clear">--- Aucun ---</SelectItem>
-                             {activeCcnls?.map((c: any) => <SelectItem key={c.ccnlId} value={c.ccnlId}>{c.name}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="text-sm font-bold text-slate-800">{effectiveData.ccnlName || "Non renseigné"}</div>
-                      )}
-                   </div>
-
-                   <div className="space-y-1">
-                      <Label className="text-[10px] font-black uppercase tracking-tight opacity-70">Niveau</Label>
-                      {isEditing && isDraft ? (
-                        <Select 
-                          value={formData.levelId} 
-                          onValueChange={handleLevelChange}
-                          disabled={!formData.ccnlId || loadingLevels}
-                        >
-                          <SelectTrigger className="h-10 rounded-xl bg-white">
-                            <SelectValue placeholder={loadingLevels ? "Chargement..." : "Sél. Niveau..."} />
-                          </SelectTrigger>
-                          <SelectContent>
-                             <SelectItem value="none_clear">--- Aucun ---</SelectItem>
-                             {activeLevels?.map((l: any) => <SelectItem key={l.levelId} value={l.levelId}>{l.levelCode} • {l.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="text-sm font-bold text-slate-800">{effectiveData.levelCode || "Non renseigné"}</div>
-                      )}
-                   </div>
-
-                   <DetailEditable 
-                     label="Qualification" 
-                     value={effectiveData.qualificationCategory} 
-                     editValue={formData.qualificationCategory} 
-                     isEditing={isEditing} 
-                     id="qualificationCategory" 
-                     disabled={!isDraft} 
-                     onChange={(v) => setFormData(p => ({...p, qualificationCategory: v}))} 
-                   />
-                </div>
-             </CardContent>
-          </Card>
-
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4 px-8">
-                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <Euro className="w-4 h-4" /> Rémunération
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-8">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Brut Mensuel (€)" value={effectiveData.grossMonthly} editValue={formData.grossMonthly} isEditing={isEditing} id="grossMonthly" type="number" disabled={!isDraft} required onChange={(v) => handleMonthlySalaryChange(v)} />
-                   <DetailEditable label="Brut Annuel / RAL (€)" value={effectiveData.grossAnnual} editValue={formData.grossAnnual} isEditing={isEditing} id="grossAnnual" type="number" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, grossAnnual: parseFloat(v) || 0}))} />
-                   <DetailEditable label="Mensualités" value={effectiveData.monthlyPayments} editValue={formData.monthlyPayments} isEditing={isEditing} id="monthlyPayments" type="number" disabled={!isDraft} onChange={(v) => setFormData(p => ({...p, monthlyPayments: parseInt(v) || 13}))} />
-                </div>
-                <DetailEditable label="Notes Variables / Heures Supp." value={effectiveData.overtimeNote} editValue={formData.overtimeNote} isEditing={isEditing} id="overtimeNote" disabled={!isDraft} className="mt-8" onChange={(v) => setFormData(p => ({...p, overtimeNote: v}))} />
-             </CardContent>
-          </Card>
-
-          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-4 px-8">
-                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <Globe className="w-4 h-4" /> Compliance & UniLav
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Protocole UniLav" value={effectiveData.uniLavProtocolNumber} editValue={formData.uniLavProtocolNumber} isEditing={isEditing} id="uniLavProtocolNumber" onChange={(v) => setFormData(p => ({...p, uniLavProtocolNumber: v}))} />
-                   <DetailEditable label="Date Soumission" value={effectiveData.uniLavSubmissionDate} editValue={formData.uniLavSubmissionDate} isEditing={isEditing} id="uniLavSubmissionDate" type="date" onChange={(v) => setFormData(p => ({...p, uniLavSubmissionDate: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -1648,279 +1365,110 @@ export default function ContractDetailPage() {
              <CardContent className="p-6 space-y-4">
                 <AuditRow label="Créé le" value={formatDateTime(contract.createdAt)} />
                 <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
-                <Separator className="opacity-20" />
-                {contract.sentForSignatureAt && <AuditRow label="Envoyé sign. le" value={formatDateTime(contract.sentForSignatureAt)} />}
                 {contract.sentToEmployeeAt && (
-                   <div className="space-y-1">
+                   <div className="space-y-1 pt-2 border-t border-dashed">
                       <AuditRow label="Envoyé salarié" value={formatDateTime(contract.sentToEmployeeAt)} />
-                      <p className="text-[9px] text-accent font-bold text-right truncate" title={contract.sentToEmployeeEmail}>
-                        Vers: {contract.sentToEmployeeEmail}
-                      </p>
+                      <p className="text-[8px] text-accent font-bold text-right truncate">{contract.sentToEmployeeEmail}</p>
                    </div>
                 )}
-                {contract.signedAt && <AuditRow label="Signé le" value={formatDateTime(contract.signedAt)} />}
                 {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
                 {contract.terminatedAt && <AuditRow label="Clôturé le" value={formatDateTime(contract.terminatedAt)} />}
-                {contract.previousContractId && (
-                  <div className="space-y-1">
-                    <AuditRow label="Origine" value="Renouvellement" />
-                    <p className="text-[8px] font-mono text-muted-foreground text-right">{contract.previousContractId}</p>
-                  </div>
-                )}
                 <Separator className="opacity-20" />
                 <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
-                <AuditRow label="Modifié par" value={getUserLabel(contract.updatedBy)} />
              </CardContent>
           </Card>
         </div>
       </div>
 
+      {/* Standard Dialogs */}
       <Dialog open={isValidationDialogOpen} onOpenChange={setIsValidationDialogOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-red-600 flex items-center gap-2">
-              <AlertTriangle className="w-6 h-6" /> Dossier contrat incomplet
+              <AlertTriangle className="w-6 h-6" /> Dossier incomplet
             </DialogTitle>
-            <DialogDescription>Certaines informations obligatoires sont manquantes pour l'envoi en signature.</DialogDescription>
           </DialogHeader>
           <div className="py-4">
             <ScrollArea className="max-h-[300px] rounded-xl border p-4 bg-slate-50">
                <ul className="space-y-2">
                   {validationErrors.map((err, i) => (
                     <li key={i} className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                       <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
-                       {err}
+                       <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" /> {err}
                     </li>
                   ))}
                </ul>
             </ScrollArea>
           </div>
-          <DialogFooter>
-             <Button onClick={() => setIsValidationDialogOpen(false)} className="w-full rounded-xl">Corriger les informations</Button>
-          </DialogFooter>
+          <DialogFooter><Button onClick={() => setIsValidationDialogOpen(false)} className="w-full rounded-xl">Corriger</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Modals: Renewal, SignedDoc, Termination */}
       <Dialog open={isRenewalModalOpen} onOpenChange={setIsRenewalModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
-              <RefreshCcw className="w-6 h-6 text-accent" /> Renouveler le contrat (CDD)
-            </DialogTitle>
-            <DialogDescription>
-              Créez un nouveau contrat draft pré-rempli à partir des conditions actuelles.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-6 space-y-6">
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Date de début (Nouveau)</Label>
-                  <Input 
-                    type="date"
-                    value={renewalForm.newStartDate}
-                    onChange={(e) => setRenewalForm(p => ({...p, newStartDate: e.target.value}))}
-                    className="h-11 rounded-xl"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Date de fin (Nouveau)</Label>
-                  <Input 
-                    type="date"
-                    value={renewalForm.newEndDate}
-                    onChange={(e) => setRenewalForm(p => ({...p, newEndDate: e.target.value}))}
-                    className="h-11 rounded-xl"
-                    required
-                  />
-                </div>
+          <DialogHeader><DialogTitle className="text-xl font-black text-primary">Renouveler le contrat</DialogTitle></DialogHeader>
+          <div className="py-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black">Début</Label>
+                <Input type="date" value={renewalForm.newStartDate} onChange={(e) => setRenewalForm(p => ({...p, newStartDate: e.target.value}))} className="h-11 rounded-xl" />
               </div>
               <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Motif du renouvellement (Optionnel)</Label>
-                <Textarea 
-                  value={renewalForm.renewalReason}
-                  onChange={(e) => setRenewalForm(p => ({...p, renewalReason: e.target.value}))}
-                  placeholder="Ex: Prolongation de la mission saisonnière..."
-                  className="min-h-[100px] rounded-xl"
-                />
+                <Label className="text-[10px] uppercase font-black">Fin</Label>
+                <Input type="date" value={renewalForm.newEndDate} onChange={(e) => setRenewalForm(p => ({...p, newEndDate: e.target.value}))} required className="h-11 rounded-xl" />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[10px] uppercase font-black">Motif</Label>
+              <Textarea value={renewalForm.renewalReason} onChange={(e) => setRenewalForm(p => ({...p, renewalReason: e.target.value}))} className="rounded-xl" />
             </div>
           </div>
           <DialogFooter>
-             <Button variant="ghost" onClick={() => setIsRenewalModalOpen(false)} disabled={processing}>Annuler</Button>
-             <Button 
-               onClick={handleCreateRenewal} 
-               disabled={processing || !renewalForm.newStartDate || !renewalForm.newEndDate}
-               className="bg-primary text-white font-black rounded-xl px-8 shadow-lg"
-             >
-               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
-               Créer le brouillon
-             </Button>
+             <Button variant="ghost" onClick={() => setIsRenewalModalOpen(false)}>Annuler</Button>
+             <Button onClick={handleCreateRenewal} disabled={processing} className="rounded-xl px-8 font-black">Créer brouillon</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={isSignedDocModalOpen} onOpenChange={setIsSignedDocModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-black text-primary">Enregistrer le contrat signé</DialogTitle>
-            <DialogDescription>Veuillez renseigner les détails du document physique ou numérique signé par les parties.</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle className="text-xl font-black text-primary">Enregistrer signature</DialogTitle></DialogHeader>
           <div className="py-6 space-y-6">
             <div className="space-y-2">
-               <Label className="text-[10px] uppercase font-black text-muted-foreground">Titre du document (Requis)</Label>
-               <input 
-                 value={signedDocForm.title} 
-                 onChange={(e) => setSignedDocForm(p => ({...p, title: e.target.value}))}
-                 placeholder="Ex: Contrat_CDI_Dumont_Signe.pdf"
-                 className="flex h-12 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-               />
+               <Label className="text-[10px] uppercase font-black">Titre du document</Label>
+               <Input value={signedDocForm.title} onChange={(e) => setSignedDocForm(p => ({...p, title: e.target.value}))} placeholder="Contrat_Signé.pdf" className="rounded-xl h-11" />
             </div>
-            
             <div className="space-y-2">
-               <Label className="text-[10px] uppercase font-black text-muted-foreground">Lien ou Référence (Optionnel)</Label>
-               <input 
-                 value={signedDocForm.url} 
-                 onChange={(e) => setSignedDocForm(p => ({...p, url: e.target.value}))}
-                 placeholder="https://..."
-                 className="flex h-12 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-               />
-            </div>
-
-            <div className="space-y-2">
-               <Label className="text-[10px] uppercase font-black text-muted-foreground">Pièce jointe PDF (Optionnel)</Label>
-               <div className="flex flex-col gap-2">
-                  <Input 
-                    type="file" 
-                    accept=".pdf"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                    className="h-12 rounded-xl pt-3"
-                  />
-                  <div className="text-[9px] text-muted-foreground italic pl-1 flex items-center gap-1">
-                    <span className="bg-secondary p-0.5 rounded-full inline-flex">
-                      <Info className="w-2.5 h-2.5" />
-                    </span>
-                    <span>PDF uniquement, max 10 Mo.</span>
-                  </div>
-               </div>
+               <Label className="text-[10px] uppercase font-black">Fichier PDF</Label>
+               <Input type="file" accept=".pdf" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} className="h-11 rounded-xl pt-2" />
             </div>
           </div>
           <DialogFooter>
-             <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)} disabled={processing}>Annuler</Button>
-             <Button onClick={handleSaveSignedDocRef} disabled={processing || !signedDocForm.title} className="bg-primary text-white font-black rounded-xl px-8">
-               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-               Enregistrer la référence
-             </Button>
+             <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)}>Annuler</Button>
+             <Button onClick={handleSaveSignedDocRef} disabled={processing || !signedDocForm.title} className="rounded-xl px-8 font-black">Enregistrer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={isTerminationModalOpen} onOpenChange={setIsTerminationModalOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-black text-red-600 flex items-center gap-2">
-              <Ban className="w-6 h-6" /> Terminer le contrat
-            </DialogTitle>
-            <DialogDescription>
-              Cette action clôture le contrat actif. Le contrat restera disponible dans l’historique.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-6 space-y-6">
+          <DialogHeader><DialogTitle className="text-xl font-black text-red-600">Terminer le contrat</DialogTitle></DialogHeader>
+          <div className="py-6 space-y-4">
              <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black text-muted-foreground">Date de fin réelle (Requis)</Label>
-                <Input 
-                  type="date"
-                  value={terminationForm.actualEndDate} 
-                  onChange={(e) => setTerminationForm(p => ({...p, actualEndDate: e.target.value}))}
-                  className="h-12 rounded-xl"
-                />
+                <Label className="text-[10px] uppercase font-black">Date de fin réelle</Label>
+                <Input type="date" value={terminationForm.actualEndDate} onChange={(e) => setTerminationForm(p => ({...p, actualEndDate: e.target.value}))} className="h-11 rounded-xl" />
              </div>
-             
              <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black text-muted-foreground">Motif de fin (Requis)</Label>
-                <Select 
-                  value={terminationForm.terminationReason} 
-                  onValueChange={(v) => setTerminationForm(p => ({...p, terminationReason: v}))}
-                >
-                  <SelectTrigger className="h-12 rounded-xl">
-                    <SelectValue placeholder="Choisir un motif..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TERMINATION_REASONS.map(r => (
-                      <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-                    ))}
-                  </SelectContent>
+                <Label className="text-[10px] uppercase font-black">Motif</Label>
+                <Select value={terminationForm.terminationReason} onValueChange={(v) => setTerminationForm(p => ({...p, terminationReason: v}))}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                  <SelectContent>{TERMINATION_REASONS.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
                 </Select>
-             </div>
-
-             <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black text-muted-foreground">Notes internes (Optionnel)</Label>
-                <Textarea 
-                  value={terminationForm.terminationNotes}
-                  onChange={(e) => setTerminationForm(p => ({...p, terminationNotes: e.target.value}))}
-                  placeholder="Observations sur la fin du contrat..."
-                  className="min-h-[100px] rounded-xl"
-                />
-             </div>
-
-             <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black text-muted-foreground">Document de clôture (Optionnel)</Label>
-                <div className={cn(
-                  "border-2 border-dashed rounded-2xl p-6 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
-                  terminationFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
-                )}>
-                   <Input 
-                     type="file" 
-                     accept=".pdf,.png,.jpg,.jpeg,.webp" 
-                     onChange={(e) => {
-                       const file = e.target.files?.[0] || null;
-                       if (file && file.size > 10 * 1024 * 1024) {
-                         toast({ variant: "destructive", title: "Fichier trop volumineux", description: "Max 10Mo." });
-                         e.target.value = "";
-                         return;
-                       }
-                       setTerminationFile(file);
-                     }}
-                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                   />
-                   {terminationFile ? (
-                     <>
-                        <div className="bg-green-100 p-2 rounded-xl text-green-600 mb-1"><FileCheck className="w-5 h-5" /></div>
-                        <p className="text-xs font-bold text-green-800">{terminationFile.name}</p>
-                        <button 
-                          type="button" 
-                          onClick={(e) => { e.stopPropagation(); setTerminationFile(null); }}
-                          className="text-[9px] text-red-500 font-black uppercase hover:underline"
-                        >
-                          Supprimer le fichier
-                        </button>
-                     </>
-                   ) : (
-                     <>
-                        <Upload className="w-5 h-5 text-slate-300 mb-1" />
-                        <p className="text-xs font-bold text-slate-600">Joindre lettre de démission, accord, etc.</p>
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">PDF, Images (10 Mo max)</p>
-                     </>
-                   )}
-                </div>
-             </div>
-
-             <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
-                <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
-                <p className="text-[10px] font-bold text-red-800 leading-tight">
-                  Attention : L'employé sera marqué comme n'ayant plus de contrat actif. Cette action est archivée et impactera les futurs pointages.
-                </p>
              </div>
           </div>
           <DialogFooter>
-             <Button variant="ghost" onClick={() => { setIsTerminationModalOpen(false); setTerminationFile(null); }} disabled={processing}>Annuler</Button>
-             <Button 
-               onClick={handleTerminateContract} 
-               disabled={processing || !terminationForm.actualEndDate || !terminationForm.terminationReason}
-               className="bg-red-600 hover:bg-red-700 text-white font-black rounded-xl px-8"
-             >
-               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-               Confirmer la clôture
-             </Button>
+             <Button variant="ghost" onClick={() => setIsTerminationModalOpen(false)}>Annuler</Button>
+             <Button onClick={handleTerminateContract} disabled={processing} className="bg-red-600 text-white rounded-xl px-8 font-black">Confirmer clôture</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1928,212 +1476,19 @@ export default function ContractDetailPage() {
   );
 }
 
-function DocumentGroup({ title, doc, history, icon: Icon, colorClass, onOpen, loadingId }: { 
-  title: string, 
-  doc: HRDocument | null, 
-  history?: HRDocument[],
-  icon: any,
-  colorClass: string,
-  onOpen: any,
-  loadingId: string | null
-}) {
-  if (!doc && (!history || history.length === 0)) return null;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 px-1">
-        <Icon className={cn("w-3.5 h-3.5", colorClass)} />
-        <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{title}</h3>
-      </div>
-      <div className="grid grid-cols-1 gap-4">
-        {doc && (
-          <DocumentRow 
-            doc={doc} 
-            onOpen={onOpen} 
-            onReplace={() => {}} 
-            loadingId={loadingId} 
-            isMain 
-            canReplace={false}
-            customLabel={doc.documentType === 'signed_contract' ? 'Contrat signé' : doc.documentType === 'termination_document' ? 'Document de clôture' : 'Dernier PDF de travail'}
-          />
-        )}
-
-        {history && history.length > 0 && (
-          <div className="pl-4 sm:pl-8">
-            <Collapsible>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black uppercase tracking-widest gap-2 hover:bg-white">
-                  <ChevronDown className="w-3 h-3" />
-                  Versions précédentes ({history.length})
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="space-y-2 mt-2 animate-in fade-in slide-in-from-top-1">
-                {history.map(d => (
-                  <DocumentRow key={d.id} doc={d} onOpen={onOpen} onReplace={() => {}} loadingId={loadingId} compactVersion canReplace={false} />
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DocumentRow({ 
-  doc, 
-  onOpen, 
-  onReplace, 
-  loadingId, 
-  isMain, 
-  compactVersion, 
-  customLabel,
-  customBadge,
-  canReplace
-}: { 
-  doc: HRDocument, 
-  onOpen: any, 
-  onReplace: (doc: HRDocument) => void,
-  loadingId: string | null,
-  isMain?: boolean,
-  compactVersion?: boolean,
-  customLabel?: string,
-  customBadge?: React.ReactNode,
-  canReplace: boolean
-}) {
-  const isLoading = loadingId === doc.id;
-  const expiryDate = parseSafeDate(doc.expiresAt);
-  const today = startOfDay(new Date());
-  const isExpired = expiryDate && isBefore(expiryDate, today);
-  const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 30;
-
-  return (
-    <Card className={cn(
-      "border-primary/5 hover:border-primary/20 transition-all shadow-sm rounded-2xl group overflow-hidden bg-white",
-      isMain && "border-primary/20 shadow-md ring-1 ring-primary/5",
-      compactVersion && "rounded-xl opacity-80"
-    )}>
-      <CardContent className={cn("p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4", compactVersion && "p-3")}>
-        <div className="flex items-start gap-4">
-          <div className={cn("bg-primary/5 p-3 rounded-xl text-primary shrink-0", compactVersion && "p-2")}>
-            <FileText className={cn("w-5 h-5", compactVersion && "w-4 h-4")} />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className={cn("font-bold text-slate-900 truncate max-w-[200px] sm:max-w-md", compactVersion && "text-xs")}>{doc.title}</p>
-              {customBadge}
-              {doc.isSensitive && <Badge variant="destructive" className="h-4 text-[8px] uppercase font-black px-1.5 border-none">Sensible</Badge>}
-              {doc.version > 1 && <Badge variant="outline" className="h-4 text-[8px] uppercase font-black border-primary/20">V{doc.version}</Badge>}
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-[9px] font-black uppercase text-muted-foreground/60">
-                {customLabel || DOCUMENT_TYPE_LABELS[doc.documentType]}
-              </span>
-              <span className="text-slate-200 text-[8px]">•</span>
-              <span className="text-[9px] font-bold text-muted-foreground/50 italic">
-                {formatDateSafe(doc.uploadedAt || doc.generatedAt || doc.createdAt)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between sm:justify-end gap-6 pl-12 sm:pl-0">
-           {expiryDate && (
-             <div className="flex flex-col items-end">
-                <p className="text-[8px] font-black uppercase text-muted-foreground tracking-tighter">Échéance</p>
-                <div className="flex items-center gap-1.5">
-                   <span className={cn("text-[10px] font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
-                     {formatDateSafe(doc.expiresAt)}
-                   </span>
-                   {isExpired ? (
-                     <AlertTriangle className="w-3 h-3 text-red-500" />
-                   ) : isExpiringSoon ? (
-                     <Clock className="w-3 h-3 text-orange-500" />
-                   ) : null}
-                </div>
-             </div>
-           )}
-
-           <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn("text-[9px] uppercase font-black h-5 border-primary/10", 
-                isExpired ? "bg-red-50 text-red-700 border-red-100" :
-                isExpiringSoon ? "bg-orange-50 text-orange-700 border-orange-100" :
-                doc.status === 'valid' ? "bg-green-50 text-green-700" : 
-                doc.status === 'replaced' ? "bg-slate-100 text-slate-500" : "bg-slate-50 text-slate-400")}>
-                {isExpired ? "Expiré" : isExpiringSoon ? "Échéance proche" : STATUS_LABELS[doc.status]}
-              </Badge>
-              
-              <div className="flex gap-1">
-                <Button 
-                  variant="secondary" 
-                  size="sm" 
-                  className={cn("h-8 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary hover:text-white transition-all gap-2", compactVersion && "h-7 px-2 text-[10px]")}
-                  onClick={() => onOpen(doc.storagePath, doc.id)}
-                  disabled={!!loadingId}
-                >
-                  {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                  <span className="hidden sm:inline">Consulter</span>
-                </Button>
-
-                {canReplace && isMain && (
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="h-8 rounded-xl font-bold border-primary/10 gap-2 hover:bg-secondary/50"
-                    onClick={() => onReplace(doc)}
-                  >
-                    <RefreshCcw className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Remplacer document</span>
-                  </Button>
-                )}
-              </div>
-           </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function DetailEditable({ label, value, editValue, isEditing, id, type = "text", required = false, disabled = false, icon: Icon, className, onChange }: { 
-  label: string, value: any, editValue?: any, isEditing: boolean, id: string, type?: string, required?: boolean, disabled?: boolean, icon?: any, className?: string, onChange: (v: any) => void 
-}) {
+function DetailEditable({ label, value, editValue, isEditing, id, type = "text", required = false, disabled = false, icon: Icon, className, onChange }: any) {
   const displayValue = value === undefined || value === null || value === "" ? "Non renseigné" : value;
   const isMissing = required && (value === undefined || value === null || value === "");
 
   return (
     <div className={cn("space-y-1", className)}>
-      <Label htmlFor={id} className={cn("text-[10px] font-black uppercase tracking-tight mb-1 opacity-70", isMissing && "text-red-600 opacity-100")}>
-        {label} {required && "*"}
-      </Label>
+      <Label htmlFor={id} className={cn("text-[10px] font-black uppercase tracking-tight mb-1 opacity-70", isMissing && "text-red-600 opacity-100")}>{label} {required && "*"}</Label>
       {isEditing ? (
-        <div className="space-y-1">
-          {disabled ? (
-            <div className="flex flex-col gap-1">
-               <div className="h-10 px-3 bg-secondary/30 rounded-xl flex items-center text-xs font-bold text-muted-foreground border border-dashed cursor-not-allowed">
-                 {displayValue}
-               </div>
-               <p className="text-[9px] font-bold text-orange-600 uppercase tracking-tighter pl-1">
-                 À corriger depuis la fiche source.
-               </p>
-            </div>
-          ) : type === "checkbox" ? (
-            <div className="flex items-center h-10 px-3 border rounded-xl bg-white">
-              <input type="checkbox" checked={!!editValue} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 text-primary" />
-            </div>
-          ) : (
-            <Input 
-              id={id} 
-              type={type} 
-              value={editValue ?? ""} 
-              onChange={(e) => onChange(e.target.value)} 
-              className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300 ring-red-100")} 
-            />
-          )}
-        </div>
+        disabled ? <div className="h-10 px-3 bg-secondary/30 rounded-xl flex items-center text-xs font-bold text-muted-foreground border border-dashed cursor-not-allowed">{displayValue}</div> :
+        <Input id={id} type={type} value={editValue ?? ""} onChange={(e) => onChange(e.target.value)} className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300")} />
       ) : (
-        <div className={cn("flex items-center gap-2 text-sm font-bold", isMissing ? "text-red-400 italic font-medium" : "text-slate-800")}>
-           {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />}
-           {displayValue}
+        <div className={cn("flex items-center gap-2 text-sm font-bold", isMissing ? "text-red-400 italic" : "text-slate-800")}>
+           {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />} {displayValue}
         </div>
       )}
     </div>
@@ -2152,44 +1507,9 @@ function AuditRow({ label, value }: { label: string, value: string }) {
 function getStatusBadge(status: ContractStatus) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 uppercase font-black text-[9px] px-2">Brouillon</Badge>;
-    case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 uppercase font-black text-[9px] px-2">En signature</Badge>;
-    case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 uppercase font-black text-[9px] px-2">En attente d'activation</Badge>;
-    case 'active': return <Badge className="bg-green-500 hover:bg-green-600 border-none text-white uppercase font-black text-[9px] px-2">Actif</Badge>;
-    case 'renewed': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 uppercase font-black text-[9px] px-2">Renouvelé</Badge>;
-    case 'expired': return <Badge variant="outline" className="bg-slate-100 text-slate-500 border-slate-200 uppercase font-black text-[9px] px-2">Expiré</Badge>;
-    case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Terminé</Badge>;
-    case 'suspended': return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 uppercase font-black text-[9px] px-2">Suspendu</Badge>;
-    case 'archived': return <Badge variant="outline" className="text-muted-foreground uppercase font-black text-[9px] px-2">Archivé</Badge>;
+    case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 uppercase font-black text-[9px] px-2">Signature</Badge>;
+    case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 uppercase font-black text-[9px] px-2">Activation</Badge>;
+    case 'active': return <Badge className="bg-green-500 text-white border-none uppercase font-black text-[9px] px-2">Actif</Badge>;
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
-  }
-}
-
-function formatDateTime(val: any): string {
-  if (!val) return "Date non disponible";
-
-  try {
-    let date: Date | null = null;
-
-    if (val instanceof Date) {
-      date = val;
-    } else if (typeof val.toDate === 'function') {
-      date = val.toDate();
-    } else if (val && typeof val === 'object') {
-      const s = val.seconds ?? val._seconds;
-      if (typeof s === 'number') {
-        date = new Date(s * 1000);
-      }
-    }
-
-    if (!date && (typeof val === 'string' || typeof val === 'number')) {
-      const parsed = new Date(val);
-      if (!isNaN(parsed.getTime())) date = parsed;
-    }
-
-    if (!date || isNaN(date.getTime())) return "Date non disponible";
-
-    return format(date, "dd/MM/yyyy", { locale: fr });
-  } catch (e) {
-    return "Date non disponible";
   }
 }
