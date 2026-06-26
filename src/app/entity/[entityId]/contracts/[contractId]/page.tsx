@@ -297,6 +297,70 @@ export default function ContractDetailPage() {
   }, [db, entityId, isEditing, contract?.status]);
   const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
 
+  // --- Derived State & Workflow Guards (CALLED UNCONDITIONALLY) ---
+  const canUpdate = hasPermission("contracts.update");
+  const isDraft = contract?.status === 'draft';
+  const isPendingSignature = contract?.status === 'pending_signature';
+  const isPendingActivation = contract?.status === 'pending_activation';
+  const isActive = contract?.status === 'active';
+  const isTerminated = contract?.status === 'terminated';
+  const isRenewed = contract?.status === 'renewed';
+  const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
+  const isImported = !!(contract?.source === 'direct_hr_creation' || contract?.source === 'historical_import');
+  
+  const today = startOfDay(new Date());
+  const contractStartDate = parseSafeDate(contract?.startDate);
+  const isStartDateReached = contractStartDate ? !isBefore(today, contractStartDate) : false;
+
+  const hasSignedDoc = !!(
+    contract?.signedDocumentId || 
+    contract?.signedDocumentUrl || 
+    contract?.signedDocumentTitle || 
+    contract?.signedDocumentFileName ||
+    contract?.signedDocumentStoragePath
+  );
+
+  const pdfDate = parseSafeDate(contract?.generatedPdfAt);
+  const contentDate = parseSafeDate(contract?.contentUpdatedAt);
+  const isPdfObsolete = !!(pdfDate && contentDate && isBefore(pdfDate, contentDate));
+
+  const contractExpiryDate = parseSafeDate(contract?.endDate);
+  const isContractExpired = !!(isActive && contractExpiryDate && isBefore(contractExpiryDate, today));
+  const isContractExpiringSoon = !!(isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30)));
+
+  const isFixedTermCDD = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract?.contractType || '');
+  const canShowRenewButton = !!(isFixedTermCDD && 
+    ['active', 'terminated', 'suspended', 'pending_signature', 'pending_activation', 'expired'].includes(contract?.status || '') && 
+    !contract?.renewedByContractId && 
+    !contract?.pendingRenewalContractId && 
+    canUpdate);
+
+  const canSendToEmployee = !!(!isEditing && !isImported && (isPendingSignature || isPendingActivation) && !!contract?.generatedPdfStoragePath && !isPdfObsolete);
+
+  // Activation Guard Logic
+  const activationBlockers = useMemo(() => {
+    const list: { label: string; type: 'error' | 'warning' | 'info' }[] = [];
+    if (!contract || isImported) return list;
+
+    if (!contract.generatedPdfStoragePath) {
+      list.push({ label: "PDF du contrat non généré", type: 'error' });
+    } else if (isPdfObsolete) {
+      list.push({ label: "Le document est obsolète. Veuillez régénérer le PDF.", type: 'error' });
+    }
+
+    if (!hasSignedDoc) {
+      list.push({ label: "Signature du salarié manquante", type: 'error' });
+    }
+
+    if (!contract.sentToEmployeeAt) {
+      list.push({ label: "Contrat non encore envoyé au salarié par email", type: 'info' });
+    }
+
+    return list;
+  }, [contract, isPdfObsolete, hasSignedDoc, isImported]);
+
+  const canActivateNow = activationBlockers.filter(b => b.type === 'error').length === 0;
+
   // Load levels securely when CCNL changes during editing
   useEffect(() => {
     async function fetchLevels() {
@@ -358,8 +422,8 @@ export default function ContractDetailPage() {
 
       jobTitleName: getEffectiveValue('jobTitleName', offer?.jobTitleName || employee?.jobTitle),
       departmentName: getEffectiveValue('departmentName', offer?.departmentName || employee?.departmentName),
-      jobTitleId: getEffectiveValue('jobTitleId', (offer as any)?.jobTitleId || employee?.jobRoleId),
-      departmentId: getEffectiveValue('departmentId', offer?.departmentId || employee?.departmentId),
+      jobTitleId: getEffectiveValue('jobTitleId' as any, (offer as any)?.jobTitleId || employee?.jobRoleId),
+      departmentId: getEffectiveValue('departmentId' as any, offer?.departmentId || employee?.departmentId),
       worksiteName: getEffectiveValue('worksiteName', offer?.worksiteName || employee?.worksiteName),
       contractType: getEffectiveValue('contractType', offer?.contractType),
       startDate: getEffectiveValue('startDate', offer?.proposedStartDate || employee?.hireDate),
@@ -376,7 +440,7 @@ export default function ContractDetailPage() {
       qualificationCategory: getEffectiveValue('qualificationCategory', offer?.qualificationLabel),
 
       grossMonthly: getEffectiveValue('grossMonthly', offer?.proposedGrossMonthly),
-      grossAnnual: getEffectiveValue('grossAnnual', offer?.proposedGrossAnnual),
+      grossAnnual: getEffectiveValue('grossGrossAnnual' as any, offer?.proposedGrossAnnual),
       monthlyPayments: getEffectiveValue('monthlyPayments', offer?.monthlyPayments || 13),
 
       uniLavProtocolNumber: getEffectiveValue('uniLavProtocolNumber', mandatoryCommunication?.protocolNumber),
@@ -468,7 +532,7 @@ export default function ContractDetailPage() {
        setFormData(p => ({ ...p, levelId: "", levelCode: "", levelLabel: "", qualificationCategory: "" }));
        return;
     }
-    const level = activeLevels?.find((l: any) => l.levelId === id);
+    const level = activeLevels?.find((l: any) => l.id === id);
     if (!level) return;
 
     setFormData(p => {
@@ -567,11 +631,8 @@ export default function ContractDetailPage() {
       return;
     }
 
-    const pdfDate = parseSafeDate(contract.generatedPdfAt);
-    const contentDate = parseSafeDate(contract.contentUpdatedAt);
-
     // Block if content is newer than PDF
-    if (pdfDate && contentDate && isBefore(pdfDate, contentDate)) {
+    if (isPdfObsolete) {
       setValidationErrors(["Le contrat a été modifié après la génération du PDF. Veuillez régénérer le PDF."]);
       setIsValidationDialogOpen(true);
       return;
@@ -601,9 +662,7 @@ export default function ContractDetailPage() {
       return;
     }
 
-    const pdfDate = parseSafeDate(contract.generatedPdfAt);
-    const contentDate = parseSafeDate(contract.contentUpdatedAt);
-    if (pdfDate && contentDate && isBefore(pdfDate, contentDate)) {
+    if (isPdfObsolete) {
       toast({ variant: "destructive", title: "Action bloquée", description: "Le PDF est obsolète. Veuillez régénérer le contrat avant l’envoi." });
       return;
     }
@@ -657,9 +716,7 @@ export default function ContractDetailPage() {
     if (!user || !contract) return;
     setProcessing(true);
 
-    const isDraftStatus = contract.status === 'draft';
-
-    if (isDraftStatus) {
+    if (isDraft) {
        const isFixedTerm = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
        if (isFixedTerm && !formData.endDate) {
           toast({ variant: "destructive", title: "Date manquante", description: "La date de fin est obligatoire pour un CDD." });
@@ -703,7 +760,7 @@ export default function ContractDetailPage() {
         "notes"
       ];
 
-      if (isDraftStatus) {
+      if (isDraft) {
         allowedKeys.push(
           "startDate", "jobTitleName", "departmentName", "worksiteName",
           "ccnlId", "ccnlName", "levelId", "levelCode", "grossMonthly", "grossAnnual", "weeklyHours",
@@ -938,68 +995,6 @@ export default function ContractDetailPage() {
   }
 
   const businessReference = contract.employeeCode || effectiveData.employeeCode || "Brouillon d'intégration";
-  const canUpdate = hasPermission("contracts.update");
-  const isDraft = contract?.status === 'draft';
-  const isPendingSignature = contract?.status === 'pending_signature';
-  const isPendingActivation = contract?.status === 'pending_activation';
-  const isActive = contract?.status === 'active';
-  const isTerminated = contract?.status === 'terminated';
-  const isRenewed = contract?.status === 'renewed';
-  const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
-  const isImported = contract.source === 'direct_hr_creation' || contract.source === 'historical_import';
-  
-  const today = startOfDay(new Date());
-  const contractStartDate = parseSafeDate(contract?.startDate);
-  const isStartDateReached = contractStartDate ? !isBefore(today, contractStartDate) : false;
-
-  const hasSignedDoc = !!(
-    contract.signedDocumentId || 
-    contract.signedDocumentUrl || 
-    contract.signedDocumentTitle || 
-    contract.signedDocumentFileName ||
-    contract.signedDocumentStoragePath
-  );
-
-  const pdfDate = parseSafeDate(contract?.generatedPdfAt);
-  const contentDate = parseSafeDate(contract?.contentUpdatedAt);
-  const isPdfObsolete = !!(pdfDate && contentDate && isBefore(pdfDate, contentDate));
-
-  const contractExpiryDate = parseSafeDate(contract?.endDate);
-  const isContractExpired = !!(isActive && contractExpiryDate && isBefore(contractExpiryDate, today));
-  const isContractExpiringSoon = !!(isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30)));
-
-  const isFixedTermCDD = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
-  const canShowRenewButton = isFixedTermCDD && 
-    ['active', 'terminated', 'suspended', 'pending_signature', 'pending_activation', 'expired'].includes(contract.status) && 
-    !contract.renewedByContractId && 
-    !contract.pendingRenewalContractId && 
-    canUpdate;
-
-  const canSendToEmployee = !isEditing && !isImported && (isPendingSignature || isPendingActivation) && !!contract.generatedPdfStoragePath && !isPdfObsolete;
-
-  // Activation Guard Logic
-  const activationBlockers = useMemo(() => {
-    const list: { label: string; type: 'error' | 'warning' | 'info' }[] = [];
-    if (isImported) return list;
-
-    if (!contract.generatedPdfStoragePath) {
-      list.push({ label: "PDF du contrat non généré", type: 'error' });
-    } else if (isPdfObsolete) {
-      list.push({ label: "Le document est obsolète. Veuillez régénérer le PDF.", type: 'error' });
-    }
-
-    if (!hasSignedDoc) {
-      list.push({ label: "Signature du salarié manquante", type: 'error' });
-    }
-
-    if (!contract.sentToEmployeeAt) {
-      list.push({ label: "Contrat non encore envoyé au salarié par email", type: 'info' });
-    }
-
-    return list;
-  }, [contract, isPdfObsolete, hasSignedDoc, isImported]);
-
-  const canActivateNow = activationBlockers.filter(b => b.type === 'error').length === 0;
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32">
@@ -1022,7 +1017,7 @@ export default function ContractDetailPage() {
              <>
                <Button variant="ghost" onClick={() => { setIsEditing(false); setFormData(contract); }} disabled={!!processing}>Annuler</Button>
                <Button onClick={handleSave} disabled={!!processing} className="gap-2 bg-green-600 text-white font-bold rounded-xl px-6">
-                 {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                 {!!processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                  Enregistrer
                </Button>
              </>
@@ -1066,7 +1061,7 @@ export default function ContractDetailPage() {
         <div className="lg:col-span-3 space-y-8">
           
           {/* Alerts Area */}
-          {isContractExpired && (
+          {!!isContractExpired && (
             <Alert variant="destructive" className="rounded-2xl border-none shadow-lg bg-red-600 text-white animate-in fade-in slide-in-from-top-2">
               <AlertTriangle className="h-5 w-5 text-white" />
               <div className="ml-2">
@@ -1110,7 +1105,7 @@ export default function ContractDetailPage() {
                     <FileCode className="w-4 h-4" /> 1. Document de travail (PDF)
                   </CardTitle>
                   <div className="flex items-center gap-2">
-                    {isPdfObsolete ? (
+                    {!!isPdfObsolete ? (
                       <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[8px] font-black uppercase">PDF Obsolète</Badge>
                     ) : contract.generatedPdfStoragePath ? (
                       <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase">PDF à jour</Badge>
@@ -1136,7 +1131,7 @@ export default function ContractDetailPage() {
                       </div>
                     )}
 
-                    {isPdfObsolete && (
+                    {!!isPdfObsolete && (
                       <Alert className="bg-orange-50 border-orange-200 rounded-xl">
                         <AlertTriangle className="h-4 w-4 text-orange-600" />
                         <AlertDescription className="text-xs font-bold text-orange-800">
@@ -1147,7 +1142,7 @@ export default function ContractDetailPage() {
 
                     <div className="flex flex-wrap gap-3">
                        <Button onClick={handleGeneratePdf} disabled={!!(generatingPdf || isEditing)} className="h-11 rounded-xl font-black gap-2 px-6">
-                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+                          {!!generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
                           {contract.generatedPdfStoragePath ? "Régénérer le PDF" : "Générer le PDF du contrat"}
                        </Button>
 
@@ -1162,7 +1157,7 @@ export default function ContractDetailPage() {
                          </Button>
                        )}
 
-                       {canSendToEmployee && (
+                       {!!canSendToEmployee && (
                          <Button 
                            onClick={handleSendToEmployee}
                            variant="outline"
@@ -1180,13 +1175,13 @@ export default function ContractDetailPage() {
 
           {/* WORKFLOW SECTION 2: Signature Placement */}
           {(isPendingSignature || isPendingActivation || (!isDraft && !isImported)) && (
-            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-primary/10")}>
+            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", !!hasSignedDoc ? "border-green-100 bg-green-50/5" : "border-primary/10")}>
               <CardHeader className="bg-primary/5 border-b py-5 px-8 flex flex-row items-center justify-between">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                   <FileSignature className="w-4 h-4" /> 2. Signature du salarié
                 </CardTitle>
                 <div className="flex items-center gap-2">
-                   {hasSignedDoc ? (
+                   {!!hasSignedDoc ? (
                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase">Document signé reçu</Badge>
                    ) : contract.sentToEmployeeAt ? (
                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[8px] font-black uppercase">Envoyé au salarié</Badge>
@@ -1196,7 +1191,7 @@ export default function ContractDetailPage() {
                 </div>
               </CardHeader>
               <CardContent className="p-8">
-                {hasSignedDoc ? (
+                {!!hasSignedDoc ? (
                   <div className="space-y-6">
                     <div className="flex items-center justify-between gap-6 p-5 bg-white rounded-2xl border shadow-sm">
                       <div className="flex items-center gap-4">
@@ -1223,7 +1218,7 @@ export default function ContractDetailPage() {
                     <div className="bg-slate-50/50 border-2 border-dashed rounded-3xl p-10 flex flex-col items-center justify-center gap-4 text-center group hover:bg-slate-100 transition-all cursor-pointer" onClick={() => (isPendingSignature || isPendingActivation) && setIsSignedDocModalOpen(true)}>
                        <div className="bg-white p-4 rounded-2xl shadow-sm text-primary/30 group-hover:text-primary transition-colors"><Upload className="w-8 h-8" /></div>
                        <div className="space-y-1">
-                          <p className="text-sm font-black text-slate-600">Téléverser le contrat signé</p>
+                          <p className="text-sm font-bold text-slate-600">Téléverser le contrat signé</p>
                           <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">Obligatoire pour l'activation finale</p>
                        </div>
                     </div>
@@ -1235,8 +1230,8 @@ export default function ContractDetailPage() {
 
           {/* WORKFLOW SECTION 3: Finalisation & Activation */}
           {!isActive && !isTerminated && !isRenewed && (isPendingSignature || isPendingActivation) && (
-             <Card className={cn("border-2 rounded-[2.5rem] shadow-2xl overflow-hidden transition-all", canActivateNow ? "border-green-500 ring-4 ring-green-50" : "border-primary/10 opacity-80")}>
-                <CardHeader className={cn("py-6 px-8 border-b", canActivateNow ? "bg-green-600 text-white" : "bg-primary/90 text-white")}>
+             <Card className={cn("border-2 rounded-[2.5rem] shadow-2xl overflow-hidden transition-all", !!canActivateNow ? "border-green-500 ring-4 ring-green-50" : "border-primary/10 opacity-80")}>
+                <CardHeader className={cn("py-6 px-8 border-b", !!canActivateNow ? "bg-green-600 text-white" : "bg-primary/90 text-white")}>
                    <div className="flex items-center gap-3">
                       <div className="bg-white/20 p-2.5 rounded-xl"><ShieldCheck className="w-6 h-6" /></div>
                       <CardTitle className="text-xl font-black">3. Finalisation & Activation</CardTitle>
@@ -1266,7 +1261,7 @@ export default function ContractDetailPage() {
                    {isRenewalContract && isPendingActivation ? (
                      isStartDateReached ? (
                        <Button onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Renouvellement activé.")} disabled={!!(processing || !canActivateNow)} className="w-full h-16 rounded-2xl text-lg font-black bg-primary text-white shadow-xl">
-                          {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                          {!!processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                           Activer le renouvellement maintenant
                        </Button>
                      ) : (
@@ -1285,10 +1280,10 @@ export default function ContractDetailPage() {
                        onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé.")}
                        disabled={!!(processing || !canActivateNow)}
                        className={cn("w-full h-16 rounded-2xl text-lg font-black shadow-xl transition-all", 
-                         canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
+                         !!canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
                        )}
                      >
-                        {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                        {!!processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                         Confirmer signature et activer le contrat
                      </Button>
                    )}
@@ -1380,7 +1375,7 @@ export default function ContractDetailPage() {
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                    <ScrollText className="w-4 h-4" /> Conditions & Classification
                 </CardTitle>
-                {canShowRenewButton && !isEditing && (
+                {!!canShowRenewButton && !isEditing && (
                   <Button variant="outline" size="sm" onClick={() => setIsRenewalModalOpen(true)} className="h-8 rounded-xl font-bold bg-white text-accent border-accent/20" disabled={!!processing}>
                     <RefreshCcw className="w-3.5 h-3.5 mr-2" /> Renouveler CDD
                   </Button>
