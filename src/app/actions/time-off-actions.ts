@@ -1,7 +1,6 @@
-
 'use server';
 
-import { adminDb, adminAuth } from "@/lib/firebase/admin";
+import { adminDb, adminAuth, adminBucket } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { 
   TimeOffRequest, 
@@ -242,5 +241,100 @@ export async function cancelTimeOffRequestAction(params: {
     }
 
     return { success: true };
+  });
+}
+
+/**
+ * Action: Uploads a sickness justification via Admin SDK.
+ * Bypasses client-side permission restrictions for employees.
+ */
+export async function uploadSicknessJustificationAction(params: {
+  entityId: string;
+  requestId: string;
+  idToken: string;
+  fileBase64: string;
+  fileName: string;
+  mimeType: string;
+}) {
+  const { entityId, requestId, idToken, fileBase64, fileName, mimeType } = params;
+  if (!adminDb || !adminAuth || !adminBucket) throw new Error("Service indisponible.");
+
+  const { uid, employee } = await getVerifiedEmployee(entityId, idToken);
+
+  const requestRef = adminDb.collection("entities").doc(entityId).collection("timeOffRequests").doc(requestId);
+
+  return await adminDb.runTransaction(async (transaction) => {
+    const snap = await transaction.get(requestRef);
+    if (!snap.exists) throw new Error("Demande introuvable.");
+    const request = snap.data()!;
+
+    // Security: Ownership and workflow checks
+    if (request.employeeId !== employee.employeeId) throw new Error("Action non autorisée.");
+    if (request.requestType !== 'sickness' && request.requestType !== 'work_accident') {
+      throw new Error("Ce type de demande ne supporte pas de justificatif médical direct.");
+    }
+    if (request.status !== 'submitted') {
+      throw new Error("Impossible d'ajouter un document à une demande déjà traitée ou annulée.");
+    }
+
+    // 1. Process File
+    const base64Data = fileBase64.split(',')[1] || fileBase64;
+    const buffer = Buffer.from(base64Data, 'base64');
+    const docId = adminDb.collection("entities").doc(entityId).collection("documents").doc().id;
+    const storagePath = `entities/${entityId}/documents/${docId}/${fileName}`;
+    const file = adminBucket.file(storagePath);
+
+    await file.save(buffer, {
+      contentType: mimeType,
+      metadata: {
+        metadata: {
+          requestId,
+          employeeId: employee.employeeId,
+          personId: employee.personId,
+          uploadedBy: uid
+        }
+      }
+    });
+
+    // 2. Create HRDocument metadata
+    const docRef = adminDb.collection("entities").doc(entityId).collection("documents").doc(docId);
+    const now = FieldValue.serverTimestamp();
+    const docData = {
+      id: docId,
+      entityId,
+      title: `Justificatif médical - ${employee.displayName}`,
+      documentType: request.requestType === 'sickness' ? "medical_certificate" : "work_accident_justification",
+      status: "valid",
+      storagePath,
+      fileName,
+      mimeType,
+      sizeBytes: buffer.length,
+      employeeId: employee.employeeId,
+      employeeDisplayName: employee.displayName,
+      personId: employee.personId,
+      relatedModule: "timeOffRequests",
+      relatedId: requestId,
+      version: 1,
+      isSensitive: true,
+      isRequired: true,
+      uploadedAt: now,
+      uploadedBy: uid,
+      uploadedByDisplayName: employee.displayName,
+      createdAt: now,
+      createdBy: uid,
+      updatedAt: now,
+      updatedBy: uid
+    };
+
+    transaction.set(docRef, docData);
+
+    // 3. Update Request Link
+    transaction.update(requestRef, {
+      justificationStatus: "provided",
+      justificationDocumentIds: FieldValue.arrayUnion(docId),
+      updatedAt: now
+    });
+
+    return { success: true, documentId: docId };
   });
 }

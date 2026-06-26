@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState } from "react";
@@ -25,7 +24,11 @@ import {
   TimeOffRequestType,
   TIME_OFF_TYPE_LABELS
 } from "@/types/time-off";
-import { submitTimeOffRequestAction, cancelTimeOffRequestAction } from "@/app/actions/time-off-actions";
+import { 
+  submitTimeOffRequestAction, 
+  cancelTimeOffRequestAction, 
+  uploadSicknessJustificationAction 
+} from "@/app/actions/time-off-actions";
 import { calculateDuration } from "@/services/time-off.service";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
@@ -74,6 +77,18 @@ function calculateDecimalHours(start: string, end: string): number {
   const diff = (eH * 60 + eM) - (sH * 60 + sM);
   return Math.max(0, diff / 60);
 }
+
+/**
+ * Utility to convert file to base64 for server action transport.
+ */
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = error => reject(error);
+  });
+};
 
 export default function MySpacePage() {
   const params = useParams();
@@ -174,13 +189,30 @@ export default function MySpacePage() {
         }
       });
 
-      // Note: Full file upload integration requires documents.upload permission, 
-      // which is usually restricted to HR. We report this safely.
-      if (selectedFile) {
-        toast({ 
-          title: "Demande envoyée", 
-          description: "Note : Le justificatif devra être transmis séparément à votre gestionnaire RH si l'accès direct est restreint." 
-        });
+      // Step 2: Handle Sickness Justification via Server Action Bridge
+      if (selectedFile && (requestForm.requestType === 'sickness')) {
+        try {
+          const fileBase64 = await fileToBase64(selectedFile);
+          await uploadSicknessJustificationAction({
+            entityId,
+            requestId: result.requestId,
+            idToken,
+            fileBase64,
+            fileName: selectedFile.name,
+            mimeType: selectedFile.type
+          });
+          toast({ 
+            title: "Demande envoyée", 
+            description: "Votre demande de maladie et votre justificatif ont été transmis avec succès." 
+          });
+        } catch (uploadErr: any) {
+          console.error("[MySpace] Justification upload failed:", uploadErr);
+          toast({ 
+            variant: "destructive", 
+            title: "Demande créée sans justificatif", 
+            description: "La demande a été enregistrée, mais le justificatif n'a pas pu être joint automatiquement. Veuillez contacter les RH." 
+          });
+        }
       } else {
         toast({ title: "Demande envoyée", description: "Votre demande est en attente de validation RH." });
       }
@@ -517,16 +549,17 @@ export default function MySpacePage() {
                          className="bg-white rounded-xl h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-orange-100 file:text-orange-700 file:border-none file:rounded-md file:mr-4 hover:bg-orange-100/50 transition-colors"
                          onChange={(e) => {
                            const file = e.target.files?.[0];
-                           if (file && file.size > 10 * 1024 * 1024) {
-                             toast({ variant: "destructive", title: "Fichier trop volumineux", description: "La taille maximum est de 10 Mo." });
+                           if (file && file.size > 4 * 1024 * 1024) {
+                             toast({ variant: "destructive", title: "Fichier trop volumineux", description: "La taille maximum conseillée pour le transfert est de 4 Mo." });
                              e.target.value = "";
                              return;
                            }
                            setSelectedFile(file || null);
                          }} 
                        />
+                       {selectedFile && <p className="text-[10px] text-green-700 font-bold">Fichier prêt: {selectedFile.name}</p>}
                        <p className="text-[10px] text-orange-700 leading-relaxed font-medium">
-                          Note : En raison des permissions de sécurité, l'envoi direct de fichiers est restreint. Veuillez également transmettre le document à votre gestionnaire RH.
+                          Note : Votre document sera transmis en toute sécurité au service RH pour validation de votre absence.
                        </p>
                     </div>
                  </div>
