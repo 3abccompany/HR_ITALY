@@ -271,6 +271,7 @@ export async function uploadHRDocument(
 /**
  * Specialized upload for pre-hire checklist items.
  * Creates an HRDocument and updates the dossier checklist item atomically.
+ * Supports replacement: unlinks old document to prevent ghost appearance in Employee 360.
  */
 export async function uploadPreHireDocument(params: {
   entityId: string;
@@ -281,8 +282,9 @@ export async function uploadPreHireDocument(params: {
   actorUid: string;
   actorName?: string;
   expiresAt?: string;
+  oldFileId?: string;
 }) {
-  const { entityId, dossierId, item, file, offer, actorUid, actorName, expiresAt } = params;
+  const { entityId, dossierId, item, file, offer, actorUid, actorName, expiresAt, oldFileId } = params;
   if (!db || !storage) throw new Error("Firebase services not initialized");
 
   // 1. Storage Upload
@@ -322,7 +324,7 @@ export async function uploadPreHireDocument(params: {
     version: 1,
     isSensitive,
     isRequired: true,
-    expiresAt: expiresAt || undefined,
+    expiresAt: expiresAt || null,
     
     uploadedAt: now,
     uploadedBy: actorUid,
@@ -335,6 +337,20 @@ export async function uploadPreHireDocument(params: {
 
   // 3. Atomic update
   const batch = writeBatch(db);
+
+  // If replacing, unlink old document from identity to prevent pick-up by conversion service
+  if (oldFileId) {
+    const oldDocRef = doc(db, `entities/${entityId}/documents`, oldFileId);
+    batch.update(oldDocRef, sanitizePayload({
+      status: "replaced",
+      candidateId: null,
+      personId: null,
+      replacedById: docId,
+      replacedAt: now,
+      updatedAt: now,
+      updatedBy: actorUid
+    }));
+  }
   
   batch.set(docRef, sanitizePayload(docData));
 
@@ -344,11 +360,15 @@ export async function uploadPreHireDocument(params: {
     documentId: docId,
     fileName: file.name,
     status: "uploaded",
-    expiresAt: expiresAt || undefined,
+    expiresAt: expiresAt || null,
     uploadedAt: now,
     uploadedBy: actorUid,
     updatedAt: now,
-    updatedBy: actorUid
+    updatedBy: actorUid,
+    // Reset validation metadata upon new upload/replacement
+    reviewedAt: null,
+    reviewedBy: null,
+    rejectionReason: null
   }));
 
   await batch.commit();
@@ -358,10 +378,10 @@ export async function uploadPreHireDocument(params: {
     await createAuditLog({
       userId: actorUid,
       entityId,
-      action: "document.uploaded",
+      action: oldFileId ? "document.replaced" : "document.uploaded",
       resourceType: "document",
       resourceId: docId,
-      details: { checklistItemId: item.itemId, offerId: offer.offerId, context: "pre-hire" }
+      details: { checklistItemId: item.itemId, offerId: offer.offerId, context: "pre-hire", oldFileId: oldFileId || null }
     });
   } catch (e) {
     console.warn("[Audit] Failed to log pre-hire doc upload:", e);

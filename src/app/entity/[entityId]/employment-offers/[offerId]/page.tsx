@@ -205,7 +205,8 @@ export default function EditEmploymentOfferPage() {
 
   useEffect(() => {
     async function fetchLevels() {
-      const ccnlId = formData.ccnlId;
+      if (!offer) return;
+      const ccnlId = formData.ccnlId || offer.ccnlId;
       if (!ccnlId || ccnlId === "none_clear" || !entityId || !user) {
         setActiveLevels([]);
         return;
@@ -223,8 +224,8 @@ export default function EditEmploymentOfferPage() {
         setLoadingLevels(false);
       }
     }
-    if (user) fetchLevels();
-  }, [formData.ccnlId, entityId, user, auth.currentUser]);
+    if (user && offer) fetchLevels();
+  }, [formData.ccnlId, entityId, user, auth.currentUser, offer]);
 
   useEffect(() => {
     if (offer) setFormData(offer);
@@ -396,7 +397,8 @@ export default function EditEmploymentOfferPage() {
       await uploadPreHireDocument({
         entityId, dossierId: dossier.dossierId, item: pendingUploadItem,
         file: pendingUploadFile, offer, actorUid: user.uid,
-        actorName: membership?.userDisplayName || undefined, expiresAt: pendingExpiresAt || undefined
+        actorName: membership?.userDisplayName || undefined, expiresAt: pendingExpiresAt || undefined,
+        oldFileId: pendingUploadItem.fileId
       });
       toast({ title: "Document téléversé" });
       setIsUploadDialogOpen(false);
@@ -674,23 +676,23 @@ export default function EditEmploymentOfferPage() {
                            )}
                            {!isConverted && (
                              <>
-                               {item.status === 'missing' && (
+                               {(item.status === 'missing' || item.status === 'uploaded' || item.status === 'rejected') && (
                                  <div className="relative">
                                     <Button variant="outline" size="sm" className="h-8 rounded-xl font-bold border-dashed border-2 gap-1.5">
                                        <Upload className="w-3.5 h-3.5" />
-                                       Joindre
+                                       {item.status === 'missing' ? 'Joindre' : 'Remplacer'}
                                     </Button>
                                     <input type="file" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onChange={(e) => handleUploadPreHireDoc(item, e)} />
                                  </div>
                                )}
                                {item.status === 'uploaded' && (
-                                 <>
-                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
-                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
-                                 </>
+                                 <div className="flex gap-1 ml-2">
+                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" title="Approuver" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
+                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" title="Rejeter" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
+                                 </div>
                                )}
                                {item.isCustom && item.status === 'missing' && !item.fileId && (
-                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDeleteCustomDoc(item.itemId)}><Trash2 className="w-4 h-4" /></Button>
+                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Supprimer" onClick={() => handleDeleteCustomDoc(item.itemId)}><Trash2 className="w-4 h-4" /></Button>
                                )}
                              </>
                            )}
