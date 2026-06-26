@@ -6,14 +6,14 @@ import { useParams, useRouter } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
   Briefcase, Building2, FileSignature,
-  Info, Euro, Clock, History, 
+  Info, Euro, Clock, History as LucideHistory, 
   Scale, Fingerprint, Calendar, FileText,
   MapPin, CheckCircle2, Ban, Archive, 
   RefreshCcw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
   ChevronDown, ChevronRight, FolderOpen, FileCheck,
-  Plus, ShieldCheck, ClipboardList
+  Plus, ShieldCheck, ClipboardList, Mail
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -387,6 +387,10 @@ export default function ContractDetailPage() {
     if (!user || !entityId || !contractId) return;
     setGeneratingPdf(true);
     try {
+      // Finalize and save fallbacks to the contract record before generation
+      // This ensures the PDF is current and bumps contentUpdatedAt before generation sets generatedPdfAt.
+      await updateContract(entityId, contractId, effectiveData, user.uid);
+
       const idToken = await auth.currentUser?.getIdToken();
       const response = await fetch(`/api/entities/${entityId}/contracts/${contractId}/generate-pdf`, {
         method: "POST",
@@ -557,13 +561,13 @@ export default function ContractDetailPage() {
     if (contract) {
       setProcessing(true);
       try {
-        await updateContract(entityId, contractId, effectiveData, user!.uid);
+        // Redundant update removed to prevent bumping contentUpdatedAt right before status change
         await sendContractToSignature(entityId, contractId, user!.uid);
         toast({ title: "Succès", description: "Contrat prêt for signature." });
       } catch (err: any) {
         toast({ variant: "destructive", title: "Erreur", description: err.message });
       } finally {
-        setProcessing(processing);
+        setProcessing(false);
       }
     }
   };
@@ -897,7 +901,6 @@ export default function ContractDetailPage() {
 
   const pdfDate = parseSafeDate(contract?.generatedPdfAt);
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
-  const isPdfOutdated = Boolean(pdfDate && contentDate && isBefore(pdfDate, contentDate));
 
   const contractExpiryDate = parseSafeDate(contract?.endDate);
   const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
@@ -1233,7 +1236,7 @@ export default function ContractDetailPage() {
                           )}
                         </div>
 
-                        {isPdfOutdated && !isTerminated && !isRenewed && (
+                        {isBefore(parseSafeDate(contract?.generatedPdfAt) || new Date(0), parseSafeDate(contract?.contentUpdatedAt) || new Date(0)) && !isTerminated && !isRenewed && (
                           <Alert className="bg-orange-100/30 border-orange-200 rounded-2xl">
                             <AlertTriangle className="h-4 w-4 text-orange-600" />
                             <AlertTitle className="text-sm font-bold text-orange-800">PDF obsolète</AlertTitle>
@@ -1246,7 +1249,7 @@ export default function ContractDetailPage() {
                         {(isDraft || isPendingSignature) && (
                           <Button variant="outline" onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="w-full h-11 border-primary/20 text-primary font-bold rounded-xl gap-2 hover:bg-primary/5">
                             {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
-                            {isPdfOutdated ? "Régénérer le PDF mis à jour" : "Régénérer une nouvelle version"}
+                            {isBefore(parseSafeDate(contract?.generatedPdfAt) || new Date(0), parseSafeDate(contract?.contentUpdatedAt) || new Date(0)) ? "Régénérer le PDF mis à jour" : "Régénérer une nouvelle version"}
                           </Button>
                         )}
                     </div>
