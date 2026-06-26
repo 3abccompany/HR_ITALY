@@ -1,7 +1,8 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { 
   Plus, Loader2, Calendar, User, Briefcase, 
   Clock, Filter, X, ListFilter, AlertCircle,
@@ -10,7 +11,8 @@ import {
   XCircle, Ban, FileWarning, Paperclip, Upload,
   Download, Eye, Euro, Settings2, Calculator, Save,
   BarChart, Trash2, ShieldCheck, RefreshCw, CheckCircle,
-  Check, ListRestart, Info as InfoIcon, Plane
+  Check, ListRestart, Info as InfoIcon, Plane, Search,
+  ChevronDown, ChevronUp
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,7 +72,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addMonths } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -84,6 +86,7 @@ import {
 } from "@/components/ui/sheet";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import React from "react";
 
 const initialForm = {
@@ -115,6 +118,18 @@ const initialAccrualForm = {
   employeeId: "all",
   usefulDaysMode: "time_off_estimate" as any,
   manualUsefulDays: 22
+};
+
+const initialFilters = {
+  search: "",
+  status: "all",
+  requestType: "all",
+  period: "all",
+  department: "all",
+  worksite: "all",
+  justification: "all",
+  source: "all",
+  blocksAccrual: false,
 };
 
 function calculateDecimalHours(start: string, end: string): string {
@@ -159,6 +174,8 @@ const isHourlyType = (type: string) => ["rol_permission", "ex_holiday_permission
 
 export default function TimeOffManagementPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
@@ -173,7 +190,10 @@ export default function TimeOffManagementPage() {
   const [formData, setFormData] = useState(initialForm);
   const [balanceForm, setBalanceForm] = useState(initialBalanceForm);
   const [accrualForm, setAccrualForm] = useState(initialAccrualForm);
-  const [statusFilter, setStatusFilter] = useState("all");
+  
+  // --- Filter State ---
+  const [filters, setFilters] = useState(initialFilters);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
   // Journal State (Phase 2I-B)
   const [journalTarget, setJournalTarget] = useState<{ balance: LeaveBalance, employeeName: string } | null>(null);
@@ -222,6 +242,12 @@ export default function TimeOffManagementPage() {
   const { data: rawBalances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
   const { data: accruals, loading: loadingAccruals } = useCollection<MonthlyAccrual>(accrualsQuery);
 
+  const employeesMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    employees?.forEach(e => map.set(e.employeeId, e));
+    return map;
+  }, [employees]);
+
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
     return employees.filter(e => {
@@ -232,11 +258,101 @@ export default function TimeOffManagementPage() {
 
   const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
 
+  // Derived filter options
+  const uniqueDepartments = useMemo(() => 
+    Array.from(new Set(activeEmployees.map(e => e.departmentName).filter(Boolean))).sort(), 
+  [activeEmployees]);
+
+  const uniqueWorksites = useMemo(() => 
+    Array.from(new Set(activeEmployees.map(e => e.worksiteName).filter(Boolean))).sort(), 
+  [activeEmployees]);
+
+  // Main Filtering Logic
   const filteredRequests = useMemo(() => {
     if (!requests) return [];
-    if (statusFilter === "all") return requests;
-    return requests.filter(r => r.status === statusFilter);
-  }, [requests, statusFilter]);
+    
+    return requests.filter(r => {
+      const emp = employeesMap.get(r.employeeId);
+      
+      // 1. Search
+      if (filters.search) {
+        const term = filters.search.toLowerCase();
+        const matches = 
+          r.employeeName.toLowerCase().includes(term) ||
+          emp?.employeeCode?.toLowerCase().includes(term) ||
+          r.reason?.toLowerCase().includes(term);
+        if (!matches) return false;
+      }
+
+      // 2. Status
+      if (filters.status !== "all" && r.status !== filters.status) return false;
+
+      // 3. Request Type
+      if (filters.requestType !== "all" && r.requestType !== filters.requestType) return false;
+
+      // 4. Source
+      if (filters.source !== "all" && r.source !== filters.source) return false;
+
+      // 5. Justification
+      if (filters.justification !== "all") {
+        if (filters.justification === "required" && !r.requiresJustification) return false;
+        if (filters.justification === "missing" && (r.justificationStatus !== "missing" || !r.requiresJustification)) return false;
+        if (filters.justification === "provided" && r.justificationStatus !== "provided") return false;
+        if (filters.justification === "not_required" && r.requiresJustification) return false;
+      }
+
+      // 6. Organization
+      if (filters.department !== "all" && emp?.departmentName !== filters.department) return false;
+      if (filters.worksite !== "all" && emp?.worksiteName !== filters.worksite) return false;
+
+      // 7. Accrual Impact (Blocking maturation)
+      if (filters.blocksAccrual) {
+        const blockingTypes = ["unpaid_leave", "unjustified_absence", "expectation"];
+        if (!blockingTypes.includes(r.requestType)) return false;
+      }
+
+      // 8. Period Filter
+      if (filters.period !== "all") {
+        const now = new Date();
+        let interval: { start: Date; end: Date } | null = null;
+
+        if (filters.period === "today") {
+          interval = { start: startOfDay(now), end: endOfDay(now) };
+        } else if (filters.period === "this_week") {
+          interval = { start: startOfWeek(now, { weekStartsOn: 1 }), end: endOfWeek(now, { weekStartsOn: 1 }) };
+        } else if (filters.period === "this_month") {
+          interval = { start: startOfMonth(now), end: endOfMonth(now) };
+        } else if (filters.period === "next_month") {
+          const next = addMonths(now, 1);
+          interval = { start: startOfMonth(next), end: endOfMonth(next) };
+        }
+
+        if (interval) {
+          const rStart = parseISO(r.startDate);
+          const rEnd = parseISO(r.endDate);
+          // Overlap logic: rStart <= intervalEnd && rEnd >= intervalStart
+          const overlaps = rStart <= interval.end && rEnd >= interval.start;
+          if (!overlaps) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [requests, filters, employeesMap]);
+
+  // Initial load from URL
+  useEffect(() => {
+    const status = searchParams.get("status");
+    const type = searchParams.get("type");
+    if (status) setFilters(p => ({ ...p, status }));
+    if (type) setFilters(p => ({ ...p, requestType: type }));
+  }, [searchParams]);
+
+  const handleUpdateFilter = (key: keyof typeof initialFilters, value: any) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleResetFilters = () => setFilters(initialFilters);
 
   const handleTypeChange = (type: TimeOffRequestType) => {
     let requires = false;
@@ -543,19 +659,188 @@ export default function TimeOffManagementPage() {
         </TabsList>
 
         <TabsContent value="requests" className="space-y-6 mt-0">
-          <div className="flex items-center gap-4">
-             <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[200px] h-10 rounded-xl">
-                  <SelectValue placeholder="Filtrer par statut" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous les statuts</SelectItem>
-                  <SelectItem value="submitted">En attente</SelectItem>
-                  <SelectItem value="approved">Approuvé</SelectItem>
-                  <SelectItem value="rejected">Refusé</SelectItem>
-                  <SelectItem value="cancelled">Annulé</SelectItem>
-                </SelectContent>
-             </Select>
+          
+          {/* Advanced Filter UI */}
+          <div className="space-y-4">
+             <div className="flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-[250px]">
+                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                   <Input 
+                    className="pl-10 h-11 rounded-xl bg-white border-primary/10 shadow-sm" 
+                    placeholder="Rechercher employé, code ou motif..." 
+                    value={filters.search}
+                    onChange={(e) => handleUpdateFilter('search', e.target.value)}
+                   />
+                </div>
+                
+                <Select value={filters.status} onValueChange={(v) => handleUpdateFilter('status', v)}>
+                   <SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="h-2 w-2 rounded-full p-0 bg-primary/20 border-none" />
+                        <SelectValue placeholder="Tous statuts" />
+                      </div>
+                   </SelectTrigger>
+                   <SelectContent>
+                      <SelectItem value="all">Tous les statuts</SelectItem>
+                      <SelectItem value="submitted">En attente RH</SelectItem>
+                      <SelectItem value="approved">Approuvés</SelectItem>
+                      <SelectItem value="rejected">Refusés</SelectItem>
+                      <SelectItem value="cancelled">Annulés</SelectItem>
+                   </SelectContent>
+                </Select>
+
+                <Select value={filters.requestType} onValueChange={(v) => handleUpdateFilter('requestType', v)}>
+                   <SelectTrigger className="w-[200px] h-11 rounded-xl bg-white border-primary/10 shadow-sm">
+                      <SelectValue placeholder="Tous types" />
+                   </SelectTrigger>
+                   <SelectContent>
+                      <SelectItem value="all">Tous les motifs</SelectItem>
+                      <SelectItem value="paid_leave">Congé payé (Ferie)</SelectItem>
+                      <SelectItem value="rol_permission">Permission ROL</SelectItem>
+                      <SelectItem value="ex_holiday_permission">Ex Festività</SelectItem>
+                      <SelectItem value="sickness">Maladie</SelectItem>
+                      <SelectItem value="work_accident">Accident du travail</SelectItem>
+                      <SelectItem value="unpaid_leave">Sans solde</SelectItem>
+                      <SelectItem value="permission">Autre permission / RTT</SelectItem>
+                   </SelectContent>
+                </Select>
+
+                <Select value={filters.period} onValueChange={(v) => handleUpdateFilter('period', v)}>
+                   <SelectTrigger className="w-[160px] h-11 rounded-xl bg-white border-primary/10 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-muted-foreground" />
+                        <SelectValue placeholder="Période" />
+                      </div>
+                   </SelectTrigger>
+                   <SelectContent>
+                      <SelectItem value="all">Toutes périodes</SelectItem>
+                      <SelectItem value="today">Aujourd'hui</SelectItem>
+                      <SelectItem value="this_week">Cette semaine</SelectItem>
+                      <SelectItem value="this_month">Ce mois</SelectItem>
+                      <SelectItem value="next_month">Mois prochain</SelectItem>
+                   </SelectContent>
+                </Select>
+
+                <Button 
+                  variant="outline" 
+                  onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+                  className={cn("h-11 rounded-xl font-bold gap-2", isAdvancedOpen && "bg-primary/5 text-primary border-primary/20")}
+                >
+                   <Filter className="w-4 h-4" /> 
+                   {isAdvancedOpen ? "Masquer filtres" : "Filtres avancés"}
+                </Button>
+
+                <Button variant="ghost" onClick={handleResetFilters} className="text-muted-foreground text-xs font-bold uppercase tracking-tight h-11">
+                   Réinitialiser
+                </Button>
+             </div>
+
+             <Collapsible open={isAdvancedOpen} onOpenChange={setIsAdvancedOpen}>
+                <CollapsibleContent className="space-y-4 pt-2 animate-in fade-in slide-in-from-top-2">
+                   <Card className="rounded-[1.5rem] border-primary/10 bg-slate-50/50 shadow-sm">
+                      <CardContent className="p-6">
+                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+                            <div className="space-y-2">
+                               <Label className="text-[10px] font-black uppercase text-muted-foreground">Département</Label>
+                               <Select value={filters.department} onValueChange={(v) => handleUpdateFilter('department', v)}>
+                                  <SelectTrigger className="bg-white"><SelectValue placeholder="Tous..." /></SelectTrigger>
+                                  <SelectContent>
+                                     <SelectItem value="all">Tous les services</SelectItem>
+                                     {uniqueDepartments.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                                  </SelectContent>
+                               </Select>
+                            </div>
+                            <div className="space-y-2">
+                               <Label className="text-[10px] font-black uppercase text-muted-foreground">Site / Localisation</Label>
+                               <Select value={filters.worksite} onValueChange={(v) => handleUpdateFilter('worksite', v)}>
+                                  <SelectTrigger className="bg-white"><SelectValue placeholder="Tous..." /></SelectTrigger>
+                                  <SelectContent>
+                                     <SelectItem value="all">Tous les sites</SelectItem>
+                                     {uniqueWorksites.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
+                                  </SelectContent>
+                               </Select>
+                            </div>
+                            <div className="space-y-2">
+                               <Label className="text-[10px] font-black uppercase text-muted-foreground">Source</Label>
+                               <Select value={filters.source} onValueChange={(v) => handleUpdateFilter('source', v)}>
+                                  <SelectTrigger className="bg-white"><SelectValue placeholder="Toutes sources..." /></SelectTrigger>
+                                  <SelectContent>
+                                     <SelectItem value="all">Toutes les sources</SelectItem>
+                                     <SelectItem value="employee_created">Saisie employé</SelectItem>
+                                     <SelectItem value="hr_created">Saisie RH</SelectItem>
+                                  </SelectContent>
+                               </Select>
+                            </div>
+                            <div className="space-y-2">
+                               <Label className="text-[10px] font-black uppercase text-muted-foreground">Justification</Label>
+                               <Select value={filters.justification} onValueChange={(v) => handleUpdateFilter('justification', v)}>
+                                  <SelectTrigger className="bg-white"><SelectValue placeholder="Tous..." /></SelectTrigger>
+                                  <SelectContent>
+                                     <SelectItem value="all">Tous les états</SelectItem>
+                                     <SelectItem value="required">Justification requise</SelectItem>
+                                     <SelectItem value="missing">Manquante</SelectItem>
+                                     <SelectItem value="provided">Fournie</SelectItem>
+                                     <SelectItem value="not_required">Non requise</SelectItem>
+                                  </SelectContent>
+                               </Select>
+                            </div>
+                         </div>
+                         
+                         <Separator className="my-6 opacity-40" />
+                         
+                         <div className="flex items-center justify-between bg-white/50 p-4 rounded-2xl border border-primary/5">
+                            <div className="flex items-center gap-3">
+                               <div className="bg-orange-100 p-2 rounded-xl text-orange-600">
+                                  <Ban className="w-4 h-4" />
+                               </div>
+                               <div>
+                                  <p className="text-xs font-bold text-slate-800">Impact sur l'acquisition (YTD)</p>
+                                  <p className="text-[10px] text-muted-foreground">Afficher uniquement les demandes qui bloquent la maturation mensuelle.</p>
+                               </div>
+                            </div>
+                            <Switch 
+                              checked={filters.blocksAccrual} 
+                              onCheckedChange={(v) => handleUpdateFilter('blocksAccrual', v)} 
+                            />
+                         </div>
+                      </CardContent>
+                   </Card>
+                </CollapsibleContent>
+             </Collapsible>
+
+             {/* Quick Filter Chips */}
+             <div className="flex items-center justify-between px-1">
+                <div className="flex flex-wrap items-center gap-2">
+                   <QuickChip 
+                    label="En attente" 
+                    count={requests?.filter(r => r.status === 'submitted').length}
+                    active={filters.status === 'submitted'}
+                    onClick={() => handleUpdateFilter('status', filters.status === 'submitted' ? 'all' : 'submitted')}
+                   />
+                   <QuickChip 
+                    label="Maladie ce mois" 
+                    active={filters.requestType === 'sickness' && filters.period === 'this_month'}
+                    onClick={() => {
+                       setFilters(p => ({ ...p, requestType: 'sickness', period: 'this_month' }));
+                    }}
+                   />
+                   <QuickChip 
+                    label="Justificatifs manquants" 
+                    active={filters.justification === 'missing'}
+                    onClick={() => handleUpdateFilter('justification', filters.justification === 'missing' ? 'all' : 'missing')}
+                   />
+                   <QuickChip 
+                    label="Sans solde" 
+                    active={filters.requestType === 'unpaid_leave'}
+                    onClick={() => handleUpdateFilter('requestType', filters.requestType === 'unpaid_leave' ? 'all' : 'unpaid_leave')}
+                   />
+                </div>
+                {!loadingRequests && (
+                  <div className="text-[10px] font-black uppercase text-muted-foreground tracking-widest bg-slate-100 px-3 py-1.5 rounded-full">
+                     {filteredRequests.length} demande{filteredRequests.length > 1 ? 's' : ''} affichée{filteredRequests.length > 1 ? 's' : ''} sur {requests?.length || 0}
+                  </div>
+                )}
+             </div>
           </div>
 
           <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-2xl">
@@ -586,6 +871,7 @@ export default function TimeOffManagementPage() {
                 ) : (
                   filteredRequests.map((r) => {
                     const isHourly = isHourlyType(r.requestType);
+                    const emp = employeesMap.get(r.employeeId);
                     return (
                     <TableRow key={r.requestId} className="hover:bg-muted/50 transition-colors">
                       <TableCell className="pl-6 py-4">
@@ -593,7 +879,15 @@ export default function TimeOffManagementPage() {
                           <div className="bg-primary/5 p-2 rounded-lg text-primary"><User className="w-4 h-4" /></div>
                           <div>
                             <p className="font-bold text-slate-900">{r.employeeName}</p>
-                            <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter">Source: {r.source === 'hr_created' ? 'RH' : 'Employé'}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                               <p className="text-[9px] text-muted-foreground uppercase font-black tracking-tighter">Source: {r.source === 'hr_created' ? 'RH' : 'Employé'}</p>
+                               {emp?.departmentName && (
+                                 <>
+                                   <span className="text-slate-200 text-[8px]">•</span>
+                                   <p className="text-[9px] text-primary/60 font-bold uppercase tracking-tighter">{emp.departmentName}</p>
+                                 </>
+                               )}
+                            </div>
                           </div>
                         </div>
                       </TableCell>
@@ -1043,7 +1337,7 @@ export default function TimeOffManagementPage() {
       </Dialog>
 
       {/* Manual Balance Dialog */}
-      <Dialog open={isBalanceModalOpen} onOpenChange={setIsBalanceModalOpen}>
+      <Dialog open={isBalanceModalOpen} onValueChange={setIsBalanceModalOpen}>
         <DialogContent className="sm:max-w-[650px] flex flex-col overflow-hidden p-0 rounded-[2rem]">
           <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-xl font-black text-primary">Définir solde annuel</DialogTitle>
@@ -1642,6 +1936,23 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
   );
 }
 
+function QuickChip({ label, count, active, onClick }: { label: string, count?: number, active: boolean, onClick: () => void }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-tight transition-all",
+        active 
+          ? "bg-primary text-white shadow-md shadow-primary/20 ring-2 ring-primary/10" 
+          : "bg-white border border-primary/5 text-muted-foreground hover:bg-slate-50"
+      )}
+    >
+      {label}
+      {count !== undefined && <span className={cn("ml-1 px-1.5 rounded-full", active ? "bg-white/20 text-white" : "bg-slate-100 text-muted-foreground")}>{count}</span>}
+    </button>
+  );
+}
+
 function formatDate(val: string) {
   if (!val) return "-";
   try {
@@ -1710,3 +2021,4 @@ function renderJustificationStatus(r: TimeOffRequest) {
       return <span className="text-[10px] text-muted-foreground uppercase">N/A</span>;
   }
 }
+
