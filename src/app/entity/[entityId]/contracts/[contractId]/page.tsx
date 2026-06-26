@@ -358,7 +358,7 @@ export default function ContractDetailPage() {
 
       jobTitleName: getEffectiveValue('jobTitleName', offer?.jobTitleName || employee?.jobTitle),
       departmentName: getEffectiveValue('departmentName', offer?.departmentName || employee?.departmentName),
-      jobTitleId: getEffectiveValue('jobTitleId', offer?.jobTitleId || employee?.jobRoleId),
+      jobTitleId: getEffectiveValue('jobTitleId', (offer as any)?.jobTitleId || employee?.jobRoleId),
       departmentId: getEffectiveValue('departmentId', offer?.departmentId || employee?.departmentId),
       worksiteName: getEffectiveValue('worksiteName', offer?.worksiteName || employee?.worksiteName),
       contractType: getEffectiveValue('contractType', offer?.contractType),
@@ -404,7 +404,6 @@ export default function ContractDetailPage() {
     setGeneratingPdf(true);
     try {
       // Step 1: Save all effective content snapshots before generation
-      // This bumps contentUpdatedAt correctly.
       await updateContract(entityId, contractId, effectiveData, user.uid);
 
       // Step 2: Trigger PDF generation API
@@ -466,7 +465,7 @@ export default function ContractDetailPage() {
 
   const handleLevelChange = (id: string) => {
     if (id === "none_clear") {
-       setFormData(p => ({...p, levelId: "", levelCode: "", levelLabel: "", qualificationCategory: ""}));
+       setFormData(p => ({ ...p, levelId: "", levelCode: "", levelLabel: "", qualificationCategory: "" }));
        return;
     }
     const level = activeLevels?.find((l: any) => l.levelId === id);
@@ -580,7 +579,6 @@ export default function ContractDetailPage() {
 
     setProcessing(true);
     try {
-      // Step 2: Transition to signature status
       await sendContractToSignature(entityId, contractId, user!.uid);
       toast({ title: "Succès", description: "Contrat prêt pour signature." });
     } catch (err: any) {
@@ -1532,7 +1530,7 @@ function DetailEditable({ label, value, editValue, isEditing, id, type = "text",
           id={id} 
           type={type} 
           value={editValue ?? ""} 
-          onChange={(e) => onChange(e.target.value)} 
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)} 
           className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300")} 
         />
       ) : (

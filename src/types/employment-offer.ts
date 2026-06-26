@@ -28,9 +28,11 @@ export interface EmploymentOffer {
   // Candidate Snapshot
   candidateDisplayName: string;
   candidateEmail: string;
+  candidatePath?: string;
   candidatePhone?: string;
 
   // Job Details Snapshot
+  jobTitleId?: string;
   jobTitleName: string;
   departmentId?: string;
   departmentName?: string;

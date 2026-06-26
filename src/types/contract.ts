@@ -32,7 +32,9 @@ export interface Contract {
   placeOfBirth?: string;
 
   // --- Job & Workplace ---
+  jobTitleId?: string;
   jobTitleName?: string;
+  departmentId?: string;
   departmentName?: string;
   worksiteName?: string;
   missionsSnapshot?: string[];
