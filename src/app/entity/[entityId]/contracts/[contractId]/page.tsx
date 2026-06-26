@@ -8,13 +8,14 @@ import {
   Info, Euro, Clock, History as LucideHistory, 
   Scale, Fingerprint, Calendar, FileText,
   MapPin, CheckCircle2, Ban, Archive, 
-  RefreshCcw, ScrollText, Globe,
+  RefreshCcw, RefreshCw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
   Upload, FileCode, Download, Eye, FileBadge,
   ChevronDown, ChevronRight, FolderOpen, FileCheck,
   Plus, ShieldCheck, ClipboardList, Mail, Send,
   MoreVertical,
-  RotateCcw
+  RotateCcw,
+  XCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,6 +127,45 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
   const date = parseSafeDate(val);
   if (!date) return "-";
   return format(date, formatStr, { locale: fr });
+}
+
+/**
+ * Renders the contract lifecycle context for a document.
+ */
+function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = false) {
+  const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(doc.documentType);
+  if (!isContractDoc && doc.relatedModule !== 'contracts') return null;
+  if (!doc.contractId) return null;
+
+  const isCoreContract = ['signed_contract', 'generated_contract_pdf'].includes(doc.documentType);
+  let label = doc.contractType || "Contrat";
+  let color = "bg-slate-50 text-slate-500 border-slate-200";
+
+  if (employee) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startDate = parseSafeDate(doc.contractStartDate);
+    const isFuture = (startDate && startDate > today) || employee.pendingContractId === doc.contractId;
+
+    if (employee.activeContractId === doc.contractId) {
+      label = isCoreContract ? "Contrat actif" : "Lié au contrat actif";
+      color = "bg-blue-50 text-blue-700 border-blue-200";
+    } else if (isFuture) {
+      label = isCoreContract ? "Contrat à venir" : "Lié au contrat à venir";
+      color = "bg-teal-50 text-teal-700 border-teal-100";
+    } else {
+      label = isCoreContract ? "Contrat précédent" : "Lié au contrat précédent";
+      color = "bg-slate-50 text-slate-500 border-slate-200";
+    }
+  }
+
+  if (onlyText) return label;
+
+  return (
+    <Badge variant="outline" className={cn("text-[8px] h-4 px-1.5 font-black uppercase", color)}>
+       {label}
+    </Badge>
+  );
 }
 
 export default function ContractDetailPage() {
@@ -971,7 +1011,7 @@ export default function ContractDetailPage() {
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black text-primary tracking-tight">Modèle de Contrat</h1>
+              <h1 className="text-2xl font-black text-primary tracking-tight">Détails du Contrat</h1>
               {getStatusBadge(contract.status as ContractStatus)}
             </div>
             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">Référence : {businessReference}</p>
@@ -984,14 +1024,14 @@ export default function ContractDetailPage() {
                <Button variant="ghost" onClick={() => { setIsEditing(false); setFormData(contract); }} disabled={processing}>Annuler</Button>
                <Button onClick={handleSave} disabled={processing} className="gap-2 bg-green-600 text-white font-bold rounded-xl px-6">
                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                 Enregistrer les modifications
+                 Enregistrer
                </Button>
              </>
            ) : (
              <>
                 {isDraft && (
                   <Button variant="outline" onClick={handleEnterEditMode} className="gap-2 bg-white rounded-xl font-bold">
-                    <Edit className="w-4 h-4" /> Éditer
+                    <Edit className="w-4 h-4" /> Éditer les informations
                   </Button>
                 )}
                 
@@ -1000,6 +1040,7 @@ export default function ContractDetailPage() {
                      <Button variant="outline" size="icon" className="rounded-xl"><MoreVertical className="w-4 h-4" /></Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-56">
+                     <div className="px-2 py-1.5 text-[10px] font-black uppercase text-muted-foreground opacity-60">Actions de gestion</div>
                      {(isPendingSignature || isPendingActivation) && (
                        <DropdownMenuItem onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2">
                          <RotateCcw className="w-4 h-4" /> Retour en brouillon
@@ -1010,7 +1051,7 @@ export default function ContractDetailPage() {
                          <Ban className="w-4 h-4" /> Résilier / Terminer
                        </DropdownMenuItem>
                      )}
-                     {canUpdate && (isDraft || isTerminated) && (
+                     {canUpdate && (isDraft || isTerminated || isRenewed || isActive) && (
                         <DropdownMenuItem onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")} disabled={processing} className="gap-2">
                            <Archive className="w-4 h-4" /> Archiver
                         </DropdownMenuItem>
@@ -1067,7 +1108,7 @@ export default function ContractDetailPage() {
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", !contract.generatedPdfStoragePath ? "border-orange-100 bg-orange-50/5" : "border-primary/10")}>
               <CardHeader className="bg-primary/5 border-b py-5 px-8 flex flex-row items-center justify-between">
                   <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                    <FileCode className="w-4 h-4" /> 1. Préparation du document (PDF)
+                    <FileCode className="w-4 h-4" /> 1. Document de travail (PDF)
                   </CardTitle>
                   <div className="flex items-center gap-2">
                     {isPdfObsolete ? (
@@ -1091,7 +1132,7 @@ export default function ContractDetailPage() {
                             </div>
                         </div>
                         <Button variant="ghost" size="sm" asChild className="rounded-xl font-bold opacity-0 group-hover:opacity-100 transition-all">
-                            <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-4 h-4 mr-1.5" /> Voir</a>
+                            <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-4 h-4 mr-1.5" /> Voir le PDF</a>
                         </Button>
                       </div>
                     )}
@@ -1100,14 +1141,14 @@ export default function ContractDetailPage() {
                       <Alert className="bg-orange-50 border-orange-200 rounded-xl">
                         <AlertTriangle className="h-4 w-4 text-orange-600" />
                         <AlertDescription className="text-xs font-bold text-orange-800">
-                          Le contrat a été modifié. Le PDF actuel ne reflète plus les données enregistrées.
+                          Le contrat a été modifié. Le PDF actuel est obsolète. Veuillez régénérer le document.
                         </AlertDescription>
                       </Alert>
                     )}
 
                     <div className="flex flex-wrap gap-3">
                        <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="h-11 rounded-xl font-black gap-2 px-6">
-                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
                           {contract.generatedPdfStoragePath ? "Régénérer le PDF" : "Générer le PDF du contrat"}
                        </Button>
 
@@ -1172,7 +1213,7 @@ export default function ContractDetailPage() {
                           </Button>
                         )}
                         {(isPendingSignature || isPendingActivation) && (
-                          <Button variant="outline" size="sm" onClick={() => setIsSignedDocModalOpen(true)} className="rounded-xl font-bold border-dashed h-9">Remplacer</Button>
+                          <Button variant="outline" size="sm" onClick={() => setIsSignedDocModalOpen(true)} className="rounded-xl font-bold border-dashed h-9">Remplacer le document</Button>
                         )}
                       </div>
                     </div>
@@ -1225,7 +1266,7 @@ export default function ContractDetailPage() {
                    {isRenewalContract && isPendingActivation ? (
                      isStartDateReached ? (
                        <Button onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Renouvellement activé.")} disabled={processing || !canActivateNow} className="w-full h-16 rounded-2xl text-lg font-black bg-primary text-white shadow-xl">
-                          {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-6 h-6 mr-2" />}
+                          {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                           Activer le renouvellement maintenant
                        </Button>
                      ) : (
@@ -1247,8 +1288,8 @@ export default function ContractDetailPage() {
                          canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
                        )}
                      >
-                        {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-6 h-6 mr-2" />}
-                        Activer le contrat
+                        {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                        Confirmer signature et activer le contrat
                      </Button>
                    )}
                 </CardContent>
@@ -1293,11 +1334,11 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Raison Sociale" value={effectiveData.entityLegalName} editValue={formData.entityLegalName} isEditing={isEditing} id="entityLegalName" required onChange={(v) => setFormData(p => ({...p, entityLegalName: v}))} />
-                   <DetailEditable label="Nom commercial" value={effectiveData.entityName} editValue={formData.entityName} isEditing={isEditing} id="entityName" onChange={(v) => setFormData(p => ({...p, entityName: v}))} />
-                   <DetailEditable label="Numéro TVA / Code Fiscal" value={effectiveData.entityVatNumber} editValue={formData.entityVatNumber} isEditing={isEditing} id="entityVatNumber" onChange={(v) => setFormData(p => ({...p, entityVatNumber: v}))} />
-                   <DetailEditable label="Représentant Légal" value={effectiveData.legalRepresentativeName} editValue={formData.legalRepresentativeName} isEditing={isEditing} id="legalRepresentativeName" onChange={(v) => setFormData(p => ({...p, legalRepresentativeName: v}))} />
-                   <DetailEditable label="Adresse du Siège" value={effectiveData.companyAddressSnapshot} editValue={formData.companyAddressSnapshot} isEditing={isEditing} id="companyAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, companyAddressSnapshot: v}))} />
+                   <DetailEditable label="Raison Sociale" value={effectiveData.entityLegalName} editValue={formData.entityLegalName} isEditing={isEditing} id="entityLegalName" required onChange={(v: string) => setFormData(p => ({...p, entityLegalName: v}))} />
+                   <DetailEditable label="Nom commercial" value={effectiveData.entityName} editValue={formData.entityName} isEditing={isEditing} id="entityName" onChange={(v: string) => setFormData(p => ({...p, entityName: v}))} />
+                   <DetailEditable label="Numéro TVA / Code Fiscal" value={effectiveData.entityVatNumber} editValue={formData.entityVatNumber} isEditing={isEditing} id="entityVatNumber" onChange={(v: string) => setFormData(p => ({...p, entityVatNumber: v}))} />
+                   <DetailEditable label="Représentant Légal" value={effectiveData.legalRepresentativeName} editValue={formData.legalRepresentativeName} isEditing={isEditing} id="legalRepresentativeName" onChange={(v: string) => setFormData(p => ({...p, legalRepresentativeName: v}))} />
+                   <DetailEditable label="Adresse du Siège" value={effectiveData.companyAddressSnapshot} editValue={formData.companyAddressSnapshot} isEditing={isEditing} id="companyAddressSnapshot" required className="col-span-full" onChange={(v: string) => setFormData(p => ({...p, companyAddressSnapshot: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -1310,11 +1351,11 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Nom Complet" value={effectiveData.employeeDisplayName} editValue={formData.employeeDisplayName} isEditing={isEditing} id="employeeDisplayName" disabled required onChange={(v) => setFormData(p => ({...p, employeeDisplayName: v}))} />
-                   <DetailEditable label="Code Fiscal / ID National" value={effectiveData.taxCode} editValue={formData.taxCode} isEditing={isEditing} id="taxCode" required disabled={!!effectiveData.taxCode} className="font-mono uppercase" onChange={(v) => setFormData(p => ({...p, taxCode: v}))} />
-                   <DetailEditable label="Date de Naissance" value={effectiveData.dateOfBirth} editValue={formData.dateOfBirth} isEditing={isEditing} id="dateOfBirth" type="date" disabled={!!effectiveData.dateOfBirth} onChange={(v) => setFormData(p => ({...p, dateOfBirth: v}))} />
-                   <DetailEditable label="Lieu de Naissance" value={effectiveData.placeOfBirth} editValue={formData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v) => setFormData(p => ({...p, placeOfBirth: v}))} />
-                   <DetailEditable label="Adresse de Résidence" value={effectiveData.employeeAddressSnapshot} editValue={formData.employeeAddressSnapshot} isEditing={isEditing} id="employeeAddressSnapshot" required className="col-span-full" onChange={(v) => setFormData(p => ({...p, employeeAddressSnapshot: v}))} />
+                   <DetailEditable label="Nom Complet" value={effectiveData.employeeDisplayName} editValue={formData.employeeDisplayName} isEditing={isEditing} id="employeeDisplayName" disabled required onChange={(v: string) => setFormData(p => ({...p, employeeDisplayName: v}))} />
+                   <DetailEditable label="Code Fiscal / ID National" value={effectiveData.taxCode} editValue={formData.taxCode} isEditing={isEditing} id="taxCode" required disabled={!!effectiveData.taxCode} className="font-mono uppercase" onChange={(v: string) => setFormData(p => ({...p, taxCode: v}))} />
+                   <DetailEditable label="Date de Naissance" value={effectiveData.dateOfBirth} editValue={formData.dateOfBirth} isEditing={isEditing} id="dateOfBirth" type="date" disabled={!!effectiveData.dateOfBirth} onChange={(v: string) => setFormData(p => ({...p, dateOfBirth: v}))} />
+                   <DetailEditable label="Lieu de Naissance" value={effectiveData.placeOfBirth} editValue={formData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v: string) => setFormData(p => ({...p, placeOfBirth: v}))} />
+                   <DetailEditable label="Adresse de Résidence" value={effectiveData.employeeAddressSnapshot} editValue={formData.employeeAddressSnapshot} isEditing={isEditing} id="employeeAddressSnapshot" required className="col-span-full" onChange={(v: string) => setFormData(p => ({...p, employeeAddressSnapshot: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -1327,9 +1368,9 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailEditable label="Intitulé du Poste" value={effectiveData.jobTitleName} editValue={formData.jobTitleName} isEditing={isEditing} id="jobTitleName" disabled={!isDraft} required icon={Briefcase} onChange={(v) => setFormData(p => ({...p, jobTitleName: v}))} />
-                   <DetailEditable label="Département" value={effectiveData.departmentName} editValue={formData.departmentName} isEditing={isEditing} id="departmentName" disabled={!isDraft} icon={Building2} onChange={(v) => setFormData(p => ({...p, departmentName: v}))} />
-                   <DetailEditable label="Site d'Affectation" value={effectiveData.worksiteName} editValue={formData.worksiteName} isEditing={isEditing} id="worksiteName" disabled={!isDraft} required icon={MapPin} className="col-span-full" onChange={(v) => setFormData(p => ({...p, worksiteName: v}))} />
+                   <DetailEditable label="Intitulé du Poste" value={effectiveData.jobTitleName} editValue={formData.jobTitleName} isEditing={isEditing} id="jobTitleName" disabled={!isDraft} required icon={Briefcase} onChange={(v: string) => setFormData(p => ({...p, jobTitleName: v}))} />
+                   <DetailEditable label="Département" value={effectiveData.departmentName} editValue={formData.departmentName} isEditing={isEditing} id="departmentName" disabled={!isDraft} icon={Building2} onChange={(v: string) => setFormData(p => ({...p, departmentName: v}))} />
+                   <DetailEditable label="Site d'Affectation" value={effectiveData.worksiteName} editValue={formData.worksiteName} isEditing={isEditing} id="worksiteName" disabled={!isDraft} required icon={MapPin} className="col-span-full" onChange={(v: string) => setFormData(p => ({...p, worksiteName: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -1347,9 +1388,9 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-12">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                   <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v) => setFormData(p => ({...p, contractType: v}))} />
-                   <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v) => setFormData(p => ({...p, startDate: v}))} />
-                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v) => setFormData(p => ({...p, endDate: v}))} />
+                   <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v: string) => setFormData(p => ({...p, contractType: v}))} />
+                   <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, startDate: v}))} />
+                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, endDate: v}))} />
                 </div>
              </CardContent>
           </Card>
@@ -1460,7 +1501,7 @@ export default function ContractDetailPage() {
              </div>
              <div className="space-y-2">
                 <Label className="text-[10px] uppercase font-black">Motif</Label>
-                <Select value={terminationForm.terminationReason} onValueChange={(v) => setTerminationForm(p => ({...p, terminationReason: v}))}>
+                <Select value={terminationForm.terminationReason} onValueChange={(v: string) => setTerminationForm(p => ({...p, terminationReason: v}))}>
                   <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Choisir..." /></SelectTrigger>
                   <SelectContent>{TERMINATION_REASONS.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
                 </Select>
