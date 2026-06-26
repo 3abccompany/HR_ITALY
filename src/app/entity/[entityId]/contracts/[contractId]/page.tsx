@@ -3,16 +3,16 @@
 import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  Loader2, ArrowLeft, User, UserCheck, 
+  Loader2, ArrowLeft, User, 
   Briefcase, Building2, FileSignature,
-  Info, Euro, Clock, History as LucideHistory, 
+  Euro, Clock, History as LucideHistory, 
   Scale, Fingerprint, Calendar, FileText,
   MapPin, CheckCircle2, Ban, Archive, 
   RefreshCcw, RefreshCw, ScrollText, Globe,
   Edit, Save, X, AlertTriangle, ExternalLink,
-  Upload, FileCode, Download, Eye, FileBadge,
-  ChevronDown, ChevronRight, FolderOpen, FileCheck,
-  Plus, ShieldCheck, ClipboardList, Mail, Send,
+  Upload, FileCode, Download, Eye,
+  ChevronRight, FileCheck,
+  Plus, ShieldCheck, Mail, Send,
   MoreVertical,
   RotateCcw,
   XCircle
@@ -48,7 +48,6 @@ import {
   updateContract,
   recordSignedDocumentReference,
   prepareContractRenewalAction,
-  markContractAsReadyForActivationAction,
   executeContractTransitionTransaction,
   recordContractSentToEmployee
 } from "@/services/contract.service";
@@ -77,19 +76,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { 
-  Collapsible, 
-  CollapsibleContent, 
-  CollapsibleTrigger 
-} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
-import { format, isBefore, startOfDay, differenceInDays, addDays } from "date-fns";
+import { format, isBefore, startOfDay, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 import { sendContractToEmployeeAction } from "@/services/email.service";
@@ -963,11 +956,11 @@ export default function ContractDetailPage() {
 
   const pdfDate = parseSafeDate(contract?.generatedPdfAt);
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
-  const isPdfObsolete = pdfDate && contentDate && isBefore(pdfDate, contentDate);
+  const isPdfObsolete = !!(pdfDate && contentDate && isBefore(pdfDate, contentDate));
 
   const contractExpiryDate = parseSafeDate(contract?.endDate);
-  const isContractExpired = isActive && contractExpiryDate && isBefore(contractExpiryDate, today);
-  const isContractExpiringSoon = isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30));
+  const isContractExpired = !!(isActive && contractExpiryDate && isBefore(contractExpiryDate, today));
+  const isContractExpiringSoon = !!(isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30)));
 
   const isFixedTermCDD = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
   const canShowRenewButton = isFixedTermCDD && 
@@ -1021,8 +1014,8 @@ export default function ContractDetailPage() {
         <div className="flex items-center gap-3">
            {isEditing ? (
              <>
-               <Button variant="ghost" onClick={() => { setIsEditing(false); setFormData(contract); }} disabled={processing}>Annuler</Button>
-               <Button onClick={handleSave} disabled={processing} className="gap-2 bg-green-600 text-white font-bold rounded-xl px-6">
+               <Button variant="ghost" onClick={() => { setIsEditing(false); setFormData(contract); }} disabled={!!processing}>Annuler</Button>
+               <Button onClick={handleSave} disabled={!!processing} className="gap-2 bg-green-600 text-white font-bold rounded-xl px-6">
                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                  Enregistrer
                </Button>
@@ -1030,7 +1023,7 @@ export default function ContractDetailPage() {
            ) : (
              <>
                 {isDraft && (
-                  <Button variant="outline" onClick={handleEnterEditMode} className="gap-2 bg-white rounded-xl font-bold">
+                  <Button variant="outline" onClick={handleEnterEditMode} className="gap-2 bg-white rounded-xl font-bold" disabled={!!processing}>
                     <Edit className="w-4 h-4" /> Éditer les informations
                   </Button>
                 )}
@@ -1042,17 +1035,17 @@ export default function ContractDetailPage() {
                   <DropdownMenuContent align="end" className="w-56">
                      <div className="px-2 py-1.5 text-[10px] font-black uppercase text-muted-foreground opacity-60">Actions de gestion</div>
                      {(isPendingSignature || isPendingActivation) && (
-                       <DropdownMenuItem onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={processing} className="gap-2">
+                       <DropdownMenuItem onClick={() => handleTransition(() => rollbackToDraft(entityId, contractId, user!.uid), "Retour au statut brouillon.")} disabled={!!processing} className="gap-2">
                          <RotateCcw className="w-4 h-4" /> Retour en brouillon
                        </DropdownMenuItem>
                      )}
                      {isActive && (
-                       <DropdownMenuItem onClick={() => setIsTerminationModalOpen(true)} disabled={processing} className="gap-2 text-destructive font-bold">
+                       <DropdownMenuItem onClick={() => setIsTerminationModalOpen(true)} disabled={!!processing} className="gap-2 text-destructive font-bold">
                          <Ban className="w-4 h-4" /> Résilier / Terminer
                        </DropdownMenuItem>
                      )}
                      {canUpdate && (isDraft || isTerminated || isRenewed || isActive) && (
-                        <DropdownMenuItem onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")} disabled={processing} className="gap-2">
+                        <DropdownMenuItem onClick={() => handleTransition(() => archiveContractAction(entityId, contractId, user!.uid), "Contrat archivé.")} disabled={!!processing} className="gap-2">
                            <Archive className="w-4 h-4" /> Archiver
                         </DropdownMenuItem>
                      )}
@@ -1147,7 +1140,7 @@ export default function ContractDetailPage() {
                     )}
 
                     <div className="flex flex-wrap gap-3">
-                       <Button onClick={handleGeneratePdf} disabled={generatingPdf || isEditing} className="h-11 rounded-xl font-black gap-2 px-6">
+                       <Button onClick={handleGeneratePdf} disabled={!!(generatingPdf || isEditing)} className="h-11 rounded-xl font-black gap-2 px-6">
                           {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
                           {contract.generatedPdfStoragePath ? "Régénérer le PDF" : "Générer le PDF du contrat"}
                        </Button>
@@ -1155,7 +1148,7 @@ export default function ContractDetailPage() {
                        {isDraft && (
                          <Button 
                            onClick={handleTransitionToSignature}
-                           disabled={processing || generatingPdf || !contract.generatedPdfStoragePath || isPdfObsolete}
+                           disabled={!!(processing || generatingPdf || !contract.generatedPdfStoragePath || isPdfObsolete)}
                            variant="outline"
                            className="h-11 rounded-xl font-bold text-accent border-accent/20 hover:bg-accent/5 gap-2"
                          >
@@ -1168,6 +1161,7 @@ export default function ContractDetailPage() {
                            onClick={handleSendToEmployee}
                            variant="outline"
                            className="h-11 rounded-xl font-bold text-primary border-primary/20 hover:bg-primary/5 gap-2"
+                           disabled={!!processing}
                          >
                            <Send className="w-4 h-4" /> Envoyer au salarié
                          </Button>
@@ -1213,7 +1207,7 @@ export default function ContractDetailPage() {
                           </Button>
                         )}
                         {(isPendingSignature || isPendingActivation) && (
-                          <Button variant="outline" size="sm" onClick={() => setIsSignedDocModalOpen(true)} className="rounded-xl font-bold border-dashed h-9">Remplacer le document</Button>
+                          <Button variant="outline" size="sm" onClick={() => setIsSignedDocModalOpen(true)} className="rounded-xl font-bold border-dashed h-9" disabled={!!processing}>Remplacer le document</Button>
                         )}
                       </div>
                     </div>
@@ -1265,7 +1259,7 @@ export default function ContractDetailPage() {
 
                    {isRenewalContract && isPendingActivation ? (
                      isStartDateReached ? (
-                       <Button onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Renouvellement activé.")} disabled={processing || !canActivateNow} className="w-full h-16 rounded-2xl text-lg font-black bg-primary text-white shadow-xl">
+                       <Button onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Renouvellement activé.")} disabled={!!(processing || !canActivateNow)} className="w-full h-16 rounded-2xl text-lg font-black bg-primary text-white shadow-xl">
                           {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                           Activer le renouvellement maintenant
                        </Button>
@@ -1283,12 +1277,12 @@ export default function ContractDetailPage() {
                    ) : (
                      <Button 
                        onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé.")}
-                       disabled={processing || !canActivateNow}
+                       disabled={!!(processing || !canActivateNow)}
                        className={cn("w-full h-16 rounded-2xl text-lg font-black shadow-xl transition-all", 
                          canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
                        )}
                      >
-                        {processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                        {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                         Confirmer signature et activer le contrat
                      </Button>
                    )}
@@ -1308,13 +1302,13 @@ export default function ContractDetailPage() {
                      </p>
                      <div className="pt-6 flex flex-wrap gap-4">
                         <div className="relative">
-                          <Button disabled={processing} className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
+                          <Button disabled={!!processing} className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
                             <Upload className="w-4 h-4" /> Ajouter le contrat signé historique
                           </Button>
                           <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalContract} />
                         </div>
                         <div className="relative">
-                          <Button disabled={processing} variant="outline" className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
+                          <Button disabled={!!processing} variant="outline" className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
                             <FileText className="w-4 h-4" /> Ajouter reçu UniLav historique
                           </Button>
                           <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalUniLav} />
@@ -1381,7 +1375,7 @@ export default function ContractDetailPage() {
                    <ScrollText className="w-4 h-4" /> Conditions & Classification
                 </CardTitle>
                 {canShowRenewButton && !isEditing && (
-                  <Button variant="outline" size="sm" onClick={() => setIsRenewalModalOpen(true)} className="h-8 rounded-xl font-bold bg-white text-accent border-accent/20">
+                  <Button variant="outline" size="sm" onClick={() => setIsRenewalModalOpen(true)} className="h-8 rounded-xl font-bold bg-white text-accent border-accent/20" disabled={!!processing}>
                     <RefreshCcw className="w-3.5 h-3.5 mr-2" /> Renouveler CDD
                   </Button>
                 )}
@@ -1466,7 +1460,7 @@ export default function ContractDetailPage() {
           </div>
           <DialogFooter>
              <Button variant="ghost" onClick={() => setIsRenewalModalOpen(false)}>Annuler</Button>
-             <Button onClick={handleCreateRenewal} disabled={processing} className="rounded-xl px-8 font-black">Créer brouillon</Button>
+             <Button onClick={handleCreateRenewal} disabled={!!processing} className="rounded-xl px-8 font-black">Créer brouillon</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1486,7 +1480,7 @@ export default function ContractDetailPage() {
           </div>
           <DialogFooter>
              <Button variant="ghost" onClick={() => setIsSignedDocModalOpen(false)}>Annuler</Button>
-             <Button onClick={handleSaveSignedDocRef} disabled={processing || !signedDocForm.title} className="rounded-xl px-8 font-black">Enregistrer</Button>
+             <Button onClick={handleSaveSignedDocRef} disabled={!!(processing || !signedDocForm.title)} className="rounded-xl px-8 font-black">Enregistrer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1509,7 +1503,7 @@ export default function ContractDetailPage() {
           </div>
           <DialogFooter>
              <Button variant="ghost" onClick={() => setIsTerminationModalOpen(false)}>Annuler</Button>
-             <Button onClick={handleTerminateContract} disabled={processing} className="bg-red-600 text-white rounded-xl px-8 font-black">Confirmer clôture</Button>
+             <Button onClick={handleTerminateContract} disabled={!!processing} className="bg-red-600 text-white rounded-xl px-8 font-black">Confirmer clôture</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1526,7 +1520,7 @@ function DetailEditable({ label, value, editValue, isEditing, id, type = "text",
       <Label htmlFor={id} className={cn("text-[10px] font-black uppercase tracking-tight mb-1 opacity-70", isMissing && "text-red-600 opacity-100")}>{label} {required && "*"}</Label>
       {isEditing ? (
         disabled ? <div className="h-10 px-3 bg-secondary/30 rounded-xl flex items-center text-xs font-bold text-muted-foreground border border-dashed cursor-not-allowed">{displayValue}</div> :
-        <Input id={id} type={type} value={editValue ?? ""} onChange={(e) => onChange(e.target.value)} className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300")} />
+        <Input id={id} type={type} value={editValue ?? ""} onChange={(v: string) => onChange(v)} className={cn("h-10 rounded-xl bg-white", isMissing && "border-red-300")} />
       ) : (
         <div className={cn("flex items-center gap-2 text-sm font-bold", isMissing ? "text-red-400 italic" : "text-slate-800")}>
            {Icon && <Icon className="w-3.5 h-3.5 text-primary/40" />} {displayValue}
