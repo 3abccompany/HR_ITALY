@@ -63,18 +63,32 @@ function sanitizePayload(obj: any): any {
 }
 
 /**
- * Calculates the duration of a time-off request in days.
- * 22/06 to 23/06 = 2 inclusive calendar days.
+ * Calculates the duration of a time-off request in days, excluding Sundays.
+ * Date range is inclusive.
  */
 export function calculateDuration(startDate: string, endDate: string, dayPart: DayPart): number {
   const start = parseISO(startDate);
   const end = parseISO(endDate);
   
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return 0;
+
+  // Special case: half day
   if (dayPart !== "full_day" && startDate === endDate) {
+    if (start.getDay() === 0) return 0; // Sunday
     return 0.5;
   }
+
+  let count = 0;
+  const current = new Date(start.getTime());
   
-  return Math.max(0, differenceInCalendarDays(end, start) + 1);
+  while (current <= end) {
+    if (current.getDay() !== 0) { // 0 is Sunday
+      count++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return count;
 }
 
 /**
@@ -358,7 +372,7 @@ export async function createTimeOffRequestForEmployee(
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestType);
   const unit = isHourly ? "hours" : "days";
   
-  // Calculate specific duration
+  // Calculate specific duration using unified helper
   const duration = isHourly 
     ? (data.startTime && data.endTime ? calculateHourlyDuration(data.startTime, data.endTime) : 0)
     : calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");

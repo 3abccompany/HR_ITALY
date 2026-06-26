@@ -1,3 +1,4 @@
+
 'use server';
 
 import { adminDb, adminAuth } from "@/lib/firebase/admin";
@@ -10,18 +11,29 @@ import {
 } from "@/types/time-off";
 
 /**
- * Server helper to calculate duration in days.
+ * Server helper to calculate duration in days, excluding Sundays.
+ * Inclusive range.
  */
 function calculateDuration(startDate: string, endDate: string, dayPart: string): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
   
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return 0;
+
   if (dayPart !== "full_day" && startDate === endDate) {
+    if (start.getDay() === 0) return 0; // Sunday
     return 0.5;
   }
   
-  const diffTime = Math.abs(end.getTime() - start.getTime());
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+  let count = 0;
+  const current = new Date(start.getTime());
+  while (current <= end) {
+    if (current.getDay() !== 0) { // 0 is Sunday
+      count++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+  return count;
 }
 
 /**
@@ -79,13 +91,14 @@ export async function submitTimeOffRequestAction(params: {
 
   const counterType = getCounterTypeForRequestType(payload.requestType);
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(payload.requestType);
+  const isSickness = payload.requestType === 'sickness';
   
-  // Server-side duration calculation
+  // Server-side duration calculation (Hardened)
   const duration = isHourly 
     ? calculateHourlyDuration(payload.startTime || "09:00", payload.endTime || "10:00") 
     : calculateDuration(payload.startDate, payload.endDate, payload.dayPart);
 
-  if (duration <= 0) throw new Error("Durée invalide.");
+  if (duration <= 0) throw new Error("Durée invalide ou calculée à 0 (ex: Dimanche uniquement).");
 
   const year = parseInt(payload.startDate.split('-')[0]);
   const balanceId = `${employee.employeeId}_${year}`;
@@ -95,8 +108,6 @@ export async function submitTimeOffRequestAction(params: {
   return await adminDb.runTransaction(async (transaction) => {
     // 1. Check Balance
     const balanceSnap = await transaction.get(balanceRef);
-    // Sickness doesn't always have a balance initialized, but it should allowed recording
-    const isSickness = payload.requestType === 'sickness';
     
     if (counterType && balanceSnap.exists) {
       const balance = balanceSnap.data()!;
@@ -192,7 +203,7 @@ export async function cancelTimeOffRequestAction(params: {
 
   const requestRef = adminDb.collection("entities").doc(entityId).collection("timeOffRequests").doc(requestId);
 
-  return await runTransaction(async (transaction) => {
+  return await adminDb.runTransaction(async (transaction) => {
     const snap = await transaction.get(requestRef);
     if (!snap.exists) throw new Error("Demande introuvable.");
     const request = snap.data()!;

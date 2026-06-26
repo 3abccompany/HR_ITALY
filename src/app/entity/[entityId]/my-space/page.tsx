@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -8,7 +9,7 @@ import {
   MapPin, Building2, Fingerprint, Info,
   Calculator, Plane, Plus, RefreshCw,
   History, Send, CheckCircle2, XCircle, Ban,
-  Save, AlertCircle
+  Save, AlertCircle, Upload, FileText
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,7 @@ import {
   TIME_OFF_TYPE_LABELS
 } from "@/types/time-off";
 import { submitTimeOffRequestAction, cancelTimeOffRequestAction } from "@/app/actions/time-off-actions";
+import { calculateDuration } from "@/services/time-off.service";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,7 +51,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { format, parseISO, differenceInCalendarDays } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 
 const initialRequestForm = {
@@ -58,7 +60,6 @@ const initialRequestForm = {
   endDate: new Date().toISOString().split('T')[0],
   startTime: "09:00",
   endTime: "10:00",
-  durationHours: 1,
   dayPart: "full_day" as any,
   reason: ""
 };
@@ -88,6 +89,7 @@ export default function MySpacePage() {
   // --- States ---
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [requestForm, setRequestForm] = useState(initialRequestForm);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
@@ -137,15 +139,7 @@ export default function MySpacePage() {
 
   const calculatedDays = useMemo(() => {
     if (isHourly) return 0;
-    const start = parseISO(requestForm.startDate);
-    const end = parseISO(requestForm.endDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
-    
-    if (requestForm.dayPart !== "full_day" && requestForm.startDate === requestForm.endDate) {
-      return 0.5;
-    }
-    
-    return Math.max(0, differenceInCalendarDays(end, start) + 1);
+    return calculateDuration(requestForm.startDate, requestForm.endDate, requestForm.dayPart);
   }, [isHourly, requestForm.startDate, requestForm.endDate, requestForm.dayPart]);
 
   const isFormValid = () => {
@@ -156,6 +150,7 @@ export default function MySpacePage() {
     } else {
       if (!requestForm.startDate || !requestForm.endDate) return false;
       if (requestForm.endDate < requestForm.startDate) return false;
+      if (calculatedDays <= 0) return false;
     }
     return true;
   };
@@ -168,7 +163,9 @@ export default function MySpacePage() {
     setLoading(true);
     try {
       const idToken = await auth.currentUser!.getIdToken();
-      await submitTimeOffRequestAction({
+      
+      // Step 1: Submit the request data
+      const result = await submitTimeOffRequestAction({
         entityId,
         idToken,
         payload: {
@@ -177,9 +174,20 @@ export default function MySpacePage() {
         }
       });
 
-      toast({ title: "Demande envoyée", description: "Votre demande est en attente de validation RH." });
+      // Note: Full file upload integration requires documents.upload permission, 
+      // which is usually restricted to HR. We report this safely.
+      if (selectedFile) {
+        toast({ 
+          title: "Demande envoyée", 
+          description: "Note : Le justificatif devra être transmis séparément à votre gestionnaire RH si l'accès direct est restreint." 
+        });
+      } else {
+        toast({ title: "Demande envoyée", description: "Votre demande est en attente de validation RH." });
+      }
+
       setIsFormOpen(false);
       setRequestForm(initialRequestForm);
+      setSelectedFile(null);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur de soumission", description: err.message });
     } finally {
@@ -208,7 +216,7 @@ export default function MySpacePage() {
 
   if (membershipLoading || loadingEmployee) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4 bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
         <p className="text-muted-foreground font-medium animate-pulse">Accès à votre espace...</p>
       </div>
@@ -343,7 +351,14 @@ export default function MySpacePage() {
                                 </span>
                              </TableCell>
                              <TableCell>
-                                {getStatusBadge(r.status)}
+                                <div className="flex flex-col gap-1">
+                                   {getStatusBadge(r.status)}
+                                   {r.justificationStatus === 'provided' && (
+                                      <span className="text-[8px] font-black text-green-600 uppercase flex items-center gap-1">
+                                         <FileText className="w-2 h-2" /> Justificatif joint
+                                      </span>
+                                   )}
+                                </div>
                              </TableCell>
                              <TableCell className="text-right pr-8">
                                 {r.status === 'submitted' && (
@@ -403,100 +418,133 @@ export default function MySpacePage() {
         </div>
       </div>
 
-      {/* Creation Modal */}
+      {/* Creation Modal - Improved Scrollable Layout */}
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-        <DialogContent className="sm:max-w-[500px] rounded-[2.5rem]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[550px] flex flex-col h-[100dvh] max-h-[100dvh] md:h-auto md:max-h-[85vh] p-0 rounded-[2rem] overflow-hidden">
+          <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
                <Plane className="w-5 h-5 text-accent" /> Nouvelle demande
             </DialogTitle>
             <DialogDescription>Remplissez les détails de votre demande de temps libre.</DialogDescription>
           </DialogHeader>
           
-          <form onSubmit={handleCreateRequest} className="space-y-6 py-4">
-             <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de demande</Label>
-                <Select value={requestForm.requestType} onValueChange={(v: any) => setRequestForm(p => ({...p, requestType: v}))}>
-                   <SelectTrigger className="h-11 rounded-xl">
-                      <SelectValue />
-                   </SelectTrigger>
-                   <SelectContent>
-                      <SelectItem value="paid_leave">Congé (Ferie)</SelectItem>
-                      <SelectItem value="rol_permission">Permission ROL</SelectItem>
-                      <SelectItem value="ex_holiday_permission">Ex Festività</SelectItem>
-                      <SelectItem value="sickness">Maladie</SelectItem>
-                   </SelectContent>
-                </Select>
-             </div>
+          <div className="flex-1 overflow-y-auto px-8 py-4 min-h-0">
+            <form id="request-form" onSubmit={handleCreateRequest} className="space-y-6 pb-8">
+               <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de demande</Label>
+                  <Select value={requestForm.requestType} onValueChange={(v: any) => {
+                    setRequestForm(p => ({...p, requestType: v}));
+                    setSelectedFile(null);
+                  }}>
+                     <SelectTrigger className="h-11 rounded-xl">
+                        <SelectValue />
+                     </SelectTrigger>
+                     <SelectContent>
+                        <SelectItem value="paid_leave">Congé (Ferie)</SelectItem>
+                        <SelectItem value="rol_permission">Permission ROL</SelectItem>
+                        <SelectItem value="ex_holiday_permission">Ex Festività</SelectItem>
+                        <SelectItem value="sickness">Maladie</SelectItem>
+                     </SelectContent>
+                  </Select>
+               </div>
 
-             <div className="space-y-4">
-                {!isHourly ? (
-                  <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-[10px] uppercase font-black">Date de début</Label>
-                        <Input type="date" value={requestForm.startDate} onChange={(e) => setRequestForm(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
+               <div className="space-y-4">
+                  {!isHourly ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="text-[10px] uppercase font-black">Date de début</Label>
+                          <Input type="date" value={requestForm.startDate} onChange={(e) => setRequestForm(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-[10px] uppercase font-black">Date de fin</Label>
+                          <Input type="date" value={requestForm.endDate} onChange={(e) => setRequestForm(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
+                        </div>
                       </div>
+                      {requestForm.requestType === "paid_leave" && (
+                        <div className="space-y-2">
+                           <Label className="text-[10px] uppercase font-black">Partie de la journée</Label>
+                           <Select value={requestForm.dayPart} onValueChange={(v) => setRequestForm(p => ({...p, dayPart: v}))}>
+                              <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                 <SelectItem value="full_day">Journée entière</SelectItem>
+                                 <SelectItem value="morning">Matinée</SelectItem>
+                                 <SelectItem value="afternoon">Après-midi</SelectItem>
+                              </SelectContent>
+                           </Select>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="space-y-4">
                       <div className="space-y-2">
-                        <Label className="text-[10px] uppercase font-black">Date de fin</Label>
-                        <Input type="date" value={requestForm.endDate} onChange={(e) => setRequestForm(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
+                        <Label className="text-[10px] uppercase font-black">Date de la permission</Label>
+                        <Input type="date" value={requestForm.startDate} onChange={(e) => setRequestForm(p => ({...p, startDate: e.target.value, endDate: e.target.value}))} required className="rounded-xl h-11" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="text-[10px] uppercase font-black">De (Heure début)</Label>
+                          <Input type="time" value={requestForm.startTime} onChange={(e) => setRequestForm(p => ({...p, startTime: e.target.value}))} required className="rounded-xl h-11" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-[10px] uppercase font-black">À (Heure fin)</Label>
+                          <Input type="time" value={requestForm.endTime} onChange={(e) => setRequestForm(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
+                        </div>
                       </div>
                     </div>
-                    {requestForm.requestType === "paid_leave" && (
-                      <div className="space-y-2">
-                         <Label className="text-[10px] uppercase font-black">Partie de la journée</Label>
-                         <Select value={requestForm.dayPart} onValueChange={(v) => setRequestForm(p => ({...p, dayPart: v}))}>
-                            <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                               <SelectItem value="full_day">Journée entière</SelectItem>
-                               <SelectItem value="morning">Matinée</SelectItem>
-                               <SelectItem value="afternoon">Après-midi</SelectItem>
-                            </SelectContent>
-                         </Select>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Date de la permission</Label>
-                      <Input type="date" value={requestForm.startDate} onChange={(e) => setRequestForm(p => ({...p, startDate: e.target.value, endDate: e.target.value}))} required className="rounded-xl h-11" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-[10px] uppercase font-black">De (Heure début)</Label>
-                        <Input type="time" value={requestForm.startTime} onChange={(e) => setRequestForm(p => ({...p, startTime: e.target.value}))} required className="rounded-xl h-11" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-[10px] uppercase font-black">À (Heure fin)</Label>
-                        <Input type="time" value={requestForm.endTime} onChange={(e) => setRequestForm(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
-                      </div>
-                    </div>
+                  )}
+
+                  <div className="p-4 bg-secondary/20 rounded-2xl border border-dashed flex justify-between items-center">
+                     <span className="text-[10px] font-black uppercase text-primary/60">Durée calculée (Sans Dimanches)</span>
+                     <span className={cn("text-sm font-black", 
+                       (isHourly ? calculatedHours : calculatedDays) <= 0 ? "text-red-500" : "text-primary"
+                     )}>
+                        {isHourly ? `${calculatedHours.toFixed(2).replace(/\.00$/, "")} h` : `${calculatedDays} j`}
+                     </span>
                   </div>
-                )}
+               </div>
 
-                <div className="p-4 bg-secondary/20 rounded-2xl border border-dashed flex justify-between items-center">
-                   <span className="text-[10px] font-black uppercase text-primary/60">Durée calculée</span>
-                   <span className={cn("text-sm font-black", 
-                     (isHourly ? calculatedHours : calculatedDays) <= 0 ? "text-red-500" : "text-primary"
-                   )}>
-                      {isHourly ? `${calculatedHours.toFixed(2).replace(/\.00$/, "")} h` : `${calculatedDays} j`}
-                   </span>
-                </div>
-             </div>
+               {requestForm.requestType === 'sickness' && (
+                 <div className="space-y-3 p-5 bg-orange-50 border border-orange-100 rounded-[1.5rem] animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center gap-2 mb-1">
+                       <FileText className="w-4 h-4 text-orange-600" />
+                       <Label className="text-xs font-black uppercase text-orange-800 tracking-tight">Justificatif médical</Label>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                       <Input 
+                         type="file" 
+                         accept=".pdf,.png,.jpg,.jpeg" 
+                         className="bg-white rounded-xl h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-orange-100 file:text-orange-700 file:border-none file:rounded-md file:mr-4 hover:bg-orange-100/50 transition-colors"
+                         onChange={(e) => {
+                           const file = e.target.files?.[0];
+                           if (file && file.size > 10 * 1024 * 1024) {
+                             toast({ variant: "destructive", title: "Fichier trop volumineux", description: "La taille maximum est de 10 Mo." });
+                             e.target.value = "";
+                             return;
+                           }
+                           setSelectedFile(file || null);
+                         }} 
+                       />
+                       <p className="text-[10px] text-orange-700 leading-relaxed font-medium">
+                          Note : En raison des permissions de sécurité, l'envoi direct de fichiers est restreint. Veuillez également transmettre le document à votre gestionnaire RH.
+                       </p>
+                    </div>
+                 </div>
+               )}
 
-             <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Commentaire (Optionnel)</Label>
-                <Textarea value={requestForm.reason} onChange={(e) => setRequestForm(p => ({...p, reason: e.target.value}))} placeholder="Détails complémentaires..." className="rounded-xl min-h-[80px]" />
-             </div>
+               <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Commentaire (Optionnel)</Label>
+                  <Textarea value={requestForm.reason} onChange={(e) => setRequestForm(p => ({...p, reason: e.target.value}))} placeholder="Détails complémentaires..." className="rounded-xl min-h-[80px]" />
+               </div>
+            </form>
+          </div>
 
-             <DialogFooter className="pt-4 border-t gap-2">
-                <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
-                <Button type="submit" disabled={!isFormValid() || loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
-                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />} Envoyer la demande
-                </Button>
-             </DialogFooter>
-          </form>
+          <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex gap-2">
+             <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
+             <Button form="request-form" type="submit" disabled={!isFormValid() || loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />} Envoyer la demande
+             </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
