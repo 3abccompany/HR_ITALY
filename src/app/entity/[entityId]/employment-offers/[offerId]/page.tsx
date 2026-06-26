@@ -95,6 +95,16 @@ const WORKING_TIME_OPTIONS = [
   "Intermittente / Chiamata"
 ];
 
+const REVISION_REASONS = [
+  "Nouvelle négociation",
+  "Salaire modifié",
+  "Niveau CCNL modifié",
+  "Date de début modifiée",
+  "Autre poste",
+  "Correction / erreur dans la proposition précédente",
+  "Autre"
+];
+
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
@@ -121,7 +131,7 @@ export default function EditEmploymentOfferPage() {
   [db, entityId, offerId, canReadCPI]);
   const { data: standaloneRequest } = useDoc<any>(standaloneRequestRef);
 
-  // Dossier Checklist Query
+  // Dossier Checklist Query - with fix for missing orderBy import
   const checklistQuery = useMemo(() => {
     if (!dossier || !db || !entityId) return null;
     return query(collection(db, `entities/${entityId}/preHireDossiers/${dossier.dossierId}/checklist`), orderBy("createdAt", "asc")) as Query<PreHireDocument>;
@@ -164,6 +174,12 @@ export default function EditEmploymentOfferPage() {
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
   const [uploadingItem, setUploadingItem] = useState<string | null>(null);
 
+  // Email Preview States
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [emailPreview, setEmailPreview] = useState<{ to: string, subject: string, html: string } | null>(null);
+  const [editableSubject, setEditableSubject] = useState("");
+  const [editableBody, setEditableBody] = useState("");
+
   // Custom Doc Dialog State
   const [isCustomDocOpen, setIsCustomDocOpen] = useState(false);
   const [customDocForm, setCustomDocForm] = useState({ label: "", type: "other", isRequired: true, description: "" });
@@ -174,12 +190,6 @@ export default function EditEmploymentOfferPage() {
   const [pendingExpiresAt, setPendingExpiresAt] = useState("");
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isUploadingPreHireDocument, setIsUploadingPreHireDocument] = useState(false);
-
-  // Email Preview States
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [emailPreview, setEmailPreview] = useState<{ to: string, subject: string, html: string } | null>(null);
-  const [editableSubject, setEditableSubject] = useState("");
-  const [editableBody, setEditableBody] = useState("");
 
   // UniLav Form State
   const [uniLavData, setUniLavData] = useState({
@@ -613,7 +623,7 @@ export default function EditEmploymentOfferPage() {
                      <Button 
                         variant="outline" 
                         size="sm" 
-                        onClick={() => handleSendDocRequest(entityId, dossier!.dossierId, user?.uid || "")} 
+                        onClick={() => user && dossier && handleSendDocRequest(entityId, dossier.dossierId, user.uid)} 
                         disabled={saving || !user} 
                         className="h-8 rounded-xl font-bold bg-white gap-2"
                       >
@@ -762,7 +772,7 @@ export default function EditEmploymentOfferPage() {
                <CardContent className="p-8">
                   <div className="grid grid-cols-2 gap-8">
                      <DetailItem label="Type contrat" value={formData.contractType} />
-                     <DetailItem label="RAL" value={`€ ${formData.proposedGrossAnnual?.toLocaleString()}`} />
+                     <DetailItem label="RAL" value={formData.proposedGrossAnnual ? `€ ${formData.proposedGrossAnnual.toLocaleString()}` : '—'} />
                      <DetailItem label="CCNL" value={formData.ccnlName} />
                      <DetailItem label="Niveau" value={formData.levelCode} />
                   </div>

@@ -92,6 +92,7 @@ export async function ensurePreHireDossier(entityId: string, offer: EmploymentOf
 
 /**
  * Adds a custom document requirement to the dossier checklist.
+ * Ensures the payload never contains undefined to prevent Firestore errors.
  */
 export async function addCustomPreHireDocumentRequest(params: {
   entityId: string;
@@ -112,17 +113,25 @@ export async function addCustomPreHireDocumentRequest(params: {
   if (exists) throw new Error("Un document avec ce libellé est déjà présent dans la checklist.");
 
   const itemRef = doc(checklistRef);
-  const docData: PreHireDocument = {
+  
+  // Construct sanitized payload
+  const docData: any = {
     itemId: itemRef.id,
     type: type || "other",
     label: label.trim(),
-    description: description || undefined,
     status: "missing",
-    isRequired,
+    isRequired: !!isRequired,
     isCustom: true,
+    fileId: null, // Use null instead of undefined
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
+
+  // Optional fields - include only if non-empty
+  const trimmedDesc = description?.trim();
+  if (trimmedDesc) {
+    docData.description = trimmedDesc;
+  }
 
   await setDoc(itemRef, docData);
   await evaluateDossierReadiness(entityId, dossierId, actorUid);
