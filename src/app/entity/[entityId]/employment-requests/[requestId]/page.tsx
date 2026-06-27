@@ -93,6 +93,18 @@ export default function EmploymentRequestDetailPage() {
 
   const { data: request, loading } = useDoc<EmploymentRequest>(requestRef);
 
+  // Mandatory Communication Lookup
+  const communicationsQuery = useMemo(() => {
+    if (!db || !entityId || !request) return null;
+    return query(
+      collection(db, `entities/${entityId}/mandatoryCommunications`), 
+      where("employmentOfferId", "==", request.offerId || "")
+    ) as Query<any>;
+  }, [db, entityId, request]);
+  
+  const { data: communications } = useCollection<any>(communicationsQuery);
+  const mandatoryCommunication = communications?.find(c => c.type === "UNILAV_ASSUNZIONE");
+
   // Consultant Registry
   const consultantsQuery = useMemo(() => {
     if (!db || !entityId || !canReadConsultants) return null;
@@ -114,11 +126,17 @@ export default function EmploymentRequestDetailPage() {
   const [loadingFile, setLoadingFile] = useState(false);
   const [isRegistryConfirmOpen, setIsRegistryConfirmOpen] = useState(false);
 
-  // --- Preview & Edit State ---
+  // --- Preview & Edit State (Official System) ---
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [emailPreview, setEmailPreview] = useState<{ to: string, subject: string, html: string } | null>(null);
   const [editableSubject, setEditableSubject] = useState("");
   const [editableBody, setEditableBody] = useState("");
+
+  // --- External Preview & Edit State (Modal Only, No persistence) ---
+  const [isExternalEditOpen, setIsExternalEditOpen] = useState(false);
+  const [externalEditTo, setExternalEditTo] = useState("");
+  const [externalEditSubject, setExternalEditSubject] = useState("");
+  const [externalEditBody, setExternalEditBody] = useState("");
 
   useEffect(() => {
     if (request) {
@@ -242,6 +260,29 @@ export default function EmploymentRequestDetailPage() {
     } finally {
       setProcessing(false);
     }
+  };
+
+  const handleOpenExternalEdit = () => {
+    if (!request) return;
+    setExternalEditTo(consultantForm.email || "");
+    setExternalEditSubject(mandatoryCommunication?.emailSubject || `Communication UniLav - ${request.candidateDisplayName || 'Recrutement'}`);
+    setExternalEditBody(mandatoryCommunication?.emailBody || "");
+    setIsExternalEditOpen(true);
+  };
+
+  const handleCopyExternal = () => {
+    const text = `À: ${externalEditTo}\nObjet: ${externalEditSubject}\n\n${externalEditBody}`;
+    navigator.clipboard.writeText(text);
+    toast({ title: "Email copié", description: "Le contenu édité est dans votre presse-papier." });
+  };
+
+  const handleMailToExternal = () => {
+    if (!externalEditTo) {
+      toast({ variant: "destructive", title: "Email manquant", description: "Veuillez renseigner l'adresse email du destinataire." });
+      return;
+    }
+    const mailtoUrl = `mailto:${externalEditTo}?subject=${encodeURIComponent(externalEditSubject)}&body=${encodeURIComponent(externalEditBody)}`;
+    window.location.href = mailtoUrl;
   };
 
   /**
@@ -549,25 +590,43 @@ export default function EmploymentRequestDetailPage() {
                 </div>
 
                 {canUpdate && !isTerminal && (
-                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                      <Button 
-                        onClick={handleSendViaEmail} 
-                        disabled={processing || !request.consultantEmail} 
-                        className="h-12 rounded-xl font-black bg-primary text-white shadow-lg gap-2"
-                      >
-                         {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                         Envoyer email au consultant
-                      </Button>
-                      <Button 
-                        onClick={handleMarkSentManual} 
-                        disabled={processing} 
-                        variant="outline" 
-                        className="h-12 rounded-xl font-bold border-dashed border-2 text-primary hover:bg-slate-50 transition-all gap-2"
-                      >
-                         {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                         Marquer comme envoyé manuellement
-                      </Button>
+                   <div className="flex flex-col gap-3 pt-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <Button 
+                          onClick={handleSendViaEmail} 
+                          disabled={processing || !request.consultantEmail} 
+                          className="h-12 rounded-xl font-black bg-primary text-white shadow-lg gap-2"
+                        >
+                          {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                          Envoyer via système (SMTP)
+                        </Button>
+                        <Button 
+                          onClick={handleMarkSentManual} 
+                          disabled={processing} 
+                          variant="outline" 
+                          className="h-12 rounded-xl font-bold border-dashed border-2 text-primary hover:bg-slate-50 transition-all gap-2"
+                        >
+                          {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                          Marquer comme transmis (Papier/Portail)
+                        </Button>
+                      </div>
+                      
+                      <div className="flex justify-center">
+                        <Button 
+                          variant="ghost" 
+                          className="text-xs font-bold text-primary gap-2"
+                          onClick={handleOpenExternalEdit}
+                        >
+                          <MessageSquare className="w-4 h-4" /> Visualiser / modifier l’e-mail
+                        </Button>
+                      </div>
                    </div>
+                )}
+
+                {!isTerminal && !canUpdate && request.sentAt && (
+                   <Button variant="ghost" className="text-xs font-bold text-primary gap-2" onClick={handleOpenExternalEdit}>
+                     <Eye className="w-4 h-4" /> Consulter le message généré
+                   </Button>
                 )}
              </CardContent>
           </Card>
@@ -582,7 +641,7 @@ export default function EmploymentRequestDetailPage() {
              <CardContent className="p-8 space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                    <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Numéro de protocole (Requis)</Label>
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Numéro de protocole (Requis)</Label>
                       <Input 
                         value={cpiForm.code} 
                         onChange={(e) => setCpiForm(p => ({...p, code: e.target.value}))} 
@@ -749,7 +808,7 @@ export default function EmploymentRequestDetailPage() {
         </div>
       </div>
 
-      {/* CPI Email Preview & Edit Dialog */}
+      {/* CPI Email Preview & Edit Dialog (System/SMTP) */}
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
         <DialogContent className="sm:max-w-[650px] rounded-[2.5rem]">
           <DialogHeader>
@@ -796,6 +855,68 @@ export default function EmploymentRequestDetailPage() {
               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
               Confirmer et envoyer
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* External Email Preview & Edit Dialog (Modal Only) */}
+      <Dialog open={isExternalEditOpen} onOpenChange={setIsExternalEditOpen}>
+        <DialogContent className="sm:max-w-[700px] rounded-[2rem] flex flex-col h-[90vh]">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+               <MessageSquare className="w-6 h-6 text-accent" />
+               {request.type === 'unilav_proroga' ? 'Proroga / Renouvellement CDD' : 'Assunzione / Première communication UniLav'}
+            </DialogTitle>
+            <DialogDescription>Visualisez et modifiez le contenu du message avant de le partager.</DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto py-6 space-y-6">
+             <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">À / Destinataire</Label>
+                <Input 
+                   value={externalEditTo} 
+                   onChange={(e) => setExternalEditTo(e.target.value)}
+                   placeholder="payroll@example.com"
+                   className="rounded-xl h-11"
+                />
+             </div>
+
+             <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Objet / Subject</Label>
+                <Input 
+                   value={externalEditSubject} 
+                   onChange={(e) => setExternalEditSubject(e.target.value)}
+                   placeholder="Objet de l'email..."
+                   className="rounded-xl h-11 font-bold"
+                />
+             </div>
+
+             <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Message / Body</Label>
+                <Textarea 
+                   value={externalEditBody} 
+                   onChange={(e) => setExternalEditBody(e.target.value)}
+                   className="min-h-[350px] rounded-2xl border-primary/5 bg-slate-50 p-4 text-xs font-sans leading-relaxed"
+                   placeholder="Votre message..."
+                />
+             </div>
+          </div>
+
+          <DialogFooter className="shrink-0 pt-6 border-t flex flex-col sm:flex-row gap-3">
+             <Button variant="ghost" onClick={() => setIsExternalEditOpen(false)} className="rounded-xl font-bold">Fermer</Button>
+             <Button 
+                variant="outline" 
+                onClick={handleCopyExternal}
+                className="rounded-xl font-bold gap-2 bg-white"
+             >
+                <RefreshCcw className="w-4 h-4" /> Copier le message édité
+             </Button>
+             <Button 
+                onClick={handleMailToExternal}
+                className="rounded-xl font-black bg-primary text-white shadow-lg gap-2 px-6"
+             >
+                <Send className="w-4 h-4" /> Ouvrir dans le client mail
+             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
