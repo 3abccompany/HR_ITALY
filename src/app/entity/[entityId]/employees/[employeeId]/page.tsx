@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -132,8 +131,8 @@ export default function Employee360HubPage() {
   const entityId = params?.entityId as string;
   const employeeId = params?.employeeId as string;
   
-  const { db } = useFirebase();
-  const auth = useAuth();
+  const { db, auth } = useFirebase();
+  const authInstance = useAuth();
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
@@ -287,7 +286,11 @@ export default function Employee360HubPage() {
 
   // Detected if a historical UniLav receipt document exists for the overview card
   const hasHistoricalUniLav = useMemo(() => {
-    return allDocs?.some(d => d.documentType === 'unilav_receipt' && d.status === 'valid');
+    return allDocs?.some(d => (d.documentType === 'unilav_receipt' || d.documentType === 'cpi_receipt') && d.status === 'valid');
+  }, [allDocs]);
+
+  const historicalUniLavDoc = useMemo(() => {
+    return allDocs?.find(d => (d.documentType === 'unilav_receipt' || d.documentType === 'cpi_receipt') && d.status === 'valid');
   }, [allDocs]);
 
   // --- Handlers ---
@@ -767,6 +770,41 @@ export default function Employee360HubPage() {
                              </Button>
                           </div>
                         </>
+                      ) : historicalUniLavDoc ? (
+                        <>
+                          <div className="flex items-center justify-between">
+                             <div className="space-y-1">
+                                <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Document GED</p>
+                                <p className="font-bold text-primary">UniLav historique / Importé</p>
+                             </div>
+                             <Badge variant="outline" className="h-6 px-3 bg-green-50 text-green-700 border-green-200">
+                                Validé
+                             </Badge>
+                          </div>
+                          
+                          <div className="space-y-4 pt-2">
+                             <div className="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 flex items-center gap-4">
+                                <div className="bg-white p-2.5 rounded-xl shadow-sm text-primary/40"><FileText className="w-5 h-5" /></div>
+                                <div className="min-w-0 flex-1">
+                                   <p className="text-sm font-bold text-slate-800 truncate">{historicalUniLavDoc.title}</p>
+                                   <p className="text-[10px] text-muted-foreground">Importé le {formatDateSafe(historicalUniLavDoc.uploadedAt)}</p>
+                                </div>
+                             </div>
+
+                             {canReadDocs && (
+                                <Button variant="secondary" className="w-full h-11 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 gap-2" onClick={() => handleOpenDoc(historicalUniLavDoc.storagePath, historicalUniLavDoc.id)}>
+                                   <Download className="w-4 h-4" /> Consulter le reçu importé
+                                </Button>
+                             )}
+
+                             <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl flex items-start gap-2">
+                                <Info className="w-3.5 h-3.5 text-blue-600 mt-0.5" />
+                                <p className="text-[10px] text-blue-800 leading-tight">
+                                   Ce document a été rattaché manuellement ou importé lors de la reprise du dossier. Aucun flux de communication CPI n'est associé à ce record.
+                                </p>
+                             </div>
+                          </div>
+                        </>
                       ) : (
                         <div className="py-12 flex flex-col items-center text-center space-y-4 opacity-60">
                            <AlertTriangle className="w-10 h-10 text-muted-foreground/30" />
@@ -1012,7 +1050,7 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
               </TableCell>
               <TableCell>
                  {expiryDate ? (
-                   <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                   <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-orange-600" : "text-slate-600")}>
                       {formatDateSafe(rawExpiry)}
                       {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                    </div>
