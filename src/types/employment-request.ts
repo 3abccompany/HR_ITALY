@@ -25,7 +25,7 @@ export interface EmploymentRequest {
   // Relational links
   personId?: string;
   candidateId?: string;
-  candidateDisplayName?: string;
+  candidateDisplayName?: string | null;
   candidateEmail?: string | null;
   candidatePhone?: string | null;
   offerId?: string;

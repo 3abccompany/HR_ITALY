@@ -21,8 +21,9 @@ import { EmploymentRequest, EmploymentRequestStatus, EmploymentRequestType } fro
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
+import { cn } from "@/lib/utils";
 
-const STATUS_LABELS: Record<EmploymentRequestStatus, string> = {
+const STATUS_LABELS: Record<string, string> = {
   draft: "Brouillon",
   to_send: "À envoyer",
   sent_to_consultant: "Envoyé consultant",
@@ -32,7 +33,7 @@ const STATUS_LABELS: Record<EmploymentRequestStatus, string> = {
   cancelled: "Annulé"
 };
 
-const TYPE_LABELS: Record<EmploymentRequestType, string> = {
+const TYPE_LABELS: Record<string, string> = {
   unilav: "Embauche / UniLav",
   unilav_proroga: "Proroga / Renouvellement",
   unilav_trasformazione: "Transformation",
@@ -199,7 +200,7 @@ export default function EmploymentRequestsRegistryPage() {
   );
 }
 
-function getStatusBadge(status: EmploymentRequestStatus) {
+function getStatusBadge(status: string) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 text-[10px] h-5 px-2">Brouillon</Badge>;
     case 'sent_to_consultant': return <Badge className="bg-blue-500 text-white border-none text-[10px] h-5 px-2">Envoyé</Badge>;
