@@ -373,17 +373,18 @@ export default function Employee360HubPage() {
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
       {/* Navigation */}
-            <div className="mb-6 flex items-center justify-between">
-            <Button
-            type="button"
-            variant="ghost"
-            onClick={() => router.push(`/entity/${entityId}/employees`)}
-            className="gap-2 rounded-xl font-bold text-primary hover:bg-primary/5"
-            >
-            <ArrowLeft className="h-4 w-4" />
-            Retour aux employés
-            </Button>
-         </div>
+      <div className="mb-6 flex items-center justify-between">
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => router.push(`/entity/${entityId}/employees`)}
+          className="gap-2 rounded-xl font-bold text-primary hover:bg-primary/5"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Retour aux employés
+        </Button>
+      </div>
+
       {/* 360 Header */}
       <header className="flex items-center justify-between mb-8 gap-6 border-b pb-8">
         <div className="flex items-center gap-6">
@@ -770,7 +771,7 @@ export default function Employee360HubPage() {
                              </Button>
                           </div>
                         </>
-                      ) : historicalUniLavDoc ? (
+                      ) : (historicalUniLavDoc ? (
                         <>
                           <div className="flex items-center justify-between">
                              <div className="space-y-1">
@@ -815,7 +816,7 @@ export default function Employee360HubPage() {
                               </p>
                            </div>
                         </div>
-                      )}
+                      ))}
                   </CardContent>
                 </Card>
               )}
@@ -1013,76 +1014,78 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
       <TableBody>
         {!docs || docs.length === 0 ? (
           <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground italic text-xs">Aucun document rattaché.</TableCell></TableRow>
-        ) : docs.map(d => {
-          const isLoading = loadingId === d.id;
-          const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(d.documentType) || d.relatedModule === 'contracts';
-          
-          const contractLabel = renderContractContext(d, employee, true) as string | null;
-          const subtitle = contractLabel || d.employeeDisplayName || "Général";
+        ) : (
+          docs.map(d => {
+            const isLoading = loadingId === d.id;
+            const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(d.documentType) || d.relatedModule === 'contracts';
+            
+            const contractLabel = renderContractContext(d, employee, true) as string | null;
+            const subtitle = contractLabel || d.employeeDisplayName || "Général";
 
-          const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
-          const expiryDate = parseSafeDate(rawExpiry);
-          const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
-          const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 60;
+            const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
+            const expiryDate = parseSafeDate(rawExpiry);
+            const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
+            const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 60;
 
-          return (
-            <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
-              <TableCell className="pl-8 py-4">
-                <div className="flex items-center gap-2">
-                   <div className="font-bold text-slate-800 text-sm truncate max-w-[250px]">{d.title}</div>
-                   {renderContractContext(d, employee)}
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                   <div className="text-[9px] text-muted-foreground font-mono truncate max-w-[150px]">{d.fileName}</div>
-                   <span className="text-slate-200 text-[8px]">•</span>
-                   <div className="text-[9px] text-muted-foreground font-medium">{subtitle}</div>
-                </div>
-              </TableCell>
-              <TableCell>
-                 <div className="flex flex-col gap-0.5">
-                    <span className="text-[10px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[d.documentType] || d.documentType}</span>
-                    {d.contractStartDate && (
-                       <span className="text-[9px] font-bold text-muted-foreground/50 italic">
-                         Période: {formatDateSafe(d.contractStartDate)} {d.contractEndDate ? `- ${formatDateSafe(d.contractEndDate)}` : ''}
-                       </span>
-                    )}
-                 </div>
-              </TableCell>
-              <TableCell>
-                 {expiryDate ? (
-                   <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-orange-600" : "text-slate-600")}>
-                      {formatDateSafe(rawExpiry)}
-                      {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
+            return (
+              <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
+                <TableCell className="pl-8 py-4">
+                  <div className="flex items-center gap-2">
+                     <div className="font-bold text-slate-800 text-sm truncate max-w-[250px]">{d.title}</div>
+                     {renderContractContext(d, employee)}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                     <div className="text-[9px] text-muted-foreground font-mono truncate max-w-[150px]">{d.fileName}</div>
+                     <span className="text-slate-200 text-[8px]">•</span>
+                     <div className="text-[9px] text-muted-foreground font-medium">{subtitle}</div>
+                  </div>
+                </TableCell>
+                <TableCell>
+                   <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] font-black uppercase text-muted-foreground/60">{DOCUMENT_TYPE_LABELS[d.documentType] || d.documentType}</span>
+                      {d.contractStartDate && (
+                         <span className="text-[9px] font-bold text-muted-foreground/50 italic">
+                           Période: {formatDateSafe(d.contractStartDate)} {d.contractEndDate ? `- ${formatDateSafe(d.contractEndDate)}` : ''}
+                         </span>
+                      )}
                    </div>
-                 ) : (
-                   <span className="text-[10px] text-muted-foreground/30">—</span>
-                 )}
-              </TableCell>
-              <TableCell>
-                 <Badge variant="outline" className={cn("text-[8px] uppercase font-black h-4", d.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50")}>
-                   {STATUS_LABELS[d.status] || d.status}
-                 </Badge>
-              </TableCell>
-              <TableCell className="text-[10px] font-medium text-slate-500">
-                 {formatDateSafe(d.uploadedAt || d.createdAt)}
-              </TableCell>
-              <TableCell className="text-right pr-8">
-                 <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {isContractDoc && d.contractId && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
-                         <Link href={`/entity/${entityId}/contracts/${d.contractId}`}>
-                            <Briefcase className="w-4 h-4" />
-                         </Link>
+                </TableCell>
+                <TableCell>
+                   {expiryDate ? (
+                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                        {formatDateSafe(rawExpiry)}
+                        {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
+                     </div>
+                   ) : (
+                     <span className="text-[10px] text-muted-foreground/30">—</span>
+                   )}
+                </TableCell>
+                <TableCell>
+                   <Badge variant="outline" className={cn("text-[8px] uppercase font-black h-4", d.status === 'valid' ? "bg-green-50 text-green-700" : "bg-slate-50")}>
+                     {STATUS_LABELS[d.status] || d.status}
+                   </Badge>
+                </TableCell>
+                <TableCell className="text-[10px] font-medium text-slate-500">
+                   {formatDateSafe(d.uploadedAt || d.createdAt)}
+                </TableCell>
+                <TableCell className="text-right pr-8">
+                   <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {isContractDoc && d.contractId && (
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
+                           <Link href={`/entity/${entityId}/contracts/${d.contractId}`}>
+                              <Briefcase className="w-4 h-4" />
+                           </Link>
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId} title="Ouvrir">
+                         {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
                       </Button>
-                    )}
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId} title="Ouvrir">
-                       {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4" />}
-                    </Button>
-                 </div>
-              </TableCell>
-            </TableRow>
-          );
-        })}
+                   </div>
+                </TableCell>
+              </TableRow>
+            );
+          })
+        )}
       </TableBody>
     </Table>
   );
