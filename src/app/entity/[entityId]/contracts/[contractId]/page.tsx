@@ -306,13 +306,6 @@ export default function ContractDetailPage() {
   const { data: communications } = useCollection<any>(communicationsQuery);
   const mandatoryCommunication = communications?.find(c => c.type === "UNILAV_ASSUNZIONE");
 
-  // Load masters for editing
-  const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId || !isEditing || contract?.status !== 'draft') return null;
-    return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any>;
-  }, [db, entityId, isEditing, contract?.status]);
-  const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
-
   // --- Derived State & Workflow Guards ---
   const canUpdate = hasPermission("contracts.update");
   const isDraft = contract?.status === 'draft';
@@ -385,6 +378,70 @@ export default function ContractDetailPage() {
 
   const canActivateNow = activationBlockers.filter(b => b.type === 'error').length === 0;
 
+  const handleGeneratePdf = async () => {
+    if (!user || !entityId || !contractId) return;
+    setGeneratingPdf(true);
+    try {
+      // Step 1: Save all effective content snapshots before generation
+      await updateContract(entityId, contractId, effectiveData, user.uid);
+
+      // Step 2: Trigger PDF generation API
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch(`/api/entities/${entityId}/contracts/${contractId}/generate-pdf`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${idToken}` }
+      });
+      
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Generation failed");
+      
+      toast({ title: "PDF Généré", description: `Version ${result.version} prête pour signature.` });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur PDF", description: err.message });
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  const handleOpenDoc = async (storagePath: string, id: string) => {
+    setLoadingActionId(id);
+    try {
+      const url = await getDocumentDownloadUrl(storagePath);
+      window.open(url, "_blank");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
+    } finally {
+      setLoadingActionId(null);
+    }
+  };
+
+  const handleEnterEditMode = () => {
+    if (contract) {
+      setFormData({
+        ...contract,
+        ...effectiveData
+      });
+      setIsEditing(true);
+    }
+  };
+
+  const handleTransition = async (action: () => Promise<any>, successMsg: string) => {
+    if (!user || !contract) return;
+    setProcessing(true);
+    try {
+      await action();
+      toast({ title: "Succès", description: successMsg });
+    } catch (err: any) {
+      let msg = err.message || "Une erreur est survenue.";
+      if (err.message === "ALREADY_HAS_ACTIVE_CONTRACT") {
+        msg = "Un altro contratto attivo esiste già per questo collaboratore.";
+      }
+      toast({ variant: "destructive", title: "Erreur", description: msg });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   // Load levels securely when CCNL changes during editing
   useEffect(() => {
     async function fetchLevels() {
@@ -401,11 +458,6 @@ export default function ContractDetailPage() {
         
         const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
         setActiveLevels(levels);
-
-        if (!formData.ccnlId && formData.ccnlName && activeCcnls) {
-           const match = activeCcnls.find((c: any) => c.name === formData.ccnlName);
-           if (match) setFormData(p => ({...p, ccnlId: match.ccnlId}));
-        }
       } catch (err: any) {
         console.error("Error fetching levels:", err);
       } finally {
@@ -416,7 +468,7 @@ export default function ContractDetailPage() {
     if (isEditing && contract?.status === 'draft') {
        fetchLevels();
     }
-  }, [formData.ccnlId, isEditing, contract?.status, entityId, user, activeCcnls, auth.currentUser]);
+  }, [formData.ccnlId, isEditing, contract?.status, entityId, user, auth.currentUser]);
 
   const getEffectiveValue = (field: keyof Contract, fallback?: any) => {
     const val = contract?.[field];
@@ -487,291 +539,9 @@ export default function ContractDetailPage() {
     }
   }, [contract]);
 
-  const handleGeneratePdf = async () => {
-    if (!user || !entityId || !contractId) return;
-    setGeneratingPdf(true);
-    try {
-      // Step 1: Save all effective content snapshots before generation
-      await updateContract(entityId, contractId, effectiveData, user.uid);
-
-      // Step 2: Trigger PDF generation API
-      const idToken = await auth.currentUser?.getIdToken();
-      const response = await fetch(`/api/entities/${entityId}/contracts/${contractId}/generate-pdf`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${idToken}` }
-      });
-      
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Generation failed");
-      
-      toast({ title: "PDF Généré", description: `Version ${result.version} prête pour signature.` });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur PDF", description: err.message });
-    } finally {
-      setGeneratingPdf(false);
-    }
-  };
-
-  const handleOpenDoc = async (storagePath: string, id: string) => {
-    setLoadingActionId(id);
-    try {
-      const url = await getDocumentDownloadUrl(storagePath);
-      window.open(url, "_blank");
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
-    } finally {
-      setLoadingActionId(null);
-    }
-  };
-
-  const handleEnterEditMode = () => {
-    if (contract) {
-      setFormData({
-        ...contract,
-        ...effectiveData
-      });
-      setIsEditing(true);
-    }
-  };
-
-  const handleCcnlChange = (id: string) => {
-    if (id === "none_clear") {
-       setFormData(p => ({...p, ccnlId: "", ccnlName: "", levelId: "", levelCode: "", levelLabel: ""}));
-       return;
-    }
-    const ccnl = activeCcnls?.find((c: any) => c.ccnlId === id);
-    setFormData(p => ({
-      ...p,
-      ccnlId: id,
-      ccnlName: ccnl?.name || "",
-      levelId: "",
-      levelCode: "",
-      levelLabel: "",
-      monthlyPayments: ccnl?.monthlyPayments || p.monthlyPayments || 13
-    }));
-  };
-
-  const handleLevelChange = (id: string) => {
-    if (id === "none_clear") {
-       setFormData(p => ({ ...p, levelId: "", levelCode: "", levelLabel: "", qualificationCategory: "" }));
-       return;
-    }
-    const level = activeLevels?.find((l: any) => l.id === id);
-    if (!level) return;
-
-    setFormData(p => {
-       const monthly = level.minimumGrossMonthly || 0;
-       const payments = p.monthlyPayments || 13;
-       return {
-         ...p,
-         levelId: id,
-         levelCode: level.levelCode || "",
-         levelLabel: level.label || "",
-         qualificationCategory: level.qualificationLabel || "",
-         grossMonthly: monthly,
-         grossAnnual: monthly * payments
-       };
-    });
-  };
-
-  const handleMonthlySalaryChange = (val: string) => {
-    const amount = parseFloat(val) || 0;
-    setFormData(p => ({
-      ...p,
-      proposedGrossMonthly: amount,
-      proposedGrossAnnual: amount * (p.monthlyPayments || 13)
-    }));
-  };
-
-  const formatDate = (val: any) => {
-    if (!val) return "-";
-    try {
-      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
-        const [y, m, d] = val.split('-');
-        return `${d}/${m}/${y}`;
-      }
-      const d = val.toDate ? val.toDate() : new Date(val);
-      if (isNaN(d.getTime())) return "-";
-      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    } catch (e) {
-      return "-";
-    }
-  };
-
-  const formatDateTime = (val: any) => {
-    if (!val) return "-";
-    try {
-      const d = val.toDate ? val.toDate() : new Date(val);
-      if (isNaN(d.getTime())) return "-";
-      return d.toLocaleString('fr-FR', { 
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit'
-      });
-    } catch (e) {
-      return "-";
-    }
-  };
-
-  const getUserLabel = (uid: string | undefined) => {
-    if (!uid) return "-";
-    if (uid === "system" || uid === "candidate_portal" || uid === "server") return "Système";
-    return "Utilisateur interne";
-  };
-
-  const validateContractForSignature = () => {
-    const missing: string[] = [];
-    const data = effectiveData;
-
-    if (!data.employeeDisplayName) missing.push("Nom salarié manquant — à corriger depuis la fiche employé.");
-    if (!data.taxCode) missing.push("Code fiscal manquant — à corriger depuis la fiche employé.");
-    if (!data.contractType) missing.push("Type de contrat manquant — à corriger depuis la proposition source.");
-    if (!data.startDate) missing.push("Date de début manquante — à corriger depuis la proposition source.");
-    if (!data.jobTitleName) missing.push("Intitulé du poste manquant — à corriger depuis la proposition source.");
-    if (!data.worksiteName) missing.push("Site d'affectation manquant — à corriger depuis la proposition source.");
-    if (!data.ccnlName) missing.push("Convention collective (CCNL) manquante — à corriger depuis la proposition source.");
-    if (!data.weeklyHours) missing.push("Temps de travail manquant — à corriger depuis la proposition source.");
-    if (!data.grossMonthly && !data.grossAnnual) missing.push("Rémunération manquante — à corriger depuis la proposition source.");
-
-    if (!data.entityLegalName) missing.push("Raison sociale de l'employeur manquante — à compléter dans le contrat ou la fiche entreprise.");
-    if (!data.companyAddressSnapshot) missing.push("Adresse du siège manquante — à compléter dans le contrat ou la fiche entreprise.");
-    if (!data.employeeAddressSnapshot) missing.push("Adresse de résidence manquante — à compléter dans le contrat.");
-
-    return missing;
-  };
-
-  const handleTransitionToSignature = async () => {
-    if (!contract) return;
-
-    const missing = validateContractForSignature();
-    if (missing.length > 0) {
-      setValidationErrors(missing);
-      setIsValidationDialogOpen(true);
-      return;
-    }
-
-    if (!contract.generatedPdfStoragePath) {
-      setValidationErrors(["Veuillez générer le PDF du contrat avant de l’envoyer en signature."]);
-      setIsValidationDialogOpen(true);
-      return;
-    }
-
-    // Block if content is newer than PDF
-    if (isPdfObsolete) {
-      setValidationErrors(["Le contrat a été modifié après la génération du PDF. Veuillez régénérer le PDF."]);
-      setIsValidationDialogOpen(true);
-      return;
-    }
-
-    setProcessing(true);
-    try {
-      await sendContractToSignature(entityId, contractId, user!.uid);
-      toast({ title: "Succès", description: "Contrat prêt pour signature." });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handleSendToEmployee = async () => {
-    if (!user || !contract || !employee || !entityId) return;
-
-    if (!employee.email) {
-      toast({ variant: "destructive", title: "Email manquant", description: "Le salarié n'a pas d'adresse email configurée." });
-      return;
-    }
-
-    if (!contract.generatedPdfStoragePath) {
-      toast({ variant: "destructive", title: "Action bloquée", description: "Veuillez générer le PDF du contrat avant l’envoi." });
-      return;
-    }
-
-    if (isPdfObsolete) {
-      toast({ variant: "destructive", title: "Action bloquée", description: "Le PDF est obsolète. Veuillez régénérer le contrat avant l’envoi." });
-      return;
-    }
-
-    setProcessing(true);
-    try {
-      const result = await sendContractToEmployeeAction({
-        entityId,
-        contractId,
-        to: employee.email,
-        employeeName: employee.displayName,
-        companyName: entity?.nomEntreprise || "Notre Entreprise",
-        jobTitle: contract.jobTitleName || "Poste",
-        storagePath: contract.generatedPdfStoragePath
-      });
-
-      if (result.success) {
-        await recordContractSentToEmployee(entityId, contractId, employee.email, user.uid);
-        toast({ title: "Email envoyé", description: `Le contrat a été transmis à ${employee.email}.` });
-      } else {
-        throw new Error(result.error);
-      }
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Échec de l'envoi", description: err.message });
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handleTransition = async (action: () => Promise<any>, successMsg: string) => {
-    if (!user || !contract) return;
-    setProcessing(true);
-    try {
-      await action();
-      toast({ title: "Succès", description: successMsg });
-    } catch (err: any) {
-      let msg = err.message || "Une erreur est survenue.";
-      if (err.message === "ALREADY_HAS_ACTIVE_CONTRACT") {
-        msg = "Un altro contratto attivo esiste già per questo collaboratore.";
-      }
-      if (err.message === "MISSING_SIGNED_DOCUMENT") {
-        msg = "Veuillez enregistrer le contrat signé avant l'activation.";
-      }
-      toast({ variant: "destructive", title: "Erreur", description: msg });
-    } finally {
-      setProcessing(false);
-    }
-  };
-
   const handleSave = async () => {
     if (!user || !contract) return;
     setProcessing(true);
-
-    if (isDraft) {
-       const isFixedTerm = ['Tempo determinato', 'fixed_term', 'CDD'].includes(contract.contractType || '');
-       if (isFixedTerm && !formData.endDate) {
-          toast({ variant: "destructive", title: "Date manquante", description: "La date de fin est obligatoire pour un CDD." });
-          setProcessing(false);
-          return;
-       }
-       if (formData.startDate && formData.endDate) {
-          const s = new Date(formData.startDate);
-          const e = new Date(formData.endDate);
-          if (e <= s) {
-             toast({ variant: "destructive", title: "Dates invalides", description: "La date de fin doit être postérieure à la date de début." });
-             setProcessing(false);
-             return;
-          }
-       }
-       if (formData.grossMonthly !== undefined && Number(formData.grossMonthly) < 0) {
-          toast({ variant: "destructive", title: "Montant invalide", description: "Le salaire ne peut pas être négatif." });
-          setProcessing(false);
-          return;
-       }
-       if (formData.weeklyHours !== undefined && Number(formData.weeklyHours) < 0) {
-          toast({ variant: "destructive", title: "Heures invalides", description: "Le temps de travail ne peut pas être négatif." });
-          setProcessing(false);
-          return;
-       }
-       if (formData.monthlyPayments !== undefined && Number(formData.monthlyPayments) <= 0) {
-          toast({ variant: "destructive", title: "Mensualités invalides", description: "Le nombre de mensualités doit être positif." });
-          setProcessing(false);
-          return;
-       }
-    }
 
     try {
       const allowedKeys = [
@@ -916,6 +686,49 @@ export default function ContractDetailPage() {
       router.push(`/entity/${entityId}/contracts/${result.newContractId}`);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleSendToEmployee = async () => {
+    if (!user || !contract || !employee || !entityId) return;
+
+    if (!employee.email) {
+      toast({ variant: "destructive", title: "Email manquant", description: "Le salarié n'a pas d'adresse email configurée." });
+      return;
+    }
+
+    if (!contract.generatedPdfStoragePath) {
+      toast({ variant: "destructive", title: "Action bloquée", description: "Veuillez générer le PDF du contrat avant l’envoi." });
+      return;
+    }
+
+    if (isPdfObsolete) {
+      toast({ variant: "destructive", title: "Action bloquée", description: "Le PDF est obsolète. Veuillez régénérer le contrat avant l’envoi." });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const result = await sendContractToEmployeeAction({
+        entityId,
+        contractId,
+        to: employee.email,
+        employeeName: employee.displayName,
+        companyName: entity?.nomEntreprise || "Notre Entreprise",
+        jobTitle: contract.jobTitleName || "Poste",
+        storagePath: contract.generatedPdfStoragePath
+      });
+
+      if (result.success) {
+        await recordContractSentToEmployee(entityId, contractId, employee.email, user.uid);
+        toast({ title: "Email envoyé", description: `Le contrat a été transmis à ${employee.email}.` });
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Échec de l'envoi", description: err.message });
     } finally {
       setProcessing(false);
     }
@@ -1170,7 +983,7 @@ export default function ContractDetailPage() {
                           {contract.generatedPdfStoragePath ? "Régénérer le PDF" : "Générer le PDF du contrat"}
                        </Button>
 
-                       {isDraft && (
+                       {(isDraft || isPendingSignature) && (
                          <Button 
                            onClick={handleTransitionToSignature}
                            disabled={!!(processing || generatingPdf || !contract.generatedPdfStoragePath || isPdfObsolete)}
@@ -1231,7 +1044,7 @@ export default function ContractDetailPage() {
                             <a href={contract.signedDocumentUrl} target="_blank" rel="noopener noreferrer"><Eye className="w-4 h-4 mr-1.5" /> Voir</a>
                           </Button>
                         )}
-                        {(isPendingSignature || isPendingActivation) && (
+                        {(isPendingSignature || isPendingActivation || isDraft) && (
                           <Button variant="outline" size="sm" onClick={() => setIsSignedDocModalOpen(true)} className="rounded-xl font-bold border-dashed h-9" disabled={!!processing}>Remplacer le document</Button>
                         )}
                       </div>
@@ -1239,7 +1052,7 @@ export default function ContractDetailPage() {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    <div className="bg-slate-50/50 border-2 border-dashed rounded-3xl p-10 flex flex-col items-center justify-center gap-4 text-center group hover:bg-slate-100 transition-all cursor-pointer" onClick={() => (isPendingSignature || isPendingActivation) && setIsSignedDocModalOpen(true)}>
+                    <div className="bg-slate-50/50 border-2 border-dashed rounded-3xl p-10 flex flex-col items-center justify-center gap-4 text-center group hover:bg-slate-100 transition-all cursor-pointer" onClick={() => (isPendingSignature || isPendingActivation || isDraft) && setIsSignedDocModalOpen(true)}>
                        <div className="bg-white p-4 rounded-2xl shadow-sm text-primary/30 group-hover:text-primary transition-colors"><Upload className="w-8 h-8" /></div>
                        <div className="space-y-1">
                           <p className="text-sm font-bold text-slate-600">Téléverser le contrat signé</p>
@@ -1253,9 +1066,9 @@ export default function ContractDetailPage() {
           )}
 
           {/* WORKFLOW SECTION 3: Finalisation & Activation */}
-          {!isActive && !isTerminated && !isRenewed && (isPendingSignature || isPendingActivation) && (
-             <Card className={cn("border-2 rounded-[2.5rem] shadow-2xl overflow-hidden transition-all", !!canActivateNow ? "border-green-500 ring-4 ring-green-50" : "border-primary/10 opacity-80")}>
-                <CardHeader className={cn("py-6 px-8 border-b", !!canActivateNow ? "bg-green-600 text-white" : "bg-primary/90 text-white")}>
+          {!isActive && !isTerminated && !isRenewed && (isPendingSignature || isPendingActivation || isDraft) && (
+             <Card className={cn("border-2 rounded-[2.5rem] shadow-2xl overflow-hidden transition-all", (canActivateNow && (isPendingActivation || isStartDateReached)) ? "border-green-500 ring-4 ring-green-50" : "border-primary/10 opacity-80")}>
+                <CardHeader className={cn("py-6 px-8 border-b", (canActivateNow && (isPendingActivation || isStartDateReached)) ? "bg-green-600 text-white" : "bg-primary/90 text-white")}>
                    <div className="flex items-center gap-3">
                       <div className="bg-white/20 p-2.5 rounded-xl"><ShieldCheck className="w-6 h-6" /></div>
                       <CardTitle className="text-xl font-black">3. Finalisation & Activation</CardTitle>
@@ -1278,37 +1091,46 @@ export default function ContractDetailPage() {
                    ) : (
                       <div className="p-4 bg-green-50 border border-green-200 rounded-2xl flex items-start gap-3 animate-in zoom-in-95">
                          <CheckCircle2 className="w-6 h-6 text-green-600 shrink-0" />
-                         <p className="text-sm font-bold text-green-800 leading-tight">Le dossier est prêt. Le contrat est signé et le PDF est à jour. Vous pouvez désormais activer l'engagement.</p>
+                         <p className="text-sm font-bold text-green-800 leading-tight">
+                           {isStartDateReached 
+                             ? "Le dossier est prêt. Toutes les conditions sont remplies pour activer l'engagement immédiatement." 
+                             : `Le dossier est prêt. Le contrat est signé et le PDF est à jour. L'activation sera effective le ${formatDateSafe(contract.startDate)}.`}
+                         </p>
                       </div>
                    )}
 
-                   {isRenewalContract && isPendingActivation ? (
+                   {isPendingActivation ? (
                      isStartDateReached ? (
                        <Button onClick={() => handleTransition(() => executeContractTransitionTransaction(entityId, contractId, user!.uid), "Renouvellement activé.")} disabled={!!(processing || !canActivateNow)} className="w-full h-16 rounded-2xl text-lg font-black bg-primary text-white shadow-xl">
                           {!!processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-                          Activer le renouvellement maintenant
+                          Activer le contrat maintenant
                        </Button>
                      ) : (
                         <div className="flex flex-col items-center gap-4 py-4">
                            <div className="bg-indigo-50 text-indigo-700 px-6 py-4 rounded-2xl border border-indigo-100 flex items-center gap-4 w-full">
                               <Clock className="w-8 h-8 opacity-40" />
                               <div>
-                                 <p className="text-xs font-black uppercase tracking-widest">Activation automatique prévue</p>
+                                 <p className="text-xs font-black uppercase tracking-widest">En attente d'activation</p>
                                  <p className="text-lg font-black">Le {formatDateSafe(contract.startDate)}</p>
                               </div>
                            </div>
+                           <p className="text-[10px] text-muted-foreground font-bold text-center">
+                             La transition vers le statut "Actif" s'effectuera automatiquement à cette date.
+                           </p>
                         </div>
                      )
                    ) : (
                      <Button 
-                       onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), "Contrat activé.")}
+                       onClick={() => handleTransition(() => activateContractAction(entityId, contractId, contract.employeeId, user!.uid), isStartDateReached ? "Contrat activé." : "Activation planifiée.")}
                        disabled={!!(processing || !canActivateNow)}
                        className={cn("w-full h-16 rounded-2xl text-lg font-black shadow-xl transition-all", 
                          !!canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
                        )}
                      >
-                        {!!processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-                        Confirmer signature et activer le contrat
+                        {!!processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                        {isStartDateReached 
+                          ? "Confirmer signature et activer le contrat" 
+                          : "Confirmer signature et planifier l'activation"}
                      </Button>
                    )}
                 </CardContent>
@@ -1385,7 +1207,7 @@ export default function ContractDetailPage() {
                    <Briefcase className="w-4 h-4" /> Poste & Lieu de Travail
                 </CardTitle>
              </CardHeader>
-             <CardContent className="p-8 space-y-8">
+             <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                    <DetailEditable label="Intitulé du Poste" value={effectiveData.jobTitleName} editValue={formData.jobTitleName} isEditing={isEditing} id="jobTitleName" disabled={!isDraft} required icon={Briefcase} onChange={(v: string) => setFormData(p => ({...p, jobTitleName: v}))} />
                    <DetailEditable label="Département" value={effectiveData.departmentName} editValue={formData.departmentName} isEditing={isEditing} id="departmentName" disabled={!isDraft} icon={Building2} onChange={(v: string) => setFormData(p => ({...p, departmentName: v}))} />
@@ -1405,7 +1227,7 @@ export default function ContractDetailPage() {
                   </Button>
                 )}
              </CardHeader>
-             <CardContent className="p-8 space-y-12">
+             <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                    <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v: string) => setFormData(p => ({...p, contractType: v}))} />
                    <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, startDate: v}))} />

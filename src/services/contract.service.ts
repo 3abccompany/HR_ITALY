@@ -297,6 +297,7 @@ export async function recordSignedDocumentReference(
 /**
  * Activates a contract and updates the linked employee.
  * STRICT GATE: Requires a signed document proof.
+ * Updated: Now date-aware. Future contracts go to pending_activation.
  */
 export async function activateContractAction(entityId: string, contractId: string, employeeId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -305,16 +306,15 @@ export async function activateContractAction(entityId: string, contractId: strin
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
-  const activated = await runTransaction(db, async (transaction) => {
-    // ALL READS FIRST
+  const result = await runTransaction(db, async (transaction) => {
+    // 1. ALL READS FIRST
     const snap = await transaction.get(contractRef);
     const empSnap = await transaction.get(employeeRef);
 
-    // VALIDATIONS
+    // 2. VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
-    // Guard: Prevent duplicate activation and timeline events
     if (contract.status === "active") {
       return { success: true, alreadyActive: true };
     }
@@ -334,23 +334,85 @@ export async function activateContractAction(entityId: string, contractId: strin
     if (!empSnap.exists()) throw new Error("L'employé rattaché n'existe pas.");
     const empData = empSnap.data();
 
+    // 3. DATE ANALYSIS
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isFuture = contract.startDate > todayStr;
+
+    const now = serverTimestamp();
+
+    // --- CASE A: FUTURE DATED (Schedule activation) ---
+    if (isFuture) {
+      transaction.update(contractRef, sanitizePayload({
+        status: "pending_activation",
+        readyForActivationAt: now,
+        readyForActivationBy: actorUid,
+        signedAt: now, // Signature is confirmed now
+        updatedAt: now,
+        updatedBy: actorUid,
+      }));
+
+      // In case of renewal, ensure we don't clear pointers yet, just link for history
+      transaction.update(employeeRef, {
+        pendingContractId: contractId,
+        updatedAt: now
+      });
+
+      // Timeline Event
+      if (contract.personId) {
+        const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+        transaction.set(timelineRef, sanitizePayload({
+          eventId: timelineRef.id,
+          entityId,
+          personId: contract.personId,
+          employeeId,
+          contractId,
+          type: "contract.scheduled",
+          label: "Activation planifiée",
+          description: `Signature confirmée. L'activation du contrat ${contract.employeeCode || contractId} est prévue pour le ${contract.startDate}.`,
+          sourceCollection: "contracts",
+          sourceId: contractId,
+          createdAt: now,
+          createdBy: actorUid,
+        }));
+      }
+
+      return { success: true, status: 'pending_activation' };
+    }
+
+    // --- CASE B: IMMEDIATE ACTIVATION (Starts today or past) ---
+
+    // Conflict Guard: Only block if another DIFFERENT active contract exists
     if (empData.activeContractId && empData.activeContractId !== contractId) {
-      throw new Error("ALREADY_HAS_ACTIVE_CONTRACT");
+      // Check if it's a legitimate renewal of the current active contract
+      const isActuallyRenewalOfCurrent = contract.isRenewal && empData.activeContractId === contract.previousContractId;
+      
+      if (!isActuallyRenewalOfCurrent) {
+        throw new Error("ALREADY_HAS_ACTIVE_CONTRACT");
+      }
+      
+      // If it IS a renewal starting today, we must retire the old one
+      const oldRef = doc(db, `entities/${entityId}/contracts`, contract.previousContractId!);
+      transaction.update(oldRef, {
+        status: "renewed",
+        renewedByContractId: contractId,
+        updatedAt: now,
+        updatedBy: actorUid
+      });
     }
 
     // ALL WRITES AFTER
     transaction.update(contractRef, sanitizePayload({
       status: "active",
-      activatedAt: serverTimestamp(),
-      signedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      activatedAt: now,
+      signedAt: now,
+      updatedAt: now,
       updatedBy: actorUid,
     }));
 
     transaction.update(employeeRef, {
       activeContractId: contractId,
-      pendingContractId: null, // Clear onboarding link if it matches
-      updatedAt: serverTimestamp(),
+      pendingContractId: null,
+      updatedAt: now,
     });
 
     // Timeline Event
@@ -364,25 +426,25 @@ export async function activateContractAction(entityId: string, contractId: strin
         contractId,
         type: "contract.activated",
         label: "Contrat activé",
-        description: `Le contrat ${contract.employeeCode || contractId} a été activé.`,
+        description: `Le contrat ${contract.employeeCode || contractId} a été activé le ${contract.startDate}.`,
         sourceCollection: "contracts",
         sourceId: contractId,
-        createdAt: serverTimestamp(),
+        createdAt: now,
         createdBy: actorUid,
       }));
     }
 
-    return { success: true };
+    return { success: true, status: 'active' };
   });
 
-  if (activated && !(activated as any).alreadyActive) {
+  if (result && !(result as any).alreadyActive) {
     await createAuditLog({
       userId: actorUid,
       entityId,
-      action: "contract.activated",
+      action: (result as any).status === 'active' ? "contract.activated" : "contract.activation_scheduled",
       resourceType: "contract",
       resourceId: contractId,
-      details: { employeeId }
+      details: { employeeId, status: (result as any).status }
     });
   }
 }
@@ -773,7 +835,7 @@ export async function prepareContractRenewalAction(
     const prorogaSubject = `Richiesta Proroga UniLav — ${old.employeeDisplayName} — ${newStartDate}`;
     const prorogaBody = `Buongiorno,
 
-con la presente si richiede la predisposizione e/o trasmissione della comunicazione obbligatoria UniLav/CPI relativa alla proroga del contratto a tempo determinato del seguente lavoratore:
+con la presente si richiede la predisposizione e/o trasmissione della communicatione obbligatoria UniLav/CPI relativa alla proroga del contratto a tempo determinato del seguente lavoratore:
 
 Azienda: ${old.entityLegalName || old.entityName || 'Non disponibile'}
 Lavoratore: ${old.employeeDisplayName || 'Non disponibile'}
@@ -784,7 +846,7 @@ Data inizio proroga: ${newStartDate}
 Nuova data fine contratto: ${newEndDate}
 Contratto precedente / riferimento: ${oldContractId}
 
-Si richiede cortesemente di procedere con la comunicazione di proroga e di trasmettere il numero di protocollo e la ricevuta PDF una volta disponibile.
+Si richiede cortesemente di procedere con la communicatione di proroga e di trasmettere il numero di protocollo e la ricevuta PDF una volta disponibile.
 
 Cordiali saluti,`;
 
