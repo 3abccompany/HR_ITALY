@@ -89,16 +89,6 @@ import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 import { sendContractToEmployeeAction } from "@/services/email.service";
 
-const TERMINATION_REASONS = [
-  { value: "resignation", label: "Démission" },
-  { value: "dismissal", label: "Licenciement" },
-  { value: "probation_failed", label: "Fin / échec période d’essai" },
-  { value: "mutual_agreement", label: "Rupture conventionnelle" },
-  { value: "fixed_term_end", label: "Fin de contrat à durée déterminée" },
-  { value: "retirement", label: "Retraite" },
-  { value: "other", label: "Autre" }
-];
-
 /**
  * Robust date parser for mixed formats.
  */
@@ -122,6 +112,14 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
   const date = parseSafeDate(val);
   if (!date) return "-";
   return format(date, formatStr, { locale: fr });
+}
+
+function formatDate(val: any): string {
+  return formatDateSafe(val, "dd/MM/yyyy");
+}
+
+function formatDateTime(val: any): string {
+  return formatDateSafe(val, "dd/MM/yyyy HH:mm");
 }
 
 /**
@@ -291,7 +289,7 @@ export default function ContractDetailPage() {
   const { data: employee } = useDoc<Employee>(employeeRef);
 
   const personRef = useMemo(() => 
-    db && entityId && contract?.personId ? doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person> : null,
+    db && entityId && contract?.personId ? doc(db, `entities/${entityId}/persons`, personId) as DocumentReference<Person> : null,
   [db, entityId, contract?.personId]);
   const { data: person } = useDoc<Person>(personRef);
 
@@ -344,6 +342,13 @@ export default function ContractDetailPage() {
     canUpdate);
 
   const canSendToEmployee = !!(!isEditing && !isImported && (isPendingSignature || isPendingActivation) && !!contract?.generatedPdfStoragePath && !isPdfObsolete);
+
+  function getUserLabel(uid?: string) {
+    if (!uid) return "-";
+    if (uid === user?.uid) return "Moi";
+    if (uid === 'system' || uid.startsWith('system:')) return "Système";
+    return uid;
+  }
 
   // Activation Guard Logic
   const activationBlockers = useMemo(() => {
@@ -442,6 +447,13 @@ export default function ContractDetailPage() {
     }
   };
 
+  const handleTransitionToSignature = () => {
+    handleTransition(
+      () => sendContractToSignature(entityId, contractId, user!.uid),
+      "Contrat marqué comme prêt pour signature."
+    );
+  };
+
   // Load levels securely when CCNL changes during editing
   useEffect(() => {
     async function fetchLevels() {
@@ -454,11 +466,11 @@ export default function ContractDetailPage() {
       setLoadingLevels(true);
       try {
         const idToken = await auth.currentUser?.getIdToken();
-        if (!idToken) throw new Error("Auth token missing");
-        
-        const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
-        setActiveLevels(levels);
-      } catch (err: any) {
+        if (idToken) {
+          const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
+          setActiveLevels(levels);
+        }
+      } catch (err) {
         console.error("Error fetching levels:", err);
       } finally {
         setLoadingLevels(false);
@@ -904,7 +916,7 @@ export default function ContractDetailPage() {
               <div className="ml-2">
                 <AlertTitle className="font-black uppercase text-xs tracking-widest">Contrat arrivé à échéance</AlertTitle>
                 <AlertDescription className="text-sm opacity-90">
-                  Le terme du contrat ({formatDateSafe(contract.endDate)}) est dépassé.
+                  Le terme du contrat ({formatDate(contract.endDate)}) est dépassé.
                 </AlertDescription>
               </div>
             </Alert>
@@ -1383,6 +1395,16 @@ export default function ContractDetailPage() {
     </div>
   );
 }
+
+const TERMINATION_REASONS = [
+  { value: "resignation", label: "Démission" },
+  { value: "dismissal", label: "Licenciement" },
+  { value: "probation_failed", label: "Fin / échec période d’essai" },
+  { value: "mutual_agreement", label: "Rupture conventionnelle" },
+  { value: "fixed_term_end", label: "Fin de contrat à durée déterminée" },
+  { value: "retirement", label: "Retraite" },
+  { value: "other", label: "Autre" }
+];
 
 function DetailEditable({ label, value, editValue, isEditing, id, type = "text", required = false, disabled = false, icon: Icon, className, onChange }: any) {
   const displayValue = value === undefined || value === null || value === "" ? "Non renseigné" : value;
