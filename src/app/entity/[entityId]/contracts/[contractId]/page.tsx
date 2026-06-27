@@ -122,6 +122,12 @@ function formatDateTime(val: any): string {
   return formatDateSafe(val, "dd/MM/yyyy HH:mm");
 }
 
+function getUserLabel(uid?: string) {
+  if (!uid) return "-";
+  if (uid === 'system' || uid.startsWith('system:')) return "Système";
+  return uid;
+}
+
 /**
  * Renders the contract lifecycle context for a document.
  */
@@ -289,7 +295,7 @@ export default function ContractDetailPage() {
   const { data: employee } = useDoc<Employee>(employeeRef);
 
   const personRef = useMemo(() => 
-    db && entityId && contract?.personId ? doc(db, `entities/${entityId}/persons`, personId) as DocumentReference<Person> : null,
+    db && entityId && contract?.personId ? (doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person>) : null,
   [db, entityId, contract?.personId]);
   const { data: person } = useDoc<Person>(personRef);
 
@@ -342,13 +348,6 @@ export default function ContractDetailPage() {
     canUpdate);
 
   const canSendToEmployee = !!(!isEditing && !isImported && (isPendingSignature || isPendingActivation) && !!contract?.generatedPdfStoragePath && !isPdfObsolete);
-
-  function getUserLabel(uid?: string) {
-    if (!uid) return "-";
-    if (uid === user?.uid) return "Moi";
-    if (uid === 'system' || uid.startsWith('system:')) return "Système";
-    return uid;
-  }
 
   // Activation Guard Logic
   const activationBlockers = useMemo(() => {
@@ -1139,7 +1138,7 @@ export default function ContractDetailPage() {
                          !!canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
                        )}
                      >
-                        {!!processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                        {!!processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                         {isStartDateReached 
                           ? "Confirmer signature et activer le contrat" 
                           : "Confirmer signature et planifier l'activation"}
