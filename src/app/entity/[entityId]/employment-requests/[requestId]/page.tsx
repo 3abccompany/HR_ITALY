@@ -24,7 +24,19 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useFirebase, useDoc, useUser, useCollection } from "@/firebase";
-import { doc, DocumentReference, collection, query, orderBy, updateDoc, serverTimestamp, getDoc, Timestamp } from "firebase/firestore";
+import { 
+  doc, 
+  DocumentReference, 
+  collection, 
+  query, 
+  orderBy, 
+  updateDoc, 
+  serverTimestamp, 
+  getDoc, 
+  Timestamp,
+  where,
+  Query 
+} from "firebase/firestore";
 import { EmploymentRequest, EmploymentRequestStatus, EmploymentRequestType } from "@/types/employment-request";
 import { Consultant } from "@/types/consultant";
 import { HRDocument } from "@/types/hr-document";
@@ -202,7 +214,7 @@ export default function EmploymentRequestDetailPage() {
       await updateConsultantAssignment({
         entityId,
         requestId,
-        consultantId,
+        consultantId: consultantForm.id === "manual" ? null : consultantForm.id,
         consultantName: consultantForm.name,
         consultantEmail: consultantForm.email,
         actorUid: user.uid
