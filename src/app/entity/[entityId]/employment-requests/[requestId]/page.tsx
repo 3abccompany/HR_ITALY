@@ -108,14 +108,18 @@ export default function EmploymentRequestDetailPage() {
   // Mandatory Communication Lookup
   const communicationsQuery = useMemo(() => {
     if (!db || !entityId || !request) return null;
+    // Support both initial (offerId) and renewal (requestId as offerId alias)
+    const lookupId = request.offerId || request.id;
     return query(
       collection(db, `entities/${entityId}/mandatoryCommunications`), 
-      where("employmentOfferId", "==", request.offerId || "")
+      where("employmentOfferId", "==", lookupId)
     ) as Query<any>;
   }, [db, entityId, request]);
   
   const { data: communications } = useCollection<any>(communicationsQuery);
-  const mandatoryCommunication = communications?.find(c => c.type === "UNILAV_ASSUNZIONE");
+  const mandatoryCommunication = communications?.find(c => 
+    c.type === "UNILAV_ASSUNZIONE" || c.type === "UNILAV_PROROGA"
+  );
 
   // Consultant Registry
   const consultantsQuery = useMemo(() => {
@@ -277,8 +281,31 @@ export default function EmploymentRequestDetailPage() {
   const handleOpenExternalEdit = () => {
     if (!request) return;
     setExternalEditTo(consultantForm.email || "");
-    setExternalEditSubject(mandatoryCommunication?.emailSubject || `Communication UniLav - ${request.candidateDisplayName || 'Recrutement'}`);
-    setExternalEditBody(mandatoryCommunication?.emailBody || "");
+    
+    // Support Fallback for Proroga if body is missing
+    let subject = mandatoryCommunication?.emailSubject || `Communication UniLav - ${request.candidateDisplayName || 'Recrutement'}`;
+    let body = mandatoryCommunication?.emailBody || "";
+
+    if (!body && request.type === 'unilav_proroga') {
+      subject = `Richiesta Proroga UniLav — ${request.candidateDisplayName || 'Collaboratore'} — ${request.plannedHireDate || ''}`;
+      body = `Buongiorno,
+
+con la presente si richiede la predisposizione e/o trasmissione della comunicazione obbligatoria UniLav/CPI relativa alla proroga del contratto a tempo determinato del seguente lavoratore:
+
+Azienda: ${entity?.nomEntreprise || 'Non disponibile'}
+Lavoratore: ${request.candidateDisplayName || 'Non disponibile'}
+Mansione: ${request.jobRoleId || 'Non disponibile'}
+Tipologia contratto: ${request.contractType || 'Tempo determinato'}
+Data inizio proroga: ${request.plannedHireDate || 'Non disponibile'}
+Contratto precedente / riferimento: ${request.previousContractId || 'Non disponibile'}
+
+Si richiede cortesemente di procedere con la comunicazione di proroga e di trasmettere il numero di protocollo e la ricevuta PDF una volta disponibile.
+
+Cordiali saluti,`;
+    }
+
+    setExternalEditSubject(subject);
+    setExternalEditBody(body);
     setIsExternalEditOpen(true);
   };
 
@@ -399,7 +426,7 @@ export default function EmploymentRequestDetailPage() {
         entityId, 
         file, 
         {
-          title: `Récépissé ${getTypeLabel(request.type)} - ${request.candidateDisplayName || 'Candidat'}`,
+          title: `Récépissé ${getTypeLabel(request.type)} - ${request.candidateDisplayName || 'Candidato'}`,
           documentType: request.type === 'unilav_proroga' ? 'unilav_receipt' : "cpi_receipt",
           relatedModule: "employmentRequests",
           relatedId: requestId,
@@ -858,7 +885,7 @@ export default function EmploymentRequestDetailPage() {
           </div>
 
           <DialogFooter className="flex gap-2">
-            <Button variant="ghost" onClick={() => setIsPreviewOpen(false)} disabled={processing} className="rounded-xl font-bold">Annuler</Button>
+            <Button variant="ghost" onClick={() => setIsPreviewOpen(false)} className="rounded-xl font-bold">Annuler</Button>
             <Button 
               onClick={confirmAndSendEmail} 
               disabled={processing || !editableSubject.trim() || !editableBody.trim()}
@@ -948,7 +975,7 @@ export default function EmploymentRequestDetailPage() {
           </div>
 
           <AlertDialogFooter className="sm:justify-between pt-4">
-            <AlertDialogCancel disabled={processing}>Non, garder seulement pour ce dossier</AlertDialogCancel>
+            <AlertDialogCancel>Non, garder seulement pour ce dossier</AlertDialogCancel>
             <AlertDialogAction 
               onClick={(e) => { e.preventDefault(); handleConfirmRegistrySave(); }}
               disabled={processing}

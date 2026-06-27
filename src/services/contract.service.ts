@@ -768,6 +768,42 @@ export async function prepareContractRenewalAction(
       updatedBy: actorUid,
     }));
 
+    // 4b. Create Mandatory Communication document for Proroga
+    const commRef = doc(collection(db, `entities/${entityId}/mandatoryCommunications`));
+    const prorogaSubject = `Richiesta Proroga UniLav — ${old.employeeDisplayName} — ${newStartDate}`;
+    const prorogaBody = `Buongiorno,
+
+con la presente si richiede la predisposizione e/o trasmissione della comunicazione obbligatoria UniLav/CPI relativa alla proroga del contratto a tempo determinato del seguente lavoratore:
+
+Azienda: ${old.entityLegalName || old.entityName || 'Non disponibile'}
+Lavoratore: ${old.employeeDisplayName || 'Non disponibile'}
+Codice fiscale: ${resolvedTaxCode || 'Non disponibile'}
+Mansione: ${old.jobTitleName || 'Non disponibile'}
+Tipologia contratto: ${old.contractType || 'Tempo determinato'}
+Data inizio proroga: ${newStartDate}
+Nuova data fine contratto: ${newEndDate}
+Contratto precedente / riferimento: ${oldContractId}
+
+Si richiede cortesemente di procedere con la comunicazione di proroga e di trasmettere il numero di protocollo e la ricevuta PDF una volta disponibile.
+
+Cordiali saluti,`;
+
+    transaction.set(commRef, sanitizePayload({
+      communicationId: commRef.id,
+      entityId,
+      employmentOfferId: requestId, // Link using requestId for renewals to isolate this communication
+      employmentRequestId: requestId,
+      contractId: newContractId,
+      type: "UNILAV_PROROGA",
+      status: "draft",
+      emailSubject: prorogaSubject,
+      emailBody: prorogaBody,
+      createdAt: serverTimestamp(),
+      createdBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    }));
+
     // 5. Timeline Event
     if (old.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
