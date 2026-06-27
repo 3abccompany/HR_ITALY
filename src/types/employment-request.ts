@@ -9,7 +9,14 @@ export type EmploymentRequestStatus =
   | "completed" 
   | "cancelled";
 
-export type EmploymentRequestType = "unilav" | "cpi" | "consultant_request" | "other";
+export type EmploymentRequestType = 
+  | "unilav" 
+  | "unilav_proroga" 
+  | "unilav_trasformazione" 
+  | "unilav_cessazione" 
+  | "cpi" 
+  | "consultant_request" 
+  | "other";
 
 export interface EmploymentRequest {
   id: string;
@@ -18,16 +25,17 @@ export interface EmploymentRequest {
   // Relational links
   personId?: string;
   candidateId?: string;
-  candidateDisplayName?: string; // Added for display & email consistency
+  candidateDisplayName?: string;
   candidateEmail?: string | null;
   candidatePhone?: string | null;
   offerId?: string;
   employeeId?: string | null;
   contractId?: string | null;
+  previousContractId?: string | null;
   mandatoryCommunicationId?: string | null;
 
   // Metadata
-  source: "offer" | "manual";
+  source: "offer" | "manual" | "contract_renewal";
   type: EmploymentRequestType;
   status: EmploymentRequestStatus;
   

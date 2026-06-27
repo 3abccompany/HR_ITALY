@@ -13,7 +13,8 @@ import {
   ChevronRight,
   MoreVertical,
   XCircle,
-  MessageSquare
+  MessageSquare,
+  Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useFirebase, useDoc, useUser, useCollection } from "@/firebase";
 import { doc, DocumentReference, collection, query, orderBy, updateDoc, serverTimestamp, getDoc, Timestamp } from "firebase/firestore";
-import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
+import { EmploymentRequest, EmploymentRequestStatus, EmploymentRequestType } from "@/types/employment-request";
 import { Consultant } from "@/types/consultant";
 import { HRDocument } from "@/types/hr-document";
 import { useActiveMembership } from "@/hooks/use-active-membership";
@@ -345,13 +346,14 @@ export default function EmploymentRequestDetailPage() {
         entityId, 
         file, 
         {
-          title: `Récépissé CPI - ${request.candidateDisplayName || 'Candidat'}`,
-          documentType: "cpi_receipt",
+          title: `Récépissé ${getTypeLabel(request.type)} - ${request.candidateDisplayName || 'Candidat'}`,
+          documentType: request.type === 'unilav_proroga' ? 'unilav_receipt' : "cpi_receipt",
           relatedModule: "employmentRequests",
           relatedId: requestId,
           personId: request.personId,
           candidateId: request.candidateId,
           employeeId: request.employeeId,
+          contractId: request.contractId,
           status: "valid"
         }, 
         user.uid, 
@@ -433,12 +435,12 @@ export default function EmploymentRequestDetailPage() {
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/employment-requests`)} className="rounded-full">
+          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black text-primary tracking-tight">Dossier Embauche / CPI</h1>
+              <h1 className="text-2xl font-black text-primary tracking-tight">Dossier {getTypeLabel(request.type)}</h1>
               {getStatusBadge(request.status)}
             </div>
             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">ID : {requestId}</p>
@@ -738,8 +740,8 @@ export default function EmploymentRequestDetailPage() {
                       <Briefcase className="w-3.5 h-3.5 opacity-40" />
                       Poste: {request.jobRoleId}
                    </div>
-                   {request.offerId && (
-                     <div className="text-[10px] text-muted-foreground">Réf: {request.offerId}</div>
+                   {request.contractId && (
+                     <div className="text-[10px] text-muted-foreground">Contrat: {request.contractId}</div>
                    )}
                 </div>
              </CardContent>
@@ -838,10 +840,6 @@ function AuditMiniRow({ label, value }: { label: string, value: string }) {
   );
 }
 
-/**
- * Robust date formatter that handles Firestore Timestamps (Client & Admin),
- * regular Date objects, and serialized timestamp maps.
- */
 function formatDateTime(val: any): string {
   if (!val) return "Date non disponible";
 
@@ -880,5 +878,16 @@ function getStatusBadge(status: string) {
     case 'completed': return <Badge className="bg-slate-900 text-white uppercase font-black text-[9px] px-2 border-none">Terminé</Badge>;
     case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 uppercase font-black text-[9px] px-2">Annulé</Badge>;
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
+  }
+}
+
+function getTypeLabel(type: EmploymentRequestType) {
+  switch (type) {
+    case 'unilav': return "Embauche / UniLav";
+    case 'unilav_proroga': return "Proroga / Renouvellement CDD";
+    case 'unilav_trasformazione': return "Transformation de contrat";
+    case 'unilav_cessazione': return "Cessation / Fin de contrat";
+    case 'cpi': return "CPI";
+    default: return type;
   }
 }

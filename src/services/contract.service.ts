@@ -610,6 +610,7 @@ export async function archiveContractAction(entityId: string, contractId: string
  * Phase 1: Prepares a renewal draft for a fixed-term contract (CDD).
  * Creates a new contract linked to the old one.
  * Phase 6B: Inherits identity identifier from canonical sources.
+ * Integrated: Automatically initiates a UniLav Proroga request.
  */
 export async function prepareContractRenewalAction(
   entityId: string, 
@@ -739,7 +740,35 @@ export async function prepareContractRenewalAction(
       updatedBy: actorUid,
     });
 
-    // 4. Timeline Event
+    // 4. Initiate UniLav Proroga Request (Compliance Automation)
+    const requestId = `proroga_${newContractId}`;
+    const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+    
+    transaction.set(requestRef, sanitizePayload({
+      id: requestId,
+      entityId,
+      personId: old.personId,
+      employeeId: old.employeeId,
+      contractId: newContractId,
+      previousContractId: oldContractId,
+      candidateDisplayName: old.employeeDisplayName,
+      
+      source: "contract_renewal",
+      type: "unilav_proroga",
+      status: "draft",
+
+      plannedHireDate: newStartDate,
+      jobRoleId: old.jobTitleName || "",
+      worksiteId: old.worksiteName || "",
+      contractType: old.contractType || null,
+      
+      createdAt: serverTimestamp(),
+      createdBy: actorUid,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorUid,
+    }));
+
+    // 5. Timeline Event
     if (old.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
@@ -750,7 +779,7 @@ export async function prepareContractRenewalAction(
         contractId: newContractId,
         type: "contract.renewal_prepared",
         label: "Renouvellement CDD initié",
-        description: `Brouillon de renouvellement créé pour la période du ${newStartDate} au ${newEndDate}.`,
+        description: `Brouillon de renouvellement créé pour la période du ${newStartDate} au ${newEndDate}. Dossier UniLav de proroga ouvert.`,
         sourceCollection: "contracts",
         sourceId: newContractId,
         createdAt: serverTimestamp(),
@@ -766,7 +795,7 @@ export async function prepareContractRenewalAction(
     };
   });
 
-  // 5. Post-transaction Audit Log
+  // 6. Post-transaction Audit Log
   await createAuditLog({
     userId: actorUid,
     entityId,
@@ -881,7 +910,7 @@ export async function markContractAsReadyForActivationAction(entityId: string, c
         entityId,
         personId: contract.personId,
         employeeId: contract.employeeId,
-        contractId,
+        contractId: contractId,
         type: "contract.ready_for_activation",
         label: "Renouvellement validé",
         description: `Le contrat de renouvellement a été signé et validé. Activation prévue le ${contract.startDate}.`,

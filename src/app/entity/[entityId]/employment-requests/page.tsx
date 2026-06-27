@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -7,7 +6,8 @@ import {
   Send, Search, Eye, Loader2, 
   Filter, X, ListFilter, Calendar, 
   Building2, Briefcase, User, Info,
-  MoreVertical
+  MoreVertical,
+  Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
+import { EmploymentRequest, EmploymentRequestStatus, EmploymentRequestType } from "@/types/employment-request";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -32,6 +32,16 @@ const STATUS_LABELS: Record<EmploymentRequestStatus, string> = {
   cancelled: "Annulé"
 };
 
+const TYPE_LABELS: Record<EmploymentRequestType, string> = {
+  unilav: "Embauche / UniLav",
+  unilav_proroga: "Proroga / Renouvellement",
+  unilav_trasformazione: "Transformation",
+  unilav_cessazione: "Cessation",
+  cpi: "CPI",
+  consultant_request: "Demande Consultant",
+  other: "Autre"
+};
+
 export default function EmploymentRequestsRegistryPage() {
   const params = useParams();
   const router = useRouter();
@@ -41,6 +51,7 @@ export default function EmploymentRequestsRegistryPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setStatusType] = useState("all");
 
   const canRead = hasPermission("employmentRequests.read");
 
@@ -55,14 +66,17 @@ export default function EmploymentRequestsRegistryPage() {
     return requests?.filter(r => {
       const term = search.toLowerCase();
       const matchesSearch = 
+        (r.candidateDisplayName || "").toLowerCase().includes(term) ||
         (r.consultantName || "").toLowerCase().includes(term) ||
         (r.jobRoleId || "").toLowerCase().includes(term) ||
         (r.id || "").toLowerCase().includes(term);
       
       const matchesStatus = statusFilter === "all" || r.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesType = typeFilter === "all" || r.type === typeFilter;
+
+      return matchesSearch && matchesStatus && matchesType;
     }) || [];
-  }, [requests, search, statusFilter]);
+  }, [requests, search, statusFilter, typeFilter]);
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
@@ -81,13 +95,24 @@ export default function EmploymentRequestsRegistryPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
               className="pl-10 h-10 text-sm" 
-              placeholder="Rechercher par consultant, poste ou ID..." 
+              placeholder="Rechercher par candidat, consultant, poste..." 
               value={search} 
               onChange={(e) => setSearch(e.target.value)} 
             />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <Select value={typeFilter} onValueChange={setStatusType}>
             <SelectTrigger className="w-[200px] h-10">
+              <SelectValue placeholder="Type de dossier" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tous les types</SelectItem>
+              {Object.entries(TYPE_LABELS).map(([val, label]) => (
+                <SelectItem key={val} value={val}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[180px] h-10">
               <SelectValue placeholder="Statut" />
             </SelectTrigger>
             <SelectContent>
@@ -103,11 +128,11 @@ export default function EmploymentRequestsRegistryPage() {
           <Table>
             <TableHeader className="bg-secondary/20">
               <TableRow>
-                <TableHead>Type & Source</TableHead>
+                <TableHead>Type & Dossier</TableHead>
+                <TableHead>Candidat / Employé</TableHead>
                 <TableHead>Détails Poste</TableHead>
                 <TableHead>Consultant</TableHead>
                 <TableHead>Statut</TableHead>
-                <TableHead>Dates</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -128,31 +153,30 @@ export default function EmploymentRequestsRegistryPage() {
                   <TableRow key={r.id} className="hover:bg-muted/50 transition-colors">
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                         <Badge variant="outline" className="w-fit text-[9px] uppercase font-black px-2 h-5">{r.type}</Badge>
-                         <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-tighter">Source: {r.source}</div>
+                         <Badge variant="outline" className={cn("w-fit text-[9px] uppercase font-black px-2 h-5 border-2", r.type === 'unilav_proroga' ? "bg-green-50 text-green-700 border-green-100" : "bg-primary/5 text-primary border-primary/10")}>
+                           {TYPE_LABELS[r.type] || r.type}
+                         </Badge>
                          <div className="text-[9px] font-mono text-muted-foreground opacity-50 truncate max-w-[120px]">{r.id}</div>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="font-bold text-slate-800 text-sm">{r.jobRoleId || "N/A"}</div>
-                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-1">
-                         <Building2 className="w-3 h-3" /> Site ID: {r.worksiteId || "Général"}
+                       <div className="flex items-center gap-2">
+                          <User className="w-3.5 h-3.5 text-primary/40" />
+                          <span className="font-bold text-slate-800 text-sm">{r.candidateDisplayName || "N/A"}</span>
+                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-bold text-slate-700 text-xs">{r.jobRoleId || "N/A"}</div>
+                      <div className="flex items-center gap-1 text-[9px] text-muted-foreground mt-1">
+                         <Building2 className="w-2.5 h-2.5" /> Site ID: {r.worksiteId || "Général"}
                       </div>
                     </TableCell>
                     <TableCell>
-                       <div className="text-xs font-bold text-primary">{r.consultantName || "Non assigné"}</div>
-                       <div className="text-[10px] text-muted-foreground">{r.consultantEmail}</div>
+                       <div className="text-[10px] font-bold text-primary">{r.consultantName || "Non assigné"}</div>
+                       <div className="text-[9px] text-muted-foreground">{r.consultantEmail}</div>
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(r.status)}
-                    </TableCell>
-                    <TableCell>
-                       <div className="space-y-1">
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-700">
-                             <Calendar className="w-3 h-3" /> Emb. : {r.plannedHireDate || "—"}
-                          </div>
-                          <div className="text-[9px] text-muted-foreground italic">Créé le {formatDate(r.createdAt)}</div>
-                       </div>
                     </TableCell>
                     <TableCell className="text-right">
                        <Button 
@@ -161,7 +185,7 @@ export default function EmploymentRequestsRegistryPage() {
                          className="h-8 gap-2 font-bold"
                          onClick={() => router.push(`/entity/${entityId}/employment-requests/${r.id}`)}
                        >
-                          <Eye className="w-4 h-4" /> Consulter
+                          <Eye className="w-4 h-4" />
                        </Button>
                     </TableCell>
                   </TableRow>
@@ -175,19 +199,12 @@ export default function EmploymentRequestsRegistryPage() {
   );
 }
 
-function formatDate(val: any) {
-  if (!val) return "—";
-  try {
-    const d = val.toDate ? val.toDate() : new Date(val);
-    return format(d, "dd/MM/yyyy", { locale: fr });
-  } catch (e) { return "—"; }
-}
-
 function getStatusBadge(status: EmploymentRequestStatus) {
   switch (status) {
     case 'draft': return <Badge variant="secondary" className="bg-slate-100 text-slate-700 text-[10px] h-5 px-2">Brouillon</Badge>;
     case 'sent_to_consultant': return <Badge className="bg-blue-500 text-white border-none text-[10px] h-5 px-2">Envoyé</Badge>;
     case 'waiting_for_communication': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] h-5 px-2">En attente</Badge>;
+    case 'communication_done': return <Badge className="bg-orange-500 text-white border-none text-[10px] h-5 px-2">Fait (CPI)</Badge>;
     case 'completed': return <Badge className="bg-green-600 text-white border-none text-[10px] h-5 px-2">Terminé</Badge>;
     case 'cancelled': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px] h-5 px-2">Annulé</Badge>;
     default: return <Badge variant="outline" className="text-[10px] h-5 px-2">{status}</Badge>;

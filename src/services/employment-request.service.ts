@@ -85,6 +85,9 @@ export async function createEmploymentRequestFromOfferIfMissing(params: {
     offerId: offer.offerId,
     personId: offer.personId,
     candidateId: offer.candidateId,
+    candidateDisplayName: offer.candidateDisplayName || null,
+    candidateEmail: offer.candidateEmail || null,
+    candidatePhone: offer.candidatePhone || null,
     employeeId: offer.employeeId || null,
     contractId: offer.contractId || null,
     mandatoryCommunicationId: mandatoryCommunicationId || null,
@@ -96,6 +99,7 @@ export async function createEmploymentRequestFromOfferIfMissing(params: {
     plannedHireDate: offer.proposedStartDate || "",
     jobRoleId: offer.jobTitleName || "",
     worksiteId: offer.worksiteId || "",
+    contractType: offer.contractType || null,
     
     createdAt: serverTimestamp(),
     createdBy: actorUid,
@@ -115,6 +119,56 @@ export async function createEmploymentRequestFromOfferIfMissing(params: {
   });
 
   return { id: requestId, alreadyExists: false };
+}
+
+/**
+ * Create a new Proroga (CDD Renewal) UniLav request.
+ */
+export async function createProrogaRequestForRenewal(params: {
+  entityId: string;
+  employeeId: string;
+  personId: string;
+  newContractId: string;
+  oldContractId: string;
+  candidateDisplayName: string;
+  plannedStartDate: string;
+  jobRoleId: string;
+  worksiteId: string;
+  contractType: string;
+  actorUid: string;
+}) {
+  const { entityId, employeeId, personId, newContractId, oldContractId, candidateDisplayName, plannedStartDate, jobRoleId, worksiteId, contractType, actorUid } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  const requestId = `proroga_${newContractId}`;
+  const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+
+  const requestData: EmploymentRequest = {
+    id: requestId,
+    entityId,
+    personId,
+    employeeId,
+    contractId: newContractId,
+    previousContractId: oldContractId,
+    candidateDisplayName,
+    
+    source: "contract_renewal",
+    type: "unilav_proroga",
+    status: "draft",
+
+    plannedHireDate: plannedStartDate,
+    jobRoleId,
+    worksiteId,
+    contractType,
+    
+    createdAt: serverTimestamp(),
+    createdBy: actorUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  };
+
+  await setDoc(requestRef, sanitizePayload(requestData));
+  return requestId;
 }
 
 /**

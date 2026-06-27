@@ -28,13 +28,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, Query } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, Query, limit } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
+import { EmploymentRequest } from "@/types/employment-request";
 import { getDocumentDownloadUrl, uploadHRDocument } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
@@ -233,6 +234,21 @@ export default function ContractDetailPage() {
 
   const { data: contractDocs } = useCollection<HRDocument>(docsQuery);
 
+  // 3. Compliance Query (Proroga Tracking)
+  const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
+  const cpiQuery = useMemo(() => {
+    if (!db || !entityId || !contractId || !isRenewalContract || !hasPermission("employmentRequests.read")) return null;
+    return query(
+      collection(db, `entities/${entityId}/employmentRequests`),
+      where("contractId", "==", contractId),
+      where("type", "==", "unilav_proroga"),
+      limit(1)
+    ) as Query<EmploymentRequest>;
+  }, [db, entityId, contractId, isRenewalContract, hasPermission]);
+
+  const { data: cpiItems } = useCollection<EmploymentRequest>(cpiQuery);
+  const renewalCpi = cpiItems?.[0];
+
   // Grouped Documents for Display
   const groupedDocs = useMemo(() => {
     if (!contractDocs) return { signed: null, latestGenerated: null, history: [], termination: [], others: [] };
@@ -297,7 +313,7 @@ export default function ContractDetailPage() {
   }, [db, entityId, isEditing, contract?.status]);
   const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
 
-  // --- Derived State & Workflow Guards (CALLED UNCONDITIONALLY) ---
+  // --- Derived State & Workflow Guards ---
   const canUpdate = hasPermission("contracts.update");
   const isDraft = contract?.status === 'draft';
   const isPendingSignature = contract?.status === 'pending_signature';
@@ -305,7 +321,6 @@ export default function ContractDetailPage() {
   const isActive = contract?.status === 'active';
   const isTerminated = contract?.status === 'terminated';
   const isRenewed = contract?.status === 'renewed';
-  const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
   const isImported = !!(contract?.source === 'direct_hr_creation' || contract?.source === 'historical_import');
   
   const today = startOfDay(new Date());
@@ -352,12 +367,21 @@ export default function ContractDetailPage() {
       list.push({ label: "Signature du salarié manquante", type: 'error' });
     }
 
+    // --- UniLav Proroga Guard (Italy Compliance) ---
+    if (isRenewalContract && isFixedTermCDD) {
+       const cpiStatus = renewalCpi?.status;
+       const isCpiDone = cpiStatus === 'completed' || cpiStatus === 'communication_done';
+       if (!isCpiDone) {
+          list.push({ label: "Communication UniLav/CPI de proroga non complétée.", type: 'error' });
+       }
+    }
+
     if (!contract.sentToEmployeeAt) {
       list.push({ label: "Contrat non encore envoyé au salarié par email", type: 'info' });
     }
 
     return list;
-  }, [contract, isPdfObsolete, hasSignedDoc, isImported]);
+  }, [contract, isPdfObsolete, hasSignedDoc, isImported, isRenewalContract, isFixedTermCDD, renewalCpi]);
 
   const canActivateNow = activationBlockers.filter(b => b.type === 'error').length === 0;
 
@@ -1283,7 +1307,7 @@ export default function ContractDetailPage() {
                          !!canActivateNow ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
                        )}
                      >
-                        {!!processing ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                        {!!processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                         Confirmer signature et activer le contrat
                      </Button>
                    )}
@@ -1413,6 +1437,32 @@ export default function ContractDetailPage() {
                 <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
              </CardContent>
           </Card>
+
+          {/* Proroga Tracking Sidebar Card */}
+          {isRenewalContract && renewalCpi && (
+            <Card className="border-primary/5 rounded-[2rem] shadow-lg bg-white overflow-hidden animate-in fade-in slide-in-from-right-2">
+               <CardHeader className="py-4 border-b bg-green-50/50">
+                  <CardTitle className="text-[10px] font-black uppercase tracking-widest text-green-700 flex items-center gap-2">
+                     <Globe className="w-4 h-4" /> Compliance Proroga
+                  </CardTitle>
+               </CardHeader>
+               <CardContent className="p-6 space-y-4">
+                  <div className="space-y-1">
+                     <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">Statut UniLav</p>
+                     {getStatusBadgeCpi(renewalCpi.status)}
+                  </div>
+                  <div className="space-y-1 pt-2 border-t border-dashed">
+                     <p className="text-[9px] font-black uppercase text-muted-foreground opacity-60">Protocole</p>
+                     <p className="text-xs font-mono font-bold text-slate-800 truncate">{renewalCpi.protocolCode || "Non enregistré"}</p>
+                  </div>
+                  <Button asChild variant="secondary" className="w-full h-9 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 text-xs gap-2">
+                     <Link href={`/entity/${entityId}/employment-requests/${renewalCpi.id}`}>
+                        Voir le dossier CPI <ChevronRight className="w-3.5 h-3.5" />
+                     </Link>
+                  </Button>
+               </CardContent>
+            </Card>
+          )}
         </div>
       </div>
 
@@ -1553,5 +1603,13 @@ function getStatusBadge(status: ContractStatus) {
     case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 uppercase font-black text-[9px] px-2">Activation</Badge>;
     case 'active': return <Badge className="bg-green-500 text-white border-none uppercase font-black text-[9px] px-2">Actif</Badge>;
     default: return <Badge variant="outline" className="uppercase font-black text-[9px] px-2">{status}</Badge>;
+  }
+}
+
+function getStatusBadgeCpi(status: string) {
+  switch (status) {
+    case 'completed': return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase">Validé</Badge>;
+    case 'communication_done': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 text-[8px] font-black uppercase">Fait</Badge>;
+    default: return <Badge variant="outline" className="text-[8px] font-black uppercase">{status}</Badge>;
   }
 }
