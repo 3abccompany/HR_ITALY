@@ -216,6 +216,9 @@ export default function Employee360HubPage() {
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
+  const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
+
   // --- 1. STRICT PERMISSION READINESS ---
   const permissionsReady = 
     !membershipLoading && 
@@ -524,23 +527,21 @@ export default function Employee360HubPage() {
       </div>
 
       {/* 360 Header */}
-      <header className="flex items-center justify-between mb-8 gap-6 border-b pb-8">
-        <div className="flex items-center gap-6">
-          <div className="relative">
-             <div className="bg-primary text-white w-20 h-20 rounded-[2rem] flex items-center justify-center text-3xl font-black shadow-xl shadow-primary/20">
-               {initials}
-             </div>
-             <div className="absolute -bottom-1 -right-1 ring-4 ring-background rounded-full">
-                {getStatusBadge(employee.status)}
-             </div>
-          </div>
-          <div>
-            <h1 className="text-4xl font-black text-primary tracking-tight">{employee.displayName}</h1>
-            <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-muted-foreground uppercase tracking-widest mt-2">
-              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Fingerprint className="w-3.5 h-3.5" /> {employee.employeeCode}</span>
-              <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Briefcase className="w-3.5 h-3.5" /> {employee.jobTitle}</span>
-              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Embauché le {formatDateSafe(employee.hireDate)}</span>
-            </div>
+      <header className="flex items-center gap-6 mb-8 border-b pb-8">
+        <div className="relative">
+           <div className="bg-primary text-white w-20 h-20 rounded-[2rem] flex items-center justify-center text-3xl font-black shadow-xl shadow-primary/20">
+             {initials}
+           </div>
+           <div className="absolute -bottom-1 -right-1 ring-4 ring-background rounded-full">
+              {getStatusBadge(employee.status)}
+           </div>
+        </div>
+        <div>
+          <h1 className="text-4xl font-black text-primary tracking-tight">{employee.displayName}</h1>
+          <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-muted-foreground uppercase tracking-widest mt-2">
+            <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Fingerprint className="w-3.5 h-3.5" /> {employee.employeeCode}</span>
+            <span className="flex items-center gap-1.5 bg-secondary/40 px-2 py-1 rounded-lg"><Briefcase className="w-3.5 h-3.5" /> {employee.jobTitle}</span>
+            <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Embauché le {formatDateSafe(employee.hireDate)}</span>
           </div>
         </div>
       </header>
