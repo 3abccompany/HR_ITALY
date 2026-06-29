@@ -8,7 +8,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, History, MoreVertical,
   RefreshCcw, FileSignature, FileText, Paperclip,
-  FileCheck, Upload
+  FileCheck, Upload, ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

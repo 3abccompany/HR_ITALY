@@ -7,7 +7,8 @@ import {
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, ArrowRight, History, MoreVertical,
-  RefreshCcw, FileSignature, XCircle, FileCheck, Paperclip, Upload
+  RefreshCcw, FileSignature, XCircle, FileCheck, Paperclip, Upload,
+  ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -529,7 +530,8 @@ function StatCard({ title, value, icon: Icon, color }: any) {
     blue: "bg-blue-50 text-blue-600 border-blue-100",
     orange: "bg-orange-50 text-orange-600 border-orange-100",
     red: "bg-red-50 text-red-600 border-red-100",
-    green: "bg-green-50 text-green-600 border-green-100"
+    green: "bg-green-50 text-green-600 border-green-100",
+    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
   };
   return (
     <Card className="border-primary/5 shadow-sm rounded-2xl group bg-white hover:shadow-md transition-all">
