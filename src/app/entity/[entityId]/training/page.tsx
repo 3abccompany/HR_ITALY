@@ -15,7 +15,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy, Query, where } from "firebase/firestore";
+import { collection, query, orderBy, Query, where, doc, getDoc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   Training, 
@@ -27,6 +27,7 @@ import {
   TRAINING_RESULT_LABELS 
 } from "@/types/training";
 import { archiveTraining } from "@/services/training.service";
+import { getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { TrainingDialog } from "@/components/trainings/TrainingDialog";
@@ -63,6 +64,7 @@ export default function TrainingsRegistryPage() {
   const [isResultMode, setIsResultMode] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
   const [loading, setLoading] = useState(false);
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
   // Queries
   const canRead = hasPermission("training.read");
@@ -133,6 +135,24 @@ export default function TrainingsRegistryPage() {
     setEditingId(t.id);
     setIsResultMode(true);
     setIsDialogVisible(true);
+  };
+
+  const handleViewCertificate = async (docId: string) => {
+    if (!db || !entityId || !docId) return;
+    setViewingDocId(docId);
+    try {
+      const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, docId));
+      if (docSnap.exists()) {
+        const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        throw new Error("Document introuvable dans le registre GED.");
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message || "Impossible d'ouvrir le document." });
+    } finally {
+      setViewingDocId(null);
+    }
   };
 
   const handleArchive = async (id: string) => {
@@ -291,9 +311,19 @@ export default function TrainingsRegistryPage() {
                       </TableCell>
                       <TableCell>
                          {t.certificateDocumentId ? (
-                           <div className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase">
-                             <FileCheck className="w-3.5 h-3.5" /> Attestation jointe
-                           </div>
+                           <button 
+                             onClick={() => handleViewCertificate(t.certificateDocumentId!)} 
+                             disabled={!!viewingDocId}
+                             className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase hover:underline disabled:opacity-50 group"
+                           >
+                             <FileCheck className="w-3.5 h-3.5" /> 
+                             Attestation jointe
+                             {viewingDocId === t.certificateDocumentId ? (
+                               <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />
+                             ) : (
+                               <Eye className="w-2.5 h-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                             )}
+                           </button>
                          ) : (
                            <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase">
                              <Paperclip className="w-3.5 h-3.5 opacity-30" /> Non jointe
@@ -329,6 +359,11 @@ export default function TrainingsRegistryPage() {
                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                            </DropdownMenuTrigger>
                            <DropdownMenuContent align="end" className="w-52">
+                              {t.certificateDocumentId && (
+                                <DropdownMenuItem onClick={() => handleViewCertificate(t.certificateDocumentId!)} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
+                                  <Eye className="w-4 h-4" /> Voir attestation
+                                </DropdownMenuItem>
+                              )}
                               {t.status !== 'completed' && t.status !== 'failed' && (
                                 <DropdownMenuItem onClick={() => handleEnterResult(t)} className="gap-2 font-bold text-primary">
                                    <FileSignature className="w-4 h-4" /> Saisir le résultat

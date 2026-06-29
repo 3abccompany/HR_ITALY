@@ -16,7 +16,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy, Query, where } from "firebase/firestore";
+import { collection, query, orderBy, Query, where, doc, getDoc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   MedicalVisit, 
@@ -27,6 +27,7 @@ import {
   FITNESS_STATUS_LABELS 
 } from "@/types/medical-visit";
 import { archiveMedicalVisit } from "@/services/medical-visit.service";
+import { getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { MedicalVisitDialog } from "@/components/medical-visits/MedicalVisitDialog";
@@ -64,6 +65,7 @@ export default function MedicalVisitsRegistryPage() {
   const [isResultMode, setIsResultMode] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
   const [loading, setLoading] = useState(false);
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
   // Queries
   const canRead = hasPermission("medicalVisits.read");
@@ -137,6 +139,24 @@ export default function MedicalVisitsRegistryPage() {
     setIsDialogVisible(true);
   };
 
+  const handleViewCertificate = async (docId: string) => {
+    if (!db || !entityId || !docId) return;
+    setViewingDocId(docId);
+    try {
+      const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, docId));
+      if (docSnap.exists()) {
+        const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        throw new Error("Document introuvable dans le registre GED.");
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message || "Impossible d'ouvrir le document." });
+    } finally {
+      setViewingDocId(null);
+    }
+  };
+
   const handleArchive = async (id: string) => {
     if (!user) return;
     setLoading(true);
@@ -206,7 +226,7 @@ export default function MedicalVisitsRegistryPage() {
           </Select>
 
           <Select value={filters.status} onValueChange={(v) => setFilters(p => ({...p, status: v}))}>
-            <SelectTrigger className="w-[180px] rounded-xl"><SelectValue placeholder="Statut" /></SelectTrigger>
+            <SelectTrigger className="w-[150px] rounded-xl"><SelectValue placeholder="Statut" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Tous les statuts</SelectItem>
               <SelectItem value="scheduled">Planifiée</SelectItem>
@@ -280,9 +300,19 @@ export default function MedicalVisitsRegistryPage() {
                       </TableCell>
                       <TableCell>
                          {v.documentId ? (
-                           <div className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase">
-                             <FileCheck className="w-3.5 h-3.5" /> Certificat joint
-                           </div>
+                           <button 
+                             onClick={() => handleViewCertificate(v.documentId!)} 
+                             disabled={!!viewingDocId}
+                             className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase hover:underline disabled:opacity-50 group"
+                           >
+                             <FileCheck className="w-3.5 h-3.5" /> 
+                             Certificat joint
+                             {viewingDocId === v.documentId ? (
+                               <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />
+                             ) : (
+                               <Eye className="w-2.5 h-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                             )}
+                           </button>
                          ) : (
                            <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase">
                              <Paperclip className="w-3.5 h-3.5 opacity-30" /> Non joint
@@ -314,6 +344,11 @@ export default function MedicalVisitsRegistryPage() {
                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                            </DropdownMenuTrigger>
                            <DropdownMenuContent align="end" className="w-48">
+                              {v.documentId && (
+                                <DropdownMenuItem onClick={() => handleViewCertificate(v.documentId!)} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
+                                  <Eye className="w-4 h-4" /> Voir certificat
+                                </DropdownMenuItem>
+                              )}
                               {v.fitnessStatus === 'pending_result' && !isTerminal(v.status) && (
                                 <DropdownMenuItem onClick={() => handleEnterResult(v)} className="gap-2 font-bold text-primary">
                                    <FileSignature className="w-4 h-4" /> Saisir le résultat

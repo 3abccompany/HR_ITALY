@@ -23,11 +23,11 @@ import {
 } from "@/types/training";
 import { Employee } from "@/types/employee";
 import { createTraining, updateTraining, createTrainingBatch } from "@/services/training.service";
-import { uploadHRDocument } from "@/services/document.service";
+import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, User, AlertCircle, Paperclip, Upload } from "lucide-react";
+import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, User, AlertCircle, Paperclip, Upload, FileCheck, Eye } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { parseISO, differenceInCalendarDays } from "date-fns";
@@ -57,7 +57,8 @@ const initialForm = {
   durationHours: undefined as number | undefined,
   status: "planned" as TrainingStatus,
   resultStatus: "not_required" as TrainingResultStatus,
-  notes: ""
+  notes: "",
+  certificateDocumentId: "" as string | null
 };
 
 export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resultMode = false, employees }: TrainingDialogProps) {
@@ -107,7 +108,8 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
               durationHours: data.durationHours || undefined,
               status: data.status,
               resultStatus: data.resultStatus || "not_required",
-              notes: data.notes || ""
+              notes: data.notes || "",
+              certificateDocumentId: data.certificateDocumentId || null
             });
             setSelectedEmployeeIds([data.employeeId]);
           }
@@ -159,6 +161,24 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
     );
   };
 
+  const handleViewDoc = async (docId: string) => {
+    if (!db || !entityId || !docId) return;
+    setLoading(true);
+    try {
+      const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, docId));
+      if (docSnap.exists()) {
+        const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        throw new Error("Document introuvable.");
+      }
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !entityId) return;
@@ -197,8 +217,8 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
             const emp = employees.find(x => x.employeeId === id);
             return { employeeId: id, personId: emp?.personId || null };
           });
-          await createTrainingBatch(entityId, payload, targets, user.uid);
-          // Batch mode: we don't handle automated upload to N records here for now
+          const batchResult = await createTrainingBatch(entityId, payload, targets, user.uid);
+          // Batch mode: multiple records created, activeTrainingId is not unique here
           activeTrainingId = null;
         }
       }
@@ -428,22 +448,37 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                 </div>
                 
                 {resultMode && (
-                  <div className="space-y-3 p-5 bg-white border border-accent/10 rounded-2xl animate-in fade-in slide-in-from-top-2">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Paperclip className="w-4 h-4 text-accent" />
-                      <Label className="text-xs font-black uppercase text-accent tracking-tight">Attestation de formation (Optionnelle)</Label>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <Input 
-                        type="file" 
-                        accept=".pdf,.png,.jpg,.jpeg" 
-                        className="h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-accent/10 file:text-accent file:border-none file:rounded-md file:mr-4 hover:bg-slate-50 transition-colors"
-                        onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} 
-                      />
-                      {selectedFile && <p className="text-[10px] text-green-600 font-bold">Fichier prêt: {selectedFile.name}</p>}
-                      <p className="text-[9px] text-muted-foreground leading-relaxed italic">
-                        Format: PDF, PNG, JPG. Peut être ajoutée plus tard dans l'onglet GED.
-                      </p>
+                  <div className="space-y-4">
+                    {formData.certificateDocumentId && (
+                      <div className="p-4 bg-white rounded-2xl border border-green-100 flex items-center justify-between shadow-sm animate-in fade-in">
+                        <div className="flex items-center gap-3">
+                           <div className="bg-green-100 p-2 rounded-xl text-green-600"><FileCheck className="w-5 h-5" /></div>
+                           <p className="text-xs font-bold text-slate-700">Attestation déjà jointe</p>
+                        </div>
+                        <Button type="button" variant="secondary" size="sm" className="h-8 rounded-lg font-bold gap-2" onClick={() => handleViewDoc(formData.certificateDocumentId!)} disabled={loading}>
+                           <Eye className="w-3.5 h-3.5" /> Voir
+                        </Button>
+                      </div>
+                    )}
+                    <div className="space-y-3 p-5 bg-white border border-accent/10 rounded-2xl">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Paperclip className="w-4 h-4 text-accent" />
+                        <Label className="text-xs font-black uppercase text-accent tracking-tight">
+                           {formData.certificateDocumentId ? "Remplacer l'attestation" : "Joindre l'attestation de formation (Optionnel)"}
+                        </Label>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <Input 
+                          type="file" 
+                          accept=".pdf,.png,.jpg,.jpeg" 
+                          className="h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-accent/10 file:text-accent file:border-none file:rounded-md file:mr-4 hover:bg-slate-50 transition-colors"
+                          onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} 
+                        />
+                        {selectedFile && <p className="text-[10px] text-green-600 font-bold">Nouveau fichier prêt : {selectedFile.name}</p>}
+                        <p className="text-[9px] text-muted-foreground leading-relaxed italic">
+                          Format: PDF, PNG, JPG. Peut être ajoutée ou consultée plus tard dans l'onglet GED.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
