@@ -41,7 +41,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
-import { doc, DocumentReference, query, collection, where, Query } from "firebase/firestore";
+import { doc, DocumentReference, query, collection, where, Query, limit, orderBy } from "firebase/firestore";
 import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
@@ -49,6 +49,11 @@ import { EmploymentOffer } from "@/types/employment-offer";
 import { Candidate } from "@/types/candidate";
 import { EmploymentRequest } from "@/types/employment-request";
 import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
+import { 
+  MedicalVisit, 
+  MEDICAL_VISIT_TYPE_LABELS,
+  FITNESS_STATUS_LABELS 
+} from "@/types/medical-visit";
 import { getDocumentDownloadUrl } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
@@ -125,6 +130,47 @@ function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = 
   );
 }
 
+/**
+ * Renders a deadline badge for medical visits.
+ */
+function getMedicalDeadlineBadge(visit: MedicalVisit) {
+  if (visit.fitnessStatus === 'pending_result') {
+    return (
+      <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] font-black uppercase">
+        In attesa di giudizio
+      </Badge>
+    );
+  }
+
+  const expiryDate = parseSafeDate(visit.nextVisitDate);
+  if (!expiryDate) return null;
+
+  const today = startOfDay(new Date());
+  const thirtyDaysOut = addDays(today, 30);
+
+  if (isBefore(expiryDate, today)) {
+    return (
+      <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase animate-pulse">
+        Scaduta
+      </Badge>
+    );
+  }
+
+  if (isBefore(expiryDate, thirtyDaysOut)) {
+    return (
+      <Badge variant="secondary" className="bg-orange-500 text-white border-none text-[10px] font-black uppercase">
+        In scadenza
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge className="bg-green-600 text-white border-none text-[10px] font-black uppercase">
+      Regolare
+    </Badge>
+  );
+}
+
 export default function Employee360HubPage() {
   const params = useParams();
   const router = useRouter();
@@ -152,6 +198,7 @@ export default function Employee360HubPage() {
   const canReadCPI = permissionsReady && activePermissions.includes("employmentRequests.read");
   const canReadPersons = permissionsReady && activePermissions.includes("persons.read");
   const canReadCandidates = permissionsReady && activePermissions.includes("candidates.read");
+  const canReadMedical = permissionsReady && activePermissions.includes("medicalVisits.read");
 
   // --- 2. Aggregate Queries ---
   
@@ -283,6 +330,20 @@ export default function Employee360HubPage() {
        return db - da;
     });
   }, [docsByEmp, docsByPers, docsByCand]);
+
+  // --- 2C. Medical Visits Sub-Query ---
+  const medicalVisitsQuery = useMemo(() => {
+    if (!db || !entityId || !employeeId || !canReadMedical) return null;
+    return query(
+      collection(db, `entities/${entityId}/medicalVisits`),
+      where("employeeId", "==", employeeId),
+      orderBy("visitDate", "desc"),
+      limit(1)
+    ) as Query<MedicalVisit>;
+  }, [db, entityId, employeeId, canReadMedical]);
+
+  const { data: medicalVisits, loading: loadingVisits } = useCollection<MedicalVisit>(medicalVisitsQuery, "employee360.medicalVisits");
+  const latestMedicalVisit = medicalVisits?.[0];
 
   // Detected if a historical UniLav receipt document exists for the overview card
   const hasHistoricalUniLav = useMemo(() => {
@@ -825,7 +886,68 @@ export default function Employee360HubPage() {
 
         <TabsContent value="compliance" className="mt-0 space-y-8 animate-in fade-in slide-in-from-bottom-2">
            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <CompliancePlaceholderCard title="Visites Médicales" icon={Stethoscope} />
+              {/* Medical Visits Card */}
+              {loadingVisits ? (
+                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
+                   <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
+                </Card>
+              ) : latestMedicalVisit ? (
+                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex flex-col group hover:shadow-md transition-all">
+                   <div className="flex items-start justify-between mb-4">
+                      <div className="bg-primary/5 p-3 rounded-2xl text-primary"><Stethoscope className="w-6 h-6" /></div>
+                      {getMedicalDeadlineBadge(latestMedicalVisit)}
+                   </div>
+                   <div className="space-y-4 flex-1">
+                      <div className="space-y-1">
+                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Dernière visite</p>
+                         <div className="flex items-center gap-2">
+                            <Calendar className="w-3.5 h-3.5 text-primary/40" />
+                            <span className="text-sm font-bold text-slate-800">{formatDateSafe(latestMedicalVisit.visitDate)}</span>
+                         </div>
+                         <Badge variant="outline" className="text-[8px] h-4 px-1.5 font-bold uppercase border-primary/10 mt-1">
+                           {MEDICAL_VISIT_TYPE_LABELS[latestMedicalVisit.visitType]}
+                         </Badge>
+                      </div>
+
+                      <div className="space-y-1">
+                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Giudizio (Aptitude)</p>
+                         <p className="text-xs font-black text-primary bg-primary/5 px-2 py-1 rounded-lg w-fit">
+                            {FITNESS_STATUS_LABELS[latestMedicalVisit.fitnessStatus]}
+                         </p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                         <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Échéance</p>
+                            <p className="text-xs font-bold text-slate-700">{latestMedicalVisit.nextVisitDate ? formatDateSafe(latestMedicalVisit.nextVisitDate) : "À définir"}</p>
+                         </div>
+                         <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Médecin</p>
+                            <p className="text-xs font-bold text-slate-700 truncate" title={latestMedicalVisit.doctorName}>{latestMedicalVisit.doctorName || "—"}</p>
+                         </div>
+                      </div>
+                   </div>
+                   <Button variant="ghost" size="sm" asChild className="mt-6 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
+                      <Link href={`/entity/${entityId}/medical-visits?search=${encodeURIComponent(employee.displayName)}`}>
+                         Dossier complet <ChevronRight className="w-4 h-4" />
+                      </Link>
+                   </Button>
+                </Card>
+              ) : (
+                <Card className="p-6 rounded-[2rem] border border-dashed border-slate-200 bg-slate-50/30 flex flex-col items-center justify-center text-center space-y-3 min-h-[220px]">
+                   <div className="bg-white p-3 rounded-2xl shadow-sm text-slate-300"><Stethoscope className="w-6 h-6" /></div>
+                   <div className="space-y-1">
+                      <p className="text-xs font-bold text-slate-500">Aucune visite médicale</p>
+                      <p className="text-[10px] text-slate-400">En attente de planification</p>
+                   </div>
+                   {hasPermission("medicalVisits.create") && (
+                     <Button variant="outline" size="sm" asChild className="h-7 rounded-lg text-[9px] font-black uppercase bg-white">
+                        <Link href={`/entity/${entityId}/medical-visits`}>Planifier</Link>
+                     </Button>
+                   )}
+                </Card>
+              )}
+
               <CompliancePlaceholderCard title="Habilitations Sécurité" icon={Shield} />
               <CompliancePlaceholderCard title="Formations Certifiantes" icon={GraduationCap} />
            </div>
@@ -872,7 +994,7 @@ export default function Employee360HubPage() {
   );
 }
 
-// --- Local Components & Helpers ---
+// ... rest of helpers unchanged (kept for final file integrity)
 
 function OverviewCard({ title, value, subtitle, icon: Icon, color, status }: any) {
   const colors: any = {
