@@ -7,7 +7,8 @@ import {
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, History, MoreVertical,
-  RefreshCcw, FileSignature, FileText, Paperclip
+  RefreshCcw, FileSignature, FileText, Paperclip,
+  FileCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

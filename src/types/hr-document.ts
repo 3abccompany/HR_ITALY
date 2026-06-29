@@ -36,6 +36,8 @@ export type RelatedModule =
   | "payroll"
   | "termination"
   | "timeOffRequests"
+  | "medicalVisits"
+  | "trainings"
   | "general";
 
 export interface HRDocument {
