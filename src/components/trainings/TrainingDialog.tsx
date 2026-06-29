@@ -211,7 +211,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
         {fetching ? (
           <div className="py-20 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
         ) : (
-          <form onSubmit={handleSave} className="space-y-6 py-4">
+          <form id="training-form" onSubmit={handleSave} className="space-y-6 py-4">
             
             <div className="space-y-2">
                <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur(s)</Label>
@@ -223,7 +223,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                  <div className="space-y-3">
                     <Popover>
                       <PopoverTrigger asChild>
-                         <Button variant="outline" className="w-full h-11 justify-between rounded-xl font-medium px-4">
+                         <Button variant="outline" type="button" className="w-full h-11 justify-between rounded-xl font-medium px-4">
                             <span className="truncate">
                                {selectedEmployeeIds.length === 0 
                                  ? "Choisir les collaborateurs..." 
@@ -233,7 +233,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                             <Search className="ml-2 h-4 w-4 opacity-50" />
                          </Button>
                       </PopoverTrigger>
-                      <PopoverContent className="w-[400px] p-0 rounded-2xl shadow-2xl" align="start">
+                      <PopoverContent className="w-[400px] p-0 rounded-2xl shadow-2xl z-[100]" align="start">
                          <div className="p-3 border-b flex items-center gap-2 bg-slate-50">
                             <Search className="w-4 h-4 text-muted-foreground" />
                             <input 
@@ -246,23 +246,31 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                          </div>
                          <ScrollArea className="h-[250px]">
                             <div className="p-2 space-y-1">
-                               {filteredEmployees.map(e => (
-                                 <div 
-                                   key={e.employeeId} 
-                                   className={cn(
-                                     "flex items-center gap-3 p-2 rounded-xl cursor-pointer transition-colors",
-                                     selectedEmployeeIds.includes(e.employeeId) ? "bg-primary/5" : "hover:bg-slate-50"
-                                   )}
-                                   onClick={() => handleToggleEmployee(e.employeeId)}
-                                 >
-                                    <Checkbox checked={selectedEmployeeIds.includes(e.employeeId)} onCheckedChange={() => handleToggleEmployee(e.employeeId)} />
-                                    <div className="flex-1 min-w-0">
-                                       <p className="text-sm font-bold text-slate-800 truncate">{e.displayName}</p>
-                                       <p className="text-[10px] text-muted-foreground uppercase font-mono">{e.employeeCode}</p>
-                                    </div>
-                                    {selectedEmployeeIds.includes(e.employeeId) && <Check className="w-4 h-4 text-primary" />}
-                                 </div>
-                               ))}
+                               {filteredEmployees.map(e => {
+                                 const isSelected = selectedEmployeeIds.includes(e.employeeId);
+                                 return (
+                                   <button
+                                     key={e.employeeId} 
+                                     type="button"
+                                     className={cn(
+                                       "w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left",
+                                       isSelected ? "bg-primary/5" : "hover:bg-slate-50"
+                                     )}
+                                     onClick={() => handleToggleEmployee(e.employeeId)}
+                                   >
+                                      <Checkbox 
+                                        checked={isSelected} 
+                                        onCheckedChange={() => {}} // parent button handles it
+                                        className="pointer-events-none"
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                         <p className="text-sm font-bold text-slate-800 truncate">{e.displayName}</p>
+                                         <p className="text-[10px] text-muted-foreground uppercase font-mono">{e.employeeCode}</p>
+                                      </div>
+                                      {isSelected && <Check className="w-4 h-4 text-primary" />}
+                                   </button>
+                                 );
+                               })}
                                {filteredEmployees.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">Aucun résultat.</p>}
                             </div>
                          </ScrollArea>
@@ -390,7 +398,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
 
             <DialogFooter className="pt-4 border-t gap-2">
               <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Annuler</Button>
-              <Button type="submit" disabled={loading || daysCount < 0} className="rounded-xl px-8 font-black shadow-lg">
+              <Button type="submit" form="training-form" disabled={loading || daysCount < 0} className="rounded-xl px-8 font-black shadow-lg">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                 {isEditing ? "Enregistrer" : "Enregistrer la session"}
               </Button>
@@ -401,4 +409,3 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
     </Dialog>
   );
 }
-
