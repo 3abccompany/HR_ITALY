@@ -20,7 +20,7 @@ import { format, isBefore, addDays, startOfDay } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
-import { MEDICAL_VISIT_TYPE_LABELS } from "@/types/medical-visit";
+import { MEDICAL_VISIT_TYPE_LABELS, MedicalVisitType } from "@/types/medical-visit";
 
 function parseSafeDate(val: any): Date | null {
   if (!val) return null;
@@ -155,7 +155,7 @@ export default function EntityDashboardPage() {
           s.medicalAlerts.push({
             id: v.id,
             title: displayName,
-            subtitle: `Visite échue (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as any] || v.visitType})`,
+            subtitle: `Visite échue (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as MedicalVisitType] || v.visitType})`,
             date: v.nextVisitDate,
             type: 'medical',
             variant: 'expired'
@@ -164,7 +164,7 @@ export default function EntityDashboardPage() {
           s.medicalAlerts.push({
             id: v.id,
             title: displayName,
-            subtitle: `Échéance proche (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as any] || v.visitType})`,
+            subtitle: `Échéance proche (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as MedicalVisitType] || v.visitType})`,
             date: v.nextVisitDate,
             type: 'medical',
             variant: 'soon'
@@ -173,7 +173,7 @@ export default function EntityDashboardPage() {
           s.medicalAlerts.push({
             id: v.id,
             title: displayName,
-            subtitle: `Résultat médical manquant (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as any] || v.visitType})`,
+            subtitle: `Résultat médical manquant (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as MedicalVisitType] || v.visitType})`,
             date: v.visitDate,
             type: 'medical',
             variant: 'missing'
