@@ -28,7 +28,8 @@ import {
   normalizeBalance,
   getCounterTypeForRequestType,
   MonthlyAccrual,
-  MonthlyAccrualStatus
+  MonthlyAccrualStatus,
+  TIME_OFF_TYPE_LABELS
 } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth, eachMonthOfInterval } from "date-fns";
 import { createAuditLog } from "./audit.service";
@@ -925,6 +926,7 @@ export async function runMonthlyAccrualCalculation(params: {
           hasDiscrepancy: false,
           impactedByRequestIds: [],
           lastImpactDetectedAt: null,
+          reviewReason: reason,
           createdAt: serverTimestamp(),
           createdByUid: actorUid,
           updatedAt: serverTimestamp(),
