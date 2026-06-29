@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useMemo, useState, useEffect } from "react";
@@ -57,6 +56,7 @@ import {
   MEDICAL_VISIT_TYPE_LABELS,
   FITNESS_STATUS_LABELS 
 } from "@/types/medical-visit";
+import { Training, TRAINING_TYPE_LABELS } from "@/types/training";
 import { getDocumentDownloadUrl } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
@@ -178,6 +178,33 @@ function getMedicalDeadlineBadge(visit: MedicalVisit) {
   );
 }
 
+/**
+ * Renders a compliance badge for training based on expiry logic.
+ */
+function getTrainingDeadlineBadge(training: Training) {
+  const expiryDate = parseSafeDate(training.expiryDate);
+  const today = startOfDay(new Date());
+  const thirtyDaysOut = addDays(today, 30);
+
+  if (training.status === 'planned') {
+    return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] font-black uppercase">Planifiée</Badge>;
+  }
+
+  if (!expiryDate) {
+    return <Badge className="bg-slate-900 text-white border-none text-[10px] font-black uppercase">Terminée</Badge>;
+  }
+
+  if (isBefore(expiryDate, today)) {
+    return <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase animate-pulse">Expirée</Badge>;
+  }
+
+  if (isBefore(expiryDate, thirtyDaysOut)) {
+    return <Badge variant="secondary" className="bg-orange-500 text-white border-none text-[10px] font-black uppercase">À renouveler</Badge>;
+  }
+
+  return <Badge className="bg-green-600 text-white border-none text-[10px] font-black uppercase">À jour</Badge>;
+}
+
 export default function Employee360HubPage() {
   const params = useParams();
   const router = useRouter();
@@ -188,9 +215,6 @@ export default function Employee360HubPage() {
   const authInstance = useAuth();
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
-
-  const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
-  const [inviting, setInviting] = useState(false);
 
   // --- 1. STRICT PERMISSION READINESS ---
   const permissionsReady = 
@@ -206,6 +230,7 @@ export default function Employee360HubPage() {
   const canReadPersons = permissionsReady && activePermissions.includes("persons.read");
   const canReadCandidates = permissionsReady && activePermissions.includes("candidates.read");
   const canReadMedical = permissionsReady && activePermissions.includes("medicalVisits.read");
+  const canReadTraining = permissionsReady && activePermissions.includes("training.read");
 
   // --- 2. Aggregate Queries ---
   
@@ -351,6 +376,51 @@ export default function Employee360HubPage() {
 
   const { data: medicalVisits, loading: loadingVisits } = useCollection<MedicalVisit>(medicalVisitsQuery, "employee360.medicalVisits");
   const latestMedicalVisit = medicalVisits?.[0];
+
+  // --- 2D. Training Sub-Query (Phase 1B) ---
+  const trainingsQuery = useMemo(() => {
+    if (!db || !entityId || !employeeId || !canReadTraining) return null;
+    return query(
+      collection(db, `entities/${entityId}/trainings`),
+      where("employeeId", "==", employeeId),
+      orderBy("courseDate", "desc")
+    ) as Query<Training>;
+  }, [db, entityId, employeeId, canReadTraining]);
+
+  const { data: trainings, loading: loadingTrainings } = useCollection<Training>(trainingsQuery, "employee360.trainings");
+
+  /**
+   * Determine the featured training to display in the 360 summary.
+   * Priority: Expired > Expiring Soon (30d) > Planned > Latest Completed.
+   */
+  const featuredTraining = useMemo(() => {
+    if (!trainings || trainings.length === 0) return null;
+    
+    const today = startOfDay(new Date());
+    const threshold = addDays(today, 30);
+
+    const sorted = [...trainings].sort((a, b) => {
+      const getPriority = (t: Training) => {
+        const expiry = parseSafeDate(t.expiryDate);
+        if (expiry && isBefore(expiry, today)) return 0; // Expired
+        if (expiry && isBefore(expiry, threshold)) return 1; // Expiring soon
+        if (t.status === 'planned') return 2; // Planned
+        return 3; // Latest completed
+      };
+      
+      const prioA = getPriority(a);
+      const prioB = getPriority(b);
+      
+      if (prioA !== prioB) return prioA - prioB;
+      
+      // Secondary: most recent course date
+      const dateA = parseSafeDate(a.courseDate)?.getTime() || 0;
+      const dateB = parseSafeDate(b.courseDate)?.getTime() || 0;
+      return dateB - dateA;
+    });
+    
+    return sorted[0];
+  }, [trainings]);
 
   // Detected if a historical UniLav receipt document exists for the overview card
   const hasHistoricalUniLav = useMemo(() => {
@@ -951,8 +1021,66 @@ export default function Employee360HubPage() {
                 </Card>
               )}
 
+              {/* Training Summary Card (Phase 1B) */}
+              {loadingTrainings ? (
+                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
+                   <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
+                </Card>
+              ) : featuredTraining ? (
+                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex flex-col group hover:shadow-md transition-all">
+                   <div className="flex items-start justify-between mb-4">
+                      <div className="bg-primary/5 p-3 rounded-2xl text-primary"><GraduationCap className="w-6 h-6" /></div>
+                      {getTrainingDeadlineBadge(featuredTraining)}
+                   </div>
+                   <div className="space-y-4 flex-1">
+                      <div className="space-y-1">
+                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Formation prioritaire</p>
+                         <h4 className="text-sm font-bold text-slate-800 line-clamp-1" title={featuredTraining.title}>{featuredTraining.title}</h4>
+                         <Badge variant="outline" className="text-[8px] h-4 px-1.5 font-bold uppercase border-primary/10 mt-1">
+                           {TRAINING_TYPE_LABELS[featuredTraining.trainingType]}
+                         </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                         <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Session</p>
+                            <p className="text-xs font-bold text-slate-700">{formatDateSafe(featuredTraining.courseDate)}</p>
+                         </div>
+                         <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Recyclage</p>
+                            <p className="text-xs font-bold text-slate-700">{featuredTraining.expiryDate ? formatDateSafe(featuredTraining.expiryDate) : "Permanent"}</p>
+                         </div>
+                      </div>
+                      
+                      {featuredTraining.provider && (
+                         <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Organisme</p>
+                            <p className="text-xs font-medium text-slate-500 truncate" title={featuredTraining.provider}>{featuredTraining.provider}</p>
+                         </div>
+                      )}
+                   </div>
+                   <Button variant="ghost" size="sm" asChild className="mt-6 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
+                      <Link href={`/entity/${entityId}/training?search=${encodeURIComponent(employee.displayName)}`}>
+                         Dossier formations <ChevronRight className="w-4 h-4" />
+                      </Link>
+                   </Button>
+                </Card>
+              ) : (
+                <Card className="p-6 rounded-[2rem] border border-dashed border-slate-200 bg-slate-50/30 flex flex-col items-center justify-center text-center space-y-3 min-h-[220px]">
+                   <div className="bg-white p-3 rounded-2xl shadow-sm text-slate-300"><GraduationCap className="w-6 h-6" /></div>
+                   <div className="space-y-1">
+                      <p className="text-xs font-bold text-slate-500">Aucune formation</p>
+                      <p className="text-[10px] text-slate-400">Dossier formation vide</p>
+                   </div>
+                   {hasPermission("training.create") && (
+                     <Button variant="outline" size="sm" asChild className="h-7 rounded-lg text-[9px] font-black uppercase bg-white">
+                        <Link href={`/entity/${entityId}/training`}>Ajouter</Link>
+                     </Button>
+                   )}
+                </Card>
+              )}
+
               <CompliancePlaceholderCard title="Habilitations Sécurité" icon={Shield} />
-              <CompliancePlaceholderCard title="Formations Certifiantes" icon={GraduationCap} />
            </div>
            
            <Card className="border-dashed border-2 bg-secondary/5 rounded-[2.5rem] py-12">
@@ -960,7 +1088,7 @@ export default function Employee360HubPage() {
                  <Info className="w-10 h-10 text-muted-foreground/20 mx-auto" />
                  <h3 className="font-bold text-primary">Dossier de Compliance</h3>
                  <p className="text-xs text-muted-foreground leading-relaxed">
-                   Les modules de suivi réglementaire (Aptitude médicale, formation sécurité, remise des DPI) seront prochainement intégrés à la plateforme.
+                   Les modules de suivi réglementaire (Aptitude médicale, formation sécurité, remise des DPI) sont désormais partiellement intégrés.
                  </p>
               </div>
            </Card>
