@@ -22,12 +22,14 @@ import {
 } from "@/types/medical-visit";
 import { Employee } from "@/types/employee";
 import { createMedicalVisit, updateMedicalVisit } from "@/services/medical-visit.service";
+import { uploadHRDocument } from "@/services/document.service";
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, Stethoscope, AlertCircle, Info, FileSignature } from "lucide-react";
+import { Loader2, ShieldCheck, Stethoscope, AlertCircle, Info, FileSignature, Upload, Paperclip } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { useActiveMembership } from "@/hooks/use-active-membership";
 
 interface MedicalVisitDialogProps {
   open: boolean;
@@ -57,10 +59,14 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
+  const { membership } = useActiveMembership(entityId);
   
   const [formData, setFormData] = useState(initialForm);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
+
+  const isEditing = !!visitId;
 
   useEffect(() => {
     async function load() {
@@ -92,6 +98,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
         }
       } else {
         setFormData(initialForm);
+        setSelectedFile(null);
       }
     }
     load();
@@ -115,13 +122,48 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
         finalPayload.status = 'completed';
       }
 
-      if (visitId) {
+      let activeVisitId = visitId;
+
+      if (isEditing && visitId) {
         await updateMedicalVisit(entityId, visitId, finalPayload, user.uid);
-        toast({ title: "Visite mise à jour" });
       } else {
-        await createMedicalVisit(entityId, finalPayload, user.uid);
-        toast({ title: "Visite enregistrée" });
+        activeVisitId = await createMedicalVisit(entityId, finalPayload, user.uid);
       }
+
+      // Handle optional GED upload
+      if (selectedFile && activeVisitId) {
+        try {
+          const emp = employees.find(e => e.employeeId === formData.employeeId);
+          const docId = await uploadHRDocument(
+            entityId,
+            selectedFile,
+            {
+              title: `Giudizio Idoneità - ${emp?.displayName || 'Employé'} - ${formData.visitDate}`,
+              documentType: "medical_certificate",
+              employeeId: formData.employeeId,
+              personId: formData.personId,
+              relatedModule: "medicalVisits",
+              relatedId: activeVisitId,
+              isSensitive: true,
+              status: "valid"
+            },
+            user.uid,
+            membership?.userDisplayName || "Utilisateur"
+          );
+
+          // Update record with linked document ID
+          await updateMedicalVisit(entityId, activeVisitId, { documentId: docId }, user.uid);
+        } catch (uploadErr) {
+          console.error("[MedicalVisit] Upload failed:", uploadErr);
+          toast({ 
+            variant: "destructive", 
+            title: "Résultat enregistré", 
+            description: "Le résultat est sauvegardé, mais l'envoi du certificat PDF a échoué. Vous pouvez le joindre plus tard dans la GED." 
+          });
+        }
+      }
+
+      toast({ title: visitId ? "Visite mise à jour" : "Visite enregistrée" });
       onOpenChange(false);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -212,23 +254,46 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
 
             <Separator className="opacity-50" />
 
-            <div className={cn("grid grid-cols-1 md:grid-cols-2 gap-6 p-6 rounded-[1.5rem] border", resultMode ? "bg-accent/5 border-accent/20 ring-4 ring-accent/5" : "bg-slate-50 border-slate-100")}>
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black text-primary">Jugement d’aptitude (Giudizio di idoneità)</Label>
-                  <Select value={formData.fitnessStatus} onValueChange={(v: any) => setFormData(p => ({...p, fitnessStatus: v}))}>
-                    <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                       {Object.entries(FITNESS_STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+            <div className={cn("p-6 rounded-[1.5rem] border space-y-6", resultMode ? "bg-accent/5 border-accent/20 ring-4 ring-accent/5" : "bg-slate-50 border-slate-100")}>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                 <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black text-primary">Jugement d’aptitude (Giudizio di idoneità)</Label>
+                    <Select value={formData.fitnessStatus} onValueChange={(v: any) => setFormData(p => ({...p, fitnessStatus: v}))}>
+                      <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                         {Object.entries(FITNESS_STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                 </div>
+
+                 <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black text-primary">Date de prochaine visite</Label>
+                    <Input type="date" value={formData.nextVisitDate} onChange={(e) => setFormData(p => ({...p, nextVisitDate: e.target.value}))} className="bg-white rounded-xl h-11" />
+                 </div>
                </div>
 
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black text-primary">Date de prochaine visite</Label>
-                  <Input type="date" value={formData.nextVisitDate} onChange={(e) => setFormData(p => ({...p, nextVisitDate: e.target.value}))} className="bg-white rounded-xl h-11" />
-               </div>
+               {resultMode && (
+                 <div className="space-y-3 p-5 bg-white border border-accent/10 rounded-2xl animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center gap-2 mb-1">
+                       <Paperclip className="w-4 h-4 text-accent" />
+                       <Label className="text-xs font-black uppercase text-accent tracking-tight">Certificat d'aptitude (Optionnel)</Label>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                       <Input 
+                         type="file" 
+                         accept=".pdf,.png,.jpg,.jpeg" 
+                         className="h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-accent/10 file:text-accent file:border-none file:rounded-md file:mr-4 hover:bg-slate-50 transition-colors"
+                         onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} 
+                       />
+                       {selectedFile && <p className="text-[10px] text-green-600 font-bold">Fichier prêt: {selectedFile.name}</p>}
+                       <p className="text-[9px] text-muted-foreground leading-relaxed italic">
+                         Format: PDF, PNG, JPG. Peut être ajouté plus tard dans l'onglet GED.
+                       </p>
+                    </div>
+                 </div>
+               )}
 
-               <div className="space-y-2 col-span-full">
+               <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black text-primary">Statut du dossier</Label>
                   <Select value={formData.status} onValueChange={(v: any) => setFormData(p => ({...p, status: v}))}>
                     <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>

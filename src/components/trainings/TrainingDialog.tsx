@@ -23,14 +23,16 @@ import {
 } from "@/types/training";
 import { Employee } from "@/types/employee";
 import { createTraining, updateTraining, createTrainingBatch } from "@/services/training.service";
+import { uploadHRDocument } from "@/services/document.service";
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, User, AlertCircle } from "lucide-react";
+import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, User, AlertCircle, Paperclip, Upload } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { parseISO, differenceInCalendarDays } from "date-fns";
 import { Badge } from "@/components/ui/badge";
+import { useActiveMembership } from "@/hooks/use-active-membership";
 
 interface TrainingDialogProps {
   open: boolean;
@@ -62,8 +64,10 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
+  const { membership } = useActiveMembership(entityId);
   
   const [formData, setFormData] = useState(initialForm);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -116,6 +120,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
         setFormData(initialForm);
         setSelectedEmployeeIds([]);
         setEmployeeSearch("");
+        setSelectedFile(null);
       }
     };
 
@@ -175,13 +180,14 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
         daysCount: daysCount > 0 ? daysCount : 1,
       };
 
+      let activeTrainingId = trainingId;
+
       if (isEditing && trainingId) {
         await updateTraining(entityId, trainingId, payload, user.uid);
-        toast({ title: "Mise à jour effectuée" });
       } else {
         if (selectedEmployeeIds.length === 1) {
           const emp = employees.find(x => x.employeeId === selectedEmployeeIds[0]);
-          await createTraining(entityId, { 
+          activeTrainingId = await createTraining(entityId, { 
             ...payload, 
             employeeId: emp!.employeeId, 
             personId: emp?.personId || null 
@@ -192,9 +198,45 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
             return { employeeId: id, personId: emp?.personId || null };
           });
           await createTrainingBatch(entityId, payload, targets, user.uid);
+          // Batch mode: we don't handle automated upload to N records here for now
+          activeTrainingId = null;
         }
-        toast({ title: "Formations enregistrées" });
       }
+
+      // Handle optional GED upload (only for single record edits or single creation)
+      if (selectedFile && activeTrainingId) {
+        try {
+          const empId = formData.employeeId || selectedEmployeeIds[0];
+          const emp = employees.find(x => x.employeeId === empId);
+          
+          const docId = await uploadHRDocument(
+            entityId,
+            selectedFile,
+            {
+              title: `Attestato Formazione - ${emp?.displayName || 'Employé'} - ${formData.title}`,
+              documentType: "training_certificate",
+              employeeId: empId,
+              personId: emp?.personId || null,
+              relatedModule: "trainings",
+              relatedId: activeTrainingId,
+              status: "valid"
+            },
+            user.uid,
+            membership?.userDisplayName || "Utilisateur"
+          );
+
+          await updateTraining(entityId, activeTrainingId, { certificateDocumentId: docId }, user.uid);
+        } catch (uploadErr) {
+          console.error("[Training] Upload failed:", uploadErr);
+          toast({ 
+            variant: "destructive", 
+            title: "Résultat enregistré", 
+            description: "La formation est sauvegardée, mais l'envoi de l'attestation PDF a échoué. Vous pouvez la joindre plus tard dans la GED." 
+          });
+        }
+      }
+
+      toast({ title: isEditing ? "Mise à jour effectuée" : "Formations enregistrées" });
       onOpenChange(false);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -384,6 +426,27 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                       <Input type="date" value={formData.expiryDate} onChange={(e) => setFormData(p => ({...p, expiryDate: e.target.value}))} className="rounded-xl bg-white" />
                    </div>
                 </div>
+                
+                {resultMode && (
+                  <div className="space-y-3 p-5 bg-white border border-accent/10 rounded-2xl animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Paperclip className="w-4 h-4 text-accent" />
+                      <Label className="text-xs font-black uppercase text-accent tracking-tight">Attestation de formation (Optionnelle)</Label>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Input 
+                        type="file" 
+                        accept=".pdf,.png,.jpg,.jpeg" 
+                        className="h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-accent/10 file:text-accent file:border-none file:rounded-md file:mr-4 hover:bg-slate-50 transition-colors"
+                        onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} 
+                      />
+                      {selectedFile && <p className="text-[10px] text-green-600 font-bold">Fichier prêt: {selectedFile.name}</p>}
+                      <p className="text-[9px] text-muted-foreground leading-relaxed italic">
+                        Format: PDF, PNG, JPG. Peut être ajoutée plus tard dans l'onglet GED.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">

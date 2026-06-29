@@ -7,7 +7,7 @@ import {
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, History, MoreVertical,
-  RefreshCcw, FileSignature
+  RefreshCcw, FileSignature, FileText, Paperclip
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -90,7 +90,7 @@ export default function MedicalVisitsRegistryPage() {
     if (!employees) return [];
     return employees
       .filter(e => {
-        const s = (e.status as string).toLowerCase();
+        const s = String(e.status || "").toLowerCase();
         return s === 'active' || s === 'actif' || s === 'active_contract';
       })
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
@@ -229,6 +229,7 @@ export default function MedicalVisitsRegistryPage() {
                 <TableHead className="pl-6">Employé</TableHead>
                 <TableHead>Type & Date</TableHead>
                 <TableHead>Jugement d'aptitude</TableHead>
+                <TableHead>Certificat (GED)</TableHead>
                 <TableHead>Médecin</TableHead>
                 <TableHead>Échéance</TableHead>
                 <TableHead>Statut</TableHead>
@@ -237,10 +238,10 @@ export default function MedicalVisitsRegistryPage() {
             </TableHeader>
             <TableBody>
               {loadingVisits ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
               ) : filteredVisits.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-20 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-20 text-muted-foreground">
                     <div className="flex flex-col items-center gap-3">
                       <ListFilter className="h-10 w-10 opacity-20" />
                       <p className="font-bold text-sm uppercase tracking-widest">Aucune visite trouvée.</p>
@@ -274,6 +275,17 @@ export default function MedicalVisitsRegistryPage() {
                             <div className="flex gap-1 mt-1">
                                <Badge variant="outline" className="text-[8px] h-3 px-1 border-orange-200 text-orange-600 bg-orange-50 uppercase font-black">Prescriptions</Badge>
                             </div>
+                         )}
+                      </TableCell>
+                      <TableCell>
+                         {v.documentId ? (
+                           <div className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase">
+                             <FileCheck className="w-3.5 h-3.5" /> Certificat joint
+                           </div>
+                         ) : (
+                           <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase">
+                             <Paperclip className="w-3.5 h-3.5 opacity-30" /> Non joint
+                           </div>
                          )}
                       </TableCell>
                       <TableCell>

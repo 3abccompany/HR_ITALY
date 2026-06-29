@@ -7,7 +7,7 @@ import {
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, ArrowRight, History, MoreVertical,
-  RefreshCcw, FileSignature, XCircle
+  RefreshCcw, FileSignature, XCircle, FileCheck, Paperclip
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -224,6 +224,7 @@ export default function TrainingsRegistryPage() {
                 <TableHead className="pl-6">Employé</TableHead>
                 <TableHead>Type & Intitulé</TableHead>
                 <TableHead>Période</TableHead>
+                <TableHead>Attestation (GED)</TableHead>
                 <TableHead>Résultat</TableHead>
                 <TableHead>Échéance</TableHead>
                 <TableHead>Statut</TableHead>
@@ -232,10 +233,10 @@ export default function TrainingsRegistryPage() {
             </TableHeader>
             <TableBody>
               {loadingTrainings ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
               ) : filteredTrainings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-20 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-20 text-muted-foreground">
                     <div className="flex flex-col items-center gap-3">
                       <ListFilter className="h-10 w-10 opacity-20" />
                       <p className="font-bold text-sm uppercase tracking-widest">Aucune formation trouvée.</p>
@@ -287,6 +288,17 @@ export default function TrainingsRegistryPage() {
                            </div>
                            {t.durationHours && <span className="text-[9px] font-black text-primary/60 uppercase">{t.durationHours} h validées</span>}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                         {t.certificateDocumentId ? (
+                           <div className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase">
+                             <FileCheck className="w-3.5 h-3.5" /> Attestation jointe
+                           </div>
+                         ) : (
+                           <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase">
+                             <Paperclip className="w-3.5 h-3.5 opacity-30" /> Non jointe
+                           </div>
+                         )}
                       </TableCell>
                       <TableCell>
                          {t.resultStatus && t.resultStatus !== 'not_required' ? (
