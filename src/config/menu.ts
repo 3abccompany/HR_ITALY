@@ -54,7 +54,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Présences", href: "attendances", permission: "attendances.read", icon: Clock },
   { label: "Visites médicales", href: "medical-visits", permission: "medicalVisits.read", icon: Stethoscope },
   { label: "Formation", href: "training", permission: "training.read", icon: GraduationCap },
-  { label: "Sécurité / DPI", href: "safety", permission: "safety.read", icon: ShieldAlert },
+  { label: "Sécurité / EPI-DPI", href: "safety", permission: "safety.read", icon: ShieldAlert },
   { label: "Rapports", href: "reports", permission: "reports.read", icon: BarChart },
   { label: "Paramètres", href: "settings", permission: ["settings.manage", "emailSettings.manage"], icon: Settings },
 ];
