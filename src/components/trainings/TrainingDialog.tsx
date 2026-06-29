@@ -330,7 +330,9 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                  <div className="space-y-2">
                     <div className="flex items-center justify-between">
                        <Label className="text-[10px] uppercase font-black">Durée totale (Heures)</Label>
-                       <Info className="w-3 h-3 text-blue-500 cursor-help" title="Saisie manuelle de la durée totale certifiée." />
+                       <span title="Saisie manuelle de la durée totale certifiée.">
+                          <Info className="w-3 h-3 text-blue-500 cursor-help" />
+                       </span>
                     </div>
                     <Input 
                       type="number" 
