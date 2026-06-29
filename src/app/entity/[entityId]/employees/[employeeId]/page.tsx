@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -25,7 +25,9 @@ import {
   Calendar,
   Mail,
   Phone,
-  MapPin
+  MapPin,
+  ChevronUp,
+  XCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -64,6 +66,7 @@ import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
+import React from "react";
 
 /**
  * Robust date parser for mixed formats.
@@ -990,8 +993,6 @@ export default function Employee360HubPage() {
   );
 }
 
-// ... rest of helpers unchanged (kept for final file integrity)
-
 function OverviewCard({ title, value, subtitle, icon: Icon, color, status }: any) {
   const colors: any = {
     blue: "bg-blue-50 text-blue-600 border-blue-100",
@@ -1170,7 +1171,7 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                 </TableCell>
                 <TableCell>
                    {expiryDate ? (
-                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-orange-600" : "text-slate-600")}>
+                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
                         {formatDateSafe(rawExpiry)}
                         {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                      </div>
