@@ -69,18 +69,27 @@ export default function MedicalVisitsRegistryPage() {
     return query(collection(db, `entities/${entityId}/medicalVisits`), orderBy("visitDate", "desc")) as Query<MedicalVisit>;
   }, [db, entityId, canRead]);
 
+  // Optimized query: No where/orderBy to prevent index blockers for this MVP view
   const employeesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active"), orderBy("displayName", "asc")) as Query<Employee>;
+    return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
   }, [db, entityId, canRead]);
 
   const { data: visits, loading: loadingVisits } = useCollection<MedicalVisit>(visitsQuery, "medical-visits.registry");
-  const { data: employees } = useCollection<Employee>(employeesQuery, "medical-visits.employees_lookup");
+  const { data: employees, loading: loadingEmployees } = useCollection<Employee>(employeesQuery, "medical-visits.employees_lookup");
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
     employees?.forEach(e => map.set(e.employeeId, e));
     return map;
+  }, [employees]);
+
+  // Process active employees for the dialog dropdown in memory
+  const activeEmployees = useMemo(() => {
+    if (!employees) return [];
+    return employees
+      .filter(e => e.status === 'active' || e.status === 'actif' || (e.status as string).toLowerCase() === 'active_contract')
+      .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
   }, [employees]);
 
   // Filter Logic
@@ -291,7 +300,7 @@ export default function MedicalVisitsRegistryPage() {
         }}
         entityId={entityId}
         visitId={editingId}
-        employees={employees || []}
+        employees={activeEmployees}
       />
     </div>
   );

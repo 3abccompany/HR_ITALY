@@ -38,6 +38,7 @@ interface MedicalVisitDialogProps {
 
 const initialForm = {
   employeeId: "",
+  personId: "" as string | null,
   visitType: "periodic" as MedicalVisitType,
   visitDate: new Date().toISOString().split('T')[0],
   doctorName: "",
@@ -69,6 +70,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
             const data = snap.data() as MedicalVisit;
             setFormData({
               employeeId: data.employeeId,
+              personId: data.personId || null,
               visitType: data.visitType,
               visitDate: data.visitDate,
               doctorName: data.doctorName,
@@ -140,18 +142,29 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
                   <Select 
                     value={formData.employeeId} 
-                    onValueChange={(v) => setFormData(p => ({...p, employeeId: v}))}
+                    onValueChange={(v) => {
+                      const emp = employees.find(e => e.employeeId === v);
+                      setFormData(p => ({
+                        ...p, 
+                        employeeId: v,
+                        personId: emp?.personId || null
+                      }));
+                    }}
                     disabled={!!visitId}
                   >
                     <SelectTrigger className="rounded-xl h-11">
                        <SelectValue placeholder="Sélectionner..." />
                     </SelectTrigger>
                     <SelectContent>
-                       {employees.map(e => (
-                         <SelectItem key={e.employeeId} value={e.employeeId}>
-                            {e.displayName} ({e.employeeCode})
-                         </SelectItem>
-                       ))}
+                       {employees.length === 0 ? (
+                         <div className="p-4 text-center text-xs text-muted-foreground">Aucun collaborateur disponible</div>
+                       ) : (
+                         employees.map(e => (
+                           <SelectItem key={e.employeeId} value={e.employeeId}>
+                              {e.displayName} ({e.employeeCode})
+                           </SelectItem>
+                         ))
+                       )}
                     </SelectContent>
                   </Select>
                </div>
@@ -223,7 +236,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
                <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-start gap-3">
                   <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                   <p className="text-[10px] text-blue-800 leading-relaxed font-medium">
-                    <strong>Note de confidentialité :</strong> Non inserire diagnosi o dettagli clinici. Indicare solo prescrizioni o limitazioni lavorative rilevanti per la sicurezza.
+                    <strong>Note de confidentialité :</strong> Non inserire diagnosi o dettagli clinici. Indicare solo prescrizioni o limitazioni lavorative rilevanti pour la sécurité.
                   </p>
                </div>
 
