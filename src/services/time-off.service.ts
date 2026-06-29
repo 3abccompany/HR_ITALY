@@ -340,14 +340,14 @@ export async function markMonthlyAccrualImpactedByRequest(entityId: string, requ
         if (data.status === 'cancelled') continue;
 
         const isPosted = data.status === 'posted';
-        const reason = `Modification de la demande ${request.requestId} (${request.requestType})`;
+        const impactReason = `Modification de la demande ${request.requestId} (${request.requestType})`;
 
         await updateDoc(accrualRef, {
           needsReview: true,
           hasDiscrepancy: isPosted ? true : (data.hasDiscrepancy || false),
           impactedByRequestIds: arrayUnion(request.requestId),
           lastImpactDetectedAt: serverTimestamp(),
-          reviewReason: reason,
+          reviewReason: impactReason,
           updatedAt: serverTimestamp()
         });
       }
@@ -387,6 +387,7 @@ export async function createTimeOffRequestForEmployee(
   const balanceRef = doc(db!, `entities/${entityId}/leaveBalances`, balanceId);
 
   const resolvedSource = data.source || (actorRole === 'employee' ? "employee_created" : "hr_created");
+  const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
 
   return await runTransaction(db, async (transaction) => {
     const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate, data.startTime, data.endTime);
@@ -403,7 +404,6 @@ export async function createTimeOffRequestForEmployee(
       }
     }
 
-    const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
     const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
 
     const payload: Partial<TimeOffRequest> = {
@@ -454,7 +454,7 @@ export async function createTimeOffRequestForEmployee(
         category: "absence",
         severity: "info",
         title: "Nouvelle demande d'absence",
-        message: "Une nouvelle demande d'absence nécessite un traitement.",
+        message: `Une nouvelle demande d'absence (${TIME_OFF_TYPE_LABELS[requestType]}) nécessite un traitement.`,
         actionUrl: `/entity/${entityId}/absences`,
         dedupKey: `absence:${reqId}:submitted`
       });
