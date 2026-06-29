@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, 
   DialogFooter, DialogDescription 
@@ -26,7 +26,7 @@ import { createTraining, updateTraining, createTrainingBatch } from "@/services/
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, User } from "lucide-react";
+import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, User, AlertCircle } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { parseISO, differenceInCalendarDays } from "date-fns";
@@ -70,10 +70,17 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
   const [fetching, setFetching] = useState(false);
 
   const isEditing = !!trainingId;
+  const lastInitializedId = useRef<string | null>(null);
 
   // Single effect for initialization to prevent loops
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      lastInitializedId.current = null;
+      return;
+    }
+
+    if (lastInitializedId.current === (trainingId || 'new')) return;
+    lastInitializedId.current = (trainingId || 'new');
 
     const initialize = async () => {
       if (trainingId && db) {
@@ -125,7 +132,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
     );
   }, [employees, employeeSearch]);
 
-  // Derived duration
+  // Derived duration in days (Inclusive calculation)
   const daysCount = useMemo(() => {
     if (!formData.startDate) return 0;
     if (!formData.endDate) return 1;
@@ -152,12 +159,12 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
     if (!user || !entityId) return;
 
     if (selectedEmployeeIds.length === 0) {
-      toast({ variant: "destructive", title: "Sélectionnez au moins un collaborateur." });
+      toast({ variant: "destructive", title: "Saisie incomplète", description: "Veuillez sélectionner au moins un collaborateur." });
       return;
     }
 
     if (daysCount < 0) {
-      toast({ variant: "destructive", title: "Dates invalides" });
+      toast({ variant: "destructive", title: "Dates invalides", description: "La date de fin ne peut pas être antérieure à la date de début." });
       return;
     }
 
@@ -170,7 +177,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
 
       if (isEditing && trainingId) {
         await updateTraining(entityId, trainingId, payload, user.uid);
-        toast({ title: "Mis à jour avec succès" });
+        toast({ title: "Mise à jour effectuée" });
       } else {
         if (selectedEmployeeIds.length === 1) {
           const emp = employees.find(x => x.employeeId === selectedEmployeeIds[0]);
@@ -186,7 +193,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
           });
           await createTrainingBatch(entityId, payload, targets, user.uid);
         }
-        toast({ title: "Créé avec succès" });
+        toast({ title: "Formations enregistrées" });
       }
       onOpenChange(false);
     } catch (err: any) {
@@ -198,7 +205,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-hidden flex flex-col p-0 rounded-[2rem]">
+      <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-hidden flex flex-col p-0 rounded-[2rem]">
         <DialogHeader className="p-8 pb-4">
           <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
             {resultMode ? <FileSignature className="w-5 h-5 text-accent" /> : <GraduationCap className="w-5 h-5 text-accent" />}
@@ -241,7 +248,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <Input 
-                        placeholder="Rechercher..." 
+                        placeholder="Rechercher par nom ou matricule..." 
                         value={employeeSearch}
                         onChange={(e) => setEmployeeSearch(e.target.value)}
                         className="pl-10 h-10 rounded-xl bg-white"
@@ -281,7 +288,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black">Type</Label>
+                    <Label className="text-[10px] uppercase font-black">Type de formation</Label>
                     <Select value={formData.trainingType} onValueChange={(v: any) => setFormData(p => ({...p, trainingType: v}))} disabled={resultMode}>
                       <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -290,22 +297,63 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                     </Select>
                  </div>
                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black">Intitulé</Label>
-                    <Input value={formData.title} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} required className="rounded-xl" disabled={resultMode} />
+                    <Label className="text-[10px] uppercase font-black">Intitulé de la formation</Label>
+                    <Input value={formData.title} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} required className="rounded-xl" disabled={resultMode} placeholder="Ex: Risque spécifique - Mécanique" />
                  </div>
                  <div className="space-y-2">
                     <Label className="text-[10px] uppercase font-black">Date de début</Label>
                     <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl" disabled={resultMode} />
                  </div>
                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black">Date de fin</Label>
-                    <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} className="rounded-xl" disabled={resultMode} />
+                    <Label className="text-[10px] uppercase font-black">Date de fin (Optionnelle)</Label>
+                    <div className="flex gap-2">
+                       <Input 
+                        type="date" 
+                        value={formData.endDate} 
+                        onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} 
+                        className="rounded-xl flex-1" 
+                        disabled={resultMode} 
+                       />
+                       {daysCount > 0 && (
+                          <div className="flex items-center">
+                             <Badge variant="secondary" className="h-10 px-3 rounded-xl bg-primary/5 text-primary border-primary/10 whitespace-nowrap font-black">
+                                {daysCount} {daysCount > 1 ? 'jours' : 'jour'}
+                             </Badge>
+                          </div>
+                       )}
+                    </div>
                  </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Organisme / Provider</Label>
+                    <Input value={formData.provider} onChange={(e) => setFormData(p => ({...p, provider: e.target.value}))} placeholder="Ex: Studio Sicurezza" className="rounded-xl" disabled={resultMode} />
+                 </div>
+                 <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                       <Label className="text-[10px] uppercase font-black">Durée totale (Heures)</Label>
+                       <Info className="w-3 h-3 text-blue-500 cursor-help" title="Saisie manuelle de la durée totale certifiée." />
+                    </div>
+                    <Input 
+                      type="number" 
+                      step="0.5"
+                      value={formData.durationHours ?? ""} 
+                      onChange={(e) => setFormData(p => ({...p, durationHours: e.target.value === "" ? undefined : parseFloat(e.target.value)}))} 
+                      placeholder="Ex: 8"
+                      className="rounded-xl" 
+                    />
+                 </div>
+              </div>
+
+              <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
+                 <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                 <p className="text-[10px] text-blue-800 leading-tight">
+                    Le nombre de jours est calculé automatiquement à partir des dates de début et de fin. 
+                    <strong> La durée en heures doit être saisie manuellement</strong> car elle dépend du programme pédagogique certifié.
+                 </p>
               </div>
 
               <Separator className="opacity-40" />
 
-              <div className={cn("p-6 rounded-[2rem] border space-y-4", resultMode ? "bg-accent/5 border-accent/20" : "bg-slate-50 border-slate-100")}>
+              <div className={cn("p-6 rounded-[2rem] border space-y-4", resultMode ? "bg-accent/5 border-accent/20 ring-4 ring-accent/5" : "bg-slate-50 border-slate-100")}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                    <div className="space-y-2">
                       <Label className="text-[10px] uppercase font-black">Statut</Label>
@@ -317,7 +365,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                       </Select>
                    </div>
                    <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Évaluation</Label>
+                      <Label className="text-[10px] uppercase font-black">Résultat / Évaluation</Label>
                       <Select value={formData.resultStatus} onValueChange={(v: any) => setFormData(p => ({...p, resultStatus: v}))}>
                         <SelectTrigger className="bg-white rounded-xl"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -326,7 +374,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                       </Select>
                    </div>
                    <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Date validation</Label>
+                      <Label className="text-[10px] uppercase font-black">Date de validation</Label>
                       <Input type="date" value={formData.completionDate} onChange={(e) => setFormData(p => ({...p, completionDate: e.target.value}))} className="rounded-xl bg-white" />
                    </div>
                    <div className="space-y-2">
@@ -337,8 +385,8 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
               </div>
 
               <div className="space-y-2">
-                 <Label className="text-[10px] uppercase font-black">Notes internes</Label>
-                 <Textarea value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} className="rounded-xl min-h-[80px]" />
+                 <Label className="text-[10px] uppercase font-black">Observations / Notes internes</Label>
+                 <Textarea value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} className="rounded-xl min-h-[80px]" placeholder="Détails sur la session ou le comportement..." />
               </div>
             </form>
           )}
@@ -348,7 +396,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
           <Button variant="ghost" type="button" onClick={() => onOpenChange(false)} disabled={loading} className="rounded-xl font-bold">Annuler</Button>
           <Button type="submit" form="training-form" disabled={loading || selectedEmployeeIds.length === 0} className="px-8 rounded-xl font-black shadow-lg">
             {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-            Enregistrer
+            {isEditing ? "Mettre à jour" : "Enregistrer la session"}
           </Button>
         </DialogFooter>
       </DialogContent>

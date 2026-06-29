@@ -279,6 +279,11 @@ export default function TrainingsRegistryPage() {
                                   <span>{formatDate(t.endDate)}</span>
                                 </>
                               )}
+                              {t.daysCount && t.daysCount > 1 && (
+                                <Badge variant="secondary" className="ml-1.5 text-[8px] h-3.5 px-1 bg-primary/5 text-primary/60 border-none font-black">
+                                  {t.daysCount} j
+                                </Badge>
+                              )}
                            </div>
                            {t.durationHours && <span className="text-[9px] font-black text-primary/60 uppercase">{t.durationHours} h validées</span>}
                         </div>
