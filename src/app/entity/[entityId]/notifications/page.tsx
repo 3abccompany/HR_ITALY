@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, where, orderBy, or } from "firebase/firestore";
+import { collection, query, where, orderBy, or, and } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Notification, NotificationStatus } from "@/types/notification";
 import { markNotificationAsRead, archiveNotification, markAllNotificationsAsRead } from "@/services/notification.service";
@@ -44,10 +44,12 @@ export default function NotificationsPage() {
 
     return query(
       baseRef,
-      where("status", "in", statusFilter),
-      or(
-        where("targetUid", "==", user.uid),
-        where("targetPermission", "in", membership.permissions.length > 0 ? membership.permissions : ["__none__"])
+      and(
+        where("status", "in", statusFilter),
+        or(
+          where("targetUid", "==", user.uid),
+          where("targetPermission", "in", membership.permissions.length > 0 ? membership.permissions : ["__none__"])
+        )
       ),
       orderBy("createdAt", "desc")
     );

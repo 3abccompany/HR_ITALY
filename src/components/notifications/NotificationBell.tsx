@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { Bell, BellDot, CheckCircle2, Clock, Info, AlertTriangle, ShieldCheck, FileText, Send, User } from "lucide-react";
+import { Bell, BellDot, CheckCircle2, Clock, Info, AlertTriangle, ShieldCheck, FileText, Send, User, FileSignature } from "lucide-react";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, where, orderBy, limit, or } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, or, and } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   DropdownMenu, 
@@ -21,6 +21,7 @@ import { useRouter, useParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function NotificationBell() {
   const params = useParams();
@@ -35,10 +36,12 @@ export function NotificationBell() {
     
     return query(
       collection(db, `entities/${entityId}/notifications`),
-      where("status", "==", "unread"),
-      or(
-        where("targetUid", "==", user.uid),
-        where("targetPermission", "in", membership.permissions.length > 0 ? membership.permissions : ["__none__"])
+      and(
+        where("status", "==", "unread"),
+        or(
+          where("targetUid", "==", user.uid),
+          where("targetPermission", "in", membership.permissions.length > 0 ? membership.permissions : ["__none__"])
+        )
       ),
       orderBy("createdAt", "desc"),
       limit(20)
@@ -179,4 +182,3 @@ function Loader2(props: any) {
 }
 
 import { GraduationCap } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";

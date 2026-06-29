@@ -11,6 +11,7 @@ import {
   writeBatch,
   getDocs,
   or,
+  and,
   limit
 } from "firebase/firestore";
 import { Notification, NotificationStatus } from "@/types/notification";
@@ -90,10 +91,12 @@ export async function markAllNotificationsAsRead(entityId: string, uid: string, 
   // We fetch unread notifications targeted at this user
   const q = query(
     notificationsRef,
-    where("status", "==", "unread"),
-    or(
-      where("targetUid", "==", uid),
-      where("targetPermission", "in", permissions.length > 0 ? permissions : ["__none__"])
+    and(
+      where("status", "==", "unread"),
+      or(
+        where("targetUid", "==", uid),
+        where("targetPermission", "in", permissions.length > 0 ? permissions : ["__none__"])
+      )
     )
   );
 
