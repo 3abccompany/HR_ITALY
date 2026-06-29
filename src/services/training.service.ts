@@ -50,10 +50,15 @@ export async function createTraining(entityId: string, data: Partial<Training>, 
   const trainingRef = doc(collection(db, `entities/${entityId}/trainings`));
   const trainingId = trainingRef.id;
 
+  // Backward compatibility: ensure courseDate and startDate are consistent
+  const startDate = data.startDate || data.courseDate || new Date().toISOString().split('T')[0];
+
   const payload: Partial<Training> = {
     ...data,
     id: trainingId,
     entityId,
+    startDate,
+    courseDate: startDate, // Maintain legacy field
     createdAt: serverTimestamp(),
     createdBy: actorUid,
     updatedAt: serverTimestamp(),
@@ -110,8 +115,14 @@ export async function updateTraining(entityId: string, trainingId: string, data:
   if (!db) throw new Error("Firestore not initialized");
 
   const trainingRef = doc(db, `entities/${entityId}/trainings`, trainingId);
+  
+  // Ensure startDate and legacy courseDate stay synchronized
+  const updateData = { ...data };
+  if (updateData.startDate) updateData.courseDate = updateData.startDate;
+  if (!updateData.startDate && updateData.courseDate) updateData.startDate = updateData.courseDate;
+
   const payload = {
-    ...data,
+    ...updateData,
     updatedAt: serverTimestamp(),
     updatedBy: actorUid,
   };

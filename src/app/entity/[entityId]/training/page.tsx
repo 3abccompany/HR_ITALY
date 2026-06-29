@@ -7,7 +7,8 @@ import {
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, History, MoreVertical,
-  RefreshCcw, FileSignature, BookOpen, ShieldCheck
+  RefreshCcw, FileSignature, BookOpen, ShieldCheck,
+  CheckCircle, XCircle, AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +23,8 @@ import {
   TrainingType, 
   TrainingStatus,
   TRAINING_TYPE_LABELS,
-  TRAINING_STATUS_LABELS 
+  TRAINING_STATUS_LABELS,
+  TRAINING_RESULT_LABELS 
 } from "@/types/training";
 import { archiveTraining } from "@/services/training.service";
 import { Employee } from "@/types/employee";
@@ -58,6 +60,7 @@ export default function TrainingsRegistryPage() {
   // UI State
   const [isDialogVisible, setIsDialogVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isResultMode, setIsResultMode] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
   const [loading, setLoading] = useState(false);
 
@@ -66,7 +69,7 @@ export default function TrainingsRegistryPage() {
   
   const trainingsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
-    return query(collection(db, `entities/${entityId}/trainings`), orderBy("courseDate", "desc")) as Query<Training>;
+    return query(collection(db, `entities/${entityId}/trainings`), orderBy("updatedAt", "desc")) as Query<Training>;
   }, [db, entityId, canRead]);
 
   const employeesQuery = useMemo(() => {
@@ -119,6 +122,13 @@ export default function TrainingsRegistryPage() {
 
   const handleEdit = (t: Training) => {
     setEditingId(t.id);
+    setIsResultMode(false);
+    setIsDialogVisible(true);
+  };
+
+  const handleEnterResult = (t: Training) => {
+    setEditingId(t.id);
+    setIsResultMode(true);
     setIsDialogVisible(true);
   };
 
@@ -145,7 +155,7 @@ export default function TrainingsRegistryPage() {
           <p className="text-muted-foreground text-sm font-medium">Gestion de la formation obligatoire (Accord État-Régions) et continue.</p>
         </div>
         {hasPermission("training.create") && (
-          <Button onClick={() => { setEditingId(null); setIsDialogVisible(true); }} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
+          <Button onClick={() => { setEditingId(null); setIsResultMode(false); setIsDialogVisible(true); }} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
             <Plus className="w-4 h-4" /> Nouvelle formation
           </Button>
         )}
@@ -210,9 +220,9 @@ export default function TrainingsRegistryPage() {
               <TableRow>
                 <TableHead className="pl-6">Employé</TableHead>
                 <TableHead>Type & Intitulé</TableHead>
-                <TableHead>Organisme</TableHead>
-                <TableHead>Date / Durée</TableHead>
-                <TableHead>Recyclage (Fin de validité)</TableHead>
+                <TableHead>Période & Durée</TableHead>
+                <TableHead>Résultat</TableHead>
+                <TableHead>Prochain recyclage</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right pr-6">Actions</TableHead>
               </TableRow>
@@ -251,13 +261,32 @@ export default function TrainingsRegistryPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                         <span className="text-xs font-medium text-slate-700">{t.provider || "—"}</span>
+                        <div className="flex flex-col gap-0.5">
+                           <div className="flex items-center gap-1.5 text-xs font-medium">
+                              <Calendar className="w-3 h-3 text-muted-foreground/40" />
+                              <span>{formatDate(t.startDate || t.courseDate)}</span>
+                              {t.endDate && t.endDate !== t.startDate && (
+                                <>
+                                  <ArrowRight className="w-2.5 h-2.5 opacity-30" />
+                                  <span>{formatDate(t.endDate)}</span>
+                                </>
+                              )}
+                           </div>
+                           <div className="flex items-center gap-2 mt-0.5">
+                              {t.daysCount && t.daysCount > 1 && <span className="text-[9px] font-bold text-muted-foreground uppercase">{t.daysCount} jours</span>}
+                              {t.durationHours && <span className="text-[9px] font-black text-primary/60 uppercase">{t.durationHours} h validées</span>}
+                           </div>
+                        </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-col gap-0.5">
-                           <span className="text-xs font-medium">{formatDate(t.courseDate)}</span>
-                           {t.durationHours && <span className="text-[10px] text-muted-foreground font-bold">{t.durationHours} h</span>}
-                        </div>
+                         {t.resultStatus && t.resultStatus !== 'not_required' ? (
+                           <div className="flex items-center gap-1.5">
+                             {t.resultStatus === 'passed' ? <CheckCircle className="w-3.5 h-3.5 text-green-600" /> : <XCircle className="w-3.5 h-3.5 text-red-600" />}
+                             <span className={cn("text-[10px] font-black uppercase", t.resultStatus === 'passed' ? "text-green-700" : "text-red-700")}>
+                                {TRAINING_RESULT_LABELS[t.resultStatus]}
+                             </span>
+                           </div>
+                         ) : <span className="text-[10px] text-muted-foreground italic">—</span>}
                       </TableCell>
                       <TableCell>
                          {t.expiryDate ? (
@@ -277,9 +306,14 @@ export default function TrainingsRegistryPage() {
                            <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                            </DropdownMenuTrigger>
-                           <DropdownMenuContent align="end" className="w-48">
+                           <DropdownMenuContent align="end" className="w-52">
+                              {t.status !== 'completed' && t.status !== 'failed' && (
+                                <DropdownMenuItem onClick={() => handleEnterResult(t)} className="gap-2 font-bold text-primary">
+                                   <FileSignature className="w-4 h-4" /> Saisir le résultat
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem onClick={() => handleEdit(t)} className="gap-2">
-                                 <Edit className="w-4 h-4" /> Modifier
+                                 <Edit className="w-4 h-4" /> Modifier détails
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => handleArchive(t.id)} className="gap-2 text-destructive">
@@ -303,10 +337,12 @@ export default function TrainingsRegistryPage() {
           setIsDialogVisible(open);
           if (!open) {
             setEditingId(null);
+            setIsResultMode(false);
           }
         }}
         entityId={entityId}
         trainingId={editingId}
+        resultMode={isResultMode}
         employees={activeEmployees}
       />
     </div>
@@ -338,8 +374,10 @@ function StatCard({ title, value, icon: Icon, color }: any) {
 function getStatusBadge(status: TrainingStatus) {
   switch (status) {
     case 'planned': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px]">Planifiée</Badge>;
+    case 'in_progress': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px]">En cours</Badge>;
     case 'completed': return <Badge className="bg-green-600 text-white border-none text-[10px]">Terminée</Badge>;
-    case 'expired': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px]">Expirée</Badge>;
+    case 'failed': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px]">Non validée</Badge>;
+    case 'expired': return <Badge variant="destructive" className="bg-red-600 text-white border-none text-[10px]">Expirée</Badge>;
     case 'cancelled': return <Badge variant="outline" className="text-muted-foreground text-[10px]">Annulée</Badge>;
     case 'archived': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300 text-[10px]">Archivée</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
@@ -347,6 +385,7 @@ function getStatusBadge(status: TrainingStatus) {
 }
 
 function formatDate(dateStr: string) {
+  if (!dateStr) return "—";
   try {
     return format(parseISO(dateStr), "dd/MM/yyyy", { locale: fr });
   } catch (e) {

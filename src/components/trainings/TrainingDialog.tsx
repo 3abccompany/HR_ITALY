@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, 
   DialogFooter, DialogDescription 
@@ -16,22 +16,27 @@ import {
   Training, 
   TrainingType, 
   TrainingStatus,
+  TrainingResultStatus,
   TRAINING_TYPE_LABELS,
-  TRAINING_STATUS_LABELS
+  TRAINING_STATUS_LABELS,
+  TRAINING_RESULT_LABELS
 } from "@/types/training";
 import { Employee } from "@/types/employee";
 import { createTraining, updateTraining } from "@/services/training.service";
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, GraduationCap, Save, Info } from "lucide-react";
+import { Loader2, ShieldCheck, GraduationCap, Save, Info, Calendar, FileSignature, AlertCircle } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
+import { parseISO, differenceInCalendarDays } from "date-fns";
 
 interface TrainingDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   entityId: string;
   trainingId: string | null;
+  resultMode?: boolean;
   employees: Employee[];
 }
 
@@ -42,15 +47,17 @@ const initialForm = {
   title: "",
   provider: "",
   deliveryMode: "classroom" as any,
-  courseDate: new Date().toISOString().split('T')[0],
+  startDate: new Date().toISOString().split('T')[0],
+  endDate: "",
   completionDate: "",
   expiryDate: "",
   durationHours: undefined as number | undefined,
   status: "planned" as TrainingStatus,
+  resultStatus: "not_required" as TrainingResultStatus,
   notes: ""
 };
 
-export function TrainingDialog({ open, onOpenChange, entityId, trainingId, employees }: TrainingDialogProps) {
+export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resultMode = false, employees }: TrainingDialogProps) {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
@@ -74,11 +81,13 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
               title: data.title || "",
               provider: data.provider || "",
               deliveryMode: data.deliveryMode || "classroom",
-              courseDate: data.courseDate,
+              startDate: data.startDate || data.courseDate,
+              endDate: data.endDate || "",
               completionDate: data.completionDate || "",
               expiryDate: data.expiryDate || "",
               durationHours: data.durationHours || undefined,
               status: data.status,
+              resultStatus: data.resultStatus || "not_required",
               notes: data.notes || ""
             });
           }
@@ -94,6 +103,20 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
     load();
   }, [trainingId, db, entityId, open, toast]);
 
+  const daysCount = useMemo(() => {
+    if (!formData.startDate) return 0;
+    if (!formData.endDate) return 1;
+    try {
+      const start = parseISO(formData.startDate);
+      const end = parseISO(formData.endDate);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+      const diff = differenceInCalendarDays(end, start);
+      return diff >= 0 ? diff + 1 : -1; // -1 indicates error (end before start)
+    } catch (e) {
+      return 0;
+    }
+  }, [formData.startDate, formData.endDate]);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !entityId) return;
@@ -108,13 +131,30 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
       return;
     }
 
+    if (daysCount < 0) {
+      toast({ variant: "destructive", title: "Dates invalides", description: "La date de fin ne peut pas être antérieure à la date de début." });
+      return;
+    }
+
+    if (formData.status === 'completed' && !formData.completionDate) {
+      toast({ variant: "destructive", title: "Date manquante", description: "Veuillez renseigner la date de complétion pour clôturer la formation." });
+      return;
+    }
+
     setLoading(true);
     try {
+      const finalPayload = { 
+        ...formData,
+        daysCount: daysCount > 0 ? daysCount : 1,
+        // Sync result status if completed but not set
+        resultStatus: (formData.status === 'completed' && formData.resultStatus === 'not_required') ? 'passed' : formData.resultStatus
+      };
+
       if (trainingId) {
-        await updateTraining(entityId, trainingId, formData, user.uid);
+        await updateTraining(entityId, trainingId, finalPayload, user.uid);
         toast({ title: "Formation mise à jour" });
       } else {
-        await createTraining(entityId, formData, user.uid);
+        await createTraining(entityId, finalPayload, user.uid);
         toast({ title: "Formation enregistrée" });
       }
       onOpenChange(false);
@@ -130,11 +170,13 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
       <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto rounded-[2rem]">
         <DialogHeader>
           <DialogTitle className="text-2xl font-black text-primary flex items-center gap-2">
-            <GraduationCap className="w-6 h-6 text-accent" />
-            {trainingId ? "Modifier la formation" : "Ajouter une formation"}
+            {resultMode ? <FileSignature className="w-6 h-6 text-accent" /> : <GraduationCap className="w-6 h-6 text-accent" />}
+            {resultMode ? "Saisir le résultat de la formation" : (trainingId ? "Modifier la formation" : "Planifier une formation")}
           </DialogTitle>
           <DialogDescription>
-            Enregistrez les détails de la formation obligatoire ou interne du collaborateur.
+            {resultMode 
+              ? "Enregistrez les détails de complétion et le résultat obtenu par le collaborateur."
+              : "Gérez la formation obligatoire ou continue du collaborateur."}
           </DialogDescription>
         </DialogHeader>
 
@@ -156,9 +198,9 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
                         personId: emp?.personId || null
                       }));
                     }}
-                    disabled={!!trainingId}
+                    disabled={!!trainingId || resultMode}
                   >
-                    <SelectTrigger className="rounded-xl h-11">
+                    <SelectTrigger className={cn("rounded-xl h-11", resultMode && "bg-secondary/20")}>
                        <SelectValue placeholder="Sélectionner..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -177,8 +219,8 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
 
                <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de formation</Label>
-                  <Select value={formData.trainingType} onValueChange={(v: any) => setFormData(p => ({...p, trainingType: v}))}>
-                    <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
+                  <Select value={formData.trainingType} onValueChange={(v: any) => setFormData(p => ({...p, trainingType: v}))} disabled={resultMode}>
+                    <SelectTrigger className={cn("rounded-xl h-11", resultMode && "bg-secondary/20")}><SelectValue /></SelectTrigger>
                     <SelectContent>
                        {Object.entries(TRAINING_TYPE_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
                     </SelectContent>
@@ -187,18 +229,18 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
 
                <div className="space-y-2 col-span-full">
                   <Label className="text-[10px] uppercase font-black">Intitulé exact du cours</Label>
-                  <Input value={formData.title} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} required placeholder="Ex: SST - Maintien des acquis" className="rounded-xl h-11" />
+                  <Input value={formData.title} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} required placeholder="Ex: SST - Maintien des acquis" className="rounded-xl h-11" disabled={resultMode} />
                </div>
 
                <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Organisme (Ente formatore)</Label>
-                  <Input value={formData.provider} onChange={(e) => setFormData(p => ({...p, provider: e.target.value}))} placeholder="Nom du centre" className="rounded-xl h-11" />
+                  <Input value={formData.provider} onChange={(e) => setFormData(p => ({...p, provider: e.target.value}))} placeholder="Nom du centre" className="rounded-xl h-11" disabled={resultMode} />
                </div>
 
                <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Mode de formation</Label>
-                  <Select value={formData.deliveryMode} onValueChange={(v: any) => setFormData(p => ({...p, deliveryMode: v}))}>
-                    <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
+                  <Select value={formData.deliveryMode} onValueChange={(v: any) => setFormData(p => ({...p, deliveryMode: v}))} disabled={resultMode}>
+                    <SelectTrigger className={cn("rounded-xl h-11", resultMode && "bg-secondary/20")}><SelectValue /></SelectTrigger>
                     <SelectContent>
                        <SelectItem value="classroom">Présentiel</SelectItem>
                        <SelectItem value="online">E-learning</SelectItem>
@@ -207,51 +249,81 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, emplo
                     </SelectContent>
                   </Select>
                </div>
+
+               <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Date de début</Label>
+                  <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" disabled={resultMode} />
+               </div>
+
+               <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[10px] uppercase font-black">Date de fin (Optionnel)</Label>
+                    {daysCount > 0 && (
+                      <Badge variant="secondary" className="h-4 text-[8px] uppercase font-bold bg-primary/5 text-primary border-none">
+                        {daysCount} {daysCount > 1 ? 'jours' : 'jour'}
+                      </Badge>
+                    )}
+                  </div>
+                  <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} className={cn("rounded-xl h-11", daysCount < 0 && "border-red-500")} disabled={resultMode} />
+                  {daysCount < 0 && <p className="text-[9px] text-red-500 font-bold mt-1">La date de fin est antérieure au début.</p>}
+               </div>
             </div>
 
             <Separator className="opacity-50" />
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Date de session</Label>
-                  <Input type="date" value={formData.courseDate} onChange={(e) => setFormData(p => ({...p, courseDate: e.target.value}))} required className="rounded-xl h-11" />
+            <div className={cn("p-6 rounded-[1.5rem] border space-y-6", resultMode ? "bg-accent/5 border-accent/20 ring-4 ring-accent/5 animate-in zoom-in-95" : "bg-slate-50 border-slate-100")}>
+               <div className="flex items-center gap-2 text-primary font-black text-[10px] uppercase tracking-widest border-b pb-2">
+                  <FileSignature className="w-3.5 h-3.5" /> Résultat & Validation
                </div>
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Complétée le</Label>
-                  <Input type="date" value={formData.completionDate} onChange={(e) => setFormData(p => ({...p, completionDate: e.target.value}))} className="rounded-xl h-11" />
-               </div>
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black text-primary">Prochain recyclage</Label>
-                  <Input type="date" value={formData.expiryDate} onChange={(e) => setFormData(p => ({...p, expiryDate: e.target.value}))} className="rounded-xl h-11 bg-accent/5 border-accent/20" />
-               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Durée (Heures)</Label>
-                  <Input type="number" step="0.5" value={formData.durationHours || ""} onChange={(e) => setFormData(p => ({...p, durationHours: e.target.value ? parseFloat(e.target.value) : undefined}))} placeholder="Ex: 4" className="rounded-xl h-11" />
-               </div>
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Statut actuel</Label>
-                  <Select value={formData.status} onValueChange={(v: any) => setFormData(p => ({...p, status: v}))}>
-                    <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                       {Object.entries(TRAINING_STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Statut actuel</Label>
+                    <Select value={formData.status} onValueChange={(v: any) => setFormData(p => ({...p, status: v}))}>
+                      <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(TRAINING_STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Score / Évaluation</Label>
+                    <Select value={formData.resultStatus} onValueChange={(v: any) => setFormData(p => ({...p, resultStatus: v}))}>
+                      <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(TRAINING_RESULT_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Date de validation (Complétion)</Label>
+                    <Input type="date" value={formData.completionDate} onChange={(e) => setFormData(p => ({...p, completionDate: e.target.value}))} className="bg-white rounded-xl h-11" required={formData.status === 'completed'} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black text-accent-foreground">Prochain recyclage / Échéance</Label>
+                    <Input type="date" value={formData.expiryDate} onChange={(e) => setFormData(p => ({...p, expiryDate: e.target.value}))} className="bg-white rounded-xl h-11 border-accent/20" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Volume horaire validé (Heures)</Label>
+                    <Input type="number" step="0.5" value={formData.durationHours || ""} onChange={(e) => setFormData(p => ({...p, durationHours: e.target.value ? parseFloat(e.target.value) : undefined}))} placeholder="Ex: 4" className="bg-white rounded-xl h-11" />
+                  </div>
                </div>
             </div>
 
             <div className="space-y-2 pt-2">
                <Label className="text-[10px] font-black uppercase text-muted-foreground">Notes internes RH</Label>
-               <Textarea value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} className="rounded-xl min-h-[80px]" />
+               <Textarea value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} className="rounded-xl min-h-[80px]" placeholder="Observations complémentaires..." />
             </div>
 
             <DialogFooter className="pt-4 border-t gap-2">
               <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Annuler</Button>
-              <Button type="submit" disabled={loading} className="rounded-xl px-8 font-black shadow-lg">
+              <Button type="submit" disabled={loading || daysCount < 0} className="rounded-xl px-8 font-black shadow-lg">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                {trainingId ? "Mettre à jour" : "Enregistrer la formation"}
+                {resultMode ? "Enregistrer le résultat" : (trainingId ? "Mettre à jour" : "Planifier la formation")}
               </Button>
             </DialogFooter>
           </form>

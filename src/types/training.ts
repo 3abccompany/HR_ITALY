@@ -17,10 +17,19 @@ export type TrainingType =
 
 export type TrainingStatus = 
   | "planned"
+  | "in_progress"
   | "completed"
+  | "failed"
   | "expired"
   | "cancelled"
   | "archived";
+
+export type TrainingResultStatus = 
+  | "passed"
+  | "failed"
+  | "attended"
+  | "not_attended"
+  | "not_required";
 
 export interface Training {
   id: string;
@@ -34,14 +43,25 @@ export interface Training {
   provider: string;
   deliveryMode?: "classroom" | "online" | "blended" | "on_the_job" | null;
   
+  /** @deprecated use startDate */
   courseDate: string; // YYYY-MM-DD
+  startDate: string; // YYYY-MM-DD
+  endDate?: string | null; // YYYY-MM-DD
+  daysCount?: number | null;
+  
   completionDate?: string | null; // YYYY-MM-DD
   expiryDate?: string | null; // YYYY-MM-DD
   durationHours?: number | null;
   
   status: TrainingStatus;
+  resultStatus?: TrainingResultStatus | null;
+  
   certificateDocumentId?: string | null;
   notes?: string | null;
+
+  // History & Renewal
+  renewalOfTrainingId?: string | null;
+  replacedByTrainingId?: string | null;
 
   // Audit
   createdAt: Date | FieldValue;
@@ -70,8 +90,18 @@ export const TRAINING_TYPE_LABELS: Record<TrainingType, string> = {
 
 export const TRAINING_STATUS_LABELS: Record<TrainingStatus, string> = {
   planned: "Planifiée",
+  in_progress: "En cours",
   completed: "Terminée",
+  failed: "Non validée",
   expired: "Expirée",
   cancelled: "Annulée",
   archived: "Archivée"
+};
+
+export const TRAINING_RESULT_LABELS: Record<TrainingResultStatus, string> = {
+  passed: "Réussite",
+  failed: "Échec",
+  attended: "Présence validée",
+  not_attended: "Absent",
+  not_required: "Sans évaluation"
 };
