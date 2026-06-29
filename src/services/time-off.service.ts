@@ -446,6 +446,35 @@ export async function createTimeOffRequestForEmployee(
 
     return requestId;
   }).then(async (reqId) => {
+    // Trigger Notifications (Non-blocking)
+    try {
+      await createNotification(entityId, {
+        targetPermission: "leaveRequests.read",
+        audience: "hr",
+        category: "absence",
+        severity: "info",
+        title: "Nouvelle demande d'absence",
+        message: "Une nouvelle demande d'absence nécessite un traitement.",
+        actionUrl: `/entity/${entityId}/absences`,
+        dedupKey: `absence:${reqId}:submitted`
+      });
+
+      if (requiresJustification) {
+        await createNotification(entityId, {
+          targetUid: actorUid,
+          audience: "employee",
+          category: "absence",
+          severity: "warning",
+          title: "Justificatif maladie à joindre",
+          message: "Merci de joindre votre justificatif depuis votre espace personnel.",
+          actionUrl: `/entity/${entityId}/my-space`,
+          dedupKey: `absence:${reqId}:justification_missing`
+        });
+      }
+    } catch (notifErr) {
+      console.warn("[createTimeOffRequestForEmployee] Notification trigger failed:", notifErr);
+    }
+
     await createAuditLog({
       userId: actorUid,
       entityId,
@@ -551,7 +580,7 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
         category: "absence",
         severity: "success",
         title: "Demande d'absence approuvée",
-        message: `Votre demande d'absence (${TIME_OFF_TYPE_LABELS[result.requestType]}) a été approuvée par le service RH.`,
+        message: "Votre demande d'absence a été approuvée.",
         actionUrl: `/entity/${entityId}/my-space`,
         dedupKey: `absence:${requestId}:approved`
       });
@@ -639,7 +668,7 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
         category: "absence",
         severity: "warning",
         title: "Demande d'absence refusée",
-        message: `Votre demande d'absence a été refusée. Motif : ${rejectionReason}`,
+        message: "Votre demande d'absence a été refusée.",
         actionUrl: `/entity/${entityId}/my-space`,
         dedupKey: `absence:${requestId}:rejected`
       });
@@ -926,7 +955,7 @@ export async function runMonthlyAccrualCalculation(params: {
           hasDiscrepancy: false,
           impactedByRequestIds: [],
           lastImpactDetectedAt: null,
-          reviewReason: reason,
+          reviewReason: null,
           createdAt: serverTimestamp(),
           createdByUid: actorUid,
           updatedAt: serverTimestamp(),
