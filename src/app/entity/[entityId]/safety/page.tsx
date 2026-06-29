@@ -8,7 +8,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, History, MoreVertical,
   RefreshCcw, FileText, Download, FileCheck,
-  ShieldCheck, ArrowRight
+  ShieldCheck, ArrowRight, Upload, Paperclip
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,7 @@ import { collection, query, orderBy, Query, where, doc, getDoc } from "firebase/
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { SafetyDpiAssignment, SAFETY_DPI_STATUS_LABELS } from "@/types/safety-dpi";
 import { archiveDpiAssignment, updateDpiAssignment } from "@/services/safety-dpi.service";
-import { getDocumentDownloadUrl } from "@/services/document.service";
+import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { SafetyDpiDialog } from "@/components/safety/SafetyDpiDialog";
@@ -32,6 +32,14 @@ import {
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { format, isBefore, addDays, startOfDay, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -49,7 +57,7 @@ export default function SafetyDpiRegistryPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
+  const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
 
   // UI State
   const [isDialogVisible, setIsDialogVisible] = useState(false);
@@ -57,6 +65,11 @@ export default function SafetyDpiRegistryPage() {
   const [filters, setFilters] = useState(initialFilters);
   const [loading, setLoading] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
+
+  // Late Attachment State
+  const [uploadingRequest, setUploadingRequest] = useState<SafetyDpiAssignment | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Queries
   const canRead = hasPermission("safety.read");
@@ -134,6 +147,42 @@ export default function SafetyDpiRegistryPage() {
       toast({ variant: "destructive", title: "Erreur", description: err.message || "Impossible d'ouvrir le document." });
     } finally {
       setViewingDocId(null);
+    }
+  };
+
+  const handleExecuteUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !uploadingRequest || !uploadFile) return;
+
+    setIsUploading(true);
+    try {
+      const emp = employeesMap.get(uploadingRequest.employeeId);
+      const docId = await uploadHRDocument(
+        entityId,
+        uploadFile,
+        {
+          title: `PV de remise EPI - ${emp?.displayName || 'Employé'} - ${uploadingRequest.dpiName}`,
+          documentType: "dpi_delivery_report",
+          employeeId: uploadingRequest.employeeId,
+          personId: uploadingRequest.personId || null,
+          relatedModule: "safety",
+          relatedId: uploadingRequest.assignmentId,
+          isSensitive: false,
+          status: "valid"
+        },
+        user.uid,
+        membership?.userDisplayName || "Utilisateur"
+      );
+
+      await updateDpiAssignment(entityId, uploadingRequest.assignmentId, { reportDocumentId: docId }, user.uid);
+      
+      toast({ title: "PV enregistré", description: "Le document de remise a été lié à l'équipement." });
+      setUploadingRequest(null);
+      setUploadFile(null);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Échec de l'envoi", description: err.message });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -327,6 +376,11 @@ export default function SafetyDpiRegistryPage() {
                                     <Eye className="w-4 h-4" /> Voir le PV
                                  </DropdownMenuItem>
                                )}
+                               {!a.reportDocumentId && (
+                                 <DropdownMenuItem onClick={() => setUploadingRequest(a)} className="gap-2 font-bold text-primary">
+                                    <Upload className="w-4 h-4" /> Joindre PV
+                                 </DropdownMenuItem>
+                               )}
                                <DropdownMenuItem onClick={() => { setEditingId(a.assignmentId); setIsDialogVisible(true); }} className="gap-2">
                                   <Edit className="w-4 h-4" /> Modifier
                                </DropdownMenuItem>
@@ -364,6 +418,69 @@ export default function SafetyDpiRegistryPage() {
         assignmentId={editingId}
         employees={activeEmployees}
       />
+
+      {/* Late Attachment Dialog */}
+      <Dialog open={!!uploadingRequest} onOpenChange={(open) => !open && setUploadingRequest(null)}>
+        <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+              <Paperclip className="w-6 h-6" /> Joindre PV de remise
+            </DialogTitle>
+            <DialogDescription>
+              Lier le procès-verbal signé pour : <span className="font-bold">{uploadingRequest?.dpiName}</span>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleExecuteUpload} className="space-y-6 py-4">
+             <div className="space-y-4">
+                <div className={cn(
+                  "border-2 border-dashed rounded-2xl p-8 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
+                  uploadFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                )}>
+                   <input 
+                     type="file" 
+                     accept=".pdf,.png,.jpg,.jpeg" 
+                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                     onChange={(e) => {
+                       const file = e.target.files?.[0];
+                       if (file && file.size > 10 * 1024 * 1024) {
+                         toast({ variant: "destructive", title: "Fichier trop volumineux", description: "La taille max est de 10 Mo." });
+                         e.target.value = "";
+                         return;
+                       }
+                       setUploadFile(file || null);
+                     }}
+                     required
+                   />
+                   {uploadFile ? (
+                      <>
+                        <div className="bg-green-100 p-2 rounded-xl text-green-600 mb-1"><FileCheck className="w-5 h-5" /></div>
+                        <p className="text-xs font-bold text-green-800">{uploadFile.name}</p>
+                      </>
+                   ) : (
+                      <>
+                        <Upload className="w-6 h-6 text-slate-300 mb-1" />
+                        <p className="text-xs font-bold text-slate-600">Cliquez pour choisir le PV</p>
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">PDF, PNG, JPG (10 Mo max)</p>
+                      </>
+                   )}
+                </div>
+             </div>
+
+             <DialogFooter className="pt-4 border-t">
+                <Button type="button" variant="ghost" onClick={() => setUploadingRequest(null)} disabled={isUploading}>Annuler</Button>
+                <Button 
+                  type="submit" 
+                  disabled={isUploading || !uploadFile}
+                  className="rounded-xl px-8 font-black shadow-lg"
+                >
+                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+                  Lancer l'importation
+                </Button>
+             </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
