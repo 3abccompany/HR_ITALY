@@ -20,6 +20,7 @@ export type HRDocumentType =
   | "payroll_document"
   | "medical_certificate"
   | "training_certificate"
+  | "dpi_delivery_report"
   | "disciplinary_document"
   | "absence_justification"
   | "work_accident_justification"
@@ -38,6 +39,7 @@ export type RelatedModule =
   | "timeOffRequests"
   | "medicalVisits"
   | "trainings"
+  | "safety"
   | "general";
 
 export interface HRDocument {
@@ -123,6 +125,7 @@ export const DOCUMENT_TYPE_LABELS: Record<HRDocumentType, string> = {
   payroll_document: "Document de paie",
   medical_certificate: "Certificat médical",
   training_certificate: "Formation / certificat",
+  dpi_delivery_report: "PV de remise EPI/DPI",
   disciplinary_document: "Document disciplinaire",
   absence_justification: "Justificatif d'absence",
   work_accident_justification: "Justificatif accident du travail",

@@ -261,16 +261,14 @@ service cloud.firestore {
       match /timeOffRequests/{requestId} {
         allow read: if hasPermission(entityId, 'leaveRequests.read') 
                      || isPlatformAdmin()
-                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
+                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.resource.data.employeeId)).data.userId == request.auth.uid);
         
         allow create: if hasPermission(entityId, 'leaveRequests.create') 
                       || isPlatformAdmin();
-                      // Self-creation handled by server action to securely update balances
 
         allow update: if hasPermission(entityId, 'leaveRequests.update') 
                       || hasPermission(entityId, 'leaveRequests.approve') 
                       || isPlatformAdmin();
-                      // Self-cancellation handled by server action
         
         allow delete: if false;
       }
@@ -300,6 +298,13 @@ service cloud.firestore {
         allow read: if hasPermission(entityId, 'training.read') || isPlatformAdmin();
         allow create: if hasPermission(entityId, 'training.create') || isPlatformAdmin();
         allow update: if hasPermission(entityId, 'training.update') || isPlatformAdmin();
+        allow delete: if false;
+      }
+
+      match /safetyDpiAssignments/{assignmentId} {
+        allow read: if hasPermission(entityId, 'safety.read') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'safety.create') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'safety.update') || isPlatformAdmin();
         allow delete: if false;
       }
     }
