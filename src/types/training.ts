@@ -59,6 +59,12 @@ export interface Training {
   certificateDocumentId?: string | null;
   notes?: string | null;
 
+  // Batch / Session tracking
+  batchId?: string | null;
+  sessionId?: string | null;
+  batchLabel?: string | null;
+  createdFromBatch?: boolean;
+
   // History & Renewal
   renewalOfTrainingId?: string | null;
   replacedByTrainingId?: string | null;

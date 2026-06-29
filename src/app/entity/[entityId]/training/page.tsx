@@ -8,7 +8,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, ArrowRight, History, MoreVertical,
   RefreshCcw, FileSignature, BookOpen, ShieldCheck,
-  CheckCircle, XCircle, AlertCircle
+  CheckCircle, XCircle, AlertCircle, Layers
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,7 +91,7 @@ export default function TrainingsRegistryPage() {
     if (!employees) return [];
     return employees
       .filter(e => {
-        const s = (e.status as string).toLowerCase();
+        const s = String(e.status || "").toLowerCase();
         return s === 'active' || s === 'actif' || s === 'active_contract';
       })
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
@@ -105,7 +105,7 @@ export default function TrainingsRegistryPage() {
 
     return trainings.filter(t => {
       const emp = employeesMap.get(t.employeeId);
-      const searchTarget = `${t.title} ${t.provider || ""} ${emp?.displayName || ""} ${emp?.employeeCode || ""}`.toLowerCase();
+      const searchTarget = `${t.title} ${t.provider || ""} ${emp?.displayName || ""} ${emp?.employeeCode || ""} ${t.batchId || ""}`.toLowerCase();
       
       if (filters.search && !searchTarget.includes(filters.search.toLowerCase())) return false;
       if (filters.trainingType !== "all" && t.trainingType !== filters.trainingType) return false;
@@ -156,7 +156,7 @@ export default function TrainingsRegistryPage() {
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-3xl font-black text-primary tracking-tight">Registre des Formations</h1>
-          <p className="text-muted-foreground text-sm font-medium">Gestion de la formation obligatoire (Accord État-Régions) et continue.</p>
+          <p className="text-muted-foreground text-sm font-medium">Gestion de la formation obligatoire et continue.</p>
         </div>
         {hasPermission("training.create") && (
           <Button onClick={() => { setEditingId(null); setIsResultMode(false); setIsDialogVisible(true); }} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
@@ -180,14 +180,14 @@ export default function TrainingsRegistryPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
               className="pl-10 rounded-xl" 
-              placeholder="Rechercher intitulé, collaborateur, organisme..." 
+              placeholder="Rechercher intitulé, collaborateur, session..." 
               value={filters.search}
               onChange={(e) => setFilters(p => ({...p, search: e.target.value}))}
             />
           </div>
           
           <Select value={filters.trainingType} onValueChange={(v) => setFilters(p => ({...p, trainingType: v}))}>
-            <SelectTrigger className="w-[200px] rounded-xl"><SelectValue placeholder="Type de formation" /></SelectTrigger>
+            <SelectTrigger className="w-[180px] rounded-xl"><SelectValue placeholder="Type" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Tous les types</SelectItem>
               {Object.entries(TRAINING_TYPE_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
@@ -199,7 +199,7 @@ export default function TrainingsRegistryPage() {
             <SelectContent>
               <SelectItem value="all">Toutes les échéances</SelectItem>
               <SelectItem value="expired">Expirée</SelectItem>
-              <SelectItem value="upcoming">À échéance proche (30j)</SelectItem>
+              <SelectItem value="upcoming">Proche (30j)</SelectItem>
               <SelectItem value="ok">À jour</SelectItem>
             </SelectContent>
           </Select>
@@ -224,9 +224,9 @@ export default function TrainingsRegistryPage() {
               <TableRow>
                 <TableHead className="pl-6">Employé</TableHead>
                 <TableHead>Type & Intitulé</TableHead>
-                <TableHead>Période & Durée</TableHead>
+                <TableHead>Période</TableHead>
                 <TableHead>Résultat</TableHead>
-                <TableHead>Prochain recyclage</TableHead>
+                <TableHead>Échéance</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right pr-6">Actions</TableHead>
               </TableRow>
@@ -255,31 +255,33 @@ export default function TrainingsRegistryPage() {
                       <TableCell className="pl-6">
                         <div className="flex flex-col">
                            <span className="font-bold text-slate-900">{emp?.displayName || "Employé inconnu"}</span>
-                           <span className="text-[10px] text-muted-foreground uppercase font-mono">{emp?.employeeCode || t.employeeId.slice(0, 8)}</span>
+                           <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] text-muted-foreground uppercase font-mono">{emp?.employeeCode || t.employeeId.slice(0, 8)}</span>
+                              {t.batchId && (
+                                <Badge variant="outline" className="text-[8px] h-3 px-1 border-primary/10 bg-primary/5 text-primary/60 font-black uppercase">Session</Badge>
+                              )}
+                           </div>
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-0.5">
-                           <span className="text-xs font-bold text-primary">{t.title}</span>
+                           <span className="text-xs font-bold text-primary truncate max-w-[180px]" title={t.title}>{t.title}</span>
                            <span className="text-[9px] text-muted-foreground uppercase">{TRAINING_TYPE_LABELS[t.trainingType]}</span>
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-0.5">
                            <div className="flex items-center gap-1.5 text-xs font-medium">
-                              <Calendar className="w-3 h-3 text-muted-foreground/40" />
+                              <Calendar className="w-3 h-3 text-primary/40" />
                               <span>{formatDate(t.startDate || t.courseDate)}</span>
                               {t.endDate && t.endDate !== t.startDate && (
                                 <>
-                                  <ArrowRight className="w-2.5 h-2.5 opacity-30" />
+                                  <ArrowRight className="w-3 h-3 opacity-30" />
                                   <span>{formatDate(t.endDate)}</span>
                                 </>
                               )}
                            </div>
-                           <div className="flex items-center gap-2 mt-0.5">
-                              {t.daysCount && t.daysCount > 1 && <span className="text-[9px] font-bold text-muted-foreground uppercase">{t.daysCount} jours</span>}
-                              {t.durationHours && <span className="text-[9px] font-black text-primary/60 uppercase">{t.durationHours} h validées</span>}
-                           </div>
+                           {t.durationHours && <span className="text-[9px] font-black text-primary/60 uppercase">{t.durationHours} h validées</span>}
                         </div>
                       </TableCell>
                       <TableCell>
