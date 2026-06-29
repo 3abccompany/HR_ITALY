@@ -288,6 +288,13 @@ service cloud.firestore {
         allow create, update: if hasPermission(entityId, 'leaveRequests.update') || hasPermission(entityId, 'leaveRequests.approve') || isPlatformAdmin();
         allow delete: if isPlatformAdmin();
       }
+
+      match /medicalVisits/{visitId} {
+        allow read: if hasPermission(entityId, 'medicalVisits.read') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'medicalVisits.create') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'medicalVisits.update') || isPlatformAdmin();
+        allow delete: if false;
+      }
     }
 
     // --- Global Reference Data ---
