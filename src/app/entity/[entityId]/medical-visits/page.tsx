@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -90,7 +89,10 @@ export default function MedicalVisitsRegistryPage() {
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
     return employees
-      .filter(e => e.status === 'active' || e.status === 'actif' || (e.status as string).toLowerCase() === 'active_contract')
+      .filter(e => {
+        const s = (e.status as string).toLowerCase();
+        return s === 'active' || s === 'actif' || s === 'active_contract';
+      })
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
   }, [employees]);
 

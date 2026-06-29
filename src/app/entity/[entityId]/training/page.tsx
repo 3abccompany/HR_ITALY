@@ -6,7 +6,7 @@ import {
   GraduationCap, Plus, Search, Eye, Edit, Archive, 
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
-  Building2, ArrowUpRight, History, MoreVertical,
+  Building2, ArrowUpRight, ArrowRight, History, MoreVertical,
   RefreshCcw, FileSignature, BookOpen, ShieldCheck,
   CheckCircle, XCircle, AlertCircle
 } from "lucide-react";
@@ -22,6 +22,7 @@ import {
   Training, 
   TrainingType, 
   TrainingStatus,
+  TrainingResultStatus,
   TRAINING_TYPE_LABELS,
   TRAINING_STATUS_LABELS,
   TRAINING_RESULT_LABELS 
@@ -78,7 +79,7 @@ export default function TrainingsRegistryPage() {
   }, [db, entityId, canRead]);
 
   const { data: trainings, loading: loadingTrainings } = useCollection<Training>(trainingsQuery, "trainings.registry");
-  const { data: employees } = useCollection<Employee>(employeesQuery, "trainings.employees_lookup");
+  const { data: employees, loading: loadingEmployees } = useCollection<Employee>(employeesQuery, "trainings.employees_lookup");
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -89,7 +90,10 @@ export default function TrainingsRegistryPage() {
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
     return employees
-      .filter(e => e.status === 'active' || e.status === 'actif' || (e.status as string).toLowerCase() === 'active_contract')
+      .filter(e => {
+        const s = (e.status as string).toLowerCase();
+        return s === 'active' || s === 'actif' || s === 'active_contract';
+      })
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
   }, [employees]);
 

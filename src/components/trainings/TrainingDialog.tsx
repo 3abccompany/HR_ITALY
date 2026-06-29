@@ -30,6 +30,7 @@ import { Loader2, ShieldCheck, GraduationCap, Save, Info, Calendar, FileSignatur
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { parseISO, differenceInCalendarDays } from "date-fns";
+import { Badge } from "@/components/ui/badge";
 
 interface TrainingDialogProps {
   open: boolean;
