@@ -26,12 +26,11 @@ import { createTraining, updateTraining, createTrainingBatch } from "@/services/
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, GraduationCap, Save, Info, Calendar, FileSignature, AlertCircle, Search, X, Check } from "lucide-react";
+import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, X, Check } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { parseISO, differenceInCalendarDays } from "date-fns";
 import { Badge } from "@/components/ui/badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -133,11 +132,13 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
     if (!term) return employees;
     return employees.filter(e => 
       e.displayName.toLowerCase().includes(term) || 
-      e.employeeCode?.toLowerCase().includes(term)
+      e.employeeCode?.toLowerCase().includes(term) ||
+      e.email?.toLowerCase().includes(term)
     );
   }, [employees, employeeSearch]);
 
   const handleToggleEmployee = (id: string) => {
+    if (isEditing) return;
     setSelectedEmployeeIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
@@ -197,8 +198,8 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto rounded-[2rem]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-hidden flex flex-col p-0 rounded-[2rem]">
+        <DialogHeader className="p-8 pb-4 shrink-0">
           <DialogTitle className="text-2xl font-black text-primary flex items-center gap-2">
             {resultMode ? <FileSignature className="w-6 h-6 text-accent" /> : <GraduationCap className="w-6 h-6 text-accent" />}
             {resultMode ? "Saisir le résultat" : (isEditing ? "Modifier la formation" : "Planifier une formation")}
@@ -208,210 +209,209 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
           </DialogDescription>
         </DialogHeader>
 
-        {fetching ? (
-          <div className="py-20 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
-        ) : (
-          <form id="training-form" onSubmit={handleSave} className="space-y-6 py-4">
-            
-            <div className="space-y-2">
-               <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur(s)</Label>
-               {isEditing ? (
-                 <div className="h-11 px-4 bg-secondary/20 rounded-xl border flex items-center text-sm font-bold text-slate-700">
-                    {employees.find(e => e.employeeId === formData.employeeId)?.displayName || "Collaborateur inconnu"}
-                 </div>
-               ) : (
-                 <div className="space-y-3">
-                    <Popover>
-                      <PopoverTrigger asChild>
-                         <Button variant="outline" type="button" className="w-full h-11 justify-between rounded-xl font-medium px-4">
-                            <span className="truncate">
-                               {selectedEmployeeIds.length === 0 
-                                 ? "Choisir les collaborateurs..." 
-                                 : `${selectedEmployeeIds.length} collaborateur${selectedEmployeeIds.length > 1 ? 's' : ''} sélectionné${selectedEmployeeIds.length > 1 ? 's' : ''}`
-                               }
-                            </span>
-                            <Search className="ml-2 h-4 w-4 opacity-50" />
-                         </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-[400px] p-0 rounded-2xl shadow-2xl z-[100]" align="start">
-                         <div className="p-3 border-b flex items-center gap-2 bg-slate-50">
-                            <Search className="w-4 h-4 text-muted-foreground" />
-                            <input 
-                              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                              placeholder="Rechercher..."
-                              value={employeeSearch}
-                              onChange={(e) => setEmployeeSearch(e.target.value)}
-                            />
-                            {employeeSearch && <button type="button" onClick={() => setEmployeeSearch("")}><X className="w-3 h-3" /></button>}
-                         </div>
-                         <ScrollArea className="h-[250px]">
-                            <div className="p-2 space-y-1">
-                               {filteredEmployees.map(e => {
-                                 const isSelected = selectedEmployeeIds.includes(e.employeeId);
-                                 return (
-                                   <div
-                                     key={e.employeeId} 
-                                     role="button"
-                                     tabIndex={0}
-                                     className={cn(
-                                       "w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left cursor-pointer outline-none",
-                                       isSelected ? "bg-primary/5" : "hover:bg-slate-50"
-                                     )}
-                                     onClick={() => handleToggleEmployee(e.employeeId)}
-                                     onKeyDown={(event) => {
-                                       if (event.key === 'Enter' || event.key === ' ') {
-                                         event.preventDefault();
-                                         handleToggleEmployee(e.employeeId);
-                                       }
-                                     }}
-                                   >
-                                      <Checkbox 
-                                        checked={isSelected} 
-                                        onCheckedChange={() => {}} // parent div handles it
-                                        className="pointer-events-none"
-                                      />
-                                      <div className="flex-1 min-w-0">
-                                         <p className="text-sm font-bold text-slate-800 truncate">{e.displayName}</p>
-                                         <p className="text-[10px] text-muted-foreground uppercase font-mono">{e.employeeCode}</p>
-                                      </div>
-                                      {isSelected && <Check className="w-4 h-4 text-primary" />}
-                                   </div>
-                                 );
-                               })}
-                               {filteredEmployees.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">Aucun résultat.</p>}
+        <div className="flex-1 overflow-y-auto px-8 py-4">
+          {fetching ? (
+            <div className="py-20 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+          ) : (
+            <form id="training-form" onSubmit={handleSave} className="space-y-8 pb-8">
+              
+              {/* Collaborators Selection Area */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-1">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Collaborateur(s)</Label>
+                  {!isEditing && selectedEmployeeIds.length > 0 && (
+                    <Badge variant="secondary" className="bg-primary/5 text-primary text-[10px] font-black border-none">
+                      {selectedEmployeeIds.length} sélectionné{selectedEmployeeIds.length > 1 ? 's' : ''}
+                    </Badge>
+                  )}
+                </div>
+
+                {isEditing ? (
+                  <div className="p-4 bg-secondary/20 rounded-2xl border flex items-center gap-3">
+                     <User className="w-5 h-5 text-primary/40" />
+                     <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-800 truncate">
+                          {employees.find(e => e.employeeId === formData.employeeId)?.displayName || "Collaborateur inconnu"}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground font-mono uppercase">
+                          {employees.find(e => e.employeeId === formData.employeeId)?.employeeCode || "N/A"}
+                        </p>
+                     </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 bg-slate-50/50 p-4 rounded-[1.5rem] border border-slate-100">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input 
+                        placeholder="Rechercher un collaborateur..." 
+                        value={employeeSearch}
+                        onChange={(e) => setEmployeeSearch(e.target.value)}
+                        className="pl-10 h-10 rounded-xl bg-white border-primary/5 focus:border-primary/20"
+                      />
+                    </div>
+
+                    <ScrollArea className="h-[220px] rounded-xl border bg-white shadow-inner">
+                      <div className="p-2 space-y-1">
+                        {filteredEmployees.map(e => {
+                          const isSelected = selectedEmployeeIds.includes(e.employeeId);
+                          return (
+                            <div
+                              key={e.employeeId} 
+                              role="button"
+                              tabIndex={0}
+                              className={cn(
+                                "flex items-center gap-3 p-3 rounded-xl transition-all cursor-pointer group outline-none",
+                                isSelected ? "bg-primary/5 ring-1 ring-primary/10" : "hover:bg-slate-50"
+                              )}
+                              onClick={() => handleToggleEmployee(e.employeeId)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  handleToggleEmployee(e.employeeId);
+                                }
+                              }}
+                            >
+                              <Checkbox 
+                                checked={isSelected} 
+                                onCheckedChange={() => {}} // parent div handles it
+                                className="pointer-events-none"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold text-slate-800 truncate group-hover:text-primary transition-colors">{e.displayName}</p>
+                                <p className="text-[10px] text-muted-foreground uppercase font-mono">{e.employeeCode || "Sans matricule"}</p>
+                              </div>
+                              {isSelected && <Badge variant="secondary" className="bg-primary/10 text-primary p-0 h-4 w-4 rounded-full flex items-center justify-center"><Check className="h-2.5 w-2.5" /></Badge>}
                             </div>
-                         </ScrollArea>
-                      </PopoverContent>
-                    </Popover>
-
-                    {selectedEmployeeIds.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                         {selectedEmployeeIds.map(id => {
-                           const emp = employees.find(e => e.employeeId === id);
-                           return (
-                             <Badge key={id} variant="secondary" className="gap-1.5 pl-2 pr-1 h-6 bg-white border-primary/10 text-primary font-bold">
-                                {emp?.displayName}
-                                <button type="button" onClick={() => handleToggleEmployee(id)} className="hover:bg-slate-100 rounded-full p-0.5"><X className="w-3 h-3" /></button>
-                             </Badge>
-                           );
-                         })}
+                          );
+                        })}
+                        {filteredEmployees.length === 0 && (
+                          <div className="py-12 text-center space-y-2">
+                             <Search className="w-8 h-8 text-muted-foreground/20 mx-auto" />
+                             <p className="text-xs text-muted-foreground italic">Aucun collaborateur trouvé.</p>
+                          </div>
+                        )}
+                        {employees.length === 0 && (
+                          <div className="py-12 text-center text-xs text-muted-foreground italic">Aucun collaborateur disponible.</div>
+                        )}
                       </div>
-                    )}
-                    <p className="text-[10px] text-muted-foreground pl-1 italic">
-                       <Info className="w-3 h-3 inline mr-1" />
-                       Une ligne de formation sera créée pour chaque collaborateur sélectionné.
+                    </ScrollArea>
+                    <p className="text-[9px] text-muted-foreground pl-1 leading-relaxed">
+                       <Info className="w-3 h-3 inline mr-1 align-text-top" />
+                       Chaque collaborateur sélectionné recevra son propre dossier de formation indépendant.
                     </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de formation</Label>
+                    <Select value={formData.trainingType} onValueChange={(v: any) => setFormData(p => ({...p, trainingType: v}))} disabled={resultMode}>
+                      <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                         {Object.entries(TRAINING_TYPE_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
                  </div>
-               )}
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de formation</Label>
-                  <Select value={formData.trainingType} onValueChange={(v: any) => setFormData(p => ({...p, trainingType: v}))} disabled={resultMode}>
-                    <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                       {Object.entries(TRAINING_TYPE_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-               </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Intitulé du cours</Label>
+                    <Input value={formData.title} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} required placeholder="Ex: SST - Maintien des acquis" className="rounded-xl h-11" disabled={resultMode} />
+                 </div>
 
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Intitulé du cours</Label>
-                  <Input value={formData.title} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} required placeholder="Ex: SST - Maintien des acquis" className="rounded-xl h-11" disabled={resultMode} />
-               </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Organisme (Ente formatore)</Label>
+                    <Input value={formData.provider} onChange={(e) => setFormData(p => ({...p, provider: e.target.value}))} placeholder="Nom du centre" className="rounded-xl h-11" disabled={resultMode} />
+                 </div>
 
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Organisme (Ente formatore)</Label>
-                  <Input value={formData.provider} onChange={(e) => setFormData(p => ({...p, provider: e.target.value}))} placeholder="Nom du centre" className="rounded-xl h-11" disabled={resultMode} />
-               </div>
-
-               <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Mode de formation</Label>
-                  <Select value={formData.deliveryMode} onValueChange={(v: any) => setFormData(p => ({...p, deliveryMode: v}))} disabled={resultMode}>
-                    <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                       <SelectItem value="classroom">Présentiel</SelectItem>
-                       <SelectItem value="online">E-learning</SelectItem>
-                       <SelectItem value="blended">Mixte</SelectItem>
-                       <SelectItem value="on_the_job">Au poste</SelectItem>
-                    </SelectContent>
-                  </Select>
-               </div>
-
-               <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Date de début</Label>
-                  <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" disabled={resultMode} />
-               </div>
-
-               <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-[10px] uppercase font-black">Date de fin (Optionnel)</Label>
-                    {daysCount > 0 && (
-                      <Badge variant="secondary" className="h-4 text-[8px] uppercase font-black bg-primary/5 text-primary border-none">
-                        {daysCount} {daysCount > 1 ? 'jours' : 'jour'}
-                      </Badge>
-                    )}
-                  </div>
-                  <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} className={cn("rounded-xl h-11", daysCount < 0 && "border-red-500")} disabled={resultMode} />
-               </div>
-            </div>
-
-            <Separator className="opacity-50" />
-
-            <div className={cn("p-6 rounded-[1.5rem] border space-y-6", resultMode ? "bg-accent/5 border-accent/20 ring-4 ring-accent/5" : "bg-slate-50 border-slate-100")}>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black">Statut actuel</Label>
-                    <Select value={formData.status} onValueChange={(v: any) => setFormData(p => ({...p, status: v}))}>
-                      <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Mode de formation</Label>
+                    <Select value={formData.deliveryMode} onValueChange={(v: any) => setFormData(p => ({...p, deliveryMode: v}))} disabled={resultMode}>
+                      <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {Object.entries(TRAINING_STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                         <SelectItem value="classroom">Présentiel</SelectItem>
+                         <SelectItem value="online">E-learning</SelectItem>
+                         <SelectItem value="blended">Mixte</SelectItem>
+                         <SelectItem value="on_the_job">Au poste</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
+                 </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black">Score / Évaluation</Label>
-                    <Select value={formData.resultStatus} onValueChange={(v: any) => setFormData(p => ({...p, resultStatus: v}))}>
-                      <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(TRAINING_RESULT_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                 <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Date de début</Label>
+                    <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" disabled={resultMode} />
+                 </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black">Date de validation</Label>
-                    <Input type="date" value={formData.completionDate} onChange={(e) => setFormData(p => ({...p, completionDate: e.target.value}))} className="bg-white rounded-xl h-11" required={formData.status === 'completed'} />
-                  </div>
+                 <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[10px] uppercase font-black">Date de fin (Optionnel)</Label>
+                      {daysCount > 0 && (
+                        <Badge variant="secondary" className="h-4 text-[8px] uppercase font-black bg-primary/5 text-primary border-none">
+                          {daysCount} {daysCount > 1 ? 'jours' : 'jour'}
+                        </Badge>
+                      )}
+                    </div>
+                    <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} className={cn("rounded-xl h-11", daysCount < 0 && "border-red-500")} disabled={resultMode} />
+                 </div>
+              </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black text-accent-foreground">Prochain recyclage</Label>
-                    <Input type="date" value={formData.expiryDate} onChange={(e) => setFormData(p => ({...p, expiryDate: e.target.value}))} className="bg-white rounded-xl h-11" />
-                  </div>
+              <Separator className="opacity-50" />
 
-                  <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black">Volume horaire (h)</Label>
-                    <Input type="number" step="0.5" value={formData.durationHours || ""} onChange={(e) => setFormData(p => ({...p, durationHours: e.target.value ? parseFloat(e.target.value) : undefined}))} placeholder="Ex: 4" className="bg-white rounded-xl h-11" />
-                  </div>
-               </div>
-            </div>
+              {/* Status and Results Block */}
+              <div className={cn("p-6 rounded-[2rem] border space-y-6", resultMode ? "bg-accent/5 border-accent/20 ring-4 ring-accent/5" : "bg-slate-50 border-slate-100")}>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-black">Statut actuel</Label>
+                      <Select value={formData.status} onValueChange={(v: any) => setFormData(p => ({...p, status: v}))}>
+                        <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(TRAINING_STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-            <div className="space-y-2">
-               <Label className="text-[10px] font-black uppercase text-muted-foreground">Notes internes RH</Label>
-               <Textarea value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} className="rounded-xl min-h-[80px]" placeholder="..." />
-            </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-black">Score / Évaluation</Label>
+                      <Select value={formData.resultStatus} onValueChange={(v: any) => setFormData(p => ({...p, resultStatus: v}))}>
+                        <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(TRAINING_RESULT_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-            <DialogFooter className="pt-4 border-t gap-2">
-              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Annuler</Button>
-              <Button type="submit" form="training-form" disabled={loading || daysCount < 0} className="rounded-xl px-8 font-black shadow-lg">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                {isEditing ? "Enregistrer" : "Enregistrer la session"}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-black">Date de validation</Label>
+                      <Input type="date" value={formData.completionDate} onChange={(e) => setFormData(p => ({...p, completionDate: e.target.value}))} className="bg-white rounded-xl h-11" required={formData.status === 'completed'} />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-black text-accent-foreground">Prochain recyclage</Label>
+                      <Input type="date" value={formData.expiryDate} onChange={(e) => setFormData(p => ({...p, expiryDate: e.target.value}))} className="bg-white rounded-xl h-11" />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-black">Volume horaire (h)</Label>
+                      <Input type="number" step="0.5" value={formData.durationHours || ""} onChange={(e) => setFormData(p => ({...p, durationHours: e.target.value ? parseFloat(e.target.value) : undefined}))} placeholder="Ex: 4" className="bg-white rounded-xl h-11" />
+                    </div>
+                 </div>
+              </div>
+
+              <div className="space-y-2">
+                 <Label className="text-[10px] font-black uppercase text-muted-foreground">Notes internes RH</Label>
+                 <Textarea value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} className="rounded-2xl min-h-[80px]" placeholder="..." />
+              </div>
+            </form>
+          )}
+        </div>
+
+        <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading} className="rounded-xl font-bold">Annuler</Button>
+          <Button type="submit" form="training-form" disabled={loading || daysCount < 0 || selectedEmployeeIds.length === 0} className="rounded-xl px-10 font-black shadow-lg shadow-primary/20">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+            {isEditing ? "Enregistrer" : (selectedEmployeeIds.length > 1 ? `Créer ${selectedEmployeeIds.length} dossiers` : "Enregistrer")}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
