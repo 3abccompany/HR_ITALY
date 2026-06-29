@@ -9,6 +9,7 @@ import { useEffect } from "react";
 import { Loader2, Building } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AuthGuard } from "@/components/guards/AuthGuard";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export default function EntityWorkspaceLayout({
   children,
@@ -58,7 +59,9 @@ export default function EntityWorkspaceLayout({
                 </div>
               </div>
               
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
+                <NotificationBell />
+                <Separator orientation="vertical" className="h-4 opacity-20" />
                 <span className="text-[10px] text-muted-foreground font-mono group-data-[collapsible=icon]:hidden">
                   ID: {entityId}
                 </span>

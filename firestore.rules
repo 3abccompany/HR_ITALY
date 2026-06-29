@@ -58,6 +58,27 @@ service cloud.firestore {
 
       // --- Entity Specific Sub-collections ---
 
+      match /notifications/{notificationId} {
+        // Targeted access rule: private by default unless targeted to user's UID or current permissions
+        allow read: if isEntityMember(entityId) && (
+          resource.data.targetUid == request.auth.uid ||
+          (resource.data.targetPermission != null && hasPermission(entityId, resource.data.targetPermission)) ||
+          isPlatformAdmin()
+        );
+        
+        // Creation via service or privileged users
+        allow create: if isEntityMember(entityId) && (hasPermission(entityId, 'dashboard.read') || isPlatformAdmin());
+        
+        // Status updates (read/archive) only allowed for the targeted recipient or admins
+        allow update: if isEntityMember(entityId) && (
+          resource.data.targetUid == request.auth.uid ||
+          (resource.data.targetPermission != null && hasPermission(entityId, resource.data.targetPermission)) ||
+          isPlatformAdmin()
+        );
+        
+        allow delete: if false;
+      }
+
       match /persons/{personId} {
         allow read: if hasPermission(entityId, 'persons.read') || isPlatformAdmin();
         allow write: if hasPermission(entityId, 'persons.create') || hasPermission(entityId, 'persons.update') || isPlatformAdmin();
@@ -261,7 +282,7 @@ service cloud.firestore {
       match /timeOffRequests/{requestId} {
         allow read: if hasPermission(entityId, 'leaveRequests.read') 
                      || isPlatformAdmin()
-                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.resource.data.employeeId)).data.userId == request.auth.uid);
+                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
         
         allow create: if hasPermission(entityId, 'leaveRequests.create') 
                       || isPlatformAdmin();
