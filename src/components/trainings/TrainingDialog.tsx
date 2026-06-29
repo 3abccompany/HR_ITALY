@@ -249,18 +249,25 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                                {filteredEmployees.map(e => {
                                  const isSelected = selectedEmployeeIds.includes(e.employeeId);
                                  return (
-                                   <button
+                                   <div
                                      key={e.employeeId} 
-                                     type="button"
+                                     role="button"
+                                     tabIndex={0}
                                      className={cn(
-                                       "w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left",
+                                       "w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left cursor-pointer outline-none",
                                        isSelected ? "bg-primary/5" : "hover:bg-slate-50"
                                      )}
                                      onClick={() => handleToggleEmployee(e.employeeId)}
+                                     onKeyDown={(event) => {
+                                       if (event.key === 'Enter' || event.key === ' ') {
+                                         event.preventDefault();
+                                         handleToggleEmployee(e.employeeId);
+                                       }
+                                     }}
                                    >
                                       <Checkbox 
                                         checked={isSelected} 
-                                        onCheckedChange={() => {}} // parent button handles it
+                                        onCheckedChange={() => {}} // parent div handles it
                                         className="pointer-events-none"
                                       />
                                       <div className="flex-1 min-w-0">
@@ -268,7 +275,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
                                          <p className="text-[10px] text-muted-foreground uppercase font-mono">{e.employeeCode}</p>
                                       </div>
                                       {isSelected && <Check className="w-4 h-4 text-primary" />}
-                                   </button>
+                                   </div>
                                  );
                                })}
                                {filteredEmployees.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">Aucun résultat.</p>}
