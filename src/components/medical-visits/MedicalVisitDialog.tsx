@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect } from "react";
@@ -25,7 +26,7 @@ import { createMedicalVisit, updateMedicalVisit } from "@/services/medical-visit
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, Stethoscope, AlertCircle, Info } from "lucide-react";
+import { Loader2, ShieldCheck, Stethoscope, AlertCircle, Info, FileSignature } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
 interface MedicalVisitDialogProps {
@@ -33,6 +34,7 @@ interface MedicalVisitDialogProps {
   onOpenChange: (open: boolean) => void;
   entityId: string;
   visitId: string | null;
+  resultMode?: boolean;
   employees: Employee[];
 }
 
@@ -51,7 +53,7 @@ const initialForm = {
   notes: ""
 };
 
-export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, employees }: MedicalVisitDialogProps) {
+export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resultMode = false, employees }: MedicalVisitDialogProps) {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
@@ -106,11 +108,18 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
 
     setLoading(true);
     try {
+      let finalPayload = { ...formData };
+      
+      // Auto-complete logic for result entry
+      if (resultMode && formData.fitnessStatus !== 'pending_result' && formData.status === 'scheduled') {
+        finalPayload.status = 'completed';
+      }
+
       if (visitId) {
-        await updateMedicalVisit(entityId, visitId, formData, user.uid);
+        await updateMedicalVisit(entityId, visitId, finalPayload, user.uid);
         toast({ title: "Visite mise à jour" });
       } else {
-        await createMedicalVisit(entityId, formData, user.uid);
+        await createMedicalVisit(entityId, finalPayload, user.uid);
         toast({ title: "Visite enregistrée" });
       }
       onOpenChange(false);
@@ -126,10 +135,14 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
       <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto rounded-[2rem]">
         <DialogHeader>
           <DialogTitle className="text-2xl font-black text-primary flex items-center gap-2">
-            <Stethoscope className="w-6 h-6 text-accent" />
-            {visitId ? "Détails de la visite" : "Planifier une visite médicale"}
+            {resultMode ? <FileSignature className="w-6 h-6 text-accent" /> : <Stethoscope className="w-6 h-6 text-accent" />}
+            {resultMode ? "Saisir le résultat de la visite médicale" : (visitId ? "Détails de la visite" : "Planifier une visite médicale")}
           </DialogTitle>
-          <DialogDescription>Gestion des visites médicales / Sorveglianza sanitaria pour le collaborateur.</DialogDescription>
+          <DialogDescription>
+            {resultMode 
+              ? "Enregistrez le jugement d'aptitude émis par le médecin compétent." 
+              : "Gestion des visites médicales / Sorveglianza sanitaria pour le collaborateur."}
+          </DialogDescription>
         </DialogHeader>
 
         {fetching ? (
@@ -150,7 +163,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
                         personId: emp?.personId || null
                       }));
                     }}
-                    disabled={!!visitId}
+                    disabled={!!visitId || resultMode}
                   >
                     <SelectTrigger className="rounded-xl h-11">
                        <SelectValue placeholder="Sélectionner..." />
@@ -171,7 +184,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
 
                <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Type de visite</Label>
-                  <Select value={formData.visitType} onValueChange={(v: any) => setFormData(p => ({...p, visitType: v}))}>
+                  <Select value={formData.visitType} onValueChange={(v: any) => setFormData(p => ({...p, visitType: v}))} disabled={resultMode}>
                     <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
                        {Object.entries(MEDICAL_VISIT_TYPE_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
@@ -181,26 +194,28 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
 
                <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Date de la visite</Label>
-                  <Input type="date" value={formData.visitDate} onChange={(e) => setFormData(p => ({...p, visitDate: e.target.value}))} required className="rounded-xl h-11" />
+                  <Input type="date" value={formData.visitDate} onChange={(e) => setFormData(p => ({...p, visitDate: e.target.value}))} required className="rounded-xl h-11" disabled={resultMode} />
                </div>
 
                <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Médecin compétent (Medico competente)</Label>
-                  <Input value={formData.doctorName} onChange={(e) => setFormData(p => ({...p, doctorName: e.target.value}))} required placeholder="Nom du médecin" className="rounded-xl h-11" />
+                  <Input value={formData.doctorName} onChange={(e) => setFormData(p => ({...p, doctorName: e.target.value}))} required placeholder="Nom du médecin" className="rounded-xl h-11" disabled={resultMode} />
                </div>
             </div>
 
-            <div className="space-y-2">
-               <Label className="text-[10px] uppercase font-black">Centre médical</Label>
-               <Input value={formData.medicalCenter} onChange={(e) => setFormData(p => ({...p, medicalCenter: e.target.value}))} placeholder="Ex: Centre de médecine du travail..." className="rounded-xl h-11" />
-            </div>
+            {!resultMode && (
+              <div className="space-y-2">
+                 <Label className="text-[10px] uppercase font-black">Centre médical</Label>
+                 <Input value={formData.medicalCenter} onChange={(e) => setFormData(p => ({...p, medicalCenter: e.target.value}))} placeholder="Ex: Centre de médecine du travail..." className="rounded-xl h-11" />
+              </div>
+            )}
 
             <Separator className="opacity-50" />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-6 rounded-[1.5rem] border border-slate-100">
+            <div className={cn("grid grid-cols-1 md:grid-cols-2 gap-6 p-6 rounded-[1.5rem] border", resultMode ? "bg-accent/5 border-accent/20 ring-4 ring-accent/5" : "bg-slate-50 border-slate-100")}>
                <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black text-primary">Jugement d’aptitude (Giudizio di idoneità)</Label>
-                  <Select value={formData.fitnessStatus} onValueChange={(v: any) => setFormData(p => ({...p, fitnessStatus: v, status: v === 'pending_result' ? 'pending_result' : 'completed'}))}>
+                  <Select value={formData.fitnessStatus} onValueChange={(v: any) => setFormData(p => ({...p, fitnessStatus: v}))}>
                     <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
                        {Object.entries(FITNESS_STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
@@ -218,8 +233,8 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
                   <Select value={formData.status} onValueChange={(v: any) => setFormData(p => ({...p, status: v}))}>
                     <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                       <SelectItem value="scheduled">Planifiée</SelectItem>
-                       <SelectItem value="completed">Terminée</SelectItem>
+                       <SelectItem value="scheduled">Planifiée / En attente</SelectItem>
+                       <SelectItem value="completed">Terminée / Jugement rendu</SelectItem>
                        <SelectItem value="pending_result">En attente de résultat</SelectItem>
                        <SelectItem value="cancelled">Annulée</SelectItem>
                        <SelectItem value="archived">Archivée</SelectItem>
@@ -251,7 +266,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
               <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Annuler</Button>
               <Button type="submit" disabled={loading} className="rounded-xl px-8 font-black shadow-lg">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-                {visitId ? "Mettre à jour" : "Enregistrer la visite"}
+                {resultMode ? "Enregistrer le résultat" : (visitId ? "Mettre à jour" : "Enregistrer la visite")}
               </Button>
             </DialogFooter>
           </form>

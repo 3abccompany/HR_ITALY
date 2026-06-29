@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useMemo, useState, useEffect } from "react";
@@ -61,7 +62,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { format, isBefore, startOfDay, addDays, differenceInDays } from "date-fns";
+import { format, isBefore, startOfDay, addDays, differenceInDays, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
@@ -137,10 +138,13 @@ function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = 
  * Renders a deadline badge for medical visits.
  */
 function getMedicalDeadlineBadge(visit: MedicalVisit) {
+  const visitDate = parseISO(visit.visitDate);
+  const isPast = isBefore(visitDate, startOfDay(new Date()));
+
   if (visit.fitnessStatus === 'pending_result') {
     return (
-      <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] font-black uppercase">
-        En attente de jugement
+      <Badge variant="outline" className={cn("text-[10px] font-black uppercase", isPast ? "bg-red-50 text-red-700 border-red-200 animate-pulse" : "bg-orange-50 text-orange-700 border-orange-200")}>
+        {isPast ? "Résultat médical en attente" : "En attente de jugement"}
       </Badge>
     );
   }

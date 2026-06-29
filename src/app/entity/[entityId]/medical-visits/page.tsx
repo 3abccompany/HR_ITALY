@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
@@ -6,7 +7,8 @@ import {
   Stethoscope, Plus, Search, Eye, Edit, Archive, 
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
-  Building2, ArrowUpRight, History, MoreVertical
+  Building2, ArrowUpRight, History, MoreVertical,
+  RefreshCcw, FileSignature
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,9 +35,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format, isBefore, addDays, startOfDay } from "date-fns";
+import { format, isBefore, addDays, startOfDay, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 
@@ -58,6 +61,7 @@ export default function MedicalVisitsRegistryPage() {
   // UI State
   const [isDialogVisible, setIsDialogVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isResultMode, setIsResultMode] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
   const [loading, setLoading] = useState(false);
 
@@ -83,7 +87,6 @@ export default function MedicalVisitsRegistryPage() {
     return map;
   }, [employees]);
 
-  // Process active employees for the dialog dropdown in memory
   const activeEmployees = useMemo(() => {
     if (!employees) return [];
     return employees
@@ -107,7 +110,7 @@ export default function MedicalVisitsRegistryPage() {
       if (filters.status !== "all" && v.status !== filters.status) return false;
 
       if (filters.deadlineStatus !== "all" && v.nextVisitDate) {
-        const nextDate = new Date(v.nextVisitDate);
+        const nextDate = parseISO(v.nextVisitDate);
         if (filters.deadlineStatus === "expired" && !isBefore(nextDate, today)) return false;
         if (filters.deadlineStatus === "upcoming" && !(isBefore(nextDate, thirtyDaysOut) && !isBefore(nextDate, today))) return false;
         if (filters.deadlineStatus === "ok" && isBefore(nextDate, thirtyDaysOut)) return false;
@@ -121,6 +124,13 @@ export default function MedicalVisitsRegistryPage() {
 
   const handleEdit = (v: MedicalVisit) => {
     setEditingId(v.id);
+    setIsResultMode(false);
+    setIsDialogVisible(true);
+  };
+
+  const handleEnterResult = (v: MedicalVisit) => {
+    setEditingId(v.id);
+    setIsResultMode(true);
     setIsDialogVisible(true);
   };
 
@@ -147,7 +157,7 @@ export default function MedicalVisitsRegistryPage() {
           <p className="text-muted-foreground text-sm font-medium">Gestion des visites médicales et de l'aptitude au travail.</p>
         </div>
         {hasPermission("medicalVisits.create") && (
-          <Button onClick={() => setIsDialogVisible(true)} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
+          <Button onClick={() => { setEditingId(null); setIsResultMode(false); setIsDialogVisible(true); }} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
             <Plus className="w-4 h-4" /> Nouvelle visite
           </Button>
         )}
@@ -156,8 +166,8 @@ export default function MedicalVisitsRegistryPage() {
       {/* Stats / KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
          <StatCard title="Total visites" value={visits?.length || 0} icon={Stethoscope} color="blue" />
-         <StatCard title="En attente résultat" value={visits?.filter(v => v.status === 'pending_result').length || 0} icon={Clock} color="orange" />
-         <StatCard title="Échéances critiques" value={visits?.filter(v => v.nextVisitDate && isBefore(new Date(v.nextVisitDate), addDays(new Date(), 30))).length || 0} icon={AlertTriangle} color="red" />
+         <StatCard title="Résultats en attente" value={visits?.filter(v => v.fitnessStatus === 'pending_result').length || 0} icon={Clock} color="orange" />
+         <StatCard title="Échéances critiques" value={visits?.filter(v => v.nextVisitDate && isBefore(parseISO(v.nextVisitDate), addDays(startOfDay(new Date()), 30))).length || 0} icon={AlertTriangle} color="red" />
          <StatCard title="Aptes (Idonei)" value={visits?.filter(v => v.fitnessStatus === 'fit').length || 0} icon={CheckCircle2} color="green" />
       </div>
 
@@ -238,6 +248,10 @@ export default function MedicalVisitsRegistryPage() {
               ) : (
                 filteredVisits.map((v) => {
                   const emp = employeesMap.get(v.employeeId);
+                  const visitDate = parseISO(v.visitDate);
+                  const isPast = isBefore(visitDate, startOfDay(new Date()));
+                  const isMissingResult = isPast && v.fitnessStatus === 'pending_result' && v.status !== 'cancelled' && v.status !== 'archived';
+
                   return (
                     <TableRow key={v.id} className="hover:bg-muted/50 transition-colors">
                       <TableCell className="pl-6">
@@ -249,11 +263,11 @@ export default function MedicalVisitsRegistryPage() {
                       <TableCell>
                         <div className="flex flex-col gap-0.5">
                            <span className="text-xs font-bold text-primary">{MEDICAL_VISIT_TYPE_LABELS[v.visitType]}</span>
-                           <span className="text-[10px] text-muted-foreground">{formatDate(v.visitDate)}</span>
+                           <span className="text-[10px] text-muted-foreground">{format(visitDate, "dd/MM/yyyy")}</span>
                         </div>
                       </TableCell>
                       <TableCell>
-                         {getFitnessBadge(v.fitnessStatus)}
+                         {getFitnessBadge(v.fitnessStatus, isMissingResult)}
                          {(v.prescriptions || v.restrictions) && (
                             <div className="flex gap-1 mt-1">
                                <Badge variant="outline" className="text-[8px] h-3 px-1 border-orange-200 text-orange-600 bg-orange-50 uppercase font-black">Prescriptions</Badge>
@@ -270,24 +284,30 @@ export default function MedicalVisitsRegistryPage() {
                          {v.nextVisitDate ? (
                            <div className="flex flex-col">
                               <span className={cn("text-xs font-black", getDeadlineColor(v.nextVisitDate))}>
-                                 {formatDate(v.nextVisitDate)}
+                                 {format(parseISO(v.nextVisitDate), "dd/MM/yyyy")}
                               </span>
                               {isExpired(v.nextVisitDate) && <span className="text-[8px] font-bold text-red-600 uppercase">Échue</span>}
                            </div>
                          ) : <span className="text-muted-foreground text-xs">—</span>}
                       </TableCell>
                       <TableCell>
-                         {getStatusBadge(v.status)}
+                         {getStatusBadge(v.status, isMissingResult)}
                       </TableCell>
                       <TableCell className="text-right pr-6">
                         <DropdownMenu>
                            <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                            </DropdownMenuTrigger>
-                           <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEdit(v)} className="gap-2 font-bold">
+                           <DropdownMenuContent align="end" className="w-48">
+                              {v.fitnessStatus === 'pending_result' && !isTerminal(v.status) && (
+                                <DropdownMenuItem onClick={() => handleEnterResult(v)} className="gap-2 font-bold text-primary">
+                                   <FileSignature className="w-4 h-4" /> Saisir le résultat
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem onClick={() => handleEdit(v)} className="gap-2">
                                  <Edit className="w-4 h-4" /> Modifier
                               </DropdownMenuItem>
+                              <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => handleArchive(v.id)} className="gap-2 text-destructive">
                                  <Archive className="w-4 h-4" /> Archiver
                               </DropdownMenuItem>
@@ -307,10 +327,14 @@ export default function MedicalVisitsRegistryPage() {
         open={isDialogVisible} 
         onOpenChange={(open) => {
           setIsDialogVisible(open);
-          if (!open) setEditingId(null);
+          if (!open) {
+            setEditingId(null);
+            setIsResultMode(false);
+          }
         }}
         entityId={entityId}
         visitId={editingId}
+        resultMode={isResultMode}
         employees={activeEmployees}
       />
     </div>
@@ -340,7 +364,9 @@ function StatCard({ title, value, icon: Icon, color }: any) {
   );
 }
 
-function getFitnessBadge(status: MedicalFitnessStatus) {
+function getFitnessBadge(status: MedicalFitnessStatus, isMissingResult: boolean) {
+  if (isMissingResult) return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[10px] animate-pulse">RÉSULTAT MANQUANT</Badge>;
+
   switch (status) {
     case 'fit': return <Badge className="bg-green-600 text-white border-none text-[10px]">{FITNESS_STATUS_LABELS.fit}</Badge>;
     case 'fit_with_prescriptions': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px]">{FITNESS_STATUS_LABELS.fit_with_prescriptions}</Badge>;
@@ -351,7 +377,9 @@ function getFitnessBadge(status: MedicalFitnessStatus) {
   }
 }
 
-function getStatusBadge(status: MedicalVisitStatus) {
+function getStatusBadge(status: MedicalVisitStatus, isMissingResult: boolean) {
+  if (isMissingResult) return <Badge variant="destructive" className="bg-red-600 text-white border-none text-[10px]">EN ATTENTE JUGEMENT</Badge>;
+
   switch (status) {
     case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px]">Planifiée</Badge>;
     case 'completed': return <Badge className="bg-slate-900 text-white border-none text-[10px]">Terminée</Badge>;
@@ -363,22 +391,19 @@ function getStatusBadge(status: MedicalVisitStatus) {
 }
 
 function isExpired(date: string) {
-  return isBefore(new Date(date), startOfDay(new Date()));
+  return isBefore(parseISO(date), startOfDay(new Date()));
+}
+
+function isTerminal(status: MedicalVisitStatus) {
+  return status === 'completed' || status === 'cancelled' || status === 'archived';
 }
 
 function getDeadlineColor(date: string) {
-  const d = new Date(date);
+  const d = parseISO(date);
   const today = startOfDay(new Date());
   const thirtyDays = addDays(today, 30);
 
   if (isBefore(d, today)) return "text-red-600";
   if (isBefore(d, thirtyDays)) return "text-orange-600";
   return "text-slate-600";
-}
-
-function formatDate(val: string) {
-  if (!val) return "—";
-  try {
-    return format(new Date(val), "dd/MM/yyyy", { locale: fr });
-  } catch (e) { return val; }
 }
