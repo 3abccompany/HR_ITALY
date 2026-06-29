@@ -295,6 +295,13 @@ service cloud.firestore {
         allow update: if hasPermission(entityId, 'medicalVisits.update') || isPlatformAdmin();
         allow delete: if false;
       }
+
+      match /trainings/{trainingId} {
+        allow read: if hasPermission(entityId, 'training.read') || isPlatformAdmin();
+        allow create: if hasPermission(entityId, 'training.create') || isPlatformAdmin();
+        allow update: if hasPermission(entityId, 'training.update') || isPlatformAdmin();
+        allow delete: if false;
+      }
     }
 
     // --- Global Reference Data ---
