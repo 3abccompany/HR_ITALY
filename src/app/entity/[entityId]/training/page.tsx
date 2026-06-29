@@ -7,8 +7,7 @@ import {
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, ArrowRight, History, MoreVertical,
-  RefreshCcw, FileSignature, BookOpen, ShieldCheck,
-  CheckCircle, XCircle, AlertCircle, Layers
+  RefreshCcw, FileSignature
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -287,7 +286,7 @@ export default function TrainingsRegistryPage() {
                       <TableCell>
                          {t.resultStatus && t.resultStatus !== 'not_required' ? (
                            <div className="flex items-center gap-1.5">
-                             {t.resultStatus === 'passed' ? <CheckCircle className="w-3.5 h-3.5 text-green-600" /> : <XCircle className="w-3.5 h-3.5 text-red-600" />}
+                             {t.resultStatus === 'passed' ? <CheckCircle2 className="w-3.5 h-3.5 text-green-600" /> : <XCircle className="w-3.5 h-3.5 text-red-600" />}
                              <span className={cn("text-[10px] font-black uppercase", t.resultStatus === 'passed' ? "text-green-700" : "text-red-700")}>
                                 {TRAINING_RESULT_LABELS[t.resultStatus]}
                              </span>

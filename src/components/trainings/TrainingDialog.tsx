@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, 
   DialogFooter, DialogDescription 
@@ -26,7 +26,7 @@ import { createTraining, updateTraining, createTrainingBatch } from "@/services/
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, X, Check } from "lucide-react";
+import { Loader2, ShieldCheck, GraduationCap, Save, Info, FileSignature, Search, X, Check, User } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { parseISO, differenceInCalendarDays } from "date-fns";
@@ -70,19 +70,34 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
+  
+  // Logic guards to prevent infinite update loops
+  const lastInitializedId = useRef<string | null | undefined>(undefined);
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
 
   const isEditing = !!trainingId;
 
   useEffect(() => {
-    // Prevent infinite loop by returning early if the dialog is closed
-    if (!open) return;
+    if (!open) {
+      lastInitializedId.current = undefined;
+      return;
+    }
+
+    // Only initialize if the target ID has changed or if we haven't initialized this session
+    if (lastInitializedId.current === trainingId) return;
+    lastInitializedId.current = trainingId;
 
     async function load() {
       if (trainingId && db) {
         setFetching(true);
         try {
           const snap = await getDoc(doc(db, `entities/${entityId}/trainings`, trainingId));
-          if (snap.exists()) {
+          if (snap.exists() && isMounted.current) {
             const data = snap.data() as Training;
             setFormData({
               employeeId: data.employeeId,
@@ -103,19 +118,21 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
             setSelectedEmployeeIds([data.employeeId]);
           }
         } catch (err) {
-          toast({ variant: "destructive", title: "Erreur de chargement" });
+          if (isMounted.current) {
+            toast({ variant: "destructive", title: "Erreur de chargement" });
+          }
         } finally {
-          setFetching(false);
+          if (isMounted.current) setFetching(false);
         }
-      } else {
-        // Reset for NEW training session - only if not already in initial state
+      } else if (isMounted.current) {
         setFormData(initialForm);
-        setSelectedEmployeeIds(prev => prev.length === 0 ? prev : []);
-        setEmployeeSearch(prev => prev === "" ? prev : "");
+        setSelectedEmployeeIds([]);
+        setEmployeeSearch("");
       }
     }
+    
     load();
-  }, [trainingId, db, entityId, open]); // Removed toast to stabilize dependencies
+  }, [trainingId, db, entityId, open, toast]);
 
   const daysCount = useMemo(() => {
     if (!formData.startDate) return 0;
@@ -196,7 +213,7 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
-      setLoading(false);
+      if (isMounted.current) setLoading(false);
     }
   };
 
