@@ -7,7 +7,9 @@ import {
   AlertTriangle, Clock, Calendar, CheckCircle2,
   FileSignature, Building2,
   ArrowUpRight, AlertCircle,
-  Stethoscope, ShieldCheck
+  Stethoscope, ShieldCheck,
+  GraduationCap, Send, Shield, FileWarning,
+  PlusCircle, ChevronRight
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useCollection, useFirebase } from "@/firebase";
 import { collection, query, where } from "firebase/firestore";
-import { format, isBefore, addDays, startOfDay } from "date-fns";
+import { format, isBefore, addDays, startOfDay, differenceInDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -37,6 +39,12 @@ function parseSafeDate(val: any): Date | null {
   return null;
 }
 
+function formatDateDisplay(val: any): string {
+  const d = parseSafeDate(val);
+  if (!d) return "N/A";
+  return format(d, "dd MMM yyyy", { locale: fr });
+}
+
 export default function EntityDashboardPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -50,7 +58,11 @@ export default function EntityDashboardPage() {
   const canReadDocs = hasPermission("documents.read");
   const canReadEmployees = hasPermission("employees.read");
   const canReadMedical = hasPermission("medicalVisits.read");
+  const canReadTraining = hasPermission("training.read");
+  const canReadSafety = hasPermission("safety.read");
+  const canReadCPI = hasPermission("employmentRequests.read");
 
+  // Collections
   const contractsQuery = useMemo(() => {
     if (!db || !entityId || !permissionsReady || !canReadContracts) return null;
     return query(collection(db, `entities/${entityId}/contracts`));
@@ -71,129 +83,188 @@ export default function EntityDashboardPage() {
     return query(collection(db, `entities/${entityId}/medicalVisits`));
   }, [db, entityId, permissionsReady, canReadMedical]);
 
-  const { data: contracts, loading: loadingContracts } = useCollection<any>(contractsQuery, "dashboard.contracts");
-  const { data: documents, loading: loadingDocs } = useCollection<any>(docsQuery, "dashboard.documents");
-  const { data: employees, loading: loadingEmployees } = useCollection<any>(employeesQuery, "dashboard.employees");
-  const { data: medicalVisits, loading: loadingVisits } = useCollection<any>(medicalVisitsQuery, "dashboard.medicalVisits");
+  const trainingsQuery = useMemo(() => {
+    if (!db || !entityId || !permissionsReady || !canReadTraining) return null;
+    return query(collection(db, `entities/${entityId}/trainings`));
+  }, [db, entityId, permissionsReady, canReadTraining]);
+
+  const safetyQuery = useMemo(() => {
+    if (!db || !entityId || !permissionsReady || !canReadSafety) return null;
+    return query(collection(db, `entities/${entityId}/safetyDpiAssignments`));
+  }, [db, entityId, permissionsReady, canReadSafety]);
+
+  const requestsQuery = useMemo(() => {
+    if (!db || !entityId || !permissionsReady || !canReadCPI) return null;
+    return query(collection(db, `entities/${entityId}/employmentRequests`));
+  }, [db, entityId, permissionsReady, canReadCPI]);
+
+  const { data: contracts } = useCollection<any>(contractsQuery, "dashboard.contracts");
+  const { data: documents } = useCollection<any>(docsQuery, "dashboard.documents");
+  const { data: employees } = useCollection<any>(employeesQuery, "dashboard.employees");
+  const { data: medicalVisits } = useCollection<any>(medicalVisitsQuery, "dashboard.medicalVisits");
+  const { data: trainings } = useCollection<any>(trainingsQuery, "dashboard.trainings");
+  const { data: safetyAssignments } = useCollection<any>(safetyQuery, "dashboard.safety");
+  const { data: employmentRequests } = useCollection<any>(requestsQuery, "dashboard.requests");
 
   const stats = useMemo(() => {
     const today = startOfDay(new Date());
     const thirtyDaysOut = addDays(today, 30);
 
-    // Mappings for enrichment
-    const contractMap = new Map<string, any>();
-    contracts?.forEach(c => contractMap.set(c.contractId || c.id, c));
-
-    const empMap = new Map<string, any>();
-    employees?.forEach(e => empMap.set(e.employeeId || e.id, e));
-
     const s = {
-      expiringContracts: [] as any[],
-      expiredContracts: [] as any[],
-      expiringDocs: [] as any[],
-      expiredDocs: [] as any[],
+      criticalCount: 0,
+      upcoming30Count: 0,
+      missingDocsCount: 0,
+      pendingActionsCount: 0,
+      
+      // Module Lists
+      contractAlerts: [] as any[],
       medicalAlerts: [] as any[],
-      totalEmployees: employees?.length || 0,
-      medicalKpis: {
-        total: 0,
-        pending: 0,
-        expired: 0,
-        soon: 0,
-        fit: 0,
-        fitWithPrescriptions: 0,
-        unfit: 0
-      }
+      trainingAlerts: [] as any[],
+      safetyAlerts: [] as any[],
+      gedAlerts: [] as any[],
+      
+      totalEmployees: employees?.length || 0
     };
 
-    // 1. Process Contracts
-    contracts?.forEach(c => {
-      if (c.renewedByContractId || c.status === 'renewed') return;
-      if (['terminated', 'archived', 'cancelled', 'draft'].includes(c.status)) return;
-      
-      const endDate = parseSafeDate(c.endDate);
-      if (!endDate) return;
+    // 1. Contracts & CPI
+    if (canReadContracts && contracts) {
+      contracts.forEach(c => {
+        if (['terminated', 'archived', 'cancelled'].includes(c.status)) return;
+        if (c.status === 'renewed') return;
 
-      if (isBefore(endDate, today)) {
-        s.expiredContracts.push(c);
-      } else if (isBefore(endDate, thirtyDaysOut)) {
-        s.expiringContracts.push(c);
-      }
-    });
+        const endDate = parseSafeDate(c.endDate);
 
-    // 2. Process Documents
-    documents?.forEach(d => {
-      if (d.status !== 'valid') return;
-      if (d.contractId) {
-        const linkedContract = contractMap.get(d.contractId);
-        if (linkedContract) {
-          if (linkedContract.renewedByContractId || ['renewed', 'terminated', 'archived', 'cancelled'].includes(linkedContract.status)) return;
+        if (c.status === 'active' && endDate) {
+          if (isBefore(endDate, today)) {
+            s.criticalCount++;
+            s.contractAlerts.push({ id: c.id, title: c.employeeDisplayName || 'Contrat', subtitle: `Expiré (${c.contractType})`, date: c.endDate, type: 'contract', variant: 'expired', link: `/entity/${entityId}/contracts/${c.id}` });
+          } else if (isBefore(endDate, thirtyDaysOut)) {
+            s.upcoming30Count++;
+            s.contractAlerts.push({ id: c.id, title: c.employeeDisplayName || 'Contrat', subtitle: `Échéance proche (${c.contractType})`, date: c.endDate, type: 'contract', variant: 'soon', link: `/entity/${entityId}/contracts/${c.id}` });
+          }
+        } else if (c.status === 'draft') {
+          s.pendingActionsCount++;
+          s.contractAlerts.push({ id: c.id, title: c.employeeDisplayName || 'Contrat', subtitle: 'Brouillon à finaliser', date: c.createdAt, type: 'contract', variant: 'soon', link: `/entity/${entityId}/contracts/${c.id}` });
+        } else if (c.status === 'pending_activation') {
+          s.pendingActionsCount++;
         }
-      }
-      const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
-      const expiry = parseSafeDate(rawExpiry);
-      if (!expiry) return;
-
-      if (isBefore(expiry, today)) {
-        s.expiredDocs.push(d);
-      } else if (isBefore(expiry, thirtyDaysOut)) {
-        s.expiringDocs.push(d);
-      }
-    });
-
-    // 3. Process Medical Visits
-    if (canReadMedical && medicalVisits) {
-      medicalVisits.forEach(v => {
-        const emp = empMap.get(v.employeeId);
-        const displayName = emp?.displayName || v.employeeDisplayName || "Employé inconnu";
-        
-        const nextDate = parseSafeDate(v.nextVisitDate);
-        const visitDate = parseSafeDate(v.visitDate);
-
-        // Alerts logic
-        if (nextDate && isBefore(nextDate, today)) {
-          s.medicalAlerts.push({
-            id: v.id,
-            title: displayName,
-            subtitle: `Visite échue (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as MedicalVisitType] || v.visitType})`,
-            date: v.nextVisitDate,
-            type: 'medical',
-            variant: 'expired'
-          });
-        } else if (nextDate && isBefore(nextDate, thirtyDaysOut)) {
-          s.medicalAlerts.push({
-            id: v.id,
-            title: displayName,
-            subtitle: `Échéance proche (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as MedicalVisitType] || v.visitType})`,
-            date: v.nextVisitDate,
-            type: 'medical',
-            variant: 'soon'
-          });
-        } else if (visitDate && isBefore(visitDate, today) && v.fitnessStatus === 'pending_result') {
-          s.medicalAlerts.push({
-            id: v.id,
-            title: displayName,
-            subtitle: `Résultat médical manquant (${MEDICAL_VISIT_TYPE_LABELS[v.visitType as MedicalVisitType] || v.visitType})`,
-            date: v.visitDate,
-            type: 'medical',
-            variant: 'missing'
-          });
-        }
-
-        // KPIs logic
-        s.medicalKpis.total++;
-        if (v.fitnessStatus === 'pending_result' || v.status === 'pending_result') s.medicalKpis.pending++;
-        if (nextDate && isBefore(nextDate, today)) s.medicalKpis.expired++;
-        if (nextDate && isBefore(nextDate, thirtyDaysOut) && !isBefore(nextDate, today)) s.medicalKpis.soon++;
-        if (v.fitnessStatus === 'fit') s.medicalKpis.fit++;
-        if (v.fitnessStatus === 'fit_with_prescriptions') s.medicalKpis.fitWithPrescriptions++;
-        if (v.fitnessStatus === 'unfit' || v.fitnessStatus === 'temporarily_unfit') s.medicalKpis.unfit++;
       });
     }
 
-    return s;
-  }, [contracts, documents, employees, medicalVisits, canReadMedical]);
+    if (canReadCPI && employmentRequests) {
+      employmentRequests.forEach(r => {
+        if (['completed', 'cancelled'].includes(r.status)) return;
+        if (r.status === 'draft' || r.status === 'to_send') {
+          s.criticalCount++;
+          s.contractAlerts.push({ id: r.id, title: r.candidateDisplayName || 'CPI', subtitle: 'Communication UniLav bloquante', date: r.createdAt, type: 'cpi', variant: 'expired', link: `/entity/${entityId}/employment-requests/${r.id}` });
+        } else {
+          s.pendingActionsCount++;
+          s.contractAlerts.push({ id: r.id, title: r.candidateDisplayName || 'CPI', subtitle: 'Transmission en cours', date: r.sentAt || r.createdAt, type: 'cpi', variant: 'soon', link: `/entity/${entityId}/employment-requests/${r.id}` });
+        }
+      });
+    }
 
-  if (membershipLoading || !permissionsReady) {
+    // 2. Medical Visits
+    if (canReadMedical && medicalVisits) {
+      medicalVisits.forEach(v => {
+        if (['cancelled', 'archived'].includes(v.status)) return;
+
+        const visitDate = parseSafeDate(v.visitDate);
+        const nextDate = parseSafeDate(v.nextVisitDate);
+        const empName = v.employeeDisplayName || 'Employé';
+
+        if (nextDate && isBefore(nextDate, today)) {
+          s.criticalCount++;
+          s.medicalAlerts.push({ id: v.id, title: empName, subtitle: `Visite échue`, date: v.nextVisitDate, type: 'medical', variant: 'expired', link: `/entity/${entityId}/medical-visits` });
+        } else if (nextDate && isBefore(nextDate, thirtyDaysOut)) {
+          s.upcoming30Count++;
+          s.medicalAlerts.push({ id: v.id, title: empName, subtitle: `Échéance proche`, date: v.nextVisitDate, type: 'medical', variant: 'soon', link: `/entity/${entityId}/medical-visits` });
+        }
+
+        if (v.fitnessStatus === 'pending_result' && visitDate && isBefore(visitDate, today)) {
+          s.pendingActionsCount++;
+          s.medicalAlerts.push({ id: v.id, title: empName, subtitle: `Résultat manquant`, date: v.visitDate, type: 'medical', variant: 'missing', link: `/entity/${entityId}/medical-visits` });
+        }
+
+        if (v.status === 'completed' && !v.documentId) {
+          s.missingDocsCount++;
+          s.gedAlerts.push({ id: v.id, title: `Certificat médical: ${empName}`, subtitle: 'Non joint', date: v.visitDate, type: 'document', variant: 'missing', link: `/entity/${entityId}/medical-visits` });
+        }
+      });
+    }
+
+    // 3. Trainings
+    if (canReadTraining && trainings) {
+      trainings.forEach(t => {
+        if (['cancelled', 'archived'].includes(t.status)) return;
+        
+        const expiryDate = parseSafeDate(t.expiryDate);
+        const empName = t.employeeDisplayName || 'Employé';
+
+        if (expiryDate && isBefore(expiryDate, today)) {
+          s.criticalCount++;
+          s.trainingAlerts.push({ id: t.id, title: empName, subtitle: `Formation expirée: ${t.title}`, date: t.expiryDate, type: 'training', variant: 'expired', link: `/entity/${entityId}/training` });
+        } else if (expiryDate && isBefore(expiryDate, thirtyDaysOut)) {
+          s.upcoming30Count++;
+          s.trainingAlerts.push({ id: t.id, title: empName, subtitle: `Renouvellement: ${t.title}`, date: t.expiryDate, type: 'training', variant: 'soon', link: `/entity/${entityId}/training` });
+        }
+
+        if (t.status === 'planned' || t.status === 'in_progress') {
+          s.pendingActionsCount++;
+          s.trainingAlerts.push({ id: t.id, title: empName, subtitle: `Session planifiée: ${t.title}`, date: t.startDate || t.courseDate, type: 'training', variant: 'soon', link: `/entity/${entityId}/training` });
+        }
+
+        if (t.status === 'completed' && !t.certificateDocumentId) {
+          s.missingDocsCount++;
+          s.gedAlerts.push({ id: t.id, title: `Attestation: ${t.title}`, subtitle: empName, date: t.completionDate || t.endDate, type: 'document', variant: 'missing', link: `/entity/${entityId}/training` });
+        }
+      });
+    }
+
+    // 4. Safety / DPI
+    if (canReadSafety && safetyAssignments) {
+      safetyAssignments.forEach(a => {
+        if (a.status !== 'assigned') return;
+
+        const nextDate = parseSafeDate(a.plannedReplacementDate);
+        const empName = a.employeeName || 'Employé';
+
+        if (nextDate && isBefore(nextDate, today)) {
+          s.criticalCount++;
+          s.safetyAlerts.push({ id: a.assignmentId, title: empName, subtitle: `DPI échu: ${a.dpiName}`, date: a.plannedReplacementDate, type: 'safety', variant: 'expired', link: `/entity/${entityId}/safety` });
+        } else if (nextDate && isBefore(nextDate, thirtyDaysOut)) {
+          s.upcoming30Count++;
+          s.safetyAlerts.push({ id: a.assignmentId, title: empName, subtitle: `DPI à remplacer: ${a.dpiName}`, date: a.plannedReplacementDate, type: 'safety', variant: 'soon', link: `/entity/${entityId}/safety` });
+        }
+
+        if (!a.reportDocumentId) {
+          s.missingDocsCount++;
+          s.gedAlerts.push({ id: a.assignmentId, title: `PV DPI: ${a.dpiName}`, subtitle: empName, date: a.deliveryDate, type: 'document', variant: 'missing', link: `/entity/${entityId}/safety` });
+        }
+      });
+    }
+
+    // Sorting by priority (earlier dates first)
+    const sortByDate = (a: any, b: any) => {
+      const d1 = parseSafeDate(a.date)?.getTime() || 0;
+      const d2 = parseSafeDate(b.date)?.getTime() || 0;
+      if (!d1 && d2) return 1;
+      if (d1 && !d2) return -1;
+      return d1 - d2;
+    };
+
+    s.contractAlerts.sort(sortByDate);
+    s.medicalAlerts.sort(sortByDate);
+    s.trainingAlerts.sort(sortByDate);
+    s.safetyAlerts.sort(sortByDate);
+    s.gedAlerts.sort(sortByDate);
+
+    return s;
+  }, [contracts, employees, medicalVisits, trainings, safetyAssignments, employmentRequests, canReadContracts, canReadMedical, canReadTraining, canReadSafety, canReadCPI, entityId]);
+
+  const isLoading = membershipLoading || !permissionsReady;
+
+  if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -201,8 +272,6 @@ export default function EntityDashboardPage() {
       </div>
     );
   }
-
-  const isLoadingData = loadingContracts || loadingDocs || loadingEmployees || loadingVisits;
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 pb-24">
@@ -218,192 +287,90 @@ export default function EntityDashboardPage() {
         </div>
       </header>
 
-      {/* Overview Stats */}
+      {/* Global Compliance KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
          <SummaryCard 
-           title="Employés actifs" 
-           value={stats.totalEmployees} 
-           icon={Users} 
-           color="blue"
-           link={`/entity/${entityId}/employees`}
-         />
-         <SummaryCard 
-           title="Contrats à échéance" 
-           value={stats.expiringContracts.length + stats.expiredContracts.length} 
-           icon={Clock} 
-           color="orange"
-           alert={stats.expiredContracts.length > 0}
-           link={`/entity/${entityId}/contracts`}
-         />
-         <SummaryCard 
-           title="Documents à échéance" 
-           value={stats.expiringDocs.length} 
-           icon={Calendar} 
-           color="indigo"
-           link={`/entity/${entityId}/documents`}
-         />
-         <SummaryCard 
-           title="Documents expirés" 
-           value={stats.expiredDocs.length} 
+           title="Alertes critiques" 
+           value={stats.criticalCount} 
            icon={AlertTriangle} 
            color="red"
-           alert={stats.expiredDocs.length > 0}
-           link={`/entity/${entityId}/documents`}
+           alert={stats.criticalCount > 0}
+           link="#"
+         />
+         <SummaryCard 
+           title="Échéances 30 jours" 
+           value={stats.upcoming30Count} 
+           icon={Clock} 
+           color="orange"
+           link="#"
+         />
+         <SummaryCard 
+           title="Documents manquants" 
+           value={stats.missingDocsCount} 
+           icon={FileWarning} 
+           color="indigo"
+           link="#"
+         />
+         <SummaryCard 
+           title="Actions RH en attente" 
+           value={stats.pendingActionsCount} 
+           icon={PlusCircle} 
+           color="blue"
+           link="#"
          />
       </div>
 
-      {/* Medical Stats Section */}
-      {canReadMedical && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 px-1">
-             <Stethoscope className="w-4 h-4 text-primary/60" />
-             <h2 className="text-xs font-black uppercase tracking-[0.2em] text-primary/70">Santé & Aptitude au travail</h2>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-             <SummaryMiniCard title="Total" value={stats.medicalKpis.total} color="blue" />
-             <SummaryMiniCard title="En attente" value={stats.medicalKpis.pending} color="orange" />
-             <SummaryMiniCard title="Échues" value={stats.medicalKpis.expired} color="red" alert={stats.medicalKpis.expired > 0} />
-             <SummaryMiniCard title="Proches" value={stats.medicalKpis.soon} color="indigo" />
-             <SummaryMiniCard title="Idonei" value={stats.medicalKpis.fit} color="green" />
-             <SummaryMiniCard title="Limitations" value={stats.medicalKpis.fitWithPrescriptions} color="orange" />
-             <SummaryMiniCard title="Inaptes" value={stats.medicalKpis.unfit} color="red" />
-          </div>
-        </div>
-      )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+         {/* Contracts & CPI */}
+         {canReadContracts && (
+           <ComplianceSection 
+             title="Contrats & CPI / UniLav" 
+             icon={FileSignature}
+             alerts={stats.contractAlerts}
+             link={`/entity/${entityId}/contracts`}
+           />
+         )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-         {/* Critical Alerts Column */}
-         <div className="lg:col-span-2 space-y-6">
-            <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
-               <CardHeader className="bg-secondary/10 border-b py-4 px-8 flex flex-row items-center justify-between">
-                  <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4" /> Alertes de conformité
-                  </CardTitle>
-                  <Badge variant="outline" className="bg-white border-primary/10 text-[9px] font-black uppercase">Seuil: 30 jours</Badge>
-               </CardHeader>
-               <CardContent className="p-0">
-                  {isLoadingData ? (
-                    <div className="py-20 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
-                  ) : (stats.expiredContracts.length === 0 && stats.expiringContracts.length === 0 && stats.expiredDocs.length === 0 && stats.expiringDocs.length === 0) ? (
-                    <div className="py-20 text-center space-y-4">
-                       <div className="bg-green-50 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto">
-                          <CheckCircle2 className="w-8 h-8 text-green-500" />
-                       </div>
-                       <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Aucune échéance critique.</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-50">
-                       {stats.expiredContracts.map(c => (
-                         <ExpiryRow 
-                            key={c.id} 
-                            title={c.employeeDisplayName || "Contrat sans nom"} 
-                            subtitle={c.contractType}
-                            date={c.endDate}
-                            type="contract"
-                            variant="expired"
-                            link={`/entity/${entityId}/contracts/${c.id}`}
-                         />
-                       ))}
-                       {stats.expiringContracts.map(c => (
-                         <ExpiryRow 
-                            key={c.id} 
-                            title={c.employeeDisplayName || "Contrat sans nom"} 
-                            subtitle={c.contractType}
-                            date={c.endDate}
-                            type="contract"
-                            variant="soon"
-                            link={`/entity/${entityId}/contracts/${c.id}`}
-                         />
-                       ))}
-                       {stats.expiredDocs.map(d => (
-                         <ExpiryRow 
-                            key={d.id} 
-                            title={d.title} 
-                            subtitle={d.employeeDisplayName || "Document général"}
-                            date={d.expiresAt}
-                            type="document"
-                            variant="expired"
-                            link={`/entity/${entityId}/documents`}
-                         />
-                       ))}
-                       {stats.expiringDocs.map(d => (
-                         <ExpiryRow 
-                            key={d.id} 
-                            title={d.title} 
-                            subtitle={d.employeeDisplayName || "Document général"}
-                            date={d.expiresAt}
-                            type="document"
-                            variant="soon"
-                            link={`/entity/${entityId}/documents`}
-                         />
-                       ))}
-                    </div>
-                  )}
-               </CardContent>
-            </Card>
+         {/* Health at Work */}
+         {canReadMedical && (
+           <ComplianceSection 
+             title="Santé au travail" 
+             icon={Stethoscope}
+             alerts={stats.medicalAlerts}
+             link={`/entity/${entityId}/medical-visits`}
+           />
+         )}
 
-            {/* Medical Alerts Card */}
-            {canReadMedical && (
-              <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
-                <CardHeader className="bg-secondary/10 border-b py-4 px-8 flex flex-row items-center justify-between">
-                  <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                    <Stethoscope className="w-4 h-4" /> Alertes Santé & Aptitude
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  {isLoadingData ? (
-                    <div className="py-20 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
-                  ) : stats.medicalAlerts.length === 0 ? (
-                    <div className="py-20 text-center space-y-4">
-                       <div className="bg-green-50 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto">
-                          <CheckCircle2 className="w-8 h-8 text-green-500" />
-                       </div>
-                       <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Aucune échéance médicale critique.</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-50">
-                       {stats.medicalAlerts.map(a => (
-                         <ExpiryRow 
-                            key={a.id} 
-                            title={a.title} 
-                            subtitle={a.subtitle}
-                            date={a.date}
-                            type="medical"
-                            variant={a.variant}
-                            link={`/entity/${entityId}/medical-visits`}
-                         />
-                       ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-         </div>
+         {/* Training */}
+         {canReadTraining && (
+           <ComplianceSection 
+             title="Formations" 
+             icon={GraduationCap}
+             alerts={stats.trainingAlerts}
+             link={`/entity/${entityId}/training`}
+           />
+         )}
 
-         {/* Side Info */}
-         <div className="space-y-6">
-            <Card className="border-primary/10 rounded-[2rem] shadow-lg overflow-hidden bg-primary/95 text-white">
-               <CardHeader className="bg-white/10 py-6 border-b border-white/10 px-8">
-                  <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                     <Clock className="w-4 h-4" /> Rappel Automatique
-                  </CardTitle>
-               </CardHeader>
-               <CardContent className="p-8 space-y-4">
-                  <p className="text-xs leading-relaxed opacity-80">
-                    Les alertes de conformité sont calculées en temps réel sur la base des dates de fin de contrat, d'expiration des documents et des visites médicales réglementaires.
-                  </p>
-                  <Separator className="bg-white/10" />
-                  <div className="flex items-center gap-3">
-                     <div className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
-                     <p className="text-[10px] font-bold uppercase tracking-tight">Rouge : Action critique</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                     <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" />
-                     <p className="text-[10px] font-bold uppercase tracking-tight">Orange : Échéance sous 30 jours</p>
-                  </div>
-               </CardContent>
-            </Card>
-         </div>
+         {/* Safety */}
+         {canReadSafety && (
+           <ComplianceSection 
+             title="Sécurité / EPI-DPI" 
+             icon={ShieldCheck}
+             alerts={stats.safetyAlerts}
+             link={`/entity/${entityId}/safety`}
+           />
+         )}
+
+         {/* GED Compliance */}
+         {canReadDocs && (
+           <ComplianceSection 
+             title="Audit GED / Certificats" 
+             icon={FileWarning}
+             alerts={stats.gedAlerts}
+             link={`/entity/${entityId}/documents`}
+             className="lg:col-span-2"
+           />
+         )}
       </div>
     </div>
   );
@@ -418,46 +385,58 @@ function SummaryCard({ title, value, icon: Icon, color, alert, link }: any) {
   };
 
   return (
-    <Link href={link}>
-      <Card className={cn(
-        "border-primary/5 shadow-sm rounded-2xl hover:shadow-md transition-all group bg-white",
-        alert && "ring-1 ring-red-500/20"
-      )}>
-        <CardContent className="p-5 flex items-center gap-4">
-          <div className={cn("p-3 rounded-2xl border transition-colors", colors[color])}>
-            <Icon className="w-5 h-5" />
+    <Card className={cn(
+      "border-primary/5 shadow-sm rounded-2xl group bg-white",
+      alert && "ring-1 ring-red-500/20 shadow-md"
+    )}>
+      <CardContent className="p-5 flex items-center gap-4">
+        <div className={cn("p-3 rounded-2xl border transition-colors", colors[color])}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest truncate mr-2">{title}</p>
+            {link !== "#" && <ArrowUpRight className="w-3 h-3 text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity" />}
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest truncate mr-2">{title}</p>
-              <ArrowUpRight className="w-3 h-3 text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-black text-primary">{value}</p>
-          </div>
-        </CardContent>
-      </Card>
-    </Link>
+          <p className="text-2xl font-black text-primary">{value}</p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
-function SummaryMiniCard({ title, value, color, alert }: any) {
-  const colors: any = {
-    blue: "text-blue-600 bg-blue-50 border-blue-100",
-    orange: "text-orange-600 bg-orange-50 border-orange-100",
-    red: "text-red-600 bg-red-50 border-red-100",
-    indigo: "text-indigo-600 bg-indigo-50 border-indigo-100",
-    green: "text-green-600 bg-green-50 border-green-100",
-    teal: "text-teal-600 bg-teal-50 border-teal-100"
-  };
-
+function ComplianceSection({ title, icon: Icon, alerts, link, className }: any) {
   return (
-    <Card className={cn(
-      "border-primary/5 shadow-sm rounded-2xl bg-white",
-      alert && "ring-1 ring-red-500/20"
-    )}>
-      <CardContent className="p-4 text-center">
-        <p className="text-[9px] font-black uppercase text-muted-foreground tracking-widest truncate mb-1">{title}</p>
-        <p className={cn("text-xl font-black", colors[color]?.split(' ')[0] || "text-primary")}>{value}</p>
+    <Card className={cn("rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white h-fit", className)}>
+      <CardHeader className="bg-secondary/10 border-b py-4 px-8 flex flex-row items-center justify-between">
+        <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+          <Icon className="w-4 h-4" /> {title}
+        </CardTitle>
+        <Link href={link} className="text-[10px] font-black uppercase text-primary/60 hover:text-primary transition-colors flex items-center gap-1">
+           Voir tout <ChevronRight className="w-3 h-3" />
+        </Link>
+      </CardHeader>
+      <CardContent className="p-0">
+        {alerts.length === 0 ? (
+          <div className="py-12 text-center space-y-2 opacity-40">
+             <CheckCircle2 className="w-8 h-8 mx-auto text-green-500" />
+             <p className="text-[10px] font-bold uppercase tracking-widest">Conformité OK</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-50">
+             {alerts.slice(0, 5).map((a: any) => (
+               <ExpiryRow 
+                  key={a.id} 
+                  title={a.title} 
+                  subtitle={a.subtitle}
+                  date={a.date}
+                  type={a.type}
+                  variant={a.variant}
+                  link={a.link}
+               />
+             ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -467,16 +446,19 @@ function ExpiryRow({ title, subtitle, date, type, variant, link }: any) {
   const icons: any = {
     contract: <FileSignature className="w-5 h-5" />,
     document: <FileText className="w-5 h-5" />,
-    medical: <Stethoscope className="w-5 h-5" />
+    medical: <Stethoscope className="w-5 h-5" />,
+    training: <GraduationCap className="w-5 h-5" />,
+    safety: <ShieldCheck className="w-5 h-5" />,
+    cpi: <Send className="w-5 h-5" />
   };
 
   const badgeConfig: any = {
-    expired: { label: "Échue", className: "bg-red-600 text-white border-none" },
-    missing: { label: "Résultat manquant", className: "bg-red-600 text-white border-none" },
-    soon: { label: "Échéance proche", className: "bg-orange-50 text-orange-700 border-orange-200" }
+    expired: { label: "Critique", className: "bg-red-600 text-white border-none" },
+    missing: { label: "Manquant", className: "bg-red-600 text-white border-none" },
+    soon: { label: "Échéance", className: "bg-orange-50 text-orange-700 border-orange-200" }
   };
 
-  const config = badgeConfig[variant] || { label: "Échéance", className: "bg-slate-50" };
+  const config = badgeConfig[variant] || { label: "Action", className: "bg-slate-50" };
 
   return (
     <Link href={link} className="flex items-center justify-between p-6 hover:bg-slate-50 transition-colors group">
@@ -488,7 +470,7 @@ function ExpiryRow({ title, subtitle, date, type, variant, link }: any) {
           {icons[type] || <FileText className="w-5 h-5" />}
         </div>
         <div className="min-w-0">
-          <p className="font-bold text-slate-900 truncate">{title}</p>
+          <p className="font-bold text-slate-900 truncate text-sm">{title}</p>
           <p className="text-[10px] text-muted-foreground font-black uppercase tracking-tight mt-0.5">{subtitle}</p>
         </div>
       </div>
@@ -500,10 +482,4 @@ function ExpiryRow({ title, subtitle, date, type, variant, link }: any) {
       </div>
     </Link>
   );
-}
-
-function formatDateDisplay(val: any): string {
-  const d = parseSafeDate(val);
-  if (!d) return "N/A";
-  return format(d, "dd MMM yyyy", { locale: fr });
 }
