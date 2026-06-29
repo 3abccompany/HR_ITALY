@@ -1,4 +1,3 @@
-
 import { db } from "@/lib/firebase/client";
 import { 
   collection, 
@@ -35,6 +34,8 @@ import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth, eachMonth
 import { createAuditLog } from "./audit.service";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.service";
+import { createNotification } from "./notification.service";
+import { Employee } from "@/types/employee";
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -464,7 +465,7 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
-  return await runTransaction(db, async (transaction) => {
+  const result = await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -532,16 +533,38 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
     }
 
     return request;
-  }).then(async (req) => {
-    await markMonthlyAccrualImpactedByRequest(entityId, req as TimeOffRequest);
+  });
 
-    await createAuditLog({
-      userId: actorUid,
-      entityId,
-      action: "timeOff.approved",
-      resourceType: "timeOffRequest",
-      resourceId: requestId,
-    });
+  // Post-transaction tasks
+  await markMonthlyAccrualImpactedByRequest(entityId, result);
+
+  // Trigger Notification for Employee (Non-blocking)
+  try {
+    const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, result.employeeId));
+    const empData = empSnap.exists() ? empSnap.data() as Employee : null;
+    
+    if (empData?.userId) {
+      await createNotification(entityId, {
+        targetUid: empData.userId,
+        audience: "employee",
+        category: "absence",
+        severity: "success",
+        title: "Demande d'absence approuvée",
+        message: `Votre demande d'absence (${TIME_OFF_TYPE_LABELS[result.requestType]}) a été approuvée par le service RH.`,
+        actionUrl: `/entity/${entityId}/my-space`,
+        dedupKey: `absence:${requestId}:approved`
+      });
+    }
+  } catch (notifErr) {
+    console.warn("[approveTimeOffRequest] Notification failed:", notifErr);
+  }
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "timeOff.approved",
+    resourceType: "timeOffRequest",
+    resourceId: requestId,
   });
 }
 
@@ -554,7 +577,7 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
 
   const requestRef = doc(db, `entities/${entityId}/timeOffRequests`, requestId);
 
-  return await runTransaction(db, async (transaction) => {
+  const result = await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(requestRef);
     if (!snap.exists()) throw new Error("Demande introuvable.");
     const request = snap.data() as TimeOffRequest;
@@ -599,14 +622,37 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
 
       transaction.update(balanceRef, balanceUpdate);
     }
-  }).then(async () => {
-    await createAuditLog({
-      userId: actorUid,
-      entityId,
-      action: "timeOff.rejected",
-      resourceType: "timeOffRequest",
-      resourceId: requestId,
-    });
+    
+    return request;
+  });
+
+  // Trigger Notification for Employee (Non-blocking)
+  try {
+    const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, result.employeeId));
+    const empData = empSnap.exists() ? empSnap.data() as Employee : null;
+    
+    if (empData?.userId) {
+      await createNotification(entityId, {
+        targetUid: empData.userId,
+        audience: "employee",
+        category: "absence",
+        severity: "warning",
+        title: "Demande d'absence refusée",
+        message: `Votre demande d'absence a été refusée. Motif : ${rejectionReason}`,
+        actionUrl: `/entity/${entityId}/my-space`,
+        dedupKey: `absence:${requestId}:rejected`
+      });
+    }
+  } catch (notifErr) {
+    console.warn("[rejectTimeOffRequest] Notification failed:", notifErr);
+  }
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "timeOff.rejected",
+    resourceType: "timeOffRequest",
+    resourceId: requestId,
   });
 }
 

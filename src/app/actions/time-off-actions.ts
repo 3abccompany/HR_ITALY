@@ -90,7 +90,7 @@ export async function submitTimeOffRequestAction(params: {
 
   const counterType = getCounterTypeForRequestType(payload.requestType);
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(payload.requestType);
-  const isSickness = payload.requestType === 'sickness';
+  const isSickness = payload.requestType === 'sickness' || payload.requestType === 'work_accident';
   
   // Server-side duration calculation (Hardened)
   const duration = isHourly 
@@ -104,7 +104,7 @@ export async function submitTimeOffRequestAction(params: {
   const balanceRef = adminDb.collection("entities").doc(entityId).collection("leaveBalances").doc(balanceId);
   const requestRef = adminDb.collection("entities").doc(entityId).collection("timeOffRequests").doc();
 
-  return await adminDb.runTransaction(async (transaction) => {
+  const result = await adminDb.runTransaction(async (transaction) => {
     // 1. Check Balance
     const balanceSnap = await transaction.get(balanceRef);
     
@@ -187,6 +187,53 @@ export async function submitTimeOffRequestAction(params: {
 
     return { requestId: requestRef.id };
   });
+
+  // 5. Trigger Notifications (Non-blocking)
+  try {
+    const batch = adminDb.batch();
+    
+    // Notification for HR
+    const hrNotifRef = adminDb.collection("entities").doc(entityId).collection("notifications").doc();
+    batch.set(hrNotifRef, {
+      id: hrNotifRef.id,
+      entityId,
+      targetPermission: "leaveRequests.read",
+      audience: "hr",
+      category: "absence",
+      severity: "info",
+      title: "Nouvelle demande d'absence",
+      message: `${employee.displayName} a soumis une demande d'absence (${payload.requestType}).`,
+      actionUrl: `/entity/${entityId}/absences`,
+      status: "unread",
+      dedupKey: `absence:${result.requestId}:submitted`,
+      createdAt: FieldValue.serverTimestamp()
+    });
+
+    // Notification for Employee if justification is missing
+    if (isSickness) {
+      const empNotifRef = adminDb.collection("entities").doc(entityId).collection("notifications").doc();
+      batch.set(empNotifRef, {
+        id: empNotifRef.id,
+        entityId,
+        targetUid: uid,
+        audience: "employee",
+        category: "absence",
+        severity: "warning",
+        title: "Justificatif maladie à joindre",
+        message: "Merci de joindre votre justificatif depuis votre espace personnel pour validation.",
+        actionUrl: `/entity/${entityId}/my-space`,
+        status: "unread",
+        dedupKey: `absence:${result.requestId}:justification_missing`,
+        createdAt: FieldValue.serverTimestamp()
+      });
+    }
+
+    await batch.commit();
+  } catch (err) {
+    console.warn("[submitTimeOffRequestAction] Failed to create notifications:", err);
+  }
+
+  return result;
 }
 
 /**
@@ -263,7 +310,7 @@ export async function uploadSicknessJustificationAction(params: {
 
   const requestRef = adminDb.collection("entities").doc(entityId).collection("timeOffRequests").doc(requestId);
 
-  return await adminDb.runTransaction(async (transaction) => {
+  const result = await adminDb.runTransaction(async (transaction) => {
     const snap = await transaction.get(requestRef);
     if (!snap.exists) throw new Error("Demande introuvable.");
     const request = snap.data()!;
@@ -337,4 +384,27 @@ export async function uploadSicknessJustificationAction(params: {
 
     return { success: true, documentId: docId };
   });
+
+  // 4. Trigger Notification for HR (Non-blocking)
+  try {
+    const hrNotifRef = adminDb.collection("entities").doc(entityId).collection("notifications").doc();
+    await hrNotifRef.set({
+      id: hrNotifRef.id,
+      entityId,
+      targetPermission: "leaveRequests.read",
+      audience: "hr",
+      category: "document",
+      severity: "info",
+      title: "Justificatif maladie reçu",
+      message: `Un justificatif médical a été ajouté par ${employee.displayName}.`,
+      actionUrl: `/entity/${entityId}/absences`,
+      status: "unread",
+      dedupKey: `absence:${requestId}:justification_uploaded`,
+      createdAt: FieldValue.serverTimestamp()
+    });
+  } catch (err) {
+    console.warn("[uploadSicknessJustificationAction] Failed to create notification:", err);
+  }
+
+  return result;
 }
