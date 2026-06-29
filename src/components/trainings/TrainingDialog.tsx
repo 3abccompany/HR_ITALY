@@ -74,8 +74,11 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
   const isEditing = !!trainingId;
 
   useEffect(() => {
+    // Prevent infinite loop by returning early if the dialog is closed
+    if (!open) return;
+
     async function load() {
-      if (trainingId && db && open) {
+      if (trainingId && db) {
         setFetching(true);
         try {
           const snap = await getDoc(doc(db, `entities/${entityId}/trainings`, trainingId));
@@ -105,13 +108,14 @@ export function TrainingDialog({ open, onOpenChange, entityId, trainingId, resul
           setFetching(false);
         }
       } else {
+        // Reset for NEW training session - only if not already in initial state
         setFormData(initialForm);
-        setSelectedEmployeeIds([]);
-        setEmployeeSearch("");
+        setSelectedEmployeeIds(prev => prev.length === 0 ? prev : []);
+        setEmployeeSearch(prev => prev === "" ? prev : "");
       }
     }
     load();
-  }, [trainingId, db, entityId, open, toast]);
+  }, [trainingId, db, entityId, open]); // Removed toast to stabilize dependencies
 
   const daysCount = useMemo(() => {
     if (!formData.startDate) return 0;
