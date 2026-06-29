@@ -27,7 +27,8 @@ import {
   Phone,
   MapPin,
   ChevronUp,
-  XCircle
+  XCircle,
+  FileCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -44,6 +45,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, query, collection, where, Query, limit, orderBy } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Contract, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
@@ -57,6 +59,7 @@ import {
   FITNESS_STATUS_LABELS 
 } from "@/types/medical-visit";
 import { Training, TRAINING_TYPE_LABELS } from "@/types/training";
+import { SafetyDpiAssignment, SAFETY_DPI_STATUS_LABELS } from "@/types/safety-dpi";
 import { getDocumentDownloadUrl } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
@@ -205,6 +208,31 @@ function getTrainingDeadlineBadge(training: Training) {
   return <Badge className="bg-green-600 text-white border-none text-[10px] font-black uppercase">À jour</Badge>;
 }
 
+/**
+ * Renders a compliance badge for safety assignments.
+ */
+function getSafetyDeadlineBadge(assignment: SafetyDpiAssignment) {
+  const today = startOfDay(new Date());
+  const threshold = addDays(today, 30);
+  const nextDate = parseSafeDate(assignment.plannedReplacementDate);
+
+  if (assignment.status !== 'assigned') {
+    return <Badge variant="outline" className="text-[10px] font-black uppercase bg-slate-50">{SAFETY_DPI_STATUS_LABELS[assignment.status]}</Badge>;
+  }
+
+  if (!nextDate) return <Badge className="bg-green-600 text-white border-none text-[10px] font-black uppercase">À jour</Badge>;
+
+  if (isBefore(nextDate, today)) {
+    return <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase animate-pulse">En retard</Badge>;
+  }
+
+  if (isBefore(nextDate, threshold)) {
+    return <Badge variant="secondary" className="bg-orange-500 text-white border-none text-[10px] font-black uppercase">À remplacer bientôt</Badge>;
+  }
+
+  return <Badge className="bg-green-600 text-white border-none text-[10px] font-black uppercase">À jour</Badge>;
+}
+
 export default function Employee360HubPage() {
   const params = useParams();
   const router = useRouter();
@@ -234,6 +262,7 @@ export default function Employee360HubPage() {
   const canReadCandidates = permissionsReady && activePermissions.includes("candidates.read");
   const canReadMedical = permissionsReady && activePermissions.includes("medicalVisits.read");
   const canReadTraining = permissionsReady && activePermissions.includes("training.read");
+  const canReadSafety = permissionsReady && activePermissions.includes("safety.read");
 
   // --- 2. Aggregate Queries ---
   
@@ -380,7 +409,7 @@ export default function Employee360HubPage() {
   const { data: medicalVisits, loading: loadingVisits } = useCollection<MedicalVisit>(medicalVisitsQuery, "employee360.medicalVisits");
   const latestMedicalVisit = medicalVisits?.[0];
 
-  // --- 2D. Training Sub-Query (Phase 1B) ---
+  // --- 2D. Training Sub-Query ---
   const trainingsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadTraining) return null;
     return query(
@@ -424,6 +453,49 @@ export default function Employee360HubPage() {
     
     return sorted[0];
   }, [trainings]);
+
+  // --- 2E. Safety Assignments Sub-Query ---
+  const safetyQuery = useMemo(() => {
+    if (!db || !entityId || !employeeId || !canReadSafety) return null;
+    return query(
+      collection(db, `entities/${entityId}/safetyDpiAssignments`),
+      where("employeeId", "==", employeeId),
+      orderBy("deliveryDate", "desc")
+    ) as Query<SafetyDpiAssignment>;
+  }, [db, entityId, employeeId, canReadSafety]);
+
+  const { data: safetyAssignments, loading: loadingSafety } = useCollection<SafetyDpiAssignment>(safetyQuery, "employee360.safety");
+
+  const featuredSafetyAssignment = useMemo(() => {
+    if (!safetyAssignments || safetyAssignments.length === 0) return null;
+    
+    const today = startOfDay(new Date());
+    const threshold = addDays(today, 30);
+
+    const sorted = [...safetyAssignments].sort((a, b) => {
+      const getPriority = (s: SafetyDpiAssignment) => {
+        const nextDate = parseSafeDate(s.plannedReplacementDate);
+        if (s.status === 'assigned') {
+          if (nextDate && isBefore(nextDate, today)) return 0; // Overdue
+          if (nextDate && isBefore(nextDate, threshold)) return 1; // Due soon
+          return 2; // Active
+        }
+        return 3; // Others (replaced, returned...)
+      };
+      
+      const prioA = getPriority(a);
+      const prioB = getPriority(b);
+      
+      if (prioA !== prioB) return prioA - prioB;
+      
+      // Secondary: recency of delivery
+      const dateA = parseSafeDate(a.deliveryDate)?.getTime() || 0;
+      const dateB = parseSafeDate(b.deliveryDate)?.getTime() || 0;
+      return dateB - dateA;
+    });
+    
+    return sorted[0];
+  }, [safetyAssignments]);
 
   // Detected if a historical UniLav receipt document exists for the overview card
   const hasHistoricalUniLav = useMemo(() => {
@@ -1022,7 +1094,7 @@ export default function Employee360HubPage() {
                 </Card>
               )}
 
-              {/* Training Summary Card (Phase 1B) */}
+              {/* Training Summary Card */}
               {loadingTrainings ? (
                 <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
                    <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
@@ -1081,7 +1153,68 @@ export default function Employee360HubPage() {
                 </Card>
               )}
 
-              <CompliancePlaceholderCard title="Habilitations Sécurité" icon={Shield} />
+              {/* Safety Assignment Card */}
+              {loadingSafety ? (
+                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
+                   <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
+                </Card>
+              ) : !canReadSafety ? (
+                <AccessDeniedSection permission="safety.read" />
+              ) : featuredSafetyAssignment ? (
+                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex flex-col group hover:shadow-md transition-all">
+                   <div className="flex items-start justify-between mb-4">
+                      <div className="bg-primary/5 p-3 rounded-2xl text-primary"><Shield className="w-6 h-6" /></div>
+                      {getSafetyDeadlineBadge(featuredSafetyAssignment)}
+                   </div>
+                   <div className="space-y-4 flex-1">
+                      <div className="space-y-1">
+                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Équipement de sécurité</p>
+                         <h4 className="text-sm font-bold text-slate-800 line-clamp-1" title={featuredSafetyAssignment.dpiName}>{featuredSafetyAssignment.dpiName}</h4>
+                         <Badge variant="outline" className="text-[8px] h-4 px-1.5 font-bold uppercase border-primary/10 mt-1">
+                           {featuredSafetyAssignment.riskType}
+                         </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                         <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Remise</p>
+                            <p className="text-xs font-bold text-slate-700">{formatDateSafe(featuredSafetyAssignment.deliveryDate)}</p>
+                         </div>
+                         <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Remplacement</p>
+                            <p className="text-xs font-bold text-slate-700">{featuredSafetyAssignment.plannedReplacementDate ? formatDateSafe(featuredSafetyAssignment.plannedReplacementDate) : "Permanent"}</p>
+                         </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-black uppercase text-muted-foreground">PV :</span>
+                        {featuredSafetyAssignment.reportDocumentId ? (
+                          <span className="text-[9px] font-bold text-green-600 uppercase flex items-center gap-1"><FileCheck className="w-3 h-3" /> Signé</span>
+                        ) : (
+                          <span className="text-[9px] font-bold text-slate-400 uppercase italic">Non joint</span>
+                        )}
+                      </div>
+                   </div>
+                   <Button variant="ghost" size="sm" asChild className="mt-6 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
+                      <Link href={`/entity/${entityId}/safety?search=${encodeURIComponent(employee.displayName)}`}>
+                         Dossier EPI/DPI <ChevronRight className="w-4 h-4" />
+                      </Link>
+                   </Button>
+                </Card>
+              ) : (
+                <Card className="p-6 rounded-[2rem] border border-dashed border-slate-200 bg-slate-50/30 flex flex-col items-center justify-center text-center space-y-3 min-h-[220px]">
+                   <div className="bg-white p-3 rounded-2xl shadow-sm text-slate-300"><Shield className="w-6 h-6" /></div>
+                   <div className="space-y-1">
+                      <p className="text-xs font-bold text-slate-500">Aucun EPI/DPI remis</p>
+                      <p className="text-[10px] text-slate-400">Registre de sécurité vide</p>
+                   </div>
+                   {hasPermission("safety.create") && (
+                     <Button variant="outline" size="sm" asChild className="h-7 rounded-lg text-[9px] font-black uppercase bg-white">
+                        <Link href={`/entity/${entityId}/safety`}>Assigner</Link>
+                     </Button>
+                   )}
+                </Card>
+              )}
            </div>
            
            <Card className="border-dashed border-2 bg-secondary/5 rounded-[2.5rem] py-12">
