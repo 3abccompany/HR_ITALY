@@ -6,7 +6,7 @@ import {
   Stethoscope, Plus, Search, Eye, Edit, Archive, 
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, 
-  Building2, ArrowUpRight, History
+  Building2, ArrowUpRight, History, MoreVertical
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -168,7 +168,7 @@ export default function MedicalVisitsRegistryPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
               className="pl-10 rounded-xl" 
-              placeholder="Rechercher employé, médecin..." 
+              placeholder="Rechercher collaborateur, médecin..." 
               value={filters.search}
               onChange={(e) => setFilters(p => ({...p, search: e.target.value}))}
             />
@@ -353,7 +353,7 @@ function getFitnessBadge(status: MedicalFitnessStatus) {
 
 function getStatusBadge(status: MedicalVisitStatus) {
   switch (status) {
-    case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-100 text-[10px]">Planifiée</Badge>;
+    case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px]">Planifiée</Badge>;
     case 'completed': return <Badge className="bg-slate-900 text-white border-none text-[10px]">Terminée</Badge>;
     case 'pending_result': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px]">En attente de résultat</Badge>;
     case 'cancelled': return <Badge variant="outline" className="text-muted-foreground text-[10px]">Annulée</Badge>;
