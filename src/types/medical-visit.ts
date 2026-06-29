@@ -59,20 +59,20 @@ export interface MedicalVisit {
 }
 
 export const MEDICAL_VISIT_TYPE_LABELS: Record<MedicalVisitType, string> = {
-  preventive: "Visita preventiva",
-  pre_employment_preventive: "Visita preventiva preassuntiva",
-  periodic: "Visita periodica",
-  job_change: "Visita per cambio mansione",
-  worker_request: "Visita su richiesta del lavoratore",
-  return_after_long_absence: "Visita per ripresa al lavoro",
-  extraordinary: "Visita straordinaria",
-  other: "Altro"
+  preventive: "Visite préventive",
+  pre_employment_preventive: "Visite préventive pré-embauche",
+  periodic: "Visite périodique",
+  job_change: "Visite pour changement de poste",
+  worker_request: "Visite à la demande du salarié",
+  return_after_long_absence: "Visite avant reprise du travail",
+  extraordinary: "Visite extraordinaire",
+  other: "Autre"
 };
 
 export const FITNESS_STATUS_LABELS: Record<MedicalFitnessStatus, string> = {
-  fit: "Idoneo",
-  fit_with_prescriptions: "Idoneo con prescrizioni/limitazioni",
-  temporarily_unfit: "Temporaneamente non idoneo",
-  unfit: "Non idoneo",
-  pending_result: "In attesa di giudizio"
+  fit: "Apte (Idoneo)",
+  fit_with_prescriptions: "Apte avec prescriptions / limitations",
+  temporarily_unfit: "Temporairement inapte",
+  unfit: "Inapte",
+  pending_result: "En attente de jugement d’aptitude"
 };

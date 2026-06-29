@@ -69,7 +69,6 @@ export default function MedicalVisitsRegistryPage() {
     return query(collection(db, `entities/${entityId}/medicalVisits`), orderBy("visitDate", "desc")) as Query<MedicalVisit>;
   }, [db, entityId, canRead]);
 
-  // Optimized query: No where/orderBy to prevent index blockers for this MVP view
   const employeesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
@@ -144,7 +143,7 @@ export default function MedicalVisitsRegistryPage() {
     <div className="p-8 max-w-7xl mx-auto space-y-8 pb-24">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-black text-primary tracking-tight">Sorveglianza Sanitaria</h1>
+          <h1 className="text-3xl font-black text-primary tracking-tight">Visites médicales / Sorveglianza sanitaria</h1>
           <p className="text-muted-foreground text-sm font-medium">Gestion des visites médicales et de l'aptitude au travail.</p>
         </div>
         {hasPermission("medicalVisits.create") && (
@@ -187,9 +186,21 @@ export default function MedicalVisitsRegistryPage() {
             <SelectTrigger className="w-[180px] rounded-xl"><SelectValue placeholder="Échéance" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Toutes les échéances</SelectItem>
-              <SelectItem value="expired">Expirée</SelectItem>
-              <SelectItem value="upcoming">Proche (30j)</SelectItem>
-              <SelectItem value="ok">Conforme</SelectItem>
+              <SelectItem value="expired">Échue</SelectItem>
+              <SelectItem value="upcoming">À échéance proche (30j)</SelectItem>
+              <SelectItem value="ok">À jour</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={filters.status} onValueChange={(v) => setFilters(p => ({...p, status: v}))}>
+            <SelectTrigger className="w-[180px] rounded-xl"><SelectValue placeholder="Statut" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tous les statuts</SelectItem>
+              <SelectItem value="scheduled">Planifiée</SelectItem>
+              <SelectItem value="completed">Terminée</SelectItem>
+              <SelectItem value="pending_result">En attente de résultat</SelectItem>
+              <SelectItem value="cancelled">Annulée</SelectItem>
+              <SelectItem value="archived">Archivée</SelectItem>
             </SelectContent>
           </Select>
 
@@ -205,7 +216,7 @@ export default function MedicalVisitsRegistryPage() {
               <TableRow>
                 <TableHead className="pl-6">Employé</TableHead>
                 <TableHead>Type & Date</TableHead>
-                <TableHead>Giudizio (Fitness)</TableHead>
+                <TableHead>Jugement d'aptitude</TableHead>
                 <TableHead>Médecin</TableHead>
                 <TableHead>Échéance</TableHead>
                 <TableHead>Statut</TableHead>
@@ -261,7 +272,7 @@ export default function MedicalVisitsRegistryPage() {
                               <span className={cn("text-xs font-black", getDeadlineColor(v.nextVisitDate))}>
                                  {formatDate(v.nextVisitDate)}
                               </span>
-                              {isExpired(v.nextVisitDate) && <span className="text-[8px] font-bold text-red-600 uppercase">Expirée</span>}
+                              {isExpired(v.nextVisitDate) && <span className="text-[8px] font-bold text-red-600 uppercase">Échue</span>}
                            </div>
                          ) : <span className="text-muted-foreground text-xs">—</span>}
                       </TableCell>
@@ -331,11 +342,11 @@ function StatCard({ title, value, icon: Icon, color }: any) {
 
 function getFitnessBadge(status: MedicalFitnessStatus) {
   switch (status) {
-    case 'fit': return <Badge className="bg-green-600 text-white border-none text-[10px]">Idoneo</Badge>;
-    case 'fit_with_prescriptions': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px]">Idoneo c/ presc.</Badge>;
-    case 'temporarily_unfit': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px]">Temp. non idoneo</Badge>;
-    case 'unfit': return <Badge variant="destructive" className="bg-red-600 text-white border-none text-[10px]">Non idoneo</Badge>;
-    case 'pending_result': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200 text-[10px]">In attesa</Badge>;
+    case 'fit': return <Badge className="bg-green-600 text-white border-none text-[10px]">{FITNESS_STATUS_LABELS.fit}</Badge>;
+    case 'fit_with_prescriptions': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px]">{FITNESS_STATUS_LABELS.fit_with_prescriptions}</Badge>;
+    case 'temporarily_unfit': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px]">{FITNESS_STATUS_LABELS.temporarily_unfit}</Badge>;
+    case 'unfit': return <Badge variant="destructive" className="bg-red-600 text-white border-none text-[10px]">{FITNESS_STATUS_LABELS.unfit}</Badge>;
+    case 'pending_result': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200 text-[10px]">{FITNESS_STATUS_LABELS.pending_result}</Badge>;
     default: return null;
   }
 }
@@ -344,8 +355,9 @@ function getStatusBadge(status: MedicalVisitStatus) {
   switch (status) {
     case 'scheduled': return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-100 text-[10px]">Planifiée</Badge>;
     case 'completed': return <Badge className="bg-slate-900 text-white border-none text-[10px]">Terminée</Badge>;
-    case 'pending_result': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px]">Attente giudizio</Badge>;
+    case 'pending_result': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px]">En attente de résultat</Badge>;
     case 'cancelled': return <Badge variant="outline" className="text-muted-foreground text-[10px]">Annulée</Badge>;
+    case 'archived': return <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300 text-[10px]">Archivée</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
   }
 }

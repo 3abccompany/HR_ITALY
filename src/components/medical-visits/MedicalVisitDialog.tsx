@@ -129,7 +129,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
             <Stethoscope className="w-6 h-6 text-accent" />
             {visitId ? "Détails de la visite" : "Planifier une visite médicale"}
           </DialogTitle>
-          <DialogDescription>Gestion de la sorveglianza sanitaria pour le collaborateur.</DialogDescription>
+          <DialogDescription>Gestion des visites médicales / Sorveglianza sanitaria pour le collaborateur.</DialogDescription>
         </DialogHeader>
 
         {fetching ? (
@@ -185,21 +185,21 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
                </div>
 
                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black">Médecin (Medico Competente)</Label>
+                  <Label className="text-[10px] uppercase font-black">Médecin compétent (Medico competente)</Label>
                   <Input value={formData.doctorName} onChange={(e) => setFormData(p => ({...p, doctorName: e.target.value}))} required placeholder="Nom du médecin" className="rounded-xl h-11" />
                </div>
             </div>
 
             <div className="space-y-2">
-               <Label className="text-[10px] uppercase font-black">Centre médical (Facultatif)</Label>
-               <Input value={formData.medicalCenter} onChange={(e) => setFormData(p => ({...p, medicalCenter: e.target.value}))} placeholder="Ex: Centro Medicina del Lavoro..." className="rounded-xl h-11" />
+               <Label className="text-[10px] uppercase font-black">Centre médical</Label>
+               <Input value={formData.medicalCenter} onChange={(e) => setFormData(p => ({...p, medicalCenter: e.target.value}))} placeholder="Ex: Centre de médecine du travail..." className="rounded-xl h-11" />
             </div>
 
             <Separator className="opacity-50" />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-6 rounded-[1.5rem] border border-slate-100">
                <div className="space-y-2">
-                  <Label className="text-[10px] uppercase font-black text-primary">Giudizio di idoneità</Label>
+                  <Label className="text-[10px] uppercase font-black text-primary">Jugement d’aptitude (Giudizio di idoneità)</Label>
                   <Select value={formData.fitnessStatus} onValueChange={(v: any) => setFormData(p => ({...p, fitnessStatus: v, status: v === 'pending_result' ? 'pending_result' : 'completed'}))}>
                     <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -214,14 +214,15 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
                </div>
 
                <div className="space-y-2 col-span-full">
-                  <Label className="text-[10px] uppercase font-black text-primary">Statut dossier</Label>
+                  <Label className="text-[10px] uppercase font-black text-primary">Statut du dossier</Label>
                   <Select value={formData.status} onValueChange={(v: any) => setFormData(p => ({...p, status: v}))}>
                     <SelectTrigger className="bg-white rounded-xl h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
                        <SelectItem value="scheduled">Planifiée</SelectItem>
-                       <SelectItem value="completed">Terminée (Résultat reçu)</SelectItem>
-                       <SelectItem value="pending_result">Résultat en attente</SelectItem>
+                       <SelectItem value="completed">Terminée</SelectItem>
+                       <SelectItem value="pending_result">En attente de résultat</SelectItem>
                        <SelectItem value="cancelled">Annulée</SelectItem>
+                       <SelectItem value="archived">Archivée</SelectItem>
                     </SelectContent>
                   </Select>
                </div>
@@ -229,14 +230,14 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, empl
 
             <div className="space-y-4">
                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Prescriptions / Limitazioni</Label>
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Prescriptions / limitations de travail</Label>
                   <Textarea value={formData.prescriptions} onChange={(e) => setFormData(p => ({...p, prescriptions: e.target.value}))} placeholder="Détails sur l'aptitude physique (ex: port de charges limité...)" className="rounded-xl min-h-[80px]" />
                </div>
                
                <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-start gap-3">
                   <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                   <p className="text-[10px] text-blue-800 leading-relaxed font-medium">
-                    <strong>Note de confidentialité :</strong> Non inserire diagnosi o dettagli clinici. Indicare solo prescrizioni o limitazioni lavorative rilevanti pour la sécurité.
+                    <strong>Note de confidentialité :</strong> Ne pas saisir de diagnostic ni de détails cliniques. Indiquer uniquement les prescriptions ou limitations de travail.
                   </p>
                </div>
 

@@ -137,7 +137,7 @@ function getMedicalDeadlineBadge(visit: MedicalVisit) {
   if (visit.fitnessStatus === 'pending_result') {
     return (
       <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] font-black uppercase">
-        In attesa di giudizio
+        En attente de jugement
       </Badge>
     );
   }
@@ -151,7 +151,7 @@ function getMedicalDeadlineBadge(visit: MedicalVisit) {
   if (isBefore(expiryDate, today)) {
     return (
       <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase animate-pulse">
-        Scaduta
+        Échue
       </Badge>
     );
   }
@@ -159,14 +159,14 @@ function getMedicalDeadlineBadge(visit: MedicalVisit) {
   if (isBefore(expiryDate, thirtyDaysOut)) {
     return (
       <Badge variant="secondary" className="bg-orange-500 text-white border-none text-[10px] font-black uppercase">
-        In scadenza
+        À échéance proche
       </Badge>
     );
   }
 
   return (
     <Badge className="bg-green-600 text-white border-none text-[10px] font-black uppercase">
-      Regolare
+      À jour
     </Badge>
   );
 }
@@ -596,10 +596,6 @@ export default function Employee360HubPage() {
                       <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Modules conformité</p>
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-xs opacity-40 grayscale pointer-events-none">
-                            <span className="flex items-center gap-2"><Stethoscope className="w-3.5 h-3.5" /> Visite Médicale</span>
-                            <Badge variant="outline" className="text-[8px]">À venir</Badge>
-                        </div>
-                        <div className="flex items-center justify-between text-xs opacity-40 grayscale pointer-events-none">
                             <span className="flex items-center gap-2"><Shield className="w-3.5 h-3.5" /> Sécurité / DPI</span>
                             <Badge variant="outline" className="text-[8px]">À venir</Badge>
                         </div>
@@ -910,7 +906,7 @@ export default function Employee360HubPage() {
                       </div>
 
                       <div className="space-y-1">
-                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Giudizio (Aptitude)</p>
+                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Jugement d'aptitude</p>
                          <p className="text-xs font-black text-primary bg-primary/5 px-2 py-1 rounded-lg w-fit">
                             {FITNESS_STATUS_LABELS[latestMedicalVisit.fitnessStatus]}
                          </p>
@@ -1174,7 +1170,7 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                 </TableCell>
                 <TableCell>
                    {expiryDate ? (
-                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-orange-600" : "text-slate-600")}>
                         {formatDateSafe(rawExpiry)}
                         {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                      </div>
