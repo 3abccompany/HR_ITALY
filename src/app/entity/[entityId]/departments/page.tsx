@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { 
   Building2, Plus, Edit, PowerOff, RefreshCcw, 
   Loader2, Briefcase, Info, MoreVertical,
-  AlertCircle, ShieldCheck
+  AlertCircle, ShieldCheck, Save
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,12 +55,12 @@ import {
   AccordionItem, 
   AccordionTrigger 
 } from "@/components/ui/accordion";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
@@ -469,7 +469,7 @@ export default function DepartmentsManagementPage() {
       <Dialog open={isDeptFormVisible} onOpenChange={setIsDeptFormVisible}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Modifier le département" : "Nouveau département"}</DialogTitle>
+            <DialogTitle>{editingDeptId ? "Modifier le département" : "Nouveau département"}</DialogTitle>
             <DialogDescription>Définissez une unité organisationnelle de l'entité.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSaveDept} className="space-y-4 py-4">
@@ -503,7 +503,7 @@ export default function DepartmentsManagementPage() {
               <Button type="button" variant="outline" onClick={handleDeptReset} disabled={loading}>Annuler</Button>
               <Button type="submit" disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-                {editingId ? "Enregistrer les modifications" : "Créer le département"}
+                {editingDeptId ? "Enregistrer les modifications" : "Créer le département"}
               </Button>
             </DialogFooter>
           </form>
