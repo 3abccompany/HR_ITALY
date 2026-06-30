@@ -1,9 +1,23 @@
 "use client";
 
-import { useMemo } from "react";
-import { Bell, BellDot, CheckCircle2, Clock, Info, AlertTriangle, ShieldCheck, FileText, Send, User, FileSignature } from "lucide-react";
-import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, where, orderBy, limit, or, and } from "firebase/firestore";
+import { useMemo, useState, useEffect } from "react";
+import { 
+  Bell, 
+  BellDot, 
+  CheckCircle2, 
+  Clock, 
+  Info, 
+  AlertTriangle, 
+  ShieldCheck, 
+  FileText, 
+  Send, 
+  User, 
+  FileSignature, 
+  GraduationCap,
+  Loader2
+} from "lucide-react";
+import { useFirebase, useUser } from "@/firebase";
+import { collection, query, where, orderBy, limit, onSnapshot, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   DropdownMenu, 
@@ -31,26 +45,79 @@ export function NotificationBell() {
   const { user } = useUser();
   const { membership, loading: membershipLoading } = useActiveMembership(entityId);
 
-  const notificationsQuery = useMemo(() => {
-    if (!db || !entityId || !user || !membership) return null;
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Manual multi-query snapshot listener to handle Firestore IN limit (30)
+  useEffect(() => {
+    if (!db || !entityId || !user || !membership || membership.entityId !== entityId) {
+      if (!membershipLoading) setLoading(false);
+      return;
+    }
+
+    const notificationsRef = collection(db, `entities/${entityId}/notifications`);
     
-    return query(
-      collection(db, `entities/${entityId}/notifications`),
-      and(
-        where("status", "==", "unread"),
-        or(
-          where("targetUid", "==", user.uid),
-          where("targetPermission", "in", membership.permissions.length > 0 ? membership.permissions : ["__none__"])
-        )
-      ),
+    // 1. Define queries
+    const queries: Query[] = [];
+    
+    // Query A: Direct target to user
+    queries.push(query(
+      notificationsRef,
+      where("status", "==", "unread"),
+      where("targetUid", "==", user.uid),
       orderBy("createdAt", "desc"),
       limit(20)
-    );
-  }, [db, entityId, user, membership]);
+    ));
 
-  const { data: notifications, loading } = useCollection<Notification>(notificationsQuery as any, "bell.notifications");
+    // Query B: Targeted to permissions (Chunked)
+    if (membership.permissions && membership.permissions.length > 0) {
+      const CHUNK_SIZE = 30;
+      for (let i = 0; i < membership.permissions.length; i += CHUNK_SIZE) {
+        const chunk = membership.permissions.slice(i, i + CHUNK_SIZE);
+        queries.push(query(
+          notificationsRef,
+          where("status", "==", "unread"),
+          where("targetPermission", "in", chunk),
+          orderBy("createdAt", "desc"),
+          limit(20)
+        ));
+      }
+    }
 
-  const unreadCount = notifications?.length || 0;
+    const resultsMap = new Map<number, Notification[]>();
+    
+    const unsubscribes = queries.map((q, index) => {
+      return onSnapshot(q, (snapshot) => {
+        const docs = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Notification));
+        resultsMap.set(index, docs);
+        
+        // Merge and deduplicate
+        const merged: Record<string, Notification> = {};
+        resultsMap.forEach(docs => {
+          docs.forEach(d => {
+            merged[d.id] = d;
+          });
+        });
+
+        // Sort by date desc
+        const sorted = Object.values(merged).sort((a, b) => {
+          const dateA = (a.createdAt as any)?.toDate?.() || new Date();
+          const dateB = (b.createdAt as any)?.toDate?.() || new Date();
+          return dateB.getTime() - dateA.getTime();
+        });
+
+        setNotifications(sorted.slice(0, 20));
+        setLoading(false);
+      }, (err) => {
+        console.error(`[NotificationBell] Query ${index} failed:`, err);
+        setLoading(false);
+      });
+    });
+
+    return () => unsubscribes.forEach(unsub => unsub());
+  }, [db, entityId, user, membership, membershipLoading]);
+
+  const unreadCount = notifications.length;
 
   const handleMarkAllRead = async () => {
     if (!user || !membership) return;
@@ -104,7 +171,7 @@ export function NotificationBell() {
                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-tight">Aucun nouveau message</p>
                 </div>
               ) : (
-                notifications?.map(n => (
+                notifications.map(n => (
                   <button 
                     key={n.id} 
                     onClick={() => handleNotificationClick(n)}
@@ -172,13 +239,3 @@ function formatTimeAgo(date: any) {
   const d = date.toDate ? date.toDate() : new Date(date);
   return formatDistanceToNow(d, { addSuffix: true, locale: fr }).replace('environ ', '');
 }
-
-function Loader2(props: any) {
-  return (
-    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
-  );
-}
-
-import { GraduationCap } from "lucide-react";

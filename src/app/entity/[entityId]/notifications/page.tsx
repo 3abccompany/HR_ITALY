@@ -1,11 +1,23 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  Bell, CheckCircle2, History, Archive, Loader2, 
-  Filter, X, Search, ChevronRight, Inbox,
-  AlertTriangle, Info, Clock, Check, ListFilter
+  Bell, 
+  CheckCircle2, 
+  History, 
+  Archive, 
+  Loader2, 
+  Filter, 
+  X, 
+  Search, 
+  ChevronRight, 
+  Inbox,
+  AlertTriangle, 
+  Info, 
+  Clock, 
+  Check, 
+  ListFilter
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,8 +25,8 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, where, orderBy, or, and } from "firebase/firestore";
+import { useFirebase, useUser } from "@/firebase";
+import { collection, query, where, orderBy, onSnapshot, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Notification, NotificationStatus } from "@/types/notification";
 import { markNotificationAsRead, archiveNotification, markAllNotificationsAsRead } from "@/services/notification.service";
@@ -36,26 +48,77 @@ export default function NotificationsPage() {
   const [search, setSearch] = useState("");
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
-  const notificationsQuery = useMemo(() => {
-    if (!db || !entityId || !user || !membership) return null;
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Manual multi-query snapshot listener to handle Firestore IN limit (30)
+  useEffect(() => {
+    if (!db || !entityId || !user || !membership || membership.entityId !== entityId) {
+      if (!membershipLoading) setLoading(false);
+      return;
+    }
 
     const baseRef = collection(db, `entities/${entityId}/notifications`);
     const statusFilter = activeTab === "active" ? ["unread", "read"] : ["archived"];
 
-    return query(
-      baseRef,
-      and(
-        where("status", "in", statusFilter),
-        or(
-          where("targetUid", "==", user.uid),
-          where("targetPermission", "in", membership.permissions.length > 0 ? membership.permissions : ["__none__"])
-        )
-      ),
-      orderBy("createdAt", "desc")
-    );
-  }, [db, entityId, user, membership, activeTab]);
+    // Define queries
+    const queries: Query[] = [];
 
-  const { data: notifications, loading } = useCollection<Notification>(notificationsQuery as any, "notifications.page");
+    // Query A: Direct target to user
+    queries.push(query(
+      baseRef,
+      where("status", "in", statusFilter),
+      where("targetUid", "==", user.uid),
+      orderBy("createdAt", "desc")
+    ));
+
+    // Query B: Targeted to permissions (Chunked)
+    if (membership.permissions && membership.permissions.length > 0) {
+      const CHUNK_SIZE = 30;
+      for (let i = 0; i < membership.permissions.length; i += CHUNK_SIZE) {
+        const chunk = membership.permissions.slice(i, i + CHUNK_SIZE);
+        queries.push(query(
+          baseRef,
+          where("status", "in", statusFilter),
+          where("targetPermission", "in", chunk),
+          orderBy("createdAt", "desc")
+        ));
+      }
+    }
+
+    const resultsMap = new Map<number, Notification[]>();
+    setLoading(true);
+
+    const unsubscribes = queries.map((q, index) => {
+      return onSnapshot(q, (snapshot) => {
+        const docs = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Notification));
+        resultsMap.set(index, docs);
+        
+        // Merge and deduplicate
+        const merged: Record<string, Notification> = {};
+        resultsMap.forEach(docs => {
+          docs.forEach(d => {
+            merged[d.id] = d;
+          });
+        });
+
+        // Sort by date desc
+        const sorted = Object.values(merged).sort((a, b) => {
+          const dateA = (a.createdAt as any)?.toDate?.() || new Date();
+          const dateB = (b.createdAt as any)?.toDate?.() || new Date();
+          return dateB.getTime() - dateA.getTime();
+        });
+
+        setNotifications(sorted);
+        setLoading(false);
+      }, (err) => {
+        console.error(`[NotificationsPage] Query ${index} failed:`, err);
+        setLoading(false);
+      });
+    });
+
+    return () => unsubscribes.forEach(unsub => unsub());
+  }, [db, entityId, user, membership, membershipLoading, activeTab]);
 
   const filteredNotifications = useMemo(() => {
     if (!notifications) return [];
@@ -109,7 +172,7 @@ export default function NotificationsPage() {
           <h1 className="text-3xl font-black text-primary tracking-tight">Centre de Notifications</h1>
           <p className="text-muted-foreground text-sm">Gérez vos alertes et communications internes.</p>
         </div>
-        {activeTab === 'active' && notifications?.some(n => n.status === 'unread') && (
+        {activeTab === 'active' && notifications.some(n => n.status === 'unread') && (
           <Button onClick={handleMarkAllRead} variant="outline" className="rounded-xl font-bold bg-white gap-2 border-primary/20">
              <CheckCircle2 className="w-4 h-4" /> Tout marquer comme lu
           </Button>

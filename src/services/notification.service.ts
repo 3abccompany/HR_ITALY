@@ -10,9 +10,8 @@ import {
   serverTimestamp, 
   writeBatch,
   getDocs,
-  or,
-  and,
-  limit
+  limit,
+  Query
 } from "firebase/firestore";
 import { Notification, NotificationStatus } from "@/types/notification";
 
@@ -82,36 +81,57 @@ export async function archiveNotification(entityId: string, notificationId: stri
 
 /**
  * Marks all notifications visible to the current user as read.
+ * Fixed: Handles Firestore IN query limit (30 values) by chunking permissions.
  */
 export async function markAllNotificationsAsRead(entityId: string, uid: string, permissions: string[]) {
   if (!db) return;
 
   const notificationsRef = collection(db, `entities/${entityId}/notifications`);
   
-  // We fetch unread notifications targeted at this user
-  const q = query(
+  // 1. Gather all required queries
+  const allQueries: Query[] = [];
+  
+  // A. Target UID
+  allQueries.push(query(
     notificationsRef,
-    and(
-      where("status", "==", "unread"),
-      or(
-        where("targetUid", "==", uid),
-        where("targetPermission", "in", permissions.length > 0 ? permissions : ["__none__"])
-      )
-    )
-  );
+    where("status", "==", "unread"),
+    where("targetUid", "==", uid)
+  ));
 
-  const snap = await getDocs(q);
-  if (snap.empty) return;
+  // B. Target Permission (Chunked to handle Firestore IN limit)
+  if (permissions && permissions.length > 0) {
+    const CHUNK_SIZE = 30;
+    for (let i = 0; i < permissions.length; i += CHUNK_SIZE) {
+      const chunk = permissions.slice(i, i + CHUNK_SIZE);
+      allQueries.push(query(
+        notificationsRef,
+        where("status", "==", "unread"),
+        where("targetPermission", "in", chunk)
+      ));
+    }
+  }
 
+  // 2. Fetch all snapshots in parallel
+  const snapshots = await Promise.all(allQueries.map(q => getDocs(q)));
+
+  // 3. Batch update deduplicated notifications
   const batch = writeBatch(db);
   const now = serverTimestamp();
+  const seenIds = new Set<string>();
 
-  snap.docs.forEach(d => {
-    batch.update(d.ref, {
-      status: "read",
-      readAt: now
+  snapshots.forEach(snap => {
+    snap.docs.forEach(d => {
+      if (!seenIds.has(d.id)) {
+        batch.update(d.ref, {
+          status: "read",
+          readAt: now
+        });
+        seenIds.add(d.id);
+      }
     });
   });
 
-  await batch.commit();
+  if (seenIds.size > 0) {
+    await batch.commit();
+  }
 }
