@@ -288,6 +288,10 @@ export default function ContractDetailPage() {
     return bundles;
   }, [contractDocs]);
 
+  const historicalUniLav = useMemo(() => {
+    return contractDocs?.find(d => d.documentType === 'unilav_receipt' && d.status === 'valid');
+  }, [contractDocs]);
+
   // 4. Source Documents for fallbacks
   const employeeRef = useMemo(() => 
     db && contract?.employeeId ? doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee> : null,
@@ -1159,18 +1163,42 @@ export default function ContractDetailPage() {
                         Ce contrat est déjà actif car il provient d’une reprise historique.
                      </p>
                      <div className="pt-6 flex flex-wrap gap-4">
-                        <div className="relative">
-                          <Button disabled={!!processing} className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
-                            <Upload className="w-4 h-4" /> Ajouter le contrat signé historique
+                        {groupedDocs.signed ? (
+                          <Button 
+                            onClick={() => handleOpenDoc(groupedDocs.signed!.storagePath, groupedDocs.signed!.id)} 
+                            disabled={!!processing || loadingActionId === groupedDocs.signed!.id}
+                            className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10 shadow-sm"
+                          >
+                             {loadingActionId === groupedDocs.signed!.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                             Voir le contrat signé
                           </Button>
-                          <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalContract} />
-                        </div>
-                        <div className="relative">
-                          <Button disabled={!!processing} variant="outline" className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
-                            <FileText className="w-4 h-4" /> Ajouter reçu UniLav historique
+                        ) : (
+                          <div className="relative">
+                            <Button disabled={!!processing} className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
+                              <Upload className="w-4 h-4" /> Ajouter le contrat signé historique
+                            </Button>
+                            <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalContract} />
+                          </div>
+                        )}
+
+                        {historicalUniLav ? (
+                          <Button 
+                            onClick={() => handleOpenDoc(historicalUniLav.storagePath, historicalUniLav.id)} 
+                            disabled={!!processing || loadingActionId === historicalUniLav.id}
+                            variant="outline"
+                            className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10 shadow-sm"
+                          >
+                             {loadingActionId === historicalUniLav.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                             Voir le reçu UniLav
                           </Button>
-                          <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalUniLav} />
-                        </div>
+                        ) : (
+                          <div className="relative">
+                            <Button disabled={!!processing} variant="outline" className="gap-2 rounded-xl font-bold bg-white text-primary border border-primary/10">
+                              <FileText className="w-4 h-4" /> Ajouter reçu UniLav historique
+                            </Button>
+                            <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf" onChange={handleUploadHistoricalUniLav} />
+                          </div>
+                        )}
                      </div>
                   </div>
                </CardContent>
@@ -1370,7 +1398,7 @@ export default function ContractDetailPage() {
       </Dialog>
 
       <Dialog open={isTerminationModalOpen} onOpenChange={setIsTerminationModalOpen}>
-        <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[450px] rounded-[2.5rem]">
           <DialogHeader><DialogTitle className="text-xl font-black text-red-600">Terminer le contrat</DialogTitle></DialogHeader>
           <div className="py-6 space-y-4">
              <div className="space-y-2">
