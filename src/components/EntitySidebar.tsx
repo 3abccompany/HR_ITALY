@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -28,6 +29,7 @@ import {
 import { entityMenu } from "@/config/menu";
 import { logout } from "@/services/auth.service";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 export function EntitySidebar() {
   const params = useParams();
@@ -36,6 +38,14 @@ export function EntitySidebar() {
   const router = useRouter();
   const { toast } = useToast();
   const { membership, entity, loading, hasPermission } = useActiveMembership(entityId);
+
+  // UX Feedback state for immediate response on click
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  // Clear pending state when navigation completes
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
 
   const handleLogout = async () => {
     try {
@@ -83,13 +93,20 @@ export function EntitySidebar() {
                 if (!isVisible) return null;
                 
                 const href = `/entity/${entityId}/${item.href}`;
-                const isActive = pathname === href;
+                const isActive = pathname === href || pendingHref === href;
+                const isPending = pendingHref === href && pathname !== href;
 
                 return (
                   <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
+                    <SidebarMenuButton 
+                      asChild 
+                      isActive={isActive} 
+                      tooltip={item.label}
+                      onClick={() => setPendingHref(href)}
+                      className={cn(isPending && "animate-pulse opacity-70")}
+                    >
                       <Link href={href}>
-                        <item.icon className="w-4 h-4" />
+                        {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <item.icon className="w-4 h-4" />}
                         <span>{item.label}</span>
                       </Link>
                     </SidebarMenuButton>
