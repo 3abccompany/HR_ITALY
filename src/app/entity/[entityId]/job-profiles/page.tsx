@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -307,17 +306,17 @@ export default function JobProfilesManagementPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={() => toggleFilterVisibility('status')} className={cn("gap-2", visibleFilters.includes('status') && "text-primary font-bold")}>
+                    <DropdownMenuItem onSelect={() => toggleFilterVisibility('status')} className={cn("gap-2", visibleFilters.includes('status') && "text-primary font-bold")}>
                       <Settings2 className="w-4 h-4" /> Statut {visibleFilters.includes('status') && "✓"}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => toggleFilterVisibility('version')} className={cn("gap-2", visibleFilters.includes('version') && "text-primary font-bold")}>
+                    <DropdownMenuItem onSelect={() => toggleFilterVisibility('version')} className={cn("gap-2", visibleFilters.includes('version') && "text-primary font-bold")}>
                       <History className="w-4 h-4" /> Version {visibleFilters.includes('version') && "✓"}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => toggleFilterVisibility('date')} className={cn("gap-2", visibleFilters.includes('date') && "text-primary font-bold")}>
+                    <DropdownMenuItem onSelect={() => toggleFilterVisibility('date')} className={cn("gap-2", visibleFilters.includes('date') && "text-primary font-bold")}>
                       <CalendarIcon className="w-4 h-4" /> Date de modification {visibleFilters.includes('date') && "✓"}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={resetFilters} className="text-destructive gap-2">
+                    <DropdownMenuItem onSelect={resetFilters} className="text-destructive gap-2">
                        <RefreshCcw className="w-4 h-4" /> Réinitialiser tout
                     </DropdownMenuItem>
                   </DropdownMenuContent>
@@ -412,21 +411,35 @@ export default function JobProfilesManagementPage() {
                           <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
-                          <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`)} className="gap-2 text-primary font-bold">
+                          <DropdownMenuItem 
+                            onSelect={() => {
+                              setTimeout(() => {
+                                router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`);
+                              }, 0);
+                            }} 
+                            className="gap-2 text-primary font-bold"
+                          >
                             <Eye className="w-4 h-4" /> Consulter / Imprimer
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {canUpdate && (
                             <>
-                              <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/edit`)} className="gap-2">
+                              <DropdownMenuItem 
+                                onSelect={() => {
+                                  setTimeout(() => {
+                                    router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/edit`);
+                                  }, 0);
+                                }} 
+                                className="gap-2"
+                              >
                                 <Edit className="w-4 h-4" /> Modifier
                               </DropdownMenuItem>
                               {p.status === 'active' ? (
-                                <DropdownMenuItem onClick={() => setStatusChange({ id: p.jobProfileId, action: 'disable' })} className="gap-2 text-destructive">
+                                <DropdownMenuItem onSelect={() => setStatusChange({ id: p.jobProfileId, action: 'disable' })} className="gap-2 text-destructive">
                                   <PowerOff className="w-4 h-4" /> Désactiver
                                 </DropdownMenuItem>
                               ) : (
-                                <DropdownMenuItem onClick={() => setStatusChange({ id: p.jobProfileId, action: 'reactivate' })} className="gap-2 text-green-600">
+                                <DropdownMenuItem onSelect={() => setStatusChange({ id: p.jobProfileId, action: 'reactivate' })} className="gap-2 text-green-600">
                                   <RefreshCcw className="w-4 h-4" /> Réactiver
                                 </DropdownMenuItem>
                               )}

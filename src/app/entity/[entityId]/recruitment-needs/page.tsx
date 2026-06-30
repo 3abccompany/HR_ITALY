@@ -476,14 +476,24 @@ export default function RecruitmentNeedsPage() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem 
-                              onClick={() => router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/preview`)}
+                              onSelect={() => {
+                                // CRITICAL: Wrap navigation in setTimeout to allow Radix UI 
+                                // to close the menu before the page unmounts.
+                                setTimeout(() => {
+                                  router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/preview`);
+                                }, 0);
+                              }}
                               className="gap-2 text-primary font-semibold"
                             >
                               <Eye className="w-4 h-4" /> Consulter
                             </DropdownMenuItem>
                             {canCreateForm && ["open", "partially_fulfilled"].includes(n.status) && (
                               <DropdownMenuItem 
-                                onClick={() => router.push(`/entity/${entityId}/application-forms/new?recruitmentNeedId=${n.needId}`)}
+                                onSelect={() => {
+                                  setTimeout(() => {
+                                    router.push(`/entity/${entityId}/application-forms/new?recruitmentNeedId=${n.needId}`);
+                                  }, 0);
+                                }}
                                 className="gap-2 font-bold text-accent"
                               >
                                 <FileCode className="w-4 h-4" /> Créer formulaire
@@ -491,7 +501,11 @@ export default function RecruitmentNeedsPage() {
                             )}
                             {canUpdate && (
                               <DropdownMenuItem 
-                                onClick={() => router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/edit`)}
+                                onSelect={() => {
+                                  setTimeout(() => {
+                                    router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/edit`);
+                                  }, 0);
+                                }}
                                 className="gap-2"
                               >
                                 <Edit className="w-4 h-4" /> Modifier
@@ -499,7 +513,7 @@ export default function RecruitmentNeedsPage() {
                             )}
                             {canCancel && !["cancelled", "archived", "fulfilled"].includes(n.status) && (
                                <DropdownMenuItem 
-                                 onClick={() => setStatusChange({ id: n.needId, action: 'cancel' })} 
+                                 onSelect={() => setStatusChange({ id: n.needId, action: 'cancel' })} 
                                  className="gap-2 text-destructive"
                                >
                                  <PowerOff className="w-4 h-4" /> Annuler la demande
@@ -507,7 +521,7 @@ export default function RecruitmentNeedsPage() {
                             )}
                             {canUpdate && n.status !== 'archived' && (
                                <DropdownMenuItem 
-                                 onClick={() => setStatusChange({ id: n.needId, action: 'archive' })} 
+                                 onSelect={() => setStatusChange({ id: n.needId, action: 'archive' })} 
                                  className="gap-2 text-muted-foreground"
                                >
                                  <Archive className="w-4 h-4" /> Archiver

@@ -521,7 +521,7 @@ export default function CandidatesManagementPage() {
             <p className="text-muted-foreground text-sm">Gestion avancée et suivi du flux de recrutement.</p>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={handleExportCSV} className="gap-2 bg-white" disabled={sortedCandidates.length === 0}>
+            <Button variant="outline" onClick={handleExportCSV} className="gap-2 bg-white" disabled={sortedInterviews.length === 0}>
                <Download className="w-4 h-4" /> Exporter CSV
             </Button>
             {canCreate && (
@@ -870,7 +870,16 @@ export default function CandidatesManagementPage() {
             <CandidateApplicationPanel 
                entityId={entityId} 
                candidate={selectedCandidate} 
-               onStatusUpdate={(updated) => setSelectedCandidate(updated)}
+               onStatusUpdate={(updated) => {
+                 // CRITICAL: If the panel initiates navigation (e.g., to interview planning),
+                 // we must close the Sheet portal before the page unmounts to prevent
+                 // the Radix UI body lock (pointer-events: none) from leaking.
+                 if (updated.status === 'interview_to_schedule') {
+                   setSelectedCandidate(null);
+                 } else {
+                   setSelectedCandidate(updated);
+                 }
+               }}
             />
           </div>
         </SheetContent>

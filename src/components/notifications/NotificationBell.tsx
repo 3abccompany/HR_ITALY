@@ -47,6 +47,7 @@ export function NotificationBell() {
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false); // Controlled state to prevent Radix body lock leak
 
   // Use simplified queries to avoid composite index requirements
   useEffect(() => {
@@ -124,14 +125,19 @@ export function NotificationBell() {
   const handleNotificationClick = async (notification: Notification) => {
     await markNotificationAsRead(entityId, notification.id);
     if (notification.actionUrl) {
-      router.push(notification.actionUrl);
+      // CRITICAL: Close the menu PORTAL before navigation to prevent 
+      // the Radix UI body lock (pointer-events: none) from leaking
+      setOpen(false);
+      setTimeout(() => {
+        router.push(notification.actionUrl!);
+      }, 0);
     }
   };
 
   if (membershipLoading) return <Button variant="ghost" size="icon" disabled className="rounded-full opacity-20"><Bell className="w-5 h-5" /></Button>;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="relative rounded-full hover:bg-primary/5 transition-colors">
           {unreadCount > 0 ? (
@@ -196,7 +202,12 @@ export function NotificationBell() {
         <Button 
           variant="ghost" 
           className="w-full h-11 rounded-none text-[10px] font-black uppercase tracking-[0.2em] text-primary hover:bg-primary/5"
-          onClick={() => router.push(`/entity/${entityId}/notifications`)}
+          onClick={() => {
+            setOpen(false);
+            setTimeout(() => {
+              router.push(`/entity/${entityId}/notifications`);
+            }, 0);
+          }}
         >
           Voir tout l'historique
         </Button>
