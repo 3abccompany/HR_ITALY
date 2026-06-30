@@ -86,8 +86,7 @@ function parseSafeDate(val: any): Date | null {
   }
   if (typeof val === 'string' || typeof val === 'number') {
     const d = new Date(val);
-    if (isNaN(d.getTime())) return null;
-    return d;
+    return isNaN(d.getTime()) ? null : d;
   }
   return null;
 }
@@ -141,7 +140,10 @@ function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = 
  * Renders a deadline badge for medical visits.
  */
 function getMedicalDeadlineBadge(visit: MedicalVisit) {
-  const visitDate = parseISO(visit.visitDate);
+  const visitDateString = visit.visitDate;
+  if (!visitDateString) return null;
+  
+  const visitDate = parseISO(visitDateString);
   const isPast = isBefore(visitDate, startOfDay(new Date()));
 
   if (visit.fitnessStatus === 'pending_result') {
@@ -239,7 +241,7 @@ export default function Employee360HubPage() {
   const entityId = params?.entityId as string;
   const employeeId = params?.employeeId as string;
   
-  const { db, auth } = useFirebase();
+  const { db } = useFirebase();
   const authInstance = useAuth();
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
@@ -289,7 +291,6 @@ export default function Employee360HubPage() {
   const dossierQuery = useMemo(() => {
     if (!db || !entityId || !permissionsReady || !employee) return null;
 
-    // 1. Try by Offer ID (Standard recruited employee)
     if (employee.sourceOfferId) {
       return query(
         collection(db, `entities/${entityId}/preHireDossiers`),
@@ -297,7 +298,6 @@ export default function Employee360HubPage() {
       ) as Query<PreHireDossier>;
     }
 
-    // 2. Fallback for direct intake (Historical)
     const isHistorical = employee.source === 'historical_import' || employee.source === 'direct_hr_creation';
     if (isHistorical && employee.employeeId) {
       return query(
@@ -327,7 +327,6 @@ export default function Employee360HubPage() {
   // --- 2A. Contracts Sub-Queries ---
   const contractsByEmployeeQuery = useMemo(() => {
     const isReady = !!db && !!entityId && !!employeeId && permissionsReady && canReadContracts && !!employee;
-    
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
@@ -353,7 +352,6 @@ export default function Employee360HubPage() {
   // --- 2B. Documents Sub-Queries ---
   const docsByEmployeeQuery = useMemo(() => {
     const isReady = !!db && !!entityId && !!employeeId && permissionsReady && canReadDocs && !!employee;
-    
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
@@ -375,7 +373,7 @@ export default function Employee360HubPage() {
     if (!isReady) return null;
     return query(
       collection(db, `entities/${entityId}/documents`),
-      where("personId", "==", employee.personId)
+      where("candidateId", "==", employee.sourceCandidateId)
     ) as Query<HRDocument>;
   }, [db, entityId, employee?.sourceCandidateId, permissionsReady, canReadDocs]);
 
@@ -395,8 +393,7 @@ export default function Employee360HubPage() {
     });
   }, [docsByEmp, docsByPers, docsByCand]);
 
-  // --- 2C. Medical Visits Sub-Query ---
-  // Optimized: Removed Firestore orderBy and limit to avoid index requirement
+  // --- 2C. Medical Visits Sub-Query (Simplified) ---
   const medicalVisitsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadMedical) return null;
     return query(
@@ -407,7 +404,6 @@ export default function Employee360HubPage() {
 
   const { data: medicalVisits, loading: loadingVisits } = useCollection<MedicalVisit>(medicalVisitsQuery, "employee360.medicalVisits");
   
-  // Client-side sorting for the latest visit
   const latestMedicalVisit = useMemo(() => {
     if (!medicalVisits || medicalVisits.length === 0) return null;
     return [...medicalVisits].sort((a, b) => {
@@ -417,8 +413,7 @@ export default function Employee360HubPage() {
     })[0];
   }, [medicalVisits]);
 
-  // --- 2D. Training Sub-Query ---
-  // Optimized: Removed Firestore orderBy to avoid index requirement
+  // --- 2D. Training Sub-Query (Simplified) ---
   const trainingsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadTraining) return null;
     return query(
@@ -429,41 +424,29 @@ export default function Employee360HubPage() {
 
   const { data: trainings, loading: loadingTrainings } = useCollection<Training>(trainingsQuery, "employee360.trainings");
 
-  /**
-   * Determine the featured training to display in the 360 summary.
-   * Priority: Expired > Expiring Soon (30d) > Planned > Latest Completed.
-   */
   const featuredTraining = useMemo(() => {
     if (!trainings || trainings.length === 0) return null;
-    
     const today = startOfDay(new Date());
     const threshold = addDays(today, 30);
-
     const sorted = [...trainings].sort((a, b) => {
       const getPriority = (t: Training) => {
         const expiry = parseSafeDate(t.expiryDate);
-        if (expiry && isBefore(expiry, today)) return 0; // Expired
-        if (expiry && isBefore(expiry, threshold)) return 1; // Expiring soon
-        if (t.status === 'planned') return 2; // Planned
-        return 3; // Latest completed
+        if (expiry && isBefore(expiry, today)) return 0;
+        if (expiry && isBefore(expiry, threshold)) return 1;
+        if (t.status === 'planned') return 2;
+        return 3;
       };
-      
       const prioA = getPriority(a);
       const prioB = getPriority(b);
-      
       if (prioA !== prioB) return prioA - prioB;
-      
-      // Secondary: most recent course date
-      const dateA = parseSafeDate(a.courseDate)?.getTime() || 0;
-      const dateB = parseSafeDate(b.courseDate)?.getTime() || 0;
+      const dateA = parseSafeDate(a.courseDate || a.startDate)?.getTime() || 0;
+      const dateB = parseSafeDate(b.courseDate || b.startDate)?.getTime() || 0;
       return dateB - dateA;
     });
-    
     return sorted[0];
   }, [trainings]);
 
-  // --- 2E. Safety Assignments Sub-Query ---
-  // Optimized: Removed Firestore orderBy to avoid index requirement
+  // --- 2E. Safety Assignments Sub-Query (Simplified) ---
   const safetyQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadSafety) return null;
     return query(
@@ -476,36 +459,28 @@ export default function Employee360HubPage() {
 
   const featuredSafetyAssignment = useMemo(() => {
     if (!safetyAssignments || safetyAssignments.length === 0) return null;
-    
     const today = startOfDay(new Date());
     const threshold = addDays(today, 30);
-
     const sorted = [...safetyAssignments].sort((a, b) => {
       const getPriority = (s: SafetyDpiAssignment) => {
         const nextDate = parseSafeDate(s.plannedReplacementDate);
         if (s.status === 'assigned') {
-          if (nextDate && isBefore(nextDate, today)) return 0; // Overdue
-          if (nextDate && isBefore(nextDate, threshold)) return 1; // Due soon
-          return 2; // Active
+          if (nextDate && isBefore(nextDate, today)) return 0;
+          if (nextDate && isBefore(nextDate, threshold)) return 1;
+          return 2;
         }
-        return 3; // Others (replaced, returned...)
+        return 3;
       };
-      
       const prioA = getPriority(a);
       const prioB = getPriority(b);
-      
       if (prioA !== prioB) return prioA - prioB;
-      
-      // Secondary: recency of delivery
       const dateA = parseSafeDate(a.deliveryDate)?.getTime() || 0;
       const dateB = parseSafeDate(b.deliveryDate)?.getTime() || 0;
       return dateB - dateA;
     });
-    
     return sorted[0];
   }, [safetyAssignments]);
 
-  // Detected if a historical UniLav receipt document exists for the overview card
   const hasHistoricalUniLav = useMemo(() => {
     return allDocs?.some(d => (d.documentType === 'unilav_receipt' || d.documentType === 'cpi_receipt') && d.status === 'valid');
   }, [allDocs]);
@@ -514,7 +489,6 @@ export default function Employee360HubPage() {
     return allDocs?.find(d => (d.documentType === 'unilav_receipt' || d.documentType === 'cpi_receipt') && d.status === 'valid');
   }, [allDocs]);
 
-  // --- Handlers ---
   const handleOpenDoc = async (storagePath: string, id: string) => {
     setLoadingActionId(id);
     try {
@@ -536,12 +510,8 @@ export default function Employee360HubPage() {
         employeeId,
         actorUid: membership.uid
       });
-      
       if (result.success) {
-        toast({ 
-          title: "Invitation envoyée", 
-          description: result.simulated ? "Simulé (SMTP non configuré)" : "L'email a été transmis au collaborateur." 
-        });
+        toast({ title: "Invitation envoyée", description: result.simulated ? "Simulé" : "L'email a été transmis." });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur invitation", description: err.message });
@@ -550,7 +520,6 @@ export default function Employee360HubPage() {
     }
   };
 
-  // --- Safe Initials Logic ---
   const initials = useMemo(() => {
     if (!employee) return "??";
     const f = employee.firstName?.[0] || "";
@@ -558,7 +527,6 @@ export default function Employee360HubPage() {
     return `${f}${l}`.toUpperCase() || "??";
   }, [employee]);
 
-  // Main Loading Guards
   if (membershipLoading || !permissionsReady) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4 bg-background">
@@ -582,7 +550,6 @@ export default function Employee360HubPage() {
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><User className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Employé introuvable</h2>
-        <p className="text-muted-foreground mt-2">Le document n'existe pas ou a été supprimé.</p>
         <Button onClick={() => router.push(`/entity/${entityId}/employees`)} className="mt-8">Retour au registre</Button>
       </div>
     );
@@ -593,7 +560,6 @@ export default function Employee360HubPage() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
-      {/* Navigation */}
       <div className="mb-6 flex items-center justify-between">
         <Button
           type="button"
@@ -606,7 +572,6 @@ export default function Employee360HubPage() {
         </Button>
       </div>
 
-      {/* 360 Header */}
       <header className="flex items-center gap-6 mb-8 border-b pb-8">
         <div className="relative">
            <div className="bg-primary text-white w-20 h-20 rounded-[2rem] flex items-center justify-center text-3xl font-black shadow-xl shadow-primary/20">
@@ -914,7 +879,6 @@ export default function Employee360HubPage() {
                       </>
                     )}
 
-                    {/* Fallback for Historical Dossier visibility */}
                     {!candidate && !offer && dossier && (
                       <div className="space-y-4 pt-4 border-t border-dashed">
                         <div className="flex items-center justify-between">
@@ -1040,7 +1004,6 @@ export default function Employee360HubPage() {
 
         <TabsContent value="compliance" className="mt-0 space-y-8 animate-in fade-in slide-in-from-bottom-2">
            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Medical Visits Card */}
               {loadingVisits ? (
                 <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
                    <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
@@ -1102,7 +1065,6 @@ export default function Employee360HubPage() {
                 </Card>
               )}
 
-              {/* Training Summary Card */}
               {loadingTrainings ? (
                 <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
                    <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
@@ -1125,7 +1087,7 @@ export default function Employee360HubPage() {
                       <div className="grid grid-cols-2 gap-4">
                          <div className="space-y-0.5">
                             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Session</p>
-                            <p className="text-xs font-bold text-slate-700">{formatDateSafe(featuredTraining.courseDate)}</p>
+                            <p className="text-xs font-bold text-slate-700">{formatDateSafe(featuredTraining.courseDate || featuredTraining.startDate)}</p>
                          </div>
                          <div className="space-y-0.5">
                             <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Recyclage</p>
@@ -1161,13 +1123,10 @@ export default function Employee360HubPage() {
                 </Card>
               )}
 
-              {/* Safety Assignment Card */}
               {loadingSafety ? (
                 <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
                    <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
                 </Card>
-              ) : !canReadSafety ? (
-                <AccessDeniedSection permission="safety.read" />
               ) : featuredSafetyAssignment ? (
                 <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex flex-col group hover:shadow-md transition-all">
                    <div className="flex items-start justify-between mb-4">
@@ -1327,16 +1286,6 @@ function DetailMini({ label, value }: { label: string, value: any }) {
    );
 }
 
-function CompliancePlaceholderCard({ title, icon: Icon }: { title: string, icon: any }) {
-   return (
-      <div className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex flex-col items-center justify-center gap-3 grayscale opacity-50 cursor-not-allowed">
-         <div className="bg-secondary p-3 rounded-2xl"><Icon className="w-5 h-5 text-muted-foreground" /></div>
-         <p className="text-xs font-black uppercase tracking-widest text-muted-foreground">{title}</p>
-         <Badge variant="secondary" className="text-[8px] font-black uppercase bg-slate-100">À venir</Badge>
-      </div>
-   );
-}
-
 function AccessDeniedSection({ permission }: { permission: string }) {
    return (
       <div className="p-12 rounded-[2rem] bg-red-50/50 border border-red-100 border-dashed flex flex-col items-center justify-center text-center space-y-3">
@@ -1411,14 +1360,13 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
           docs.map(d => {
             const isLoading = loadingId === d.id;
             const isContractDoc = ['signed_contract', 'generated_contract_pdf', 'unilav_receipt', 'cpi_receipt'].includes(d.documentType) || d.relatedModule === 'contracts';
-            
             const contractLabel = renderContractContext(d, employee, true) as string | null;
             const subtitle = contractLabel || d.employeeDisplayName || "Général";
-
             const rawExpiry = d.expiresAt || (d as any).expirationDate || (d as any).dueDate || (d as any).deadline;
             const expiryDate = parseSafeDate(rawExpiry);
-            const isExpired = expiryDate && isBefore(expiryDate, startOfDay(new Date()));
-            const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, startOfDay(new Date())) <= 60;
+            const today = startOfDay(new Date());
+            const isExpired = expiryDate && isBefore(expiryDate, today);
+            const isExpiringSoon = expiryDate && !isExpired && differenceInDays(expiryDate, today) <= 60;
 
             return (
               <TableRow key={d.id} className="hover:bg-muted/50 transition-colors group">
@@ -1445,7 +1393,7 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                 </TableCell>
                 <TableCell>
                    {expiryDate ? (
-                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-orange-600" : "text-slate-600")}>
+                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
                         {formatDateSafe(rawExpiry)}
                         {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                      </div>
