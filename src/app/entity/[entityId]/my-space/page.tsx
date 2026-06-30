@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
   Loader2, User, Calendar, Clock, FolderOpen, 
@@ -33,7 +33,8 @@ import {
 } from "@/app/actions/time-off-actions";
 import { 
   uploadSignedContractAction, 
-  getContractSignedUrlAction 
+  getContractSignedUrlAction,
+  getMyContractsAction 
 } from "@/app/actions/contract-actions";
 import { calculateDuration } from "@/services/time-off.service";
 import { Separator } from "@/components/ui/separator";
@@ -133,9 +134,13 @@ export default function MySpacePage() {
   const [loading, setLoading] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
+  // Contracts state (controlled via server action to bypass direct read rules)
+  const [myContracts, setMyContracts] = useState<any[]>([]);
+  const [loadingContracts, setLoadingContracts] = useState(true);
+
   // Contract Upload State
   const [isContractUploadOpen, setIsContractUploadOpen] = useState(false);
-  const [activeContractForUpload, setActiveContractForUpload] = useState<Contract | null>(null);
+  const [activeContractForUpload, setActiveContractForUpload] = useState<any | null>(null);
   const [contractFile, setContractFile] = useState<File | null>(null);
   const [uploadingContract, setUploadingContract] = useState(false);
 
@@ -175,15 +180,31 @@ export default function MySpacePage() {
 
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery as any, "my-space.requests");
 
-  const contractsQuery = useMemo(() => {
-    if (!db || !entityId || !employee) return null;
-    return query(
-      collection(db, `entities/${entityId}/contracts`),
-      where("employeeId", "==", employee.employeeId)
-    );
-  }, [db, entityId, employee]);
-
-  const { data: contractsData, loading: loadingContracts } = useCollection<Contract>(contractsQuery as any, "my-space.contracts");
+  // --- Contract Loading via Server Action ---
+  useEffect(() => {
+    async function loadContracts() {
+      if (!user || !entityId || !employee) {
+        if (!membershipLoading && !loadingEmployee) setLoadingContracts(false);
+        return;
+      }
+      
+      setLoadingContracts(true);
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        if (idToken) {
+          const result = await getMyContractsAction({ entityId, idToken });
+          if (result.success) {
+            setMyContracts(result.contracts);
+          }
+        }
+      } catch (err) {
+        console.error("[MySpace] Contracts load failed:", err);
+      } finally {
+        setLoadingContracts(false);
+      }
+    }
+    loadContracts();
+  }, [user, entityId, employee, auth, membershipLoading, loadingEmployee]);
 
   // --- Memory Sorting ---
 
@@ -195,17 +216,6 @@ export default function MySpacePage() {
       return dateB - dateA;
     });
   }, [requests]);
-
-  const sortedContracts = useMemo(() => {
-    if (!contractsData) return [];
-    return [...contractsData]
-      .filter(c => c.status !== 'archived' && c.status !== 'cancelled')
-      .sort((a, b) => {
-        const dateA = parseSafeDate(a.startDate)?.getTime() || 0;
-        const dateB = parseSafeDate(b.startDate)?.getTime() || 0;
-        return dateB - dateA;
-      });
-  }, [contractsData]);
 
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestForm.requestType);
 
@@ -345,6 +355,11 @@ export default function MySpacePage() {
       setIsContractUploadOpen(false);
       setContractFile(null);
       setActiveContractForUpload(null);
+
+      // Refresh contracts list
+      const updatedList = await getMyContractsAction({ entityId, idToken });
+      if (updatedList.success) setMyContracts(updatedList.contracts);
+
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur de transfert", description: err.message });
     } finally {
@@ -466,10 +481,10 @@ export default function MySpacePage() {
                    <TableBody>
                       {loadingContracts ? (
                         <TableRow><TableCell colSpan={3} className="text-center py-10"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
-                      ) : !sortedContracts || sortedContracts.length === 0 ? (
+                      ) : !myContracts || myContracts.length === 0 ? (
                         <TableRow><TableCell colSpan={3} className="text-center py-16 text-muted-foreground italic text-xs">Aucun contrat disponible.</TableCell></TableRow>
                       ) : (
-                        sortedContracts.map(c => (
+                        myContracts.map(c => (
                           <TableRow key={c.contractId} className="hover:bg-muted/50 transition-colors">
                              <TableCell className="pl-8 py-4">
                                 <p className="font-bold text-slate-800 text-sm">{c.contractType}</p>
@@ -482,7 +497,7 @@ export default function MySpacePage() {
                              </TableCell>
                              <TableCell className="text-right pr-8">
                                 <div className="flex justify-end gap-2">
-                                   {c.generatedPdfStoragePath && (
+                                   {c.hasGeneratedPdf && (
                                      <Button variant="ghost" size="sm" onClick={() => handleViewContractFile(c.contractId, "generated")} className="text-primary font-bold h-8 rounded-lg gap-1.5">
                                         <Eye className="w-3.5 h-3.5" /> Consulter
                                      </Button>

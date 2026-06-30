@@ -29,6 +29,56 @@ async function getVerifiedEmployee(entityId: string, idToken: string) {
 }
 
 /**
+ * Fetches contracts for the authenticated employee in a specific entity.
+ * Filters by ownership and returns only safe fields for the personal portal.
+ */
+export async function getMyContractsAction(params: {
+  entityId: string;
+  idToken: string;
+}) {
+  const { entityId, idToken } = params;
+  if (!adminDb) throw new Error("Service indisponible.");
+
+  try {
+    const { employee } = await getVerifiedEmployee(entityId, idToken);
+    
+    const contractsSnap = await adminDb.collection("entities").doc(entityId).collection("contracts")
+      .where("employeeId", "==", employee.employeeId)
+      .get();
+
+    const contracts = contractsSnap.docs
+      .map(docSnap => {
+        const data = docSnap.data();
+        return {
+          contractId: docSnap.id,
+          contractType: data.contractType || "Contrat",
+          startDate: data.startDate || "",
+          endDate: data.endDate || null,
+          status: data.status,
+          hasGeneratedPdf: !!data.generatedPdfStoragePath,
+          signedDocumentId: data.signedDocumentId || null,
+          signedDocumentUploadedAt: data.signedDocumentUploadedAt 
+            ? (typeof data.signedDocumentUploadedAt.toDate === 'function' 
+                ? data.signedDocumentUploadedAt.toDate().toISOString() 
+                : data.signedDocumentUploadedAt)
+            : null
+        };
+      })
+      .filter(c => !['archived', 'cancelled'].includes(c.status))
+      .sort((a, b) => {
+         const dA = a.startDate || "";
+         const dB = b.startDate || "";
+         return dB.localeCompare(dA); // Newest first
+      });
+
+    return { success: true, contracts };
+  } catch (err: any) {
+    console.error("[getMyContractsAction] Error:", err.message);
+    throw err;
+  }
+}
+
+/**
  * Generates a secure, short-lived signed URL for an employee to view a contract file.
  * Verifies ownership before generating the link.
  */
