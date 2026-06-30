@@ -521,7 +521,7 @@ export default function CandidatesManagementPage() {
             <p className="text-muted-foreground text-sm">Gestion avancée et suivi du flux de recrutement.</p>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={handleExportCSV} className="gap-2 bg-white" disabled={sortedInterviews.length === 0}>
+            <Button variant="outline" onClick={handleExportCSV} className="gap-2 bg-white" disabled={sortedCandidates.length === 0}>
                <Download className="w-4 h-4" /> Exporter CSV
             </Button>
             {canCreate && (
@@ -1205,7 +1205,7 @@ function SortableHeader({ label, field, currentSort, onSort }: { label: string, 
     >
       {label}
       {isActive ? (
-        currentSort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+        currentSort.direction === 'asc' ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />
       ) : (
         <div className="w-3 h-3 opacity-20"><ChevronUp className="w-3 h-3" /></div>
       )}
