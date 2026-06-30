@@ -57,6 +57,25 @@ import { cn } from "@/lib/utils";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 
+/**
+ * Robust date parser for mixed formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
 const initialRequestForm = {
   requestType: "paid_leave" as TimeOffRequestType,
   startDate: new Date().toISOString().split('T')[0],
@@ -138,12 +157,22 @@ export default function MySpacePage() {
     if (!db || !entityId || !employee) return null;
     return query(
       collection(db, `entities/${entityId}/timeOffRequests`),
-      where("employeeId", "==", employee.employeeId),
-      orderBy("createdAt", "desc")
+      where("employeeId", "==", employee.employeeId)
+      // Removal of orderBy to avoid composite index requirement
     );
   }, [db, entityId, employee]);
 
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery as any, "my-space.requests");
+
+  // Memory sort by createdAt descending
+  const sortedRequests = useMemo(() => {
+    if (!requests) return [];
+    return [...requests].sort((a, b) => {
+      const dateA = parseSafeDate(a.createdAt)?.getTime() || 0;
+      const dateB = parseSafeDate(b.createdAt)?.getTime() || 0;
+      return dateB - dateA;
+    });
+  }, [requests]);
 
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestForm.requestType);
 
@@ -361,10 +390,10 @@ export default function MySpacePage() {
                    <TableBody>
                       {loadingRequests ? (
                         <TableRow><TableCell colSpan={4} className="text-center py-10"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
-                      ) : !requests || requests.length === 0 ? (
+                      ) : !sortedRequests || sortedRequests.length === 0 ? (
                         <TableRow><TableCell colSpan={4} className="text-center py-16 text-muted-foreground italic text-xs">Aucune demande effectuée.</TableCell></TableRow>
                       ) : (
-                        requests.map(r => (
+                        sortedRequests.map(r => (
                           <TableRow key={r.requestId} className="hover:bg-muted/50 transition-colors">
                              <TableCell className="pl-8 py-4">
                                 <p className="font-bold text-slate-800 text-sm">{TIME_OFF_TYPE_LABELS[r.requestType]}</p>
@@ -534,9 +563,9 @@ export default function MySpacePage() {
                   <div className="p-4 bg-secondary/20 rounded-2xl border border-dashed flex justify-between items-center">
                      <span className="text-[10px] font-black uppercase text-primary/60">Durée calculée (Sans Dimanches)</span>
                      <span className={cn("text-sm font-black", 
-                       (isHourly ? calculatedHours : calculatedDays) <= 0 ? "text-red-500" : "text-primary"
+                       (isHourly ? calculateDecimalHours(requestForm.startTime, requestForm.endTime) : calculateDuration(requestForm.startDate, requestForm.endDate, requestForm.dayPart)) <= 0 ? "text-red-500" : "text-primary"
                      )}>
-                        {isHourly ? `${calculatedHours.toFixed(2).replace(/\.00$/, "")} h` : `${calculatedDays} j`}
+                        {isHourly ? `${calculateDecimalHours(requestForm.startTime, requestForm.endTime).toFixed(2).replace(/\.00$/, "")} h` : `${calculateDuration(requestForm.startDate, requestForm.endDate, requestForm.dayPart)} j`}
                      </span>
                   </div>
                </div>
