@@ -137,6 +137,8 @@ export default function EditApplicationFormPage() {
 
       await updateApplicationForm(entityId, formId, cleanData, user.uid);
       toast({ title: "Configuration enregistrée" });
+      // SUCCESS NAVIGATION: Return to the list page
+      router.push(`/entity/${entityId}/application-forms`);
     } catch (err: any) {
       console.error("Save error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -254,7 +256,7 @@ export default function EditApplicationFormPage() {
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <div className="flex items-center justify-between mb-8 sticky top-0 bg-background/80 backdrop-blur py-4 z-40 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/application-forms`)}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
