@@ -91,9 +91,10 @@ export async function createDpiAssignment(entityId: string, data: Partial<Safety
 
     // Notify Employee (Non-blocking)
     if (data.employeeId) {
+      const empId = data.employeeId;
       void (async () => {
         try {
-          const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, data.employeeId));
+          const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, empId));
           const empData = empSnap.data();
           if (empData?.userId) {
             await createNotification(entityId, {
