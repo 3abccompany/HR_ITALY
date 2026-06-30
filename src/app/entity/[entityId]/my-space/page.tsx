@@ -385,6 +385,11 @@ export default function MySpacePage() {
                              <TableCell>
                                 <div className="flex flex-col gap-1">
                                    {getStatusBadge(r.status)}
+                                   {r.status === 'rejected' && (
+                                      <p className="text-[9px] text-red-600 font-bold mt-0.5 leading-snug max-w-[160px] italic">
+                                         Motif du refus : {r.rejectionReason || "Aucun motif renseigné."}
+                                      </p>
+                                   )}
                                    {r.justificationStatus === 'provided' && (
                                       <span className="text-[8px] font-black text-green-600 uppercase flex items-center gap-1">
                                          <FileText className="w-2 h-2" /> Justificatif joint
