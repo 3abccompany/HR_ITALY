@@ -7,7 +7,7 @@ import {
   Loader2, Mail, Briefcase, AlertCircle, MoreVertical, Globe, User,
   LayoutDashboard, X, Filter, ChevronRight, Calendar as CalendarIcon,
   Building2, MapPin, ListFilter as ListFilterIcon, Download,
-  ChevronUp, ChevronDown, ChevronLeft
+  ChevronUp, ChevronDown, ChevronLeft, CheckCircle2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1135,7 +1135,7 @@ function CandidateTable({
             )}
           >
             <TableCell>
-              <div className="font-bold text-primary truncate max-w-[180px]">{c.displayName}</div>
+              <div className="font-bold text-primary">{c.displayName}</div>
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
                 <Mail className="h-2.5 w-2.5" /> {c.email || "Non renseigné"}
               </div>
@@ -1205,7 +1205,7 @@ function SortableHeader({ label, field, currentSort, onSort }: { label: string, 
     >
       {label}
       {isActive ? (
-        currentSort.direction === 'asc' ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />
+        currentSort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
       ) : (
         <div className="w-3 h-3 opacity-20"><ChevronUp className="w-3 h-3" /></div>
       )}
