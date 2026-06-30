@@ -65,7 +65,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { format, isBefore, startOfDay, addDays, differenceInDays, parseISO } from "date-fns";
+import { format, isBefore, addDays, startOfDay, differenceInDays, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
@@ -396,26 +396,34 @@ export default function Employee360HubPage() {
   }, [docsByEmp, docsByPers, docsByCand]);
 
   // --- 2C. Medical Visits Sub-Query ---
+  // Optimized: Removed Firestore orderBy and limit to avoid index requirement
   const medicalVisitsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadMedical) return null;
     return query(
       collection(db, `entities/${entityId}/medicalVisits`),
-      where("employeeId", "==", employeeId),
-      orderBy("visitDate", "desc"),
-      limit(1)
+      where("employeeId", "==", employeeId)
     ) as Query<MedicalVisit>;
   }, [db, entityId, employeeId, canReadMedical]);
 
   const { data: medicalVisits, loading: loadingVisits } = useCollection<MedicalVisit>(medicalVisitsQuery, "employee360.medicalVisits");
-  const latestMedicalVisit = medicalVisits?.[0];
+  
+  // Client-side sorting for the latest visit
+  const latestMedicalVisit = useMemo(() => {
+    if (!medicalVisits || medicalVisits.length === 0) return null;
+    return [...medicalVisits].sort((a, b) => {
+      const dateA = parseSafeDate(a.visitDate)?.getTime() || 0;
+      const dateB = parseSafeDate(b.visitDate)?.getTime() || 0;
+      return dateB - dateA;
+    })[0];
+  }, [medicalVisits]);
 
   // --- 2D. Training Sub-Query ---
+  // Optimized: Removed Firestore orderBy to avoid index requirement
   const trainingsQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadTraining) return null;
     return query(
       collection(db, `entities/${entityId}/trainings`),
-      where("employeeId", "==", employeeId),
-      orderBy("courseDate", "desc")
+      where("employeeId", "==", employeeId)
     ) as Query<Training>;
   }, [db, entityId, employeeId, canReadTraining]);
 
@@ -455,12 +463,12 @@ export default function Employee360HubPage() {
   }, [trainings]);
 
   // --- 2E. Safety Assignments Sub-Query ---
+  // Optimized: Removed Firestore orderBy to avoid index requirement
   const safetyQuery = useMemo(() => {
     if (!db || !entityId || !employeeId || !canReadSafety) return null;
     return query(
       collection(db, `entities/${entityId}/safetyDpiAssignments`),
-      where("employeeId", "==", employeeId),
-      orderBy("deliveryDate", "desc")
+      where("employeeId", "==", employeeId)
     ) as Query<SafetyDpiAssignment>;
   }, [db, entityId, employeeId, canReadSafety]);
 
@@ -1437,7 +1445,7 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                 </TableCell>
                 <TableCell>
                    {expiryDate ? (
-                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : isExpiringSoon ? "text-orange-600" : "text-slate-600")}>
+                     <div className={cn("text-xs font-black", isExpired ? "text-red-600" : "text-orange-600" : "text-slate-600")}>
                         {formatDateSafe(rawExpiry)}
                         {isExpired && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-bottom" />}
                      </div>
