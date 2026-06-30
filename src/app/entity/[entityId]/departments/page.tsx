@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo } from "react";
@@ -308,22 +309,39 @@ export default function DepartmentsManagementPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                            {canUpdateDepts && (
-                             <DropdownMenuItem onClick={() => handleEditDept(dept)} className="gap-2">
+                             <DropdownMenuItem 
+                               onSelect={() => setTimeout(() => handleEditDept(dept), 0)} 
+                               className="gap-2"
+                             >
                                <Edit className="w-4 h-4" /> Modifier le département
                              </DropdownMenuItem>
                            )}
                            {canCreateJobs && dept.status === 'active' && (
-                             <DropdownMenuItem onClick={() => { setActiveDeptId(dept.departmentId); setIsJobFormVisible(true); }} className="gap-2 font-semibold text-primary">
+                             <DropdownMenuItem 
+                               onSelect={() => { 
+                                 setTimeout(() => {
+                                   setActiveDeptId(dept.departmentId); 
+                                   setIsJobFormVisible(true);
+                                 }, 0);
+                               }} 
+                               className="gap-2 font-semibold text-primary"
+                             >
                                <Plus className="w-4 h-4" /> Ajouter un intitulé de poste
                              </DropdownMenuItem>
                            )}
                            {canUpdateDepts && (
                              dept.status === 'active' ? (
-                               <DropdownMenuItem onClick={() => setStatusChange({ id: dept.departmentId, type: 'dept', action: 'disable' })} className="gap-2 text-destructive">
+                               <DropdownMenuItem 
+                                 onSelect={() => setTimeout(() => setStatusChange({ id: dept.departmentId, type: 'dept', action: 'disable' }), 0)} 
+                                 className="gap-2 text-destructive"
+                               >
                                  <PowerOff className="w-4 h-4" /> Désactiver
                                </DropdownMenuItem>
                              ) : (
-                               <DropdownMenuItem onClick={() => setStatusChange({ id: dept.departmentId, type: 'dept', action: 'reactivate' })} className="gap-2 text-green-600">
+                               <DropdownMenuItem 
+                                 onSelect={() => setTimeout(() => setStatusChange({ id: dept.departmentId, type: 'dept', action: 'reactivate' }), 0)} 
+                                 className="gap-2 text-green-600"
+                               >
                                  <RefreshCcw className="w-4 h-4" /> Réactiver
                                </DropdownMenuItem>
                              )
@@ -367,17 +385,26 @@ export default function DepartmentsManagementPage() {
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
                                     {canUpdateJobs && (
-                                      <DropdownMenuItem onClick={() => handleEditJob(job)} className="gap-2 text-xs">
+                                      <DropdownMenuItem 
+                                        onSelect={() => setTimeout(() => handleEditJob(job), 0)} 
+                                        className="gap-2 text-xs"
+                                      >
                                         <Edit className="w-3 h-3" /> Modifier
                                       </DropdownMenuItem>
                                     )}
                                     {canUpdateJobs && (
                                       job.status === 'active' ? (
-                                        <DropdownMenuItem onClick={() => setStatusChange({ id: job.jobTitleId, type: 'job', action: 'disable' })} className="gap-2 text-xs text-destructive">
+                                        <DropdownMenuItem 
+                                          onSelect={() => setTimeout(() => setStatusChange({ id: job.jobTitleId, type: 'job', action: 'disable' }), 0)} 
+                                          className="gap-2 text-xs text-destructive"
+                                        >
                                           <PowerOff className="w-3 h-3" /> Désactiver
                                         </DropdownMenuItem>
                                       ) : (
-                                        <DropdownMenuItem onClick={() => setStatusChange({ id: job.jobTitleId, type: 'job', action: 'reactivate' })} className="gap-2 text-xs text-green-600">
+                                        <DropdownMenuItem 
+                                          onSelect={() => setTimeout(() => setStatusChange({ id: job.jobTitleId, type: 'job', action: 'reactivate' }), 0)} 
+                                          className="gap-2 text-xs text-green-600"
+                                        >
                                           <RefreshCcw className="w-3 h-3" /> Réactiver
                                         </DropdownMenuItem>
                                       )
@@ -398,7 +425,7 @@ export default function DepartmentsManagementPage() {
       )}
 
       {/* Dept Dialog */}
-      <Dialog open={isDeptFormVisible} onOpenChange={(open) => !open && handleDeptReset()}>
+      <Dialog open={isDeptFormVisible} onOpenChange={setIsDeptFormVisible}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>{editingDeptId ? "Modifier le département" : "Nouveau département"}</DialogTitle>
@@ -408,34 +435,34 @@ export default function DepartmentsManagementPage() {
             <div className="grid grid-cols-4 gap-4">
               <div className="col-span-3 space-y-2">
                 <Label htmlFor="name">Nom du département</Label>
-                <Input id="name" value={deptFormData.name} onChange={(e) => setDeptFormData(p => ({...p, name: e.target.value}))} required placeholder="Ex: Ressources Humaines" />
+                <Input id="name" value={deptFormData.name} onChange={handleInputChange} required placeholder="Ex: Ressources Humaines" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="code">Code</Label>
-                <Input id="code" value={deptFormData.code} onChange={(e) => setDeptFormData(p => ({...p, code: e.target.value}))} required placeholder="Ex: RH" />
+                <Input id="code" value={deptFormData.code} onChange={handleInputChange} required placeholder="Ex: RH" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="responsibleName">Nom du Responsable (Optionnel)</Label>
-              <Input id="responsibleName" value={deptFormData.responsibleName} onChange={(e) => setDeptFormData(p => ({...p, responsibleName: e.target.value}))} placeholder="Ex: Jean Dupont" />
+              <Input id="responsibleName" value={deptFormData.responsibleName} onChange={handleInputChange} placeholder="Ex: Jean Dupont" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="description">Description</Label>
-              <Textarea id="description" value={deptFormData.description} onChange={(e) => setDeptFormData(p => ({...p, description: e.target.value}))} placeholder="Missions du département..." />
+              <Textarea id="description" value={deptFormData.description} onChange={handleInputChange} placeholder="Missions du département..." />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="notes">Notes Internes</Label>
-              <Input id="notes" value={deptFormData.notes} onChange={(e) => setDeptFormData(p => ({...p, notes: e.target.value}))} placeholder="Observations privées..." />
+              <Input id="notes" value={deptFormData.notes} onChange={handleInputChange} placeholder="Observations privées..." />
             </div>
 
             <DialogFooter className="pt-4 border-t">
               <Button type="button" variant="outline" onClick={handleDeptReset} disabled={loading}>Annuler</Button>
               <Button type="submit" disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-                {editingDeptId ? "Enregistrer" : "Créer le département"}
+                {editingDeptId ? "Enregistrer les modifications" : "Créer le département"}
               </Button>
             </DialogFooter>
           </form>
@@ -443,7 +470,7 @@ export default function DepartmentsManagementPage() {
       </Dialog>
 
       {/* Job Dialog */}
-      <Dialog open={isJobFormVisible} onOpenChange={(open) => !open && handleJobReset()}>
+      <Dialog open={isJobFormVisible} onOpenChange={setIsJobFormVisible}>
         <DialogContent className="sm:max-w-[450px]">
           <DialogHeader>
             <DialogTitle>{editingJobId ? "Modifier l'intitulé" : "Nouvel intitulé de poste"}</DialogTitle>
@@ -454,17 +481,17 @@ export default function DepartmentsManagementPage() {
           <form onSubmit={handleSaveJob} className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="title">Titre du poste</Label>
-              <Input id="title" value={jobFormData.title} onChange={(e) => setJobFormData(p => ({...p, title: e.target.value}))} required placeholder="Ex: Développeur Senior" />
+              <Input id="title" value={jobFormData.title} onChange={handleInputChange} required placeholder="Ex: Développeur Senior" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="description">Description du rôle</Label>
-              <Textarea id="description" value={jobFormData.description} onChange={(e) => setJobFormData(p => ({...p, description: e.target.value}))} placeholder="Activités principales..." />
+              <Textarea id="description" value={jobFormData.description} onChange={handleInputChange} placeholder="Activités principales..." />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="jobNotes">Notes</Label>
-              <Input id="jobNotes" value={jobFormData.notes} onChange={(e) => setJobFormData(p => ({...p, notes: e.target.value}))} placeholder="..." />
+              <Input id="jobNotes" value={jobFormData.notes} onChange={handleInputChange} placeholder="..." />
             </div>
 
             <DialogFooter className="pt-4 border-t">
@@ -500,3 +527,4 @@ export default function DepartmentsManagementPage() {
     </div>
   );
 }
+
