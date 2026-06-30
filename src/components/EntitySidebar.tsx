@@ -50,7 +50,7 @@ export function EntitySidebar() {
   const handleLogout = async () => {
     try {
       await logout();
-      router.push("/login");
+      router.replace("/login");
     } catch (e) {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible de se déconnecter." });
     }
