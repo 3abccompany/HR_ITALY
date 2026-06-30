@@ -9,7 +9,8 @@ import {
   Calculator, Plane, Plus, RefreshCw,
   History, Send, CheckCircle2, XCircle, Ban,
   Save, AlertCircle, Upload, FileText,
-  FileSignature, Download, Eye, ChevronRight
+  FileSignature, Download, Eye, ChevronRight,
+  FileCheck
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
