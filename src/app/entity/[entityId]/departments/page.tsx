@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -525,7 +524,7 @@ export default function DepartmentsManagementPage() {
 
             <div className="space-y-2">
               <Label htmlFor="jobNotes">Notes</Label>
-              <Input id="jobNotes" value={jobFormData.notes} onChange={handleJobInputChange} placeholder="..." />
+              <Input id="notes" value={jobFormData.notes} onChange={handleJobInputChange} placeholder="..." />
             </div>
 
             <DialogFooter className="pt-4 border-t">
