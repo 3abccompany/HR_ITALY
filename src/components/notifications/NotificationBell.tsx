@@ -1,4 +1,4 @@
-"use client";
+"use client"
 
 import { useMemo, useState, useEffect } from "react";
 import { 
@@ -17,7 +17,7 @@ import {
   Loader2
 } from "lucide-react";
 import { useFirebase, useUser } from "@/firebase";
-import { collection, query, where, orderBy, limit, onSnapshot, Query } from "firebase/firestore";
+import { collection, query, where, onSnapshot, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   DropdownMenu, 
@@ -48,7 +48,7 @@ export function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Manual multi-query snapshot listener to handle Firestore IN limit (30)
+  // Use simplified queries to avoid composite index requirements
   useEffect(() => {
     if (!db || !entityId || !user || !membership || membership.entityId !== entityId) {
       if (!membershipLoading) setLoading(false);
@@ -57,16 +57,13 @@ export function NotificationBell() {
 
     const notificationsRef = collection(db, `entities/${entityId}/notifications`);
     
-    // 1. Define queries
+    // 1. Define base queries without combined status or ordering
     const queries: Query[] = [];
     
     // Query A: Direct target to user
     queries.push(query(
       notificationsRef,
-      where("status", "==", "unread"),
-      where("targetUid", "==", user.uid),
-      orderBy("createdAt", "desc"),
-      limit(20)
+      where("targetUid", "==", user.uid)
     ));
 
     // Query B: Targeted to permissions (Chunked)
@@ -76,22 +73,20 @@ export function NotificationBell() {
         const chunk = membership.permissions.slice(i, i + CHUNK_SIZE);
         queries.push(query(
           notificationsRef,
-          where("status", "==", "unread"),
-          where("targetPermission", "in", chunk),
-          orderBy("createdAt", "desc"),
-          limit(20)
+          where("targetPermission", "in", chunk)
         ));
       }
     }
 
     const resultsMap = new Map<number, Notification[]>();
-    
+    setLoading(true);
+
     const unsubscribes = queries.map((q, index) => {
       return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Notification));
         resultsMap.set(index, docs);
         
-        // Merge and deduplicate
+        // 2. Merge, deduplicate, filter, sort and limit client-side
         const merged: Record<string, Notification> = {};
         resultsMap.forEach(docs => {
           docs.forEach(d => {
@@ -99,16 +94,18 @@ export function NotificationBell() {
           });
         });
 
-        // Sort by date desc
-        const sorted = Object.values(merged).sort((a, b) => {
-          const dateA = (a.createdAt as any)?.toDate?.() || new Date();
-          const dateB = (b.createdAt as any)?.toDate?.() || new Date();
-          return dateB.getTime() - dateA.getTime();
-        });
+        const processed = Object.values(merged)
+          .filter(n => n.status === "unread")
+          .sort((a, b) => {
+            const dateA = (a.createdAt as any)?.toDate?.() || new Date(0);
+            const dateB = (b.createdAt as any)?.toDate?.() || new Date(0);
+            return dateB.getTime() - dateA.getTime();
+          });
 
-        setNotifications(sorted.slice(0, 20));
+        setNotifications(processed.slice(0, 20));
         setLoading(false);
       }, (err) => {
+        // Log but don't crash
         console.error(`[NotificationBell] Query ${index} failed:`, err);
         setLoading(false);
       });
@@ -226,7 +223,7 @@ function getCategoryColor(cat: NotificationCategory) {
     case 'contract': return "bg-blue-50 text-blue-600";
     case 'medical': return "bg-orange-50 text-orange-600";
     case 'training': return "bg-indigo-50 text-indigo-600";
-    case 'safety': return "bg-teal-50 text-teal-600";
+    case 'safety': return "bg-teal-50 text-teal-700 border-teal-100";
     case 'absence': return "bg-purple-50 text-purple-600";
     case 'cpi': return "bg-sky-50 text-sky-600";
     case 'document': return "bg-slate-50 text-slate-600";

@@ -6,14 +6,12 @@ import {
   updateDoc, 
   query, 
   where, 
-  orderBy, 
   serverTimestamp, 
   writeBatch,
   getDocs,
-  limit,
   Query
 } from "firebase/firestore";
-import { Notification, NotificationStatus } from "@/types/notification";
+import { Notification } from "@/types/notification";
 
 /**
  * Normalizes payload for Firestore.
@@ -81,31 +79,29 @@ export async function archiveNotification(entityId: string, notificationId: stri
 
 /**
  * Marks all notifications visible to the current user as read.
- * Fixed: Handles Firestore IN query limit (30 values) by chunking permissions.
+ * Simplified queries to avoid composite index requirements.
  */
 export async function markAllNotificationsAsRead(entityId: string, uid: string, permissions: string[]) {
   if (!db) return;
 
   const notificationsRef = collection(db, `entities/${entityId}/notifications`);
   
-  // 1. Gather all required queries
+  // 1. Gather all required queries (Target only, no combined filters to avoid indexes)
   const allQueries: Query[] = [];
   
   // A. Target UID
   allQueries.push(query(
     notificationsRef,
-    where("status", "==", "unread"),
     where("targetUid", "==", uid)
   ));
 
-  // B. Target Permission (Chunked to handle Firestore IN limit)
+  // B. Target Permission (Chunked)
   if (permissions && permissions.length > 0) {
     const CHUNK_SIZE = 30;
     for (let i = 0; i < permissions.length; i += CHUNK_SIZE) {
       const chunk = permissions.slice(i, i + CHUNK_SIZE);
       allQueries.push(query(
         notificationsRef,
-        where("status", "==", "unread"),
         where("targetPermission", "in", chunk)
       ));
     }
@@ -114,7 +110,7 @@ export async function markAllNotificationsAsRead(entityId: string, uid: string, 
   // 2. Fetch all snapshots in parallel
   const snapshots = await Promise.all(allQueries.map(q => getDocs(q)));
 
-  // 3. Batch update deduplicated notifications
+  // 3. Batch update deduplicated notifications with client-side status filter
   const batch = writeBatch(db);
   const now = serverTimestamp();
   const seenIds = new Set<string>();
@@ -122,10 +118,13 @@ export async function markAllNotificationsAsRead(entityId: string, uid: string, 
   snapshots.forEach(snap => {
     snap.docs.forEach(d => {
       if (!seenIds.has(d.id)) {
-        batch.update(d.ref, {
-          status: "read",
-          readAt: now
-        });
+        const data = d.data();
+        if (data.status === "unread") {
+          batch.update(d.ref, {
+            status: "read",
+            readAt: now
+          });
+        }
         seenIds.add(d.id);
       }
     });
