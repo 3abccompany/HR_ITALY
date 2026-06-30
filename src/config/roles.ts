@@ -37,7 +37,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     scope: "entity",
     getPermissions: () => {
       const hrModules = [
-        "dashboard", "persons", "candidates", "interviews", 
+        "dashboard", "notifications", "persons", "candidates", "interviews", 
         "departments", "jobTitles", "jobProfiles", "jobProfileCatalog",
         "recruitmentNeeds", "applicationForms", "applicationSubmissions", 
         "worksites", "employees", "contracts", "documents", 
@@ -60,6 +60,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     getPermissions: () => {
       const exactCodes = [
         "dashboard.read",
+        "notifications.read",
         "employees.read",
         "documents.read",
         "documents.upload",
@@ -90,7 +91,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     scope: "entity",
     getPermissions: () => 
       MVP_PERMISSIONS
-        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions" || p.module === "persons" || p.module === "worksites"))
+        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "notifications" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions" || p.module === "persons" || p.module === "worksites"))
         .filter(p => p.action === "read")
         .map(p => p.code)
   },
@@ -102,7 +103,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     scope: "entity",
     getPermissions: () => 
       MVP_PERMISSIONS
-        .filter(p => p.code.startsWith("self."))
+        .filter(p => p.code.startsWith("self.") || p.code === "notifications.read")
         .map(p => p.code)
   }
 ];

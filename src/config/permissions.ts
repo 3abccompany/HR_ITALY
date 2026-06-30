@@ -34,6 +34,7 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
 
   // --- Entity Permissions ---
   { code: "dashboard.read", module: "dashboard", action: "read", label: "Voir Dashboard Entité", description: "Accès au tableau de bord de l'entreprise.", scope: "entity" },
+  { code: "notifications.read", module: "notifications", action: "read", label: "Voir les notifications", description: "Accès au centre de notifications et historique.", scope: "entity" },
   { code: "persons.read", module: "persons", action: "read", label: "Voir les personnes", description: "Liste des fiches identités (candidats/employés).", scope: "entity" },
   { code: "persons.create", module: "persons", action: "create", label: "Créer une personne", description: "Ajout d'une nouvelle identité root.", scope: "entity" },
   { code: "persons.update", module: "persons", action: "update", label: "Modifier une personne", description: "Mise à jour des informations d'identité.", scope: "entity" },
