@@ -8,7 +8,8 @@ import {
   MapPin, Building2, Fingerprint, Info,
   Calculator, Plane, Plus, RefreshCw,
   History, Send, CheckCircle2, XCircle, Ban,
-  Save, AlertCircle, Upload, FileText
+  Save, AlertCircle, Upload, FileText,
+  FileSignature, Download, Eye, ChevronRight
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,7 @@ import { useFirebase, useUser, useCollection, useAuth } from "@/firebase";
 import { collection, query, where, limit, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Employee } from "@/types/employee";
+import { Contract } from "@/types/contract";
 import { 
   LeaveBalance, 
   normalizeBalance, 
@@ -29,6 +31,10 @@ import {
   cancelTimeOffRequestAction, 
   uploadSicknessJustificationAction 
 } from "@/app/actions/time-off-actions";
+import { 
+  uploadSignedContractAction, 
+  getContractSignedUrlAction 
+} from "@/app/actions/contract-actions";
 import { calculateDuration } from "@/services/time-off.service";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
@@ -116,7 +122,7 @@ export default function MySpacePage() {
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading, entity, membership } = useActiveMembership(entityId);
+  const { loading: membershipLoading, entity } = useActiveMembership(entityId);
 
   const currentYear = new Date().getFullYear();
 
@@ -126,6 +132,12 @@ export default function MySpacePage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  // Contract Upload State
+  const [isContractUploadOpen, setIsContractUploadOpen] = useState(false);
+  const [activeContractForUpload, setActiveContractForUpload] = useState<Contract | null>(null);
+  const [contractFile, setContractFile] = useState<File | null>(null);
+  const [uploadingContract, setUploadingContract] = useState(false);
 
   // --- Queries ---
   const employeeQuery = useMemo(() => {
@@ -158,13 +170,23 @@ export default function MySpacePage() {
     return query(
       collection(db, `entities/${entityId}/timeOffRequests`),
       where("employeeId", "==", employee.employeeId)
-      // Removal of orderBy to avoid composite index requirement
     );
   }, [db, entityId, employee]);
 
   const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery as any, "my-space.requests");
 
-  // Memory sort by createdAt descending
+  const contractsQuery = useMemo(() => {
+    if (!db || !entityId || !employee) return null;
+    return query(
+      collection(db, `entities/${entityId}/contracts`),
+      where("employeeId", "==", employee.employeeId)
+    );
+  }, [db, entityId, employee]);
+
+  const { data: contractsData, loading: loadingContracts } = useCollection<Contract>(contractsQuery as any, "my-space.contracts");
+
+  // --- Memory Sorting ---
+
   const sortedRequests = useMemo(() => {
     if (!requests) return [];
     return [...requests].sort((a, b) => {
@@ -173,6 +195,17 @@ export default function MySpacePage() {
       return dateB - dateA;
     });
   }, [requests]);
+
+  const sortedContracts = useMemo(() => {
+    if (!contractsData) return [];
+    return [...contractsData]
+      .filter(c => c.status !== 'archived' && c.status !== 'cancelled')
+      .sort((a, b) => {
+        const dateA = parseSafeDate(a.startDate)?.getTime() || 0;
+        const dateB = parseSafeDate(b.startDate)?.getTime() || 0;
+        return dateB - dateA;
+      });
+  }, [contractsData]);
 
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestForm.requestType);
 
@@ -208,7 +241,6 @@ export default function MySpacePage() {
     try {
       const idToken = await auth.currentUser!.getIdToken();
       
-      // Step 1: Submit the request data
       const result = await submitTimeOffRequestAction({
         entityId,
         idToken,
@@ -218,7 +250,6 @@ export default function MySpacePage() {
         }
       });
 
-      // Step 2: Handle Sickness Justification via Server Action Bridge
       if (selectedFile && (requestForm.requestType === 'sickness')) {
         try {
           const fileBase64 = await fileToBase64(selectedFile);
@@ -232,14 +263,13 @@ export default function MySpacePage() {
           });
           toast({ 
             title: "Demande envoyée", 
-            description: "Votre demande de maladie et votre justificatif ont été transmis avec succès." 
+            description: "Votre demande de maladie et votre justificatif ont été transmis." 
           });
-        } catch (uploadErr: any) {
-          console.error("[MySpace] Justification upload failed:", uploadErr);
+        } catch (uploadErr) {
           toast({ 
             variant: "destructive", 
             title: "Demande créée sans justificatif", 
-            description: "La demande a été enregistrée, mais le justificatif n'a pas pu être joint automatiquement. Veuillez contacter les RH." 
+            description: "La demande est enregistrée mais l'envoi du fichier a échoué." 
           });
         }
       } else {
@@ -250,7 +280,7 @@ export default function MySpacePage() {
       setRequestForm(initialRequestForm);
       setSelectedFile(null);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur de soumission", description: err.message });
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
     }
@@ -272,6 +302,53 @@ export default function MySpacePage() {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleViewContractFile = async (contractId: string, type: "generated" | "signed") => {
+    setLoading(true);
+    try {
+      const idToken = await auth.currentUser!.getIdToken();
+      const result = await getContractSignedUrlAction({
+        entityId,
+        contractId,
+        idToken,
+        type
+      });
+      window.open(result.url, "_blank");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'accès", description: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUploadSignedContract = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !entityId || !activeContractForUpload || !contractFile) return;
+
+    setUploadingContract(true);
+    try {
+      const idToken = await auth.currentUser!.getIdToken();
+      const fileBase64 = await fileToBase64(contractFile);
+      
+      await uploadSignedContractAction({
+        entityId,
+        contractId: activeContractForUpload.contractId,
+        idToken,
+        fileBase64,
+        fileName: contractFile.name,
+        mimeType: contractFile.type
+      });
+
+      toast({ title: "Contrat signé envoyé", description: "Le document a été transmis à l'équipe RH." });
+      setIsContractUploadOpen(false);
+      setContractFile(null);
+      setActiveContractForUpload(null);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur de transfert", description: err.message });
+    } finally {
+      setUploadingContract(false);
     }
   };
 
@@ -370,11 +447,71 @@ export default function MySpacePage() {
             </div>
           )}
 
+          {/* Mes Contrats Section */}
+          <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
+             <CardHeader className="bg-secondary/10 border-b py-6 px-8">
+                <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
+                   <FileSignature className="w-4 h-4" /> Mes Contrats
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-0">
+                <Table>
+                   <TableHeader className="bg-slate-50/50">
+                      <TableRow>
+                        <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest">Type & Période</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase tracking-widest">Statut</TableHead>
+                        <TableHead className="text-right pr-8 text-[10px] font-black uppercase tracking-widest">Actions</TableHead>
+                      </TableRow>
+                   </TableHeader>
+                   <TableBody>
+                      {loadingContracts ? (
+                        <TableRow><TableCell colSpan={3} className="text-center py-10"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
+                      ) : !sortedContracts || sortedContracts.length === 0 ? (
+                        <TableRow><TableCell colSpan={3} className="text-center py-16 text-muted-foreground italic text-xs">Aucun contrat disponible.</TableCell></TableRow>
+                      ) : (
+                        sortedContracts.map(c => (
+                          <TableRow key={c.contractId} className="hover:bg-muted/50 transition-colors">
+                             <TableCell className="pl-8 py-4">
+                                <p className="font-bold text-slate-800 text-sm">{c.contractType}</p>
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                   Du {formatDate(c.startDate)} {c.endDate ? ` au ${formatDate(c.endDate)}` : ''}
+                                </p>
+                             </TableCell>
+                             <TableCell>
+                                {getContractStatusBadge(c.status)}
+                             </TableCell>
+                             <TableCell className="text-right pr-8">
+                                <div className="flex justify-end gap-2">
+                                   {c.generatedPdfStoragePath && (
+                                     <Button variant="ghost" size="sm" onClick={() => handleViewContractFile(c.contractId, "generated")} className="text-primary font-bold h-8 rounded-lg gap-1.5">
+                                        <Eye className="w-3.5 h-3.5" /> Consulter
+                                     </Button>
+                                   )}
+                                   {["pending_signature", "draft"].includes(c.status) && !c.signedDocumentId && (
+                                     <Button variant="secondary" size="sm" onClick={() => { setActiveContractForUpload(c); setIsContractUploadOpen(true); }} className="bg-accent/10 text-accent font-black h-8 rounded-lg uppercase text-[9px] gap-1.5 shadow-sm">
+                                        <Upload className="w-3.5 h-3.5" /> Signer / Retourner
+                                     </Button>
+                                   )}
+                                   {c.signedDocumentId && (
+                                      <Button variant="ghost" size="sm" onClick={() => handleViewContractFile(c.contractId, "signed")} className="text-green-600 font-bold h-8 rounded-lg gap-1.5">
+                                         <FileCheck className="w-3.5 h-3.5" /> Voir signé
+                                      </Button>
+                                   )}
+                                </div>
+                             </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                   </TableBody>
+                </Table>
+             </CardContent>
+          </Card>
+
           {/* Request History */}
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
              <CardHeader className="bg-secondary/10 border-b py-6 px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
-                   <History className="w-4 h-4" /> Mes Demandes
+                   <History className="w-4 h-4" /> Mes Demandes d'Absence
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-0">
@@ -475,8 +612,8 @@ export default function MySpacePage() {
                   <FolderOpen className="w-8 h-8 text-white" />
                 </div>
                 <div className="space-y-1">
-                   <h4 className="font-bold text-sm uppercase tracking-widest">Mes Documents</h4>
-                   <p className="text-[10px] opacity-70">Accédez à vos contrats et bulletins de paie.</p>
+                   <h4 className="font-bold text-sm uppercase tracking-widest">Mes Bulletins</h4>
+                   <p className="text-[10px] opacity-70">Accédez à l'historique de vos bulletins de paie.</p>
                 </div>
                 <Badge variant="outline" className="border-white/20 text-white text-[9px] font-black uppercase">Bientôt disponible</Badge>
              </CardContent>
@@ -484,7 +621,69 @@ export default function MySpacePage() {
         </div>
       </div>
 
-      {/* Creation Modal - Improved Scrollable Layout */}
+      {/* Contract Signed Upload Modal */}
+      <Dialog open={isContractUploadOpen} onOpenChange={setIsContractUploadOpen}>
+        <DialogContent className="sm:max-w-[500px] rounded-[2rem] overflow-hidden p-0">
+          <DialogHeader className="p-8 pb-4">
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+               <Upload className="w-5 h-5 text-accent" /> Retourner mon contrat signé
+            </DialogTitle>
+            <DialogDescription>Transmettez votre contrat signé pour validation et activation.</DialogDescription>
+          </DialogHeader>
+          
+          <div className="px-8 py-4 space-y-6">
+            <div className="p-4 bg-secondary/20 rounded-2xl border border-dashed flex items-center gap-3">
+               <FileSignature className="w-6 h-6 text-primary/40" />
+               <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-800 truncate">{activeContractForUpload?.contractType}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tight">ID: {activeContractForUpload?.contractId.substring(0, 8)}</p>
+               </div>
+            </div>
+
+            <div className="space-y-3">
+              <Label className="text-[10px] uppercase font-black text-muted-foreground">Sélectionner le fichier (PDF, PNG, JPG)</Label>
+              <div className={cn(
+                "border-2 border-dashed rounded-2xl p-8 transition-all relative flex flex-col items-center justify-center gap-2 text-center",
+                contractFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100 cursor-pointer"
+              )}>
+                 <Input 
+                   type="file" 
+                   accept=".pdf,.png,.jpg,.jpeg" 
+                   className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                   onChange={(e) => setContractFile(e.target.files?.[0] || null)}
+                 />
+                 {contractFile ? (
+                    <>
+                      <div className="bg-green-100 p-2 rounded-xl text-green-600 mb-1"><FileCheck className="w-5 h-5" /></div>
+                      <p className="text-xs font-bold text-green-800">{contractFile.name}</p>
+                    </>
+                 ) : (
+                    <>
+                      <Upload className="w-6 h-6 text-slate-300 mb-1" />
+                      <p className="text-xs font-bold text-slate-600">Cliquer pour choisir le document signé</p>
+                    </>
+                 )}
+              </div>
+            </div>
+
+            <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
+               <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+               <p className="text-[10px] text-blue-800 leading-relaxed font-medium">
+                  Une fois transmis, le service RH sera notifié. Votre contrat sera activé après vérification manuelle de la signature.
+               </p>
+            </div>
+          </div>
+
+          <DialogFooter className="p-8 border-t bg-slate-50 flex gap-2">
+             <Button variant="ghost" type="button" onClick={() => setIsContractUploadOpen(false)} disabled={uploadingContract}>Annuler</Button>
+             <Button onClick={handleUploadSignedContract} disabled={uploadingContract || !contractFile} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
+                {uploadingContract ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Confirmer l'envoi
+             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Creation Modal */}
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
         <DialogContent className="sm:max-w-[550px] flex flex-col h-[100dvh] max-h-[100dvh] md:h-auto md:max-h-[85vh] p-0 rounded-[2rem] overflow-hidden">
           <DialogHeader className="p-8 pb-4 shrink-0">
@@ -721,6 +920,17 @@ function getStatusBadge(status: string) {
     case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[10px] h-5">Refusée</Badge>;
     case 'cancelled': return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200 text-[10px] h-5">Annulée</Badge>;
     default: return <Badge variant="outline" className="text-[10px] h-5">{status}</Badge>;
+  }
+}
+
+function getContractStatusBadge(status: string) {
+  switch (status) {
+    case 'active': return <Badge className="bg-green-500 text-white border-none text-[9px] font-black uppercase px-2 h-5">Actif</Badge>;
+    case 'pending_signature': return <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 text-[9px] font-black uppercase px-2 h-5">Signature</Badge>;
+    case 'pending_activation': return <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[9px] font-black uppercase px-2 h-5">En attente</Badge>;
+    case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-500 text-[9px] font-black uppercase px-2 h-5">Brouillon</Badge>;
+    case 'terminated': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200 text-[9px] font-black uppercase px-2 h-5">Clôturé</Badge>;
+    default: return <Badge variant="outline" className="text-[9px] font-black uppercase px-2 h-5">{status}</Badge>;
   }
 }
 
