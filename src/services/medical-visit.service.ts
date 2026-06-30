@@ -16,6 +16,7 @@ import { MedicalVisit } from "@/types/medical-visit";
 import { createAuditLog } from "./audit.service";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { createNotification } from "./notification.service";
 
 /**
  * Removes undefined properties from an object before Firestore write.
@@ -70,6 +71,30 @@ export async function createMedicalVisit(entityId: string, data: Partial<Medical
       resourceId: visitId,
       details: { visitType: data.visitType, employeeId: data.employeeId }
     });
+
+    // Notify Employee (Non-blocking)
+    if (data.employeeId) {
+      void (async () => {
+        try {
+          const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, data.employeeId));
+          const empData = empSnap.data();
+          if (empData?.userId) {
+            await createNotification(entityId, {
+              targetUid: empData.userId,
+              audience: "employee",
+              category: "medical",
+              severity: "info",
+              title: "Visite médicale planifiée",
+              message: "Votre visite médicale a été planifiée.",
+              actionUrl: `/entity/${entityId}/my-space`,
+              dedupKey: `medical_visit_planned:${visitId}`
+            });
+          }
+        } catch (notifErr) {
+          console.warn("[Notification] Medical visit notification failed (silent):", notifErr);
+        }
+      })();
+    }
 
     return visitId;
   } catch (err: any) {

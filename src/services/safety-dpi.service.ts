@@ -12,6 +12,7 @@ import { SafetyDpiAssignment } from "@/types/safety-dpi";
 import { createAuditLog } from "./audit.service";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { createNotification } from "./notification.service";
 
 /**
  * Utility to remove undefined properties from an object to prevent Firestore errors.
@@ -87,6 +88,30 @@ export async function createDpiAssignment(entityId: string, data: Partial<Safety
       resourceId: assignmentId,
       details: { dpiName: data.dpiName, employeeId: data.employeeId }
     });
+
+    // Notify Employee (Non-blocking)
+    if (data.employeeId) {
+      void (async () => {
+        try {
+          const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, data.employeeId));
+          const empData = empSnap.data();
+          if (empData?.userId) {
+            await createNotification(entityId, {
+              targetUid: empData.userId,
+              audience: "employee",
+              category: "safety",
+              severity: "info",
+              title: "EPI/DPI remis",
+              message: "Un équipement de protection vous a été affecté.",
+              actionUrl: `/entity/${entityId}/my-space`,
+              dedupKey: `safety_assigned:${assignmentId}`
+            });
+          }
+        } catch (notifErr) {
+          console.warn("[Notification] Safety notification failed (silent):", notifErr);
+        }
+      })();
+    }
 
     return assignmentId;
   } catch (err: any) {

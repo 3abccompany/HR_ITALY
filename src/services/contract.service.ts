@@ -18,6 +18,7 @@ import { registerSignedContractDocument } from "./document.service";
 import { Employee } from "@/types/employee";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { createNotification } from "./notification.service";
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -177,6 +178,32 @@ export async function sendContractToSignature(entityId: string, contractId: stri
     resourceType: "contract",
     resourceId: contractId,
   });
+
+  // Notify Employee (Non-blocking)
+  void (async () => {
+    try {
+      const contractSnap = await getDoc(contractRef);
+      const contractData = contractSnap.data();
+      if (contractData?.employeeId) {
+        const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, contractData.employeeId));
+        const empData = empSnap.data();
+        if (empData?.userId) {
+          await createNotification(entityId, {
+            targetUid: empData.userId,
+            audience: "employee",
+            category: "contract",
+            severity: "info",
+            title: "Contrat disponible",
+            message: "Un contrat est disponible dans votre espace.",
+            actionUrl: `/entity/${entityId}/my-space`,
+            dedupKey: `contract_available:${contractId}`
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.warn("[Notification] Contract signature notification failed (silent):", notifErr);
+    }
+  })();
 }
 
 /**

@@ -18,6 +18,7 @@ import { Training } from "@/types/training";
 import { createAuditLog } from "./audit.service";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { createNotification } from "./notification.service";
 
 /**
  * Removes undefined properties from an object before Firestore write.
@@ -97,6 +98,30 @@ export async function createTraining(entityId: string, data: Partial<Training>, 
       resourceId: trainingId,
       details: { title: data.title, type: data.trainingType, employeeId: data.employeeId }
     });
+
+    // Notify Employee (Non-blocking)
+    if (data.employeeId) {
+      void (async () => {
+        try {
+          const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, data.employeeId));
+          const empData = empSnap.data();
+          if (empData?.userId) {
+            await createNotification(entityId, {
+              targetUid: empData.userId,
+              audience: "employee",
+              category: "training",
+              severity: "info",
+              title: "Formation planifiée",
+              message: "Une formation vous a été planifiée.",
+              actionUrl: `/entity/${entityId}/my-space`,
+              dedupKey: `training_planned:${trainingId}`
+            });
+          }
+        } catch (notifErr) {
+          console.warn("[Notification] Training notification failed (silent):", notifErr);
+        }
+      })();
+    }
 
     return trainingId;
   } catch (err: any) {
@@ -183,6 +208,34 @@ export async function createTrainingBatch(
     resourceId: batchId,
     details: { count: employees.length, title: payload.title }
   });
+
+  // Notify Each Employee Individually (Non-blocking)
+  void (async () => {
+    try {
+      for (let i = 0; i < employees.length; i++) {
+        const empId = employees[i].employeeId;
+        const trainingId = createdIds[i];
+        
+        const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, empId));
+        const empData = empSnap.data();
+        
+        if (empData?.userId) {
+          await createNotification(entityId, {
+            targetUid: empData.userId,
+            audience: "employee",
+            category: "training",
+            severity: "info",
+            title: "Formation planifiée",
+            message: "Une formation vous a été planifiée.",
+            actionUrl: `/entity/${entityId}/my-space`,
+            dedupKey: `training_planned:${trainingId}`
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.warn("[Notification] Batch training notification loop failed (silent):", notifErr);
+    }
+  })();
 
   return { batchId, count: employees.length };
 }
