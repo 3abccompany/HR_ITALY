@@ -85,6 +85,7 @@ interface Filters {
   search: string;
   status: string;
   decision: string;
+  confirmation: string;
   interviewer: string;
   job: string;
   department: string;
@@ -96,6 +97,7 @@ const initialFilters: Filters = {
   search: "",
   status: "all",
   decision: "all",
+  confirmation: "all",
   interviewer: "all",
   job: "all",
   department: "all",
@@ -320,6 +322,12 @@ export default function InterviewsManagementPage() {
       if (filters.decision !== "all") {
         const d = i.decision || "pending";
         if (d !== filters.decision) return false;
+      }
+
+      // Confirmation
+      if (filters.confirmation !== "all") {
+        const c = i.confirmationStatus || "pending";
+        if (c !== filters.confirmation) return false;
       }
 
       // Interviewer
@@ -678,6 +686,19 @@ export default function InterviewsManagementPage() {
                 ]}
               />
 
+              {/* Confirmation Filter */}
+              <FilterDropdown 
+                label="Confirmation" 
+                value={filters.confirmation} 
+                onValueChange={(v) => handleUpdateFilter('confirmation', v)}
+                options={[
+                  { label: "Confirmé", value: "confirmed" },
+                  { label: "En attente", value: "pending" },
+                  { label: "Refusé", value: "declined" },
+                  { label: "Lien expiré", value: "expired" }
+                ]}
+              />
+
               {/* Recruiter Filter */}
               <FilterDropdown 
                 label="Recruteur" 
@@ -740,6 +761,7 @@ export default function InterviewsManagementPage() {
               let label = value;
               if (key === 'status') label = getStatusLabel(value);
               if (key === 'decision') label = getDecisionLabel(value);
+              if (key === 'confirmation') label = `Confirmation: ${value === 'pending' ? 'En attente' : value === 'declined' ? 'Refusé' : value === 'confirmed' ? 'Confirmé' : 'Expiré'}`;
               if (key === 'date') label = value.replace('_', ' ');
 
               return (
@@ -853,22 +875,22 @@ export default function InterviewsManagementPage() {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 {canUpdate && (
-                                  <DropdownMenuItem onClick={() => handleEdit(i)} className="gap-2">
+                                  <DropdownMenuItem onSelect={() => setTimeout(() => handleEdit(i), 0)} className="gap-2">
                                     <Edit className="w-4 h-4" /> Modifier
                                   </DropdownMenuItem>
                                 )}
                                 {canDecide && i.status !== 'inactive' && (
-                                  <DropdownMenuItem onClick={() => handleOpenDecision(i)} className="gap-2 font-bold text-primary">
+                                  <DropdownMenuItem onSelect={() => setTimeout(() => handleOpenDecision(i), 0)} className="gap-2 font-bold text-primary">
                                     <CheckCircle2 className="w-4 h-4" /> Décision
                                   </DropdownMenuItem>
                                 )}
                                 {canUpdate && (
                                   i.status !== 'inactive' ? (
-                                    <DropdownMenuItem onClick={() => setDisablingId(i.interviewId)} className="gap-2 text-destructive">
+                                    <DropdownMenuItem onSelect={() => setDisablingId(i.interviewId)} className="gap-2 text-destructive">
                                       <PowerOff className="w-4 h-4" /> Désactiver
                                     </DropdownMenuItem>
                                   ) : (
-                                    <DropdownMenuItem onClick={() => setReactivatingId(i.interviewId)} className="gap-2 text-green-600">
+                                    <DropdownMenuItem onSelect={() => setReactivatingId(i.interviewId)} className="gap-2 text-green-600">
                                       <RefreshCcw className="w-4 h-4" /> Réactiver
                                     </DropdownMenuItem>
                                   )
