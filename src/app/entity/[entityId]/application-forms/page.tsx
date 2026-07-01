@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo } from "react";
@@ -595,23 +594,23 @@ function FormsTable({
                     <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/application-forms/${f.formId}/preview`)} className="gap-2">
+                    <DropdownMenuItem onSelect={() => setTimeout(() => router.push(`/entity/${entityId}/application-forms/${f.formId}/preview`), 0)} className="gap-2">
                       <Eye className="w-4 h-4" /> Aperçu HR
                     </DropdownMenuItem>
                     
                     {f.publicSlug && (
                       <>
-                        <DropdownMenuItem onClick={() => onOpen(f.publicSlug)} className="gap-2 text-accent font-bold">
+                        <DropdownMenuItem onSelect={() => setTimeout(() => onOpen(f.publicSlug), 0)} className="gap-2 text-accent font-bold">
                           <ExternalLink className="w-4 h-4" /> Ouvrir le formulaire
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => onCopy(f.publicSlug)} className="gap-2">
+                        <DropdownMenuItem onSelect={() => setTimeout(() => onCopy(f.publicSlug), 0)} className="gap-2">
                           <Copy className="w-4 h-4" /> Copier le lien public
                         </DropdownMenuItem>
                       </>
                     )}
 
                     {canUpdate && (f.status === 'draft' || f.status === 'published') && (
-                      <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/application-forms/${f.formId}/edit`)} className="gap-2">
+                      <DropdownMenuItem onSelect={() => setTimeout(() => router.push(`/entity/${entityId}/application-forms/${f.formId}/edit`), 0)} className="gap-2">
                         <Edit className="w-4 h-4" /> Configurer
                       </DropdownMenuItem>
                     )}
@@ -619,17 +618,17 @@ function FormsTable({
                     <DropdownMenuSeparator />
 
                     {canPublish && f.status === 'draft' && (
-                      <DropdownMenuItem onClick={() => onAction(f.formId, 'publish')} className="gap-2 text-green-600 font-bold">
+                      <DropdownMenuItem onSelect={() => setTimeout(() => onAction(f.formId, 'publish'), 0)} className="gap-2 text-green-600 font-bold">
                         <Globe className="w-4 h-4" /> Publier l'offre
                       </DropdownMenuItem>
                     )}
                     {canUpdate && f.status === 'published' && (
-                      <DropdownMenuItem onClick={() => onAction(f.formId, 'close')} className="gap-2 text-orange-600">
+                      <DropdownMenuItem onSelect={() => setTimeout(() => onAction(f.formId, 'close'), 0)} className="gap-2 text-orange-600">
                         <XCircle className="w-4 h-4" /> Fermer l'offre
                       </DropdownMenuItem>
                     )}
                     {canUpdate && f.status !== 'archived' && (
-                      <DropdownMenuItem onClick={() => onAction(f.formId, 'archive')} className="gap-2 text-muted-foreground">
+                      <DropdownMenuItem onSelect={() => setTimeout(() => onAction(f.formId, 'archive'), 0)} className="gap-2 text-muted-foreground">
                         <Archive className="w-4 h-4" /> Archiver
                       </DropdownMenuItem>
                     )}
