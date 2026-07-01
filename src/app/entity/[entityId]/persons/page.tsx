@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -334,8 +335,6 @@ export default function PersonsManagementPage() {
     document.body.removeChild(link);
   };
 
-  // --- Original Handlers (Preserved) ---
-
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target;
     setFormData(prev => ({ ...prev, [id]: value }));
@@ -469,8 +468,8 @@ export default function PersonsManagementPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      <div className="p-8 pb-4 shrink-0 flex flex-col gap-6">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 pb-24">
+      <div className="flex flex-col gap-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-headline font-bold text-primary">Base de données Personnes</h1>
@@ -548,170 +547,170 @@ export default function PersonsManagementPage() {
           </ScrollArea>
 
           {/* Filter Chips */}
-          <div className="flex flex-wrap items-center gap-2 min-h-[32px]">
-            {Object.entries(filters).map(([key, value]) => {
-              if (key === 'search' || value === 'all' || !value) return null;
-              return (
-                <Badge key={key} variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
-                  {value}
-                  <button onClick={() => handleRemoveFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5">
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </Badge>
-              );
-            })}
+          <div className="flex items-center justify-between px-1">
+            <div className="flex flex-wrap items-center gap-2 min-h-[32px]">
+              {Object.entries(filters).map(([key, value]) => {
+                if (key === 'search' || value === 'all' || !value) return null;
+                return (
+                  <Badge key={key} variant="secondary" className="gap-1.5 py-1 px-2.5 text-[10px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
+                    {value}
+                    <button onClick={() => handleRemoveFilter(key as keyof Filters)} className="hover:bg-primary/10 rounded-full p-0.5">
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </Badge>
+                );
+              })}
+            </div>
             
             {sortedPersons.length > 0 && !loadingPersons && (
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest ml-auto mr-2">
-                {sortedPersons.length} personne{sortedPersons.length > 1 ? 's' : ''} trouvée{sortedPersons.length > 1 ? 's' : ''}
+                {totalResults} personne{totalResults > 1 ? 's' : ''} trouvée{totalResults > 1 ? 's' : ''}
               </span>
             )}
           </div>
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden p-8 pt-0">
-        {/* Full Width Table Section */}
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
-            <div className="flex-1 overflow-auto">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-secondary/20">
-                  <TableRow>
-                    <TableHead>
-                      <button onClick={() => handleToggleSort('displayName')} className="flex items-center gap-1 hover:text-primary transition-colors">
-                        Identité {sort.field === 'displayName' && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-                      </button>
-                    </TableHead>
-                    <TableHead className="hidden md:table-cell">
-                      <button onClick={() => handleToggleSort('email')} className="flex items-center gap-1 hover:text-primary transition-colors">
-                        Contact {sort.field === 'email' && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-                      </button>
-                    </TableHead>
-                    <TableHead>
-                      <button onClick={() => handleToggleSort('currentLifecycleStatus' as any)} className="flex items-center gap-1 hover:text-primary transition-colors">
-                        Situation {sort.field === 'currentLifecycleStatus' as any && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-                      </button>
-                    </TableHead>
-                    <TableHead>
-                      <button onClick={() => handleToggleSort('status')} className="flex items-center gap-1 hover:text-primary transition-colors">
-                        Statut {sort.field === 'status' && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-                      </button>
-                    </TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loadingPersons ? (
-                    <TableRow><TableCell colSpan={5} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-                  ) : paginatedPersons.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">Aucune personne ne correspond aux filtres.</TableCell></TableRow>
-                  ) : (
-                    paginatedPersons.map((p) => (
-                      <TableRow 
-                        key={p.personId} 
-                        onClick={() => setSelectedPerson(p)}
-                        className={cn(
-                          "cursor-pointer transition-colors", 
-                          selectedPerson?.personId === p.personId ? "bg-primary/5 hover:bg-primary/5" : "hover:bg-muted/50"
-                        )}
-                      >
-                        <TableCell>
-                          <div className="font-bold text-primary">{p.displayName || "Non renseigné"}</div>
-                          <div className="text-[10px] text-muted-foreground uppercase font-mono mt-0.5">{p.codiceFiscale || "SANS ID"}</div>
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell">
-                          <div className="flex flex-col gap-0.5">
-                            <div className="text-xs flex items-center gap-1"><Mail className="w-2.5 h-2.5 opacity-50" /> {p.email || "Non renseigné"}</div>
-                            {p.phone && <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Phone className="w-2.5 h-2.5 opacity-50" /> {p.phone}</div>}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {getLifecycleBadge(p.currentLifecycleStatus)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={p.status === 'active' ? 'default' : 'outline'} className={p.status === 'active' ? "bg-green-500 hover:bg-green-600 border-none" : ""}>
-                            {p.status === 'active' ? "Actif" : "Inactif"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                          {canUpdate && (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => handleEdit(p)} className="gap-2">
-                                  <Edit className="w-4 h-4" /> Modifier
-                                </DropdownMenuItem>
-                                {p.status === 'active' ? (
-                                  <DropdownMenuItem onClick={() => setDisablingId(p.personId)} className="gap-2 text-destructive">
-                                    <PowerOff className="w-4 h-4" /> Désactiver
-                                  </DropdownMenuItem>
-                                ) : (
-                                  <DropdownMenuItem onClick={() => setReactivatingId(p.personId)} className="gap-2 text-green-600">
-                                    <RefreshCcw className="w-4 h-4" /> Réactiver
-                                  </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-            
-            {/* Pagination Footer */}
-            <div className="border-t bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
-               <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground">Lignes par page:</span>
-                    <Select 
-                      value={String(pagination.pageSize)} 
-                      onValueChange={(v) => setPagination(p => ({ ...p, pageSize: Number(v), page: 1 }))}
+      <div className="space-y-4">
+        {/* Table Container */}
+        <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem]">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-secondary/20">
+                <TableRow>
+                  <TableHead>
+                    <button onClick={() => handleToggleSort('displayName')} className="flex items-center gap-1 hover:text-primary transition-colors uppercase text-[10px] font-black tracking-widest">
+                      Identité {sort.field === 'displayName' && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                    </button>
+                  </TableHead>
+                  <TableHead className="hidden md:table-cell uppercase text-[10px] font-black tracking-widest text-muted-foreground">
+                    <button onClick={() => handleToggleSort('email')} className="flex items-center gap-1 hover:text-primary transition-colors">
+                      Contact {sort.field === 'email' && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                    </button>
+                  </TableHead>
+                  <TableHead className="uppercase text-[10px] font-black tracking-widest text-muted-foreground">
+                    <button onClick={() => handleToggleSort('currentLifecycleStatus' as any)} className="flex items-center gap-1 hover:text-primary transition-colors">
+                      Situation {sort.field === 'currentLifecycleStatus' as any && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                    </button>
+                  </TableHead>
+                  <TableHead className="uppercase text-[10px] font-black tracking-widest text-muted-foreground">
+                    <button onClick={() => handleToggleSort('status')} className="flex items-center gap-1 hover:text-primary transition-colors">
+                      Statut {sort.field === 'status' && (sort.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                    </button>
+                  </TableHead>
+                  <TableHead className="text-right uppercase text-[10px] font-black tracking-widest text-muted-foreground pr-6">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingPersons ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                ) : paginatedPersons.length === 0 ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic text-xs">Aucune personne ne correspond aux filtres.</TableCell></TableRow>
+                ) : (
+                  paginatedPersons.map((p) => (
+                    <TableRow 
+                      key={p.personId} 
+                      onClick={() => setSelectedPerson(p)}
+                      className={cn(
+                        "cursor-pointer transition-colors", 
+                        selectedPerson?.personId === p.personId ? "bg-primary/5 hover:bg-primary/5" : "hover:bg-muted/50"
+                      )}
                     >
-                      <SelectTrigger className="h-7 w-20 text-[10px] font-bold">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="10">10</SelectItem>
-                        <SelectItem value="25">25</SelectItem>
-                        <SelectItem value="50">50</SelectItem>
-                        <SelectItem value="100">100</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase">
-                    Page {pagination.page} sur {Math.max(1, totalPages)}
-                  </span>
-               </div>
-               
-               <div className="flex items-center gap-2">
-                 <Button 
-                   variant="outline" 
-                   size="icon" 
-                   className="h-8 w-8" 
-                   onClick={() => setPagination(p => ({ ...p, page: p.page - 1 }))}
-                   disabled={pagination.page <= 1}
-                 >
-                   <ChevronLeft className="w-4 h-4" />
-                 </Button>
-                 <Button 
-                   variant="outline" 
-                   size="icon" 
-                   className="h-8 w-8" 
-                   onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
-                   disabled={pagination.page >= totalPages}
-                 >
-                   <ChevronRight className="w-4 h-4" />
-                 </Button>
-               </div>
-            </div>
-          </Card>
-        </div>
+                      <TableCell>
+                        <div className="font-bold text-primary">{p.displayName || "Non renseigné"}</div>
+                        <div className="text-[10px] text-muted-foreground uppercase font-mono mt-0.5">{p.codiceFiscale || "SANS ID"}</div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-xs flex items-center gap-1"><Mail className="w-2.5 h-2.5 opacity-50" /> {p.email || "Non renseigné"}</div>
+                          {p.phone && <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Phone className="w-2.5 h-2.5 opacity-50" /> {p.phone}</div>}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {getLifecycleBadge(p.currentLifecycleStatus)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={p.status === 'active' ? 'default' : 'outline'} className={p.status === 'active' ? "bg-green-500 hover:bg-green-600 border-none" : ""}>
+                          {p.status === 'active' ? "Actif" : "Inactif"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right pr-6" onClick={(e) => e.stopPropagation()}>
+                        {canUpdate && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => setTimeout(() => handleEdit(p), 0)} className="gap-2">
+                                <Edit className="w-4 h-4" /> Modifier
+                              </DropdownMenuItem>
+                              {p.status === 'active' ? (
+                                <DropdownMenuItem onSelect={() => setDisablingId(p.personId)} className="gap-2 text-destructive">
+                                  <PowerOff className="w-4 h-4" /> Désactiver
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onSelect={() => setReactivatingId(p.personId)} className="gap-2 text-green-600">
+                                  <RefreshCcw className="w-4 h-4" /> Réactiver
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          
+          {/* Pagination Footer */}
+          <div className="border-t bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
+             <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Lignes:</span>
+                  <Select 
+                    value={String(pagination.pageSize)} 
+                    onValueChange={(v) => { setPagination(p => ({ ...p, pageSize: Number(v), page: 1 })); }}
+                  >
+                    <SelectTrigger className="h-7 w-20 text-[10px] font-bold">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                  Page {pagination.page} sur {Math.max(1, totalPages)}
+                </span>
+             </div>
+             
+             <div className="flex items-center gap-2">
+               <Button 
+                 variant="outline" 
+                 size="icon" 
+                 className="h-8 w-8" 
+                 onClick={() => setPagination(p => ({ ...p, page: p.page - 1 }))}
+                 disabled={pagination.page <= 1}
+               >
+                 <ChevronLeft className="w-4 h-4" />
+               </Button>
+               <Button 
+                 variant="outline" 
+                 size="icon" 
+                 className="h-8 w-8" 
+                 onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
+                 disabled={pagination.page >= totalPages}
+               >
+                 <ChevronRight className="w-4 h-4" />
+               </Button>
+             </div>
+          </div>
+        </Card>
       </div>
 
       {/* Person Detail Right-side Drawer */}
