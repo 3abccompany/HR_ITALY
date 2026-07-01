@@ -180,6 +180,8 @@ export default function ContractDetailPage() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isValidationDialogOpen, setIsValidationDialogOpen] = useState(false);
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
+  const [activeLevels, setActiveLevels] = useState<any[]>([]);
+  const [loadingLevels, setLoadingLevels] = useState(false);
 
   // Actor label resolution helper
   const getActorLabel = (uid?: string) => {
