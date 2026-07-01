@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -17,10 +16,6 @@ import {
   Info,
   Plus,
   Scale,
-  CheckCircle,
-  Circle,
-  Trash2,
-  Globe,
   History,
   Mail,
   Phone,
@@ -162,8 +157,21 @@ export default function EditEmploymentOfferPage() {
   const [isCustomDocOpen, setIsCustomDocOpen] = useState(false);
   const [customDocForm, setCustomDocForm] = useState({ label: "", type: "other", isRequired: true, description: "" });
 
+  const annualToDisplay = useMemo(() => {
+    if (!offer) return null;
+    if (offer.proposedGrossAnnual && offer.proposedGrossAnnual > 0) return offer.proposedGrossAnnual;
+    const m = Number(offer.proposedGrossMonthly || 0);
+    const p = Number(offer.monthlyPayments ?? 13);
+    if (m > 0) return m * p;
+    return null;
+  }, [offer]);
+
   const handleEnterEdit = () => {
     if (offer) {
+      const monthly = offer.proposedGrossMonthly || 0;
+      const payments = offer.monthlyPayments || 13;
+      const annual = offer.proposedGrossAnnual || (monthly > 0 ? Number((monthly * payments).toFixed(2)) : 0);
+
       setEditForm({
         contractType: offer.contractType || "",
         ccnlName: offer.ccnlName || "",
@@ -173,9 +181,9 @@ export default function EditEmploymentOfferPage() {
         weeklyHours: offer.weeklyHours || 40,
         workingTime: offer.workingTime || "Tempo pieno (Full-time)",
         trialPeriodDays: offer.trialPeriodDays || 0,
-        proposedGrossMonthly: offer.proposedGrossMonthly || 0,
-        monthlyPayments: offer.monthlyPayments || 13,
-        proposedGrossAnnual: offer.proposedGrossAnnual || 0,
+        proposedGrossMonthly: monthly,
+        monthlyPayments: payments,
+        proposedGrossAnnual: annual,
         salaryNotes: offer.salaryNotes || ""
       });
       setIsEditing(true);
@@ -251,7 +259,9 @@ export default function EditEmploymentOfferPage() {
       toast({ title: "Dossier initialisé" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleAddCustomDoc = async (e: React.FormEvent) => {
@@ -549,7 +559,9 @@ export default function EditEmploymentOfferPage() {
                            value={String(editForm.monthlyPayments ?? 13)} 
                            onValueChange={(v) => handleUpdateEditField('monthlyPayments', parseInt(v))}
                          >
-                           <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
+                           <SelectTrigger className="rounded-xl">
+                              <SelectValue />
+                           </SelectTrigger>
                            <SelectContent>
                               <SelectItem value="12">12 mensualités</SelectItem>
                               <SelectItem value="13">13 mensualités</SelectItem>
@@ -579,13 +591,13 @@ export default function EditEmploymentOfferPage() {
                    <div className="space-y-6">
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                          <div className="bg-slate-50 p-4 rounded-2xl border text-center">
-                            <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Brut Mensuel</p>
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Brut Mensuel</p>
                             <p className="text-xl font-black text-slate-800">€ {offer.proposedGrossMonthly?.toLocaleString('fr-FR') || "—"}</p>
                             <p className="text-[8px] text-muted-foreground font-bold uppercase mt-1">{offer.monthlyPayments || 13} mensualités</p>
                          </div>
                          <div className="md:col-span-2 bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center ring-2 ring-primary/5">
-                            <p className="text-[9px] font-black uppercase text-primary/60 mb-1">RAL (Annuel)</p>
-                            <p className="text-xl font-black text-primary">€ {offer.proposedGrossAnnual?.toLocaleString('fr-FR') || "—"}</p>
+                            <p className="text-[9px] font-black uppercase text-primary/60 mb-1">RAL (Annuel estimé)</p>
+                            <p className="text-xl font-black text-primary">€ {annualToDisplay?.toLocaleString('fr-FR') || "—"}</p>
                          </div>
                       </div>
                       {offer.salaryNotes && (
@@ -926,3 +938,22 @@ const STATUS_LABELS: Record<string, string> = {
   expired: "Expirée",
   cancelled: "Annulée"
 };
+
+function Circle(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+    </svg>
+  )
+}
