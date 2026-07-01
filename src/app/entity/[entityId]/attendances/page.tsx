@@ -9,14 +9,15 @@ import {
   AlertCircle,
   Calendar,
   CheckCircle2,
-  Info
+  Info,
+  Loader2
 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { Loader2 } from "lucide-react";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 /**
  * Attendance Registry Skeleton (Phase 1).
