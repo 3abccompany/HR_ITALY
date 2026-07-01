@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -21,7 +22,9 @@ import {
   Trash2,
   Globe,
   History,
-  Mail
+  Mail,
+  Phone,
+  Fingerprint
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -78,32 +81,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { format, isBefore, startOfDay, differenceInDays } from "date-fns";
 import { fr } from "date-fns/locale";
-import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-
-const CONTRACT_TYPES = [
-  "Tempo indeterminato",
-  "Tempo determinato",
-  "Apprendistato",
-  "Stage / Tirocinio",
-  "Altro"
-];
-
-const WORKING_TIME_OPTIONS = [
-  "Tempo pieno (Full-time)",
-  "Tempo parziale (Part-time)",
-  "Intermittente / Chiamata"
-];
-
-const REVISION_REASONS = [
-  "Nouvelle négociation",
-  "Salaire modifié",
-  "Niveau CCNL modifié",
-  "Date de début modifiée",
-  "Autre poste",
-  "Correction / erreur dans la proposition précédente",
-  "Autre"
-];
 
 export default function EditEmploymentOfferPage() {
   const params = useParams();
@@ -111,7 +88,7 @@ export default function EditEmploymentOfferPage() {
   const entityId = params?.entityId as string;
   const offerId = params?.offerId as string;
   
-  const { db, storage } = useFirebase();
+  const { db } = useFirebase();
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
@@ -157,32 +134,12 @@ export default function EditEmploymentOfferPage() {
     (item: any) => item.type === "UNILAV_ASSUNZIONE"
   );
 
-  // Master Data
-  const ccnlsQuery = useMemo(() => db && entityId ? query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<any> : null, [db, entityId]);
-  const { data: activeCcnls } = useCollection<any>(ccnlsQuery);
-
-  const needRef = useMemo(() => db && entityId && offer?.recruitmentNeedId ? doc(db, `entities/${entityId}/recruitmentNeeds`, offer.recruitmentNeedId) as DocumentReference<RecruitmentNeed> : null, [db, entityId, offer?.recruitmentNeedId]);
-  const { data: need } = useDoc<RecruitmentNeed>(needRef);
-
-  const [formData, setFormData] = useState<Partial<EmploymentOffer>>({});
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [converting, setConverting] = useState(false);
-  const [processing, setProcessing] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
-  const [uploadingItem, setUploadingItem] = useState<string | null>(null);
-
-  // Email Preview States
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [emailPreview, setEmailPreview] = useState<{ to: string, subject: string, html: string } | null>(null);
-  const [editableSubject, setEditableSubject] = useState("");
-  const [editableBody, setEditableBody] = useState("");
-
-  // Custom Doc Dialog State
-  const [isCustomDocOpen, setIsCustomDocOpen] = useState(false);
-  const [customDocForm, setCustomDocForm] = useState({ label: "", type: "other", isRequired: true, description: "" });
 
   // New Upload States
   const [pendingUploadItem, setPendingUploadItem] = useState<PreHireDocument | null>(null);
@@ -191,127 +148,20 @@ export default function EditEmploymentOfferPage() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isUploadingPreHireDocument, setIsUploadingPreHireDocument] = useState(false);
 
-  // UniLav Form State
-  const [uniLavData, setUniLavData] = useState({
-    protocolNumber: "",
-    submittedAt: "",
-    receiptPdfUrl: ""
-  });
-  const [savingUniLav, setSavingUniLav] = useState(false);
-
-  // Server-side fetching for levels
-  const [activeLevels, setActiveLevels] = useState<any[]>([]);
-  const [loadingLevels, setLoadingLevels] = useState(false);
-
-  useEffect(() => {
-    async function fetchLevels() {
-      if (!offer) return;
-      const ccnlId = formData.ccnlId || offer.ccnlId;
-      if (!ccnlId || ccnlId === "none_clear" || !entityId || !user) {
-        setActiveLevels([]);
-        return;
-      }
-      setLoadingLevels(true);
-      try {
-        const idToken = await auth.currentUser?.getIdToken();
-        if (idToken) {
-          const levels = await getLevelsForCcnlAction(entityId, ccnlId, idToken);
-          setActiveLevels(levels);
-        }
-      } catch (err) {
-        console.error("Error fetching levels:", err);
-      } finally {
-        setLoadingLevels(false);
-      }
-    }
-    if (user && offer) fetchLevels();
-  }, [formData.ccnlId, entityId, user, auth.currentUser, offer]);
-
-  useEffect(() => {
-    if (offer) setFormData(offer);
-  }, [offer]);
-
-  useEffect(() => {
-    if (mandatoryCommunication) {
-      setUniLavData({
-        protocolNumber: mandatoryCommunication.protocolNumber || "",
-        submittedAt: mandatoryCommunication.submittedAt ? (mandatoryCommunication.submittedAt.seconds ? new Date(mandatoryCommunication.submittedAt.seconds * 1000).toISOString().split('T')[0] : mandatoryCommunication.submittedAt) : "",
-        receiptPdfUrl: mandatoryCommunication.receiptPdfUrl || ""
-      });
-    }
-  }, [mandatoryCommunication]);
-
-  const handleCcnlChange = (ccnlId: string) => {
-    if (ccnlId === "none_clear") {
-      setFormData(p => ({ ...p, ccnlId: "", ccnlName: "", cnelCode: "", levelId: "", levelCode: "", levelLabel: "" }));
-      return;
-    }
-    const foundCcnl = activeCcnls?.find((c: any) => c.id === ccnlId);
-    setFormData(p => ({
-      ...p,
-      ccnlId,
-      ccnlName: foundCcnl?.name || "",
-      cnelCode: foundCcnl?.cnelCode || "",
-      monthlyPayments: foundCcnl?.monthlyPayments || 13,
-      hourlyDivisor: foundCcnl?.hourlyDivisor || 173,
-      levelId: "", levelCode: "", levelLabel: ""
-    }));
-  };
-
-  const handleLevelChange = (levelId: string) => {
-    if (levelId === "none_clear") {
-       setFormData(p => ({ ...p, levelId: "", levelCode: "", levelLabel: "", qualificationLabel: "" }));
-       return;
-    }
-    const foundLevel = activeLevels?.find(l => l.id === levelId);
-    setFormData(p => {
-      const monthly = foundLevel?.minimumGrossMonthly || 0;
-      return {
-        ...p,
-        levelId,
-        levelCode: foundLevel?.levelCode || "",
-        levelLabel: foundLevel?.label || "",
-        qualificationLabel: foundLevel?.qualificationLabel || "",
-        proposedGrossMonthly: monthly,
-        proposedGrossAnnual: monthly * (p.monthlyPayments || 13)
-      };
-    });
-  };
-
-  const handleMonthlySalaryChange = (val: string) => {
-    const amount = parseFloat(val) || 0;
-    setFormData(p => ({
-      ...p,
-      proposedGrossMonthly: amount,
-      proposedGrossAnnual: amount * (p.monthlyPayments || 13)
-    }));
-  };
-
-  const isFixedTerm = useMemo(() => formData.contractType !== "Tempo indeterminato", [formData.contractType]);
-
-  const handleSave = async (nextStatus?: EmploymentOfferStatus) => {
-    if (!user || !entityId || !offerId) return;
-    if (isFixedTerm && !formData.proposedEndDate) {
-      toast({ variant: "destructive", title: "Date manquante", description: "La date de fin est obligatoire pour un contrat déterminé." });
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateEmploymentOffer(entityId, offerId, { ...formData, status: nextStatus || (offer?.status as EmploymentOfferStatus) || 'draft' }, user.uid);
-      toast({ title: "Enregistré" });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { setSaving(false); }
-  };
+  // Custom Doc Dialog State
+  const [isCustomDocOpen, setIsCustomDocOpen] = useState(false);
+  const [customDocForm, setCustomDocForm] = useState({ label: "", type: "other", isRequired: true, description: "" });
 
   const handleSend = async () => {
     if (!user || !entityId || !offerId || !offer) return;
     setSending(true);
     try {
       const result = await initiateOfferSend(entityId, offerId, user.uid);
-      if (result && result.success) toast({ title: "Envoyée" });
+      if (result && result.success) {
+        toast({ title: "Offre envoyée", description: "Le candidat a été notifié par email." });
+      }
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
+      toast({ variant: "destructive", title: "Erreur lors de l'envoi", description: err.message });
     } finally { setSending(false); }
   };
 
@@ -392,7 +242,6 @@ export default function EditEmploymentOfferPage() {
   const handleExecuteUpload = async () => {
     if (!pendingUploadItem || !pendingUploadFile || !user || !offer || !dossier) return;
     setIsUploadingPreHireDocument(true);
-    setUploadingItem(pendingUploadItem.itemId);
     try {
       await uploadPreHireDocument({
         entityId, dossierId: dossier.dossierId, item: pendingUploadItem,
@@ -406,7 +255,6 @@ export default function EditEmploymentOfferPage() {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setIsUploadingPreHireDocument(false);
-      setUploadingItem(null);
       setPendingUploadItem(null);
       setPendingUploadFile(null);
     }
@@ -425,116 +273,12 @@ export default function EditEmploymentOfferPage() {
     } finally { setLoadingFileId(null); }
   };
 
-  const handleSaveUniLav = async () => {
-    if (!user || !mandatoryCommunication || !entityId) return;
-    setSavingUniLav(true);
-    try {
-      const commRef = doc(db!, `entities/${entityId}/mandatoryCommunications`, mandatoryCommunication.id);
-      const isComplete = uniLavData.protocolNumber && uniLavData.submittedAt && uniLavData.receiptPdfUrl;
-      await updateDoc(commRef, { ...uniLavData, status: isComplete ? "receipt_received" : "draft", updatedAt: serverTimestamp(), updatedBy: user.uid });
-      toast({ title: "Données UniLav enregistrées" });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { setSavingUniLav(false); }
-  };
-
-  const handleSendDocRequest = async (entityId: string, dossierId: string, actorUid: string) => {
-    try {
-      setSaving(true);
-      await sendDocumentRequestEmail(entityId, dossierId, actorUid);
-      toast({ title: "Email envoyé", description: "Le candidat a été relancé." });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSendViaEmail = async () => {
-    if (!user || !entityId || !offerId || !offer || !mandatoryCommunication) return;
-    
-    const requestId = `unilav_${offerId}`;
-    if (!mandatoryCommunication.consultantEmail) {
-      toast({ variant: "destructive", title: "Email manquant", description: "Veuillez renseigner l'email du consultant dans la communication obligatoire." });
-      return;
-    }
-
-    setProcessing(true);
-    try {
-      const result = await getConsultantCPIEmailPreviewAction({
-        entityId,
-        requestId,
-        templateData: {
-          consultantName: mandatoryCommunication.consultantName || "Consulente",
-          candidateName: offer.candidateDisplayName || "Candidato",
-          candidateEmail: offer.candidateEmail || undefined,
-          candidatePhone: offer.candidatePhone || undefined,
-          jobTitle: offer.jobTitleName || "da definire",
-          companyName: entity?.nomEntreprise || "la nostra azienda",
-          plannedHireDate: offer.proposedStartDate || "da definire",
-          contractType: offer.contractType || "da definire",
-          requestId: requestId
-        }
-      });
-
-      if (!result.success) throw new Error((result as any).error || "Impossible de générer l'aperçu.");
-
-      setEditableSubject(result.preview!.subject);
-      setEditableBody(result.preview!.text);
-      setEmailPreview({
-        to: mandatoryCommunication.consultantEmail,
-        subject: result.preview!.subject,
-        html: result.preview!.html
-      });
-      setIsPreviewOpen(true);
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur d'aperçu", description: err.message });
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const confirmAndSendEmail = async () => {
-    if (!user || !entityId || !offerId || !offer || !emailPreview) return;
-    const requestId = `unilav_${offerId}`;
-
-    setProcessing(true);
-    try {
-      const result = await sendConsultantCPIRequestAction({
-        entityId,
-        requestId,
-        to: emailPreview.to,
-        subject: emailPreview.subject,
-        subjectOverride: editableSubject,
-        bodyOverride: editableBody,
-        templateData: {
-          consultantName: mandatoryCommunication?.consultantName || "Consulente",
-          candidateName: offer.candidateDisplayName || "Candidato",
-          candidateEmail: offer.candidateEmail || undefined,
-          candidatePhone: offer.candidatePhone || undefined,
-          jobTitle: offer.jobTitleName || "da definire",
-          companyName: entity?.nomEntreprise || "la nostra azienda",
-          plannedHireDate: offer.proposedStartDate || "da definire",
-          contractType: offer.contractType || "da definire",
-          requestId: requestId
-        }
-      });
-
-      if (!result.success) throw new Error(result.error);
-
-      toast({ title: "Email envoyé", description: "Le dossier a été transmis au consultant." });
-      setIsPreviewOpen(false);
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
-    } finally {
-      setProcessing(false);
-    }
-  };
-
   const isAccepted = offer?.status === 'accepted';
-  const isUniLavDone = mandatoryCommunication?.status === "receipt_received";
+  const isUniLavDone = mandatoryCommunication?.status === "receipt_received" || standaloneRequest?.status === 'completed';
   const isConverted = offer?.conversionStatus === 'converted';
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
+
+  const canUpdate = hasPermission("contracts.create") || hasPermission("contracts.update");
 
   const blockers = useMemo(() => {
     const list: string[] = [];
@@ -558,9 +302,9 @@ export default function EditEmploymentOfferPage() {
   if (!offer) {
     return (
       <div className="p-8 text-center max-w-md mx-auto mt-20">
-        <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
-        <h2 className="text-xl font-bold mb-2">Offre introuvable</h2>
-        <Button onClick={() => router.back()}>Retour à la liste</Button>
+        <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
+        <h2 className="text-2xl font-black text-primary">Proposition introuvable</h2>
+        <Button onClick={() => router.push(`/entity/${entityId}/employment-offers`)} className="mt-8">Retour au registre</Button>
       </div>
     );
   }
@@ -583,208 +327,243 @@ export default function EditEmploymentOfferPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-             {!isConverted && !["accepted", "sent", "viewed"].includes(offer.status) && (
-               <Button variant="outline" onClick={() => handleSave()} disabled={saving} className="bg-white font-bold rounded-xl"><Save className="w-4 h-4 mr-2" /> Brouillon</Button>
+             {canUpdate && (offer.status === 'draft' || offer.status === 'ready_to_send' || offer.status === 'sent' || offer.status === 'viewed') && (
+               <Button onClick={handleSend} disabled={sending} className="bg-primary text-white font-black rounded-xl px-6 shadow-lg shadow-primary/10 gap-2">
+                  {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  {offer.status === 'draft' || offer.status === 'ready_to_send' ? "Envoyer au candidat" : "Renvoyer l'offre"}
+               </Button>
              )}
-             {offer.status === 'ready_to_send' && <Button onClick={handleSend} disabled={sending} className="bg-primary text-white font-black rounded-xl px-6"><Send className="w-4 h-4 mr-2" /> Envoyer offre</Button>}
           </div>
         </div>
 
         {/* Stepper Component */}
-        <div className="grid grid-cols-4 gap-4 px-4">
-           <Step label="Offre" active={true} completed={["sent", "viewed", "accepted", "declined"].includes(offer.status)} icon={FileSignature} />
-           <Step label="Dossier RH" active={offer.status === 'accepted'} completed={dossier?.readyForConversion} icon={ClipboardList} />
-           <Step label="UniLav" active={dossier?.readyForConversion} completed={isUniLavDone} icon={Globe} />
-           <Step label="Embauche" active={isUniLavDone} completed={isConverted} icon={UserPlus} />
+        <div className="grid grid-cols-5 gap-4 px-4">
+           <Step label="Brouillon" active={offer.status === 'draft'} completed={offer.status !== 'draft'} icon={FileSignature} date={formatDateTime(offer.createdAt)} />
+           <Step label="Envoyée" active={offer.status === 'sent'} completed={['sent', 'viewed', 'accepted', 'declined'].includes(offer.status)} icon={Send} date={formatDateTime(offer.sentAt)} />
+           <Step label="Vue" active={offer.status === 'viewed'} completed={['viewed', 'accepted', 'declined'].includes(offer.status)} icon={Eye} date={formatDateTime(offer.viewedAt || offer.lastViewedAt)} />
+           <Step label="Acceptée" active={offer.status === 'accepted'} completed={isConverted} icon={CheckCircle2} date={formatDateTime(offer.respondedAt)} />
+           <Step label="Embauche" active={isConverted} completed={isConverted} icon={UserPlus} date={isConverted ? formatDateTime(offer.updatedAt) : ""} />
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           
-          {/* 2. Dossier Section */}
+          {/* Phase cards displayed when offer is progressing or being reviewed */}
+          
+          {/* 2. Candidate Identity Section */}
+          <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <User className="w-4 h-4" /> Identité & Contact
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
+                <DetailItem label="Nom Complet" value={offer.candidateDisplayName} icon={User} />
+                <DetailItem label="Email" value={offer.candidateEmail} icon={Mail} />
+                <DetailItem label="Téléphone" value={offer.candidatePhone} icon={Phone} />
+                <DetailItem label="Proposé le" value={formatDate(offer.createdAt)} icon={Calendar} />
+             </CardContent>
+          </Card>
+
+          {/* 3. Job Context Section */}
+          <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <Briefcase className="w-4 h-4" /> Poste & Localisation
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
+                <DetailItem label="Intitulé du Poste" value={offer.jobTitleName} icon={Briefcase} />
+                <DetailItem label="Département" value={offer.departmentName} icon={Building2} />
+                <DetailItem label="Site d'affectation" value={offer.worksiteName} icon={MapPin} />
+                <DetailItem label="Référence Besoin RH" value={offer.recruitmentNeedId} icon={Info} />
+             </CardContent>
+          </Card>
+
+          {/* 4. Contract Terms Section */}
+          <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <FileText className="w-4 h-4" /> Conditions Contractuelles
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                   <DetailItem label="Type de contrat" value={offer.contractType} />
+                   <DetailItem label="Temps de travail" value={offer.workingTime} icon={Clock} />
+                   <DetailItem label="CCNL appliqué" value={offer.ccnlName} icon={Scale} />
+                   <DetailItem label="Niveau / Livello" value={offer.levelCode ? `${offer.levelCode} (${offer.levelLabel || ''})` : '—'} />
+                   <DetailItem label="Date de début prévue" value={formatDate(offer.proposedStartDate)} icon={Calendar} />
+                   <DetailItem label="Date de fin (si CDD)" value={formatDate(offer.proposedEndDate)} icon={Calendar} />
+                   <DetailItem label="Heures hebdomadaires" value={offer.weeklyHours ? `${offer.weeklyHours}h` : '—'} />
+                   <DetailItem label="Période d'essai (jours)" value={offer.trialPeriodDays} />
+                </div>
+             </CardContent>
+          </Card>
+
+          {/* 5. Salary Section */}
+          <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <Euro className="w-4 h-4" /> Rémunération
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                   <div className="bg-slate-50 p-4 rounded-2xl border text-center">
+                      <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Brut Mensuel</p>
+                      <p className="text-xl font-black text-slate-800">€ {offer.proposedGrossMonthly?.toLocaleString('fr-FR') || "—"}</p>
+                   </div>
+                   <div className="bg-slate-50 p-4 rounded-2xl border text-center">
+                      <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Mensualités</p>
+                      <p className="text-xl font-black text-slate-800">{offer.monthlyPayments || "13"}</p>
+                   </div>
+                   <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center ring-2 ring-primary/5">
+                      <p className="text-[9px] font-black uppercase text-primary/60 mb-1">Estimation RAL</p>
+                      <p className="text-xl font-black text-primary">€ {offer.proposedGrossAnnual?.toLocaleString('fr-FR') || "—"}</p>
+                   </div>
+                </div>
+                {offer.salaryNotes && (
+                  <div className="p-4 bg-slate-50 border-l-4 border-primary rounded-r-xl text-xs text-slate-600 italic">
+                     <p className="font-bold text-[10px] uppercase not-italic mb-1 opacity-50">Notes sur la rémunération</p>
+                     "{offer.salaryNotes}"
+                  </div>
+                )}
+             </CardContent>
+          </Card>
+
+          {/* 6. Post-Acceptance Sections (RH Dossier & UniLav) */}
           {(offer.status === 'accepted' || isConverted) && (
-            <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", dossier?.readyForConversion ? "border-green-100 bg-green-50/5" : "border-primary/5")}>
-              <CardHeader className="bg-primary/5 border-b py-6 px-8 flex flex-row items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="bg-primary text-white p-2.5 rounded-xl"><ClipboardList className="w-5 h-5" /></div>
-                  <div>
-                    <CardTitle className="text-lg font-black text-primary">Dossier de Pré-embauche</CardTitle>
-                    <p className="text-[10px] uppercase font-bold text-muted-foreground">{validatedCount} / {requiredCount} validés</p>
-                  </div>
-                </div>
-                {!isConverted && (
-                   <div className="flex items-center gap-2">
-                     <Button variant="outline" size="sm" onClick={() => setIsCustomDocOpen(true)} className="h-8 rounded-xl font-bold bg-white gap-2 border-dashed">
-                        <Plus className="w-3.5 h-3.5" /> Ajouter demande
-                     </Button>
-                     <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => user && dossier && handleSendDocRequest(entityId, dossier.dossierId, user.uid)} 
-                        disabled={saving || !user} 
-                        className="h-8 rounded-xl font-bold bg-white gap-2"
-                      >
-                        <Send className="w-3.5 h-3.5" /> Relancer candidat
-                     </Button>
-                   </div>
-                )}
-              </CardHeader>
-              <CardContent className="p-8 space-y-6">
-                {!dossier ? (
-                  <div className="py-12 flex flex-col items-center gap-4 text-center">
-                    <AlertCircle className="w-10 h-10 text-orange-400" />
-                    <p className="text-sm font-medium text-slate-600">Le dossier n'est pas encore initialisé.</p>
-                    <Button onClick={handleInitDossier} disabled={saving} className="rounded-xl">Initialiser maintenant</Button>
-                  </div>
-                ) : (
-                  <div className="grid gap-3">
-                    {checklist?.map(item => (
-                      <div key={item.itemId} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm group hover:border-primary/20 transition-all">
-                        <div className="flex items-center gap-4">
-                           <div className={cn("p-2 rounded-xl shrink-0", 
-                             item.status === 'approved' ? "bg-green-100 text-green-600" : 
-                             item.status === 'rejected' ? "bg-red-100 text-red-600" : 
-                             item.status === 'uploaded' ? "bg-orange-100 text-orange-600" : "bg-slate-100 text-slate-400")}>
-                             <FileText className="w-5 h-5" />
-                           </div>
-                           <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-black text-slate-800 truncate">{item.label}</p>
-                                {item.isRequired ? (
-                                  <Badge variant="outline" className="text-[8px] font-black uppercase h-4 px-1.5 border-red-200 text-red-700 bg-red-50">Requis</Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-[8px] font-black uppercase h-4 px-1.5 border-slate-200 text-slate-400 bg-slate-50">Optionnel</Badge>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 mt-1">
-                                 {getDocStatusBadge(item.status)}
-                                 {item.description && <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">{item.description}</span>}
-                              </div>
-                           </div>
-                        </div>
-                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                           {item.fileId && (
-                             <Button variant="secondary" size="sm" className="h-8 rounded-xl font-bold bg-primary/5 text-primary gap-1.5" onClick={() => handleConsultDocument(item)}>
-                               {loadingFileId === item.itemId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
-                               Voir
-                             </Button>
-                           )}
-                           {!isConverted && (
-                             <>
-                               {(item.status === 'missing' || item.status === 'uploaded' || item.status === 'rejected') && (
-                                 <div className="relative">
-                                    <Button variant="outline" size="sm" className="h-8 rounded-xl font-bold border-dashed border-2 gap-1.5">
-                                       <Upload className="w-3.5 h-3.5" />
-                                       {item.status === 'missing' ? 'Joindre' : 'Remplacer'}
-                                    </Button>
-                                    <input type="file" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onChange={(e) => handleUploadPreHireDoc(item, e)} />
-                                 </div>
-                               )}
-                               {item.status === 'uploaded' && (
-                                 <div className="flex gap-1 ml-2">
-                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" title="Approuver" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
-                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" title="Rejeter" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
-                                 </div>
-                               )}
-                               {item.isCustom && item.status === 'missing' && !item.fileId && (
-                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Supprimer" onClick={() => handleDeleteCustomDoc(item.itemId)}><Trash2 className="w-4 h-4" /></Button>
-                               )}
-                             </>
-                           )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* 3. UniLav Section */}
-          {(isAccepted || isConverted) && (
-            <Card className="border-primary/10 rounded-[2rem] shadow-xl overflow-hidden bg-white">
-              <CardHeader className="bg-secondary/10 border-b py-6 px-8 flex flex-row items-center justify-between">
-                <div className="flex items-center gap-3">
-                   <div className="bg-primary text-white p-2.5 rounded-xl"><Globe className="w-5 h-5" /></div>
-                   <div>
-                     <CardTitle className="text-lg font-black text-primary">Conformité UniLav / CPI</CardTitle>
-                     <p className="text-[10px] uppercase font-bold text-muted-foreground">Communication obligatoire Italie</p>
-                   </div>
-                </div>
-                {mandatoryCommunication && (
-                   <Badge variant="outline" className={cn("font-black uppercase h-7 px-3 border-2", 
-                     isUniLavDone ? "bg-green-50 text-green-700 border-green-200" : "bg-orange-50 text-orange-700 border-orange-200"
-                   )}>
-                      {isUniLavDone ? "Complétée" : "À faire"}
-                   </Badge>
-                )}
-              </CardHeader>
-              <CardContent className="p-8 space-y-6">
-                {!mandatoryCommunication ? (
-                  <div className="py-6 text-center text-xs italic text-muted-foreground">Module de communication non actif.</div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                       <div className="space-y-2">
-                          <Label className="text-[10px] font-black uppercase text-muted-foreground">Numéro Protocole</Label>
-                          <Input value={uniLavData.protocolNumber} onChange={(e) => setUniLavData(p => ({...p, protocolNumber: e.target.value}))} disabled={isConverted} placeholder="Ex: 2024-XXX..." className="rounded-xl font-mono h-11" />
-                       </div>
-                       <div className="space-y-2">
-                          <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de soumission</Label>
-                          <Input type="date" value={uniLavData.submittedAt} onChange={(e) => setUniLavData(p => ({...p, submittedAt: e.target.value}))} disabled={isConverted} className="rounded-xl h-11" />
-                       </div>
-                       <div className="space-y-2 col-span-full">
-                          <Label className="text-[10px] font-black uppercase text-muted-foreground">URL du récépissé (PDF)</Label>
-                          <Input value={uniLavData.receiptPdfUrl} onChange={(e) => setUniLavData(p => ({...p, receiptPdfUrl: e.target.value}))} disabled={isConverted} placeholder="https://..." className="rounded-xl h-11" />
-                       </div>
+            <>
+              <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", dossier?.readyForConversion ? "border-green-100 bg-green-50/5" : "border-primary/5")}>
+                <CardHeader className="bg-primary/5 border-b py-6 px-8 flex flex-row items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-primary text-white p-2.5 rounded-xl"><ClipboardList className="w-5 h-5" /></div>
+                    <div>
+                      <CardTitle className="text-lg font-black text-primary">Dossier de Pré-embauche</CardTitle>
+                      <p className="text-[10px] uppercase font-bold text-muted-foreground">{validatedCount} / {requiredCount} validés</p>
                     </div>
-                    
-                    {!isConverted && (
-                      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pt-2">
-                         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                           <Button variant="outline" onClick={handleSaveUniLav} disabled={savingUniLav} className="rounded-xl font-bold h-10 px-6">
-                              {savingUniLav ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Sauvegarder
-                           </Button>
-                           <Button asChild variant="outline" className="rounded-xl font-bold border-dashed border-2 gap-2 hover:bg-slate-50">
-                              <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
-                                 Accéder au dossier CPI <ChevronRight className="w-4 h-4" />
-                              </Link>
-                           </Button>
-                         </div>
-                         {mandatoryCommunication.emailBody && (
-                            <Button variant="ghost" className="text-primary font-bold text-xs" onClick={() => { navigator.clipboard.writeText(mandatoryCommunication.emailBody); toast({ title: "Email copié" }); }}>Copier mail consultant</Button>
-                         )}
-                      </div>
-                    )}
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+                  {!isConverted && (
+                     <div className="flex items-center gap-2">
+                       <Button variant="outline" size="sm" onClick={() => setIsCustomDocOpen(true)} className="h-8 rounded-xl font-bold bg-white gap-2 border-dashed">
+                          <Plus className="w-3.5 h-3.5" /> Ajouter demande
+                       </Button>
+                       <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => user && dossier && handleSendDocRequest(entityId, dossier.dossierId, user.uid)} 
+                          disabled={saving || !user} 
+                          className="h-8 rounded-xl font-bold bg-white gap-2"
+                        >
+                          <Send className="w-3.5 h-3.5" /> Relancer candidat
+                       </Button>
+                     </div>
+                  )}
+                </CardHeader>
+                <CardContent className="p-8 space-y-6">
+                  {!dossier ? (
+                    <div className="py-12 flex flex-col items-center gap-4 text-center">
+                      <AlertCircle className="w-10 h-10 text-orange-400" />
+                      <p className="text-sm font-medium text-slate-600">Le dossier n'est pas encore initialisé.</p>
+                      <Button onClick={handleInitDossier} disabled={saving} className="rounded-xl">Initialiser maintenant</Button>
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      {checklist?.map(item => (
+                        <div key={item.itemId} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm group hover:border-primary/20 transition-all">
+                          <div className="flex items-center gap-4">
+                             <div className={cn("p-2 rounded-xl shrink-0", 
+                               item.status === 'approved' ? "bg-green-100 text-green-600" : 
+                               item.status === 'rejected' ? "bg-red-100 text-red-600" : 
+                               item.status === 'uploaded' ? "bg-orange-100 text-orange-600" : "bg-slate-100 text-slate-400")}>
+                               <FileText className="w-5 h-5" />
+                             </div>
+                             <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-black text-slate-800 truncate">{item.label}</p>
+                                  {item.isRequired ? (
+                                    <Badge variant="outline" className="text-[8px] font-black uppercase h-4 px-1.5 border-red-200 text-red-700 bg-red-50">Requis</Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[8px] font-black uppercase h-4 px-1.5 border-slate-200 text-slate-400 bg-slate-50">Optionnel</Badge>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                   {getDocStatusBadge(item.status)}
+                                   {item.description && <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">{item.description}</span>}
+                                </div>
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                             {item.fileId && (
+                               <Button variant="secondary" size="sm" className="h-8 rounded-xl font-bold bg-primary/5 text-primary gap-1.5" onClick={() => handleConsultDocument(item)}>
+                                 {loadingFileId === item.itemId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                                 Voir
+                               </Button>
+                             )}
+                             {!isConverted && (
+                               <>
+                                 {(item.status === 'missing' || item.status === 'uploaded' || item.status === 'rejected') && (
+                                   <div className="relative">
+                                      <Button variant="outline" size="sm" className="h-8 rounded-xl font-bold border-dashed border-2 gap-1.5">
+                                         <Upload className="w-3.5 h-3.5" />
+                                         {item.status === 'missing' ? 'Joindre' : 'Remplacer'}
+                                      </Button>
+                                      <input type="file" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onChange={(e) => handleUploadPreHireDoc(item, e)} />
+                                   </div>
+                                 )}
+                                 {item.status === 'uploaded' && (
+                                   <div className="flex gap-1 ml-2">
+                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" title="Approuver" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
+                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" title="Rejeter" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
+                                   </div>
+                                 )}
+                                 {item.isCustom && item.status === 'missing' && !item.fileId && (
+                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Supprimer" onClick={() => handleDeleteCustomDoc(item.itemId)}><Trash2 className="w-4 h-4" /></Button>
+                                 )}
+                               </>
+                             )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
-          {/* Standard Offer Details - Hidden when converted for focus */}
-          {!isConverted && (
-            <Card className="border-primary/5 rounded-[2rem] overflow-hidden opacity-80 grayscale-[0.2]">
-               <CardHeader className="py-4 px-8 border-b bg-slate-50">
-                  <CardTitle className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                     <FileSignature className="w-4 h-4" /> Détails de la proposition
-                  </CardTitle>
-               </CardHeader>
-               <CardContent className="p-8">
-                  <div className="grid grid-cols-2 gap-8">
-                     <DetailItem label="Type contrat" value={formData.contractType} />
-                     <DetailItem label="RAL" value={formData.proposedGrossAnnual ? `€ ${formData.proposedGrossAnnual.toLocaleString()}` : '—'} />
-                     <DetailItem label="CCNL" value={formData.ccnlName} />
-                     <DetailItem label="Niveau" value={formData.levelCode} />
+              <Card className="border-primary/10 rounded-[2rem] shadow-xl overflow-hidden bg-white">
+                <CardHeader className="bg-secondary/10 border-b py-6 px-8 flex flex-row items-center justify-between">
+                  <div className="flex items-center gap-3">
+                     <div className="bg-primary text-white p-2.5 rounded-xl"><Globe className="w-5 h-5" /></div>
+                     <div>
+                       <CardTitle className="text-lg font-black text-primary">Conformité UniLav / CPI</CardTitle>
+                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Communication obligatoire Italie</p>
+                     </div>
                   </div>
-               </CardContent>
-            </Card>
+                  <Badge variant="outline" className={cn("font-black uppercase h-7 px-3 border-2", 
+                    isUniLavDone ? "bg-green-50 text-green-700 border-green-200" : "bg-orange-50 text-orange-700 border-orange-200"
+                  )}>
+                     {isUniLavDone ? "Complétée" : "À faire"}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="p-8 space-y-6 text-center">
+                    <p className="text-sm text-slate-600">
+                      Accédez au dossier de communication obligatoire pour renseigner le protocole ou transmettre les données au consultant.
+                    </p>
+                    <Button asChild variant="outline" className="w-full h-11 rounded-xl font-bold border-dashed border-2 gap-2 hover:bg-slate-50">
+                       <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
+                          Gérer le dossier CPI <ChevronRight className="w-4 h-4" />
+                       </Link>
+                    </Button>
+                </CardContent>
+              </Card>
+            </>
           )}
         </div>
 
         <div className="space-y-8">
-           {/* 4. Embauche Finale Card */}
+           {/* Final Conversion Decision Card */}
            {(isAccepted || isConverted) && (
              <Card className={cn("border-2 rounded-[2.5rem] shadow-2xl overflow-hidden transition-all", canConvert ? "border-green-500 ring-4 ring-green-50" : "border-primary/10 opacity-80")}>
                 <CardHeader className={cn("py-6 px-8 border-b", canConvert ? "bg-green-600 text-white" : "bg-primary/90 text-white")}>
@@ -841,73 +620,32 @@ export default function EditEmploymentOfferPage() {
              </Card>
            )}
 
-           <Card className="rounded-[2rem] border-primary/5 bg-secondary/5 overflow-hidden">
+           {/* Trackability sidebar */}
+           <Card className="rounded-[2rem] border-primary/5 shadow-lg bg-secondary/5 overflow-hidden">
              <CardHeader className="py-5 px-8 border-b bg-secondary/10">
                 <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                   <History className="w-4 h-4" /> Timeline Proposition
+                   <History className="w-4 h-4" /> Suivi de la proposition
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-6 space-y-4">
-                <AuditRow label="Acceptée le" value={formatDateTime(offer.respondedAt)} />
+                <AuditRow label="Brouillon créé" value={formatDate(offer.createdAt)} />
                 <AuditRow label="Dernier envoi" value={formatDateTime(offer.sentAt)} />
-                <AuditRow label="Vue" value={`${offer.viewCount || 0} fois`} />
+                <AuditRow label="Nombre de vues" value={`${offer.viewCount || 0} fois`} />
+                <AuditRow label="Dernière vue" value={formatDateTime(offer.lastViewedAt || offer.viewedAt)} />
+                {offer.respondedAt && (
+                   <>
+                     <Separator className="opacity-20" />
+                     <AuditRow label="Réponse candidat" value={offer.candidateResponse === 'accepted' ? "Acceptée" : "Refusée"} />
+                     <AuditRow label="Date réponse" value={formatDateTime(offer.respondedAt)} />
+                   </>
+                )}
              </CardContent>
            </Card>
         </div>
       </div>
 
-      {/* CPI Email Preview & Edit Dialog */}
-      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
-        <DialogContent className="sm:max-w-[650px] rounded-[2.5rem]">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
-              <Mail className="w-6 h-6" /> Préparer l'email au consultant
-            </DialogTitle>
-            <DialogDescription>Modifiez le contenu si nécessaire avant l'envoi officiel.</DialogDescription>
-          </DialogHeader>
-          
-          <div className="py-4 space-y-6">
-            <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-muted-foreground">Destinataire (Lecture seule)</p>
-              <p className="text-sm font-bold text-slate-800 bg-secondary/20 p-2 rounded-lg">{emailPreview?.to}</p>
-            </div>
-            
-            <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-muted-foreground">Objet de l'email</p>
-              <Input 
-                value={editableSubject} 
-                onChange={(e) => setEditableSubject(e.target.value)}
-                placeholder="Objet..."
-                className="rounded-xl h-11 border-primary/10"
-              />
-            </div>
+      {/* Global Modals */}
 
-            <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-muted-foreground mb-2">Corps du message (Texte)</p>
-              <Textarea 
-                value={editableBody} 
-                onChange={(e) => setEditableBody(e.target.value)}
-                className="min-h-[350px] w-full rounded-xl border bg-slate-50 p-4 text-xs leading-relaxed font-sans"
-                placeholder="Votre message..."
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="flex gap-2">
-            <Button variant="ghost" onClick={() => setIsPreviewOpen(false)} disabled={processing} className="rounded-xl font-bold">Annuler</Button>
-            <Button 
-              onClick={confirmAndSendEmail} 
-              disabled={processing || !editableSubject.trim() || !editableBody.trim()}
-              className="rounded-xl px-8 font-black shadow-lg"
-            >
-              {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
-              Confirmer et envoyer
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Custom Doc Dialog */}
       <Dialog open={isCustomDocOpen} onOpenChange={setIsCustomDocOpen}>
         <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
            <DialogHeader>
@@ -947,21 +685,6 @@ export default function EditEmploymentOfferPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Rejection Dialog */}
-      <Dialog open={rejectItem !== null} onOpenChange={() => setRejectItem(null)}>
-        <DialogContent className="rounded-[2rem]">
-          <DialogHeader><DialogTitle>Rejeter le document</DialogTitle><DialogDescription>Précisez la raison pour informer le candidat.</DialogDescription></DialogHeader>
-          <div className="py-4 space-y-3">
-             <Label className="text-xs uppercase font-black">Motif du rejet</Label>
-             <Textarea value={rejectItem?.reason || ""} onChange={(e) => setRejectItem(p => p ? ({...p, reason: e.target.value}) : null)} placeholder="Ex: Illisible, périmé..." className="rounded-xl min-h-[100px]" />
-          </div>
-          <DialogFooter>
-             <Button variant="ghost" onClick={() => setRejectItem(null)}>Annuler</Button>
-             <Button variant="destructive" disabled={!rejectItem?.reason} onClick={() => rejectItem && handleUpdateDoc(rejectItem.id, 'rejected', rejectItem.reason)}>Confirmer le rejet</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Upload Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[450px]">
@@ -982,7 +705,6 @@ export default function EditEmploymentOfferPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Final Conversion Alert */}
       <AlertDialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
@@ -997,11 +719,25 @@ export default function EditEmploymentOfferPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={rejectItem !== null} onOpenChange={() => setRejectItem(null)}>
+        <DialogContent className="rounded-[2rem]">
+          <DialogHeader><DialogTitle>Rejeter le document</DialogTitle><DialogDescription>Précisez la raison pour informer le candidat.</DialogDescription></DialogHeader>
+          <div className="py-4 space-y-3">
+             <Label className="text-xs uppercase font-black">Motif du rejet</Label>
+             <Textarea value={rejectItem?.reason || ""} onChange={(e) => setRejectItem(p => p ? ({...p, reason: e.target.value}) : null)} placeholder="Ex: Illisible, périmé..." className="rounded-xl min-h-[100px]" />
+          </div>
+          <DialogFooter>
+             <Button variant="ghost" onClick={() => setRejectItem(null)}>Annuler</Button>
+             <Button variant="destructive" disabled={!rejectItem?.reason} onClick={() => rejectItem && handleUpdateDoc(rejectItem.id, 'rejected', rejectItem.reason)}>Confirmer le rejet</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function Step({ label, active, completed, icon: Icon }: any) {
+function Step({ label, active, completed, icon: Icon, date }: any) {
   return (
     <div className="flex flex-col items-center gap-3 relative">
        <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center transition-all z-10 border-2", 
@@ -1010,14 +746,40 @@ function Step({ label, active, completed, icon: Icon }: any) {
        )}>
           {completed ? <CheckCircle2 className="w-6 h-6" /> : <Icon className="w-5 h-5" />}
        </div>
-       <p className={cn("text-[9px] font-black uppercase tracking-widest", 
-         completed ? "text-green-700" : active ? "text-primary" : "text-slate-400"
-       )}>{label}</p>
+       <div className="text-center min-h-[32px]">
+         <p className={cn("text-[9px] font-black uppercase tracking-widest leading-tight", 
+           completed ? "text-green-700" : active ? "text-primary" : "text-slate-400"
+         )}>{label}</p>
+         {date && date !== "—" && (
+           <p className="text-[8px] font-bold text-muted-foreground mt-0.5">{date}</p>
+         )}
+       </div>
     </div>
   );
 }
 
-function getStatusBadge(status: string) {
+function DetailItem({ label, value, icon: Icon }: any) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">{label}</p>
+      <div className="flex items-center gap-2">
+         {Icon && <Icon className="w-3.5 h-3.5 text-primary/30" />}
+         <p className="text-sm font-bold text-slate-700">{value || "—"}</p>
+      </div>
+    </div>
+  );
+}
+
+function AuditRow({ label, value }: { label: string, value: string }) {
+  return (
+    <div className="flex justify-between items-center text-[11px] font-bold">
+       <span className="text-muted-foreground font-medium uppercase text-[9px]">{label}</span>
+       <span className="text-slate-700">{value}</span>
+    </div>
+  );
+}
+
+function getStatusBadge(status: EmploymentOfferStatus) {
   const map: any = {
     accepted: { label: "Acceptée", color: "bg-green-500" },
     sent: { label: "Envoyée", color: "bg-primary" },
@@ -1041,28 +803,18 @@ function getDocStatusBadge(status: string) {
   }
 }
 
-function DetailItem({ label, value }: any) {
-  return (
-    <div className="space-y-0.5">
-       <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">{label}</p>
-       <p className="text-sm font-bold text-slate-700">{value || "—"}</p>
-    </div>
-  );
-}
-
-function AuditRow({ label, value }: { label: string, value: string }) {
-  return (
-    <div className="flex justify-between items-center text-[11px] font-bold">
-       <span className="text-muted-foreground font-medium uppercase text-[9px]">{label}</span>
-       <span className="text-slate-700">{value}</span>
-    </div>
-  );
-}
-
 function formatDateTime(val: any): string {
-  if (!val) return "-";
+  if (!val) return "—";
+  try {
+    const d = val.toDate ? val.toDate() : new Date(val);
+    return format(d, "dd/MM/yyyy HH:mm", { locale: fr });
+  } catch (e) { return "—"; }
+}
+
+function formatDate(val: any): string {
+  if (!val) return "—";
   try {
     const d = val.toDate ? val.toDate() : new Date(val);
     return format(d, "dd/MM/yyyy", { locale: fr });
-  } catch (e) { return "-"; }
+  } catch (e) { return "—"; }
 }
