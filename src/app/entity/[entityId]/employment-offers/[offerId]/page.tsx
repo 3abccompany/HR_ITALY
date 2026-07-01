@@ -139,6 +139,7 @@ export default function EditEmploymentOfferPage() {
 
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [converting, setConverting] = useState(false);
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
@@ -158,6 +159,10 @@ export default function EditEmploymentOfferPage() {
   // Custom Doc Dialog State
   const [isCustomDocOpen, setIsCustomDocOpen] = useState(false);
   const [customDocForm, setCustomDocForm] = useState({ label: "", type: "other", isRequired: true, description: "" });
+
+  // Revision UI State
+  const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
+  const [selectedRevisionReason, setSelectedRevisionReason] = useState("");
 
   const annualToDisplay = useMemo(() => {
     if (!offer) return null;
@@ -223,6 +228,49 @@ export default function EditEmploymentOfferPage() {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleMarkReady = async () => {
+    if (!user || !offer || !entityId) return;
+
+    // Validation of required fields
+    const required = [
+      { field: 'candidateEmail', label: "Email candidat" },
+      { field: 'candidateDisplayName', label: "Nom candidat" },
+      { field: 'jobTitleName', label: "Intitulé du poste" },
+      { field: 'contractType', label: "Type de contrat" },
+      { field: 'ccnlName', label: "Convention collective" },
+      { field: 'levelCode', label: "Niveau" },
+      { field: 'proposedStartDate', label: "Date de début" },
+      { field: 'weeklyHours', label: "Heures hebdomadaires" },
+      { field: 'proposedGrossMonthly', label: "Brut mensuel" },
+      { field: 'monthlyPayments', label: "Mensualités" },
+    ];
+
+    const missing = required.filter(r => {
+      const val = offer[r.field as keyof EmploymentOffer];
+      if (typeof val === 'number') return val === undefined || val === null;
+      return !val;
+    });
+
+    if (missing.length > 0) {
+      toast({
+        variant: "destructive",
+        title: "Dossier incomplet",
+        description: `Veuillez renseigner : ${missing.map(m => m.label).join(', ')}`
+      });
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      await updateEmploymentOffer(entityId, offerId, { status: 'ready_to_send' }, user.uid);
+      toast({ title: "Proposition validée", description: "L'offre est désormais prête à être envoyée au candidat." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -392,7 +440,9 @@ export default function EditEmploymentOfferPage() {
       <div className="p-8 text-center max-w-md mx-auto mt-20">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Proposition introuvable</h2>
-        <Button onClick={() => router.push(`/entity/${entityId}/employment-offers`)} className="mt-8">Retour au registre</Button>
+        <Button asChild variant="outline" className="mt-8 rounded-xl">
+           <Link href={`/entity/${entityId}/employment-offers`}>Retour au registre</Link>
+        </Button>
       </div>
     );
   }
@@ -417,22 +467,31 @@ export default function EditEmploymentOfferPage() {
           <div className="flex items-center gap-2">
              {canManage && !isEditing && (offer.status === 'draft' || offer.status === 'internal_review' || offer.status === 'ready_to_send') && (
                <Button variant="outline" onClick={handleEnterEdit} className="rounded-xl font-bold bg-white gap-2">
-                  <Edit className="w-4 h-4" /> Modifier la proposition
+                  <Edit className="w-4 h-4" /> Modifier
                </Button>
              )}
+
+             {canManage && !isEditing && (offer.status === 'draft' || offer.status === 'internal_review') && (
+               <Button onClick={handleMarkReady} disabled={processing} className="bg-accent text-white font-black rounded-xl px-6 shadow-lg gap-2">
+                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Valider la proposition
+               </Button>
+             )}
+
              {isEditing && (
                <>
                  <Button variant="ghost" onClick={() => setIsEditing(false)} disabled={saving}>Annuler</Button>
                  <Button onClick={handleSaveEdit} disabled={saving} className="bg-green-600 text-white font-black rounded-xl px-6 shadow-lg gap-2">
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    Enregistrer les modifications
+                    Enregistrer
                  </Button>
                </>
              )}
-             {canManage && (offer.status === 'draft' || offer.status === 'ready_to_send' || offer.status === 'sent' || offer.status === 'viewed') && !isEditing && (
+
+             {canManage && (offer.status === 'ready_to_send' || offer.status === 'sent' || offer.status === 'viewed') && !isEditing && (
                <Button onClick={handleSend} disabled={sending} className="bg-primary text-white font-black rounded-xl px-6 shadow-lg shadow-primary/10 gap-2">
                   {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  {offer.status === 'draft' || offer.status === 'ready_to_send' ? "Envoyer au candidat" : "Renvoyer l'offre"}
+                  {offer.status === 'ready_to_send' ? "Envoyer au candidat" : "Renvoyer l'offre"}
                </Button>
              )}
           </div>
@@ -753,6 +812,46 @@ export default function EditEmploymentOfferPage() {
                 <AuditRow label="Créée le" value={formatDateTime(offer.createdAt)} />
              </CardContent>
            </Card>
+
+           {canConvert && (
+             <Card className="rounded-[2rem] border-2 border-green-600 shadow-2xl overflow-hidden bg-white animate-in zoom-in-95">
+                <CardHeader className="bg-green-600 text-white py-6 px-8">
+                   <CardTitle className="text-xs font-black uppercase tracking-widest flex items-center gap-2">
+                      <UserPlus className="w-4 h-4" /> Finalisation RH
+                   </CardTitle>
+                </CardHeader>
+                <CardContent className="p-8 space-y-6">
+                   <p className="text-sm font-bold text-slate-700 leading-relaxed">
+                     Toutes les étapes de conformité sont terminées. Le dossier est prêt pour la création officielle du profil employé.
+                   </p>
+                   <Button onClick={() => setIsConvertDialogOpen(true)} className="w-full h-14 rounded-2xl text-md font-black bg-green-600 hover:bg-green-700 text-white shadow-xl shadow-green-100 gap-2">
+                      <UserPlus className="w-5 h-5" />
+                      Créer le profil employé
+                   </Button>
+                </CardContent>
+             </Card>
+           )}
+
+           {offer.status === 'accepted' && !canConvert && (
+             <Card className="rounded-[2rem] border-orange-200 border-2 bg-orange-50 shadow-lg overflow-hidden">
+                <CardHeader className="py-6 px-8 border-b border-orange-100">
+                   <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-700 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" /> Blocages Conversion
+                   </CardTitle>
+                </CardHeader>
+                <CardContent className="p-8 space-y-4">
+                   <p className="text-[10px] font-bold text-orange-800 uppercase tracking-widest">Éléments manquants :</p>
+                   <ul className="space-y-3">
+                      {blockers.map((b, i) => (
+                        <li key={i} className="text-xs font-bold text-orange-600 flex items-start gap-2">
+                           <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                           <span>{b}</span>
+                        </li>
+                      ))}
+                   </ul>
+                </CardContent>
+             </Card>
+           )}
         </div>
       </div>
 
@@ -843,9 +942,113 @@ export default function EditEmploymentOfferPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Revision Confirmation Dialog */}
+      <Dialog open={revisionDialogOpen} onOpenChange={setRevisionDialogOpen}>
+        <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+              <History className="w-5 h-5 text-accent" /> Nouvelle proposition
+            </DialogTitle>
+            <DialogDescription>
+              Ce candidat possède déjà une proposition clôturée. Voulez-vous créer une nouvelle proposition liée à l'historique ?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+             <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase">Motif de la révision</Label>
+                <Select value={selectedRevisionReason} onValueChange={setSelectedRevisionReason}>
+                  <SelectTrigger className="rounded-xl h-11">
+                    <SelectValue placeholder="Choisir un motif..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REVISION_REASONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+             </div>
+          </div>
+          <DialogFooter className="sm:justify-between">
+             <Button variant="ghost" onClick={() => setRevisionDialogOpen(false)} disabled={processing}>Annuler</Button>
+             <Button onClick={() => handlePrepareOffer(true)} disabled={processing || !selectedRevisionReason} className="rounded-xl px-6 font-bold">
+                {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                Créer révision
+             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+
+  async function handlePrepareOffer(forceNew = false) {
+    if (!user || !candidate || !entityId) return;
+    setProcessing(true);
+    try {
+      const activeOffer = await getActiveOfferForCandidate(entityId, candidate.candidateId);
+      if (activeOffer) {
+        toast({ title: "Proposition active", description: "Une proposition est déjà en cours pour ce candidat." });
+        router.push(`/entity/${entityId}/employment-offers/${activeOffer.offerId}`);
+        return;
+      }
+
+      if (!forceNew) {
+        const latestOffer = await getLatestOfferForCandidate(entityId, candidate.candidateId);
+        if (latestOffer) {
+          setRevisionDialogOpen(true);
+          setProcessing(false);
+          return;
+        }
+      }
+
+      let need = null;
+      let profile = null;
+      const effectiveNeedId = (candidate as any).recruitmentNeedId || submission?.recruitmentNeedId;
+
+      if (effectiveNeedId) {
+         const needRef = doc(db!, `entities/${entityId}/recruitmentNeeds`, effectiveNeedId);
+         const n = await getDoc(needRef);
+         if (n.exists()) {
+           need = { ...n.data(), needId: n.id } as any;
+         }
+      }
+
+      const effectiveProfileId = (candidate as any).jobProfileId || need?.jobProfileId;
+      if (effectiveProfileId) {
+         const profileRef = doc(db!, `entities/${entityId}/jobProfiles`, effectiveProfileId);
+         const p = await getDoc(profileRef);
+         if (p.exists()) {
+           profile = { ...p.data(), jobProfileId: p.id } as any;
+         }
+      }
+
+      const { offerId } = await createEmploymentOfferDraft({
+        entityId,
+        candidate,
+        need,
+        profile,
+        actorUid: user.uid,
+        revisionReason: selectedRevisionReason
+      });
+
+      toast({ title: "Proposition initialisée", description: "Brouillon prêt pour édition." });
+      setRevisionDialogOpen(false);
+      router.push(`/entity/${entityId}/employment-offers/${offerId}`);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setProcessing(false);
+    }
+  }
 }
+
+const REVISION_REASONS = [
+  "Nouvelle négociation",
+  "Salaire modifié",
+  "Niveau CCNL modifié",
+  "Date de début modifiée",
+  "Autre poste",
+  "Correction / erreur dans la proposition précédente",
+  "Autre"
+];
 
 function Step({ label, active, completed, icon: Icon, date }: any) {
   return (
