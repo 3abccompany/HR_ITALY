@@ -13,7 +13,9 @@ import {
   Info,
   Loader2,
   FileDown,
-  ChevronDown
+  ChevronDown,
+  LayoutList,
+  Columns
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,7 +34,8 @@ import {
   endOfMonth, 
   eachDayOfInterval, 
   addDays, 
-  startOfDay 
+  startOfDay,
+  startOfWeek
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { 
@@ -46,9 +49,19 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import ExcelJS from "exceljs";
 
+const ABSENCE_CODES = [
+  "paid_leave",
+  "paid_permission",
+  "unpaid_permission",
+  "sickness",
+  "justified_absence",
+  "expectation",
+  "other"
+];
+
 /**
  * Attendance Registry Page.
- * Phase 2: Excel Template Generation.
+ * Phase 2B: Advanced Excel Template Generation with Formulas and Compact View.
  */
 export default function AttendancesPage() {
   const params = useParams();
@@ -58,9 +71,10 @@ export default function AttendancesPage() {
 
   // --- Template State ---
   const [periodType, setPeriodType] = useState<"monthly" | "weekly">("monthly");
+  const [inputMode, setInputMode] = useState<"detailed" | "compact">("detailed");
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [startDate, setStartDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
   const [isDownloading, setIsDownloading] = useState(false);
 
   // --- Permissions ---
@@ -100,106 +114,16 @@ export default function AttendancesPage() {
       const sheet1 = workbook.addWorksheet("Présences");
       const sheet2 = workbook.addWorksheet("Guide & Référentiels");
 
-      // --- Sheet 1: Columns Definition ---
-      const columns = [
-        { header: "Code employé", key: "employeeCode", width: 15 },
-        { header: "Nom employé", key: "employeeName", width: 25 },
-        { header: "Date", key: "date", width: 15 },
-        { header: "Jour", key: "day", width: 10 },
-        { header: "Département", key: "department", width: 20 },
-        { header: "Site", key: "worksite", width: 20 },
-        { header: "AM Entrée", key: "amIn", width: 10 },
-        { header: "AM Sortie", key: "amOut", width: 10 },
-        { header: "PM Entrée", key: "pmIn", width: 10 },
-        { header: "PM Sortie", key: "pmOut", width: 10 },
-        { header: "HS Entrée", key: "otIn", width: 10 },
-        { header: "HS Sortie", key: "otOut", width: 10 },
-        { header: "Pause minutes", key: "pause", width: 15 },
-        { header: "Heures calculées", key: "calcHours", width: 15 },
-        { header: "Heures validées", key: "validHours", width: 15 },
-        { header: "Code absence", key: "absence", width: 15 },
-        { header: "Férié", key: "holiday", width: 10 },
-        { header: "Notes / Correction", key: "notes", width: 40 },
-      ];
-
-      sheet1.columns = columns;
-
-      // Styling Headers
-      const headerRow = sheet1.getRow(1);
-      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      headerRow.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FF1F1F66" } // Primary Indigo
-      };
-      headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
-      sheet1.views = [{ state: 'frozen', ySplit: 1 }];
-
-      // --- Data Generation ---
-      let days: Date[] = [];
-      if (periodType === "monthly") {
-        const start = startOfMonth(new Date(selectedYear, selectedMonth - 1));
-        const end = endOfMonth(start);
-        days = eachDayOfInterval({ start, end });
+      // --- Setup Columns & Logic based on Mode ---
+      
+      if (inputMode === "detailed") {
+        setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees);
       } else {
-        const start = startOfDay(new Date(startDate));
-        days = eachDayOfInterval({ start, end: addDays(start, 6) });
+        setupCompactSheet(sheet1, startDate, employees);
       }
 
-      employees.forEach(emp => {
-        days.forEach(day => {
-          const row = sheet1.addRow({
-            employeeCode: emp.employeeCode,
-            employeeName: emp.displayName,
-            date: format(day, "yyyy-MM-dd"),
-            day: format(day, "EEEE", { locale: fr }),
-            department: emp.departmentName || "",
-            worksite: emp.worksiteName || "",
-            amIn: "", amOut: "", pmIn: "", pmOut: "", otIn: "", otOut: "",
-            pause: 0,
-            calcHours: "",
-            validHours: "",
-            absence: "",
-            holiday: "",
-            notes: ""
-          });
-
-          // Cell formating for time columns
-          ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => {
-            row.getCell(col).numFmt = 'hh:mm';
-          });
-          row.getCell('C').numFmt = 'yyyy-mm-dd';
-        });
-      });
-
       // --- Sheet 2: Guide & Masters ---
-      sheet2.getColumn('A').width = 40;
-      sheet2.getColumn('B').width = 40;
-
-      sheet2.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
-      sheet2.addRow(["1. Format heure : HH:mm (ex: 08:30)"]);
-      sheet2.addRow(["2. Format date : YYYY-MM-DD (ne pas modifier les dates pré-remplies)"]);
-      sheet2.addRow(["3. Ne pas modifier le 'Code employé' : c'est la clé d'importation."]);
-      sheet2.addRow(["4. 'Heures validées' : si rempli, cette valeur sera utilisée pour la paie."]);
-      sheet2.addRow(["5. 'Code absence' : utiliser uniquement les codes listés ci-dessous."]);
-      sheet2.addRow([]);
-
-      sheet2.addRow(["CODES ABSENCE"]).font = { bold: true };
-      const absenceCodes = [
-        ["paid_leave", "Congé payé"],
-        ["paid_permission", "Autorisation rémunérée"],
-        ["unpaid_permission", "Autorisation non rémunérée"],
-        ["sickness", "Maladie"],
-        ["justified_absence", "Absence justifiée"],
-        ["expectation", "Aspettativa / disponibilité"],
-        ["other", "Autre"]
-      ];
-      absenceCodes.forEach(c => sheet2.addRow(c));
-      sheet2.addRow([]);
-
-      sheet2.addRow(["RÉFÉRENTIELS ACTIFS"]).font = { bold: true };
-      sheet2.addRow(["Départements :", departments?.map(d => d.name).join(", ") || "Aucun"]);
-      sheet2.addRow(["Sites :", worksites?.map(w => w.name).join(", ") || "Aucun"]);
+      setupGuideSheet(sheet2, departments, worksites);
 
       // --- Finalize and Download ---
       const buffer = await workbook.xlsx.writeBuffer();
@@ -207,7 +131,7 @@ export default function AttendancesPage() {
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      const fileName = `modele_presences_${periodType}_${format(new Date(), "yyyyMMdd")}.xlsx`;
+      const fileName = `modele_presences_${inputMode}_${periodType}_${format(new Date(), "yyyyMMdd")}.xlsx`;
       anchor.download = fileName;
       anchor.click();
       window.URL.revokeObjectURL(url);
@@ -218,6 +142,203 @@ export default function AttendancesPage() {
     } finally {
       setIsDownloading(false);
     }
+  };
+
+  const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[]) => {
+    const columns = [
+      { header: "Code employé", key: "employeeCode", width: 15 },
+      { header: "Nom employé", key: "employeeName", width: 25 },
+      { header: "Date", key: "date", width: 15 },
+      { header: "Jour", key: "day", width: 10 },
+      { header: "Département", key: "department", width: 20 },
+      { header: "Site", key: "worksite", width: 20 },
+      { header: "AM Entrée", key: "amIn", width: 10 },
+      { header: "AM Sortie", key: "amOut", width: 10 },
+      { header: "PM Entrée", key: "pmIn", width: 10 },
+      { header: "PM Sortie", key: "pmOut", width: 10 },
+      { header: "HS Entrée", key: "otIn", width: 10 },
+      { header: "HS Sortie", key: "otOut", width: 10 },
+      { header: "Pause minutes", key: "pause", width: 15 },
+      { header: "Heures calculées", key: "calcHours", width: 15 },
+      { header: "Heures validées", key: "validHours", width: 15 },
+      { header: "Code absence", key: "absence", width: 15 },
+      { header: "Férié", key: "holiday", width: 10 },
+      { header: "Notes / Correction", key: "notes", width: 40 },
+    ];
+
+    sheet.columns = columns;
+
+    // Header Style
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    // Data Generation
+    let days: Date[] = [];
+    if (periodType === "monthly") {
+      const pStart = startOfMonth(new Date(year, month - 1));
+      days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
+    } else {
+      const pStart = startOfDay(new Date(start));
+      days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
+    }
+
+    let currentRow = 2;
+    employees.forEach(emp => {
+      days.forEach(day => {
+        const row = sheet.addRow({
+          employeeCode: emp.employeeCode,
+          employeeName: emp.displayName,
+          date: format(day, "yyyy-MM-dd"),
+          day: format(day, "EEEE", { locale: fr }),
+          department: emp.departmentName || "",
+          worksite: emp.worksiteName || "",
+          pause: 0
+        });
+
+        // Formatting
+        row.getCell('C').numFmt = 'yyyy-mm-dd';
+        ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
+        
+        // Identity shading
+        ['A', 'B', 'C', 'D', 'E', 'F'].forEach(col => {
+           row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+        });
+
+        // Formula for Calculated Hours (N)
+        // G=AM_In, H=AM_Out, I=PM_In, J=PM_Out, K=HS_In, L=HS_Out, M=Pause
+        row.getCell('N').value = { 
+          formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
+          result: 0 
+        };
+        row.getCell('N').numFmt = '0.00';
+        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+        row.getCell('N').font = { bold: true };
+
+        // Data Validation (Dropdowns)
+        row.getCell('P').dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: [`"${ABSENCE_CODES.join(',')}"`]
+        };
+
+        row.getCell('Q').dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: ['"Oui,Non"']
+        };
+
+        currentRow++;
+      });
+    });
+  };
+
+  const setupCompactSheet = (sheet: ExcelJS.Worksheet, start: string, employees: Employee[]) => {
+    const pStart = startOfDay(new Date(start));
+    const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
+    
+    const columns = [
+      { header: "Code employé", key: "employeeCode", width: 15 },
+      { header: "Nom employé", key: "employeeName", width: 25 },
+      { header: "Département", key: "department", width: 20 },
+      { header: "Site", key: "worksite", width: 20 },
+    ];
+
+    weekDays.forEach(day => {
+      const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
+      columns.push({ header: `${dayLabel} - Heures`, key: `h_${format(day, "dd")}`, width: 15 });
+      columns.push({ header: `${dayLabel} - Absence`, key: `a_${format(day, "dd")}`, width: 15 });
+    });
+
+    columns.push({ header: "Total semaine", key: "total", width: 15 });
+    columns.push({ header: "Notes générales", key: "notes", width: 40 });
+
+    sheet.columns = columns;
+
+    // Header Style
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } }; // Sky 700
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    let currentRow = 2;
+    employees.forEach(emp => {
+      const row = sheet.addRow({
+        employeeCode: emp.employeeCode,
+        employeeName: emp.displayName,
+        department: emp.departmentName || "",
+        worksite: emp.worksiteName || ""
+      });
+
+      // Identity shading (A-D)
+      ['A', 'B', 'C', 'D'].forEach(col => {
+         row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+      });
+
+      // Daily Hour cells format and Absence validation
+      // Hours are in E, G, I, K, M, O, Q
+      // Absences are in F, H, J, L, N, P, R
+      const hourCols = ['E', 'G', 'I', 'K', 'M', 'O', 'Q'];
+      const absCols = ['F', 'H', 'J', 'L', 'N', 'P', 'R'];
+
+      hourCols.forEach(col => {
+        row.getCell(col).numFmt = '0.00';
+      });
+
+      absCols.forEach(col => {
+        row.getCell(col).dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: [`"${ABSENCE_CODES.join(',')}"`]
+        };
+      });
+
+      // Formula for Total (S)
+      row.getCell('S').value = { 
+        formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`,
+        result: 0 
+      };
+      row.getCell('S').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+      row.getCell('S').font = { bold: true };
+
+      currentRow++;
+    });
+  };
+
+  const setupGuideSheet = (sheet: ExcelJS.Worksheet, departments?: Department[], worksites?: Worksite[]) => {
+    sheet.getColumn('A').width = 40;
+    sheet.getColumn('B').width = 40;
+
+    sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
+    sheet.addRow(["MODES DISPONIBLES :"]);
+    sheet.addRow(["1. Mode Détaillé : Saisir les horaires au format HH:mm (ex: 08:30)."]);
+    sheet.addRow(["2. Mode Compact : Saisir les totaux quotidiens en décimal (ex: 6.5 pour 6h30)."]);
+    sheet.addRow([]);
+    sheet.addRow(["RÈGLES D'IMPORTATION :"]);
+    sheet.addRow(["- Ne pas modifier le 'Code employé' : c'est la clé d'identification."]);
+    sheet.addRow(["- Le 'Code absence' doit correspondre exactement aux valeurs de la liste."]);
+    sheet.addRow(["- 'Heures validées' (Mode détaillé) : si rempli, ce montant sera prioritaire."]);
+    sheet.addRow([]);
+
+    sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
+    const absenceDetails = [
+      ["paid_leave", "Congé payé"],
+      ["paid_permission", "Autorisation rémunérée"],
+      ["unpaid_permission", "Autorisation non rémunérée"],
+      ["sickness", "Maladie"],
+      ["justified_absence", "Absence justifiée"],
+      ["expectation", "Aspettativa / disponibilité"],
+      ["other", "Autre"]
+    ];
+    absenceDetails.forEach(c => sheet.addRow(c));
+    sheet.addRow([]);
+
+    sheet.addRow(["RÉFÉRENTIELS ACTIFS"]).font = { bold: true };
+    sheet.addRow(["Départements :", departments?.map(d => d.name).join(", ") || "Aucun"]);
+    sheet.addRow(["Sites :", worksites?.map(w => w.name).join(", ") || "Aucun"]);
   };
 
   if (membershipLoading) {
@@ -259,11 +380,31 @@ export default function AttendancesPage() {
                 <div className="space-y-4">
                    <div className="space-y-2">
                       <Label className="text-[10px] uppercase font-black">Type de période</Label>
-                      <Select value={periodType} onValueChange={(v: any) => setPeriodType(v)}>
+                      <Select value={periodType} onValueChange={(v: any) => {
+                        setPeriodType(v);
+                        if (v === 'monthly') setInputMode('detailed');
+                        else setInputMode('compact');
+                      }}>
                         <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
                         <SelectContent>
                            <SelectItem value="monthly">Mensuel</SelectItem>
                            <SelectItem value="weekly">Hebdomadaire</SelectItem>
+                        </SelectContent>
+                      </Select>
+                   </div>
+
+                   <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-black">Mode de saisie</Label>
+                      <Select value={inputMode} onValueChange={(v: any) => setInputMode(v)}>
+                        <SelectTrigger className="rounded-xl">
+                          <div className="flex items-center gap-2">
+                            {inputMode === 'detailed' ? <Clock className="w-3.5 h-3.5" /> : <LayoutList className="w-3.5 h-3.5" />}
+                            <SelectValue />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                           <SelectItem value="detailed">Détaillé horaires (HH:mm)</SelectItem>
+                           <SelectItem value="compact">Compact hebdomadaire (Décimal)</SelectItem>
                         </SelectContent>
                       </Select>
                    </div>
@@ -316,7 +457,7 @@ export default function AttendancesPage() {
                 </Button>
 
                 <p className="text-[10px] text-muted-foreground text-center italic">
-                   Le fichier sera pré-rempli avec les {employees?.length || 0} employés actifs.
+                   Généré pour {employees?.length || 0} employés actifs.
                 </p>
              </CardContent>
           </Card>
@@ -327,9 +468,9 @@ export default function AttendancesPage() {
           <Alert className="bg-blue-50 border-blue-100 text-blue-800 rounded-[2rem] p-6 shadow-sm">
             <Info className="h-5 w-5 text-blue-600" />
             <div className="ml-2">
-              <AlertTitle className="font-black text-xs uppercase tracking-widest mb-1">Comment ça marche ?</AlertTitle>
+              <AlertTitle className="font-black text-xs uppercase tracking-widest mb-1">Amélioration du flux de saisie</AlertTitle>
               <AlertDescription className="text-sm leading-relaxed opacity-90">
-                Utilisez le générateur à gauche pour obtenir une matrice vierge adaptée à votre effectif. Remplissez les colonnes d'entrées/sorties et importez le fichier pour validation.
+                Le modèle Excel inclut désormais des <strong>formules de calcul automatique</strong> et des <strong>listes de choix</strong> pour les codes d'absence, réduisant les erreurs de saisie avant l'importation.
               </AlertDescription>
             </div>
           </Alert>
@@ -338,28 +479,28 @@ export default function AttendancesPage() {
             <WorkflowStepCard 
               step="1"
               title="Préparation"
-              description="Téléchargez le modèle Excel pré-rempli avec vos employés et la période choisie."
+              description="Téléchargez le modèle. Choisissez 'Détaillé' pour un suivi heure par heure ou 'Compact' pour une saisie rapide par jour."
               icon={Download}
               active={true}
             />
             <WorkflowStepCard 
               step="2"
-              title="Saisie"
-              description="Remplissez les horaires AM/PM et les éventuels codes d'absence dans Excel."
+              title="Saisie assistée"
+              description="Utilisez les menus déroulants pour les absences. Excel calcule les totaux en temps réel via des formules intégrées."
               icon={FileSpreadsheet}
               active={false}
             />
             <WorkflowStepCard 
               step="3"
               title="Importation"
-              description="Téléversez le fichier pour valider et enregistrer les présences dans le registre."
+              description="Bientôt : Téléversez le fichier pour synchroniser les données avec le registre Firestore de l'entité."
               icon={Upload}
               active={false}
             />
             <WorkflowStepCard 
               step="4"
-              title="Validation"
-              description="Contrôlez les anomalies détectées et validez les heures pour la paie."
+              title="Validation RH"
+              description="Contrôlez les écarts entre les heures calculées et validées avant clôture de la période."
               icon={CheckCircle2}
               active={false}
             />
@@ -374,7 +515,7 @@ export default function AttendancesPage() {
         <Calendar className="w-12 h-12 text-muted-foreground mb-4 opacity-20" />
         <h3 className="font-black text-muted-foreground uppercase text-xs tracking-[0.2em]">Registre des pointages</h3>
         <p className="text-xs text-muted-foreground mt-2 italic max-w-xs">
-          Les données importées apparaîtront ici sous forme de calendrier et de liste après votre première importation.
+          Les données importées apparaîtront ici après la mise en service du module d'importation (Phase 3).
         </p>
       </Card>
     </div>
