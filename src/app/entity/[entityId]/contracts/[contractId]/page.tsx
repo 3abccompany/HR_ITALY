@@ -122,12 +122,6 @@ function formatDateTime(val: any): string {
   return formatDateSafe(val, "dd/MM/yyyy HH:mm");
 }
 
-function getUserLabel(uid?: string) {
-  if (!uid) return "-";
-  if (uid === 'system' || uid.startsWith('system:')) return "Système";
-  return uid;
-}
-
 /**
  * Renders the contract lifecycle context for a document.
  */
@@ -190,6 +184,30 @@ export default function ContractDetailPage() {
   // Registry & Selection States
   const [activeLevels, setActiveLevels] = useState<any[]>([]);
   const [loadingLevels, setLoadingLevels] = useState(false);
+
+  // Members lookup for audit labels
+  const membershipsQuery = useMemo(() => {
+    if (!db || !entityId) return null;
+    return query(collection(db, "memberships"), where("entityId", "==", entityId));
+  }, [db, entityId]);
+
+  const { data: memberships } = useCollection<any>(membershipsQuery, "contract.members_lookup");
+
+  const membersMap = useMemo(() => {
+    const map = new Map<string, string>();
+    memberships?.forEach(m => {
+      map.set(m.uid, m.userDisplayName || m.userEmail || "Utilisateur");
+    });
+    return map;
+  }, [memberships]);
+
+  const getActorLabel = (uid?: string) => {
+    if (!uid) return "Utilisateur inconnu";
+    if (uid === 'system' || uid.startsWith('system:')) return "Système";
+    if (uid === 'candidate_portal') return "Candidat (Portail)";
+    if (uid === 'employee') return "Le Salarié";
+    return membersMap.get(uid) || "Utilisateur inconnu";
+  };
 
   // Renewal State
   const [isRenewalModalOpen, setIsRenewalModalOpen] = useState(false);
@@ -1050,7 +1068,7 @@ export default function ContractDetailPage() {
                         <div className="bg-green-100 p-3 rounded-2xl text-green-600"><CheckCircle2 className="w-6 h-6" /></div>
                         <div>
                            <p className="text-sm font-black text-slate-800">{contract.signedDocumentTitle}</p>
-                           <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">Reçu le {formatDateTime(contract.signedDocumentUploadedAt)}</p>
+                           <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">Reçu le {formatDateTime(contract.signedDocumentUploadedAt)} par {getActorLabel(contract.signedDocumentUploadedBy)}</p>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -1285,17 +1303,33 @@ export default function ContractDetailPage() {
              </CardHeader>
              <CardContent className="p-6 space-y-4">
                 <AuditRow label="Créé le" value={formatDateTime(contract.createdAt)} />
-                <AuditRow label="Auteur" value={getUserLabel(contract.createdBy)} />
+                <AuditRow label="Créé par" value={getActorLabel(contract.createdBy)} />
                 {contract.sentToEmployeeAt && (
                    <div className="space-y-1 pt-2 border-t border-dashed">
-                      <AuditRow label="Envoyé salarié" value={formatDateTime(contract.sentToEmployeeAt)} />
-                      <p className="text-[8px] text-accent font-bold text-right truncate">{contract.sentToEmployeeEmail}</p>
+                      <AuditRow label="Envoyé au salarié" value={formatDateTime(contract.sentToEmployeeAt)} />
+                      <AuditRow label="Envoyé par" value={getActorLabel(contract.sentToEmployeeBy)} />
+                      <AuditRow label="Destinataire" value={contract.sentToEmployeeEmail || "-"} />
                    </div>
                 )}
-                {contract.activatedAt && <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />}
-                {contract.terminatedAt && <AuditRow label="Clôturé le" value={formatDateTime(contract.terminatedAt)} />}
+                {contract.activatedAt && (
+                   <>
+                     <Separator className="opacity-20" />
+                     <AuditRow label="Activé le" value={formatDateTime(contract.activatedAt)} />
+                     <AuditRow label="Activé par" value={getActorLabel(contract.activatedBy)} />
+                   </>
+                )}
+                {contract.terminatedAt && (
+                   <>
+                     <Separator className="opacity-20" />
+                     <AuditRow label="Clôturé le" value={formatDateTime(contract.terminatedAt)} />
+                     <AuditRow label="Clôturé par" value={getActorLabel(contract.terminatedBy)} />
+                   </>
+                )}
                 <Separator className="opacity-20" />
-                <AuditRow label="Dernière modif." value={formatDateTime(contract.updatedAt)} />
+                <div className="space-y-1">
+                  <AuditRow label="Dernière modification" value={formatDateTime(contract.updatedAt)} />
+                  <AuditRow label="Modifié par" value={getActorLabel(contract.updatedBy)} />
+                </div>
              </CardContent>
           </Card>
 
