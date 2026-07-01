@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -23,7 +24,9 @@ import {
   History,
   Mail,
   Phone,
-  Fingerprint
+  Fingerprint,
+  Edit,
+  X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -81,7 +84,6 @@ import { fr } from "date-fns/locale";
 
 /**
  * Employment Offer Detail Page / Onboarding Funnel.
- * Phase 1: Enhanced display sections and send control.
  */
 export default function EditEmploymentOfferPage() {
   const params = useParams();
@@ -145,6 +147,10 @@ export default function EditEmploymentOfferPage() {
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
+  // Edit Mode States
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState<Partial<EmploymentOffer>>({});
+
   // Upload States
   const [pendingUploadItem, setPendingUploadItem] = useState<PreHireDocument | null>(null);
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
@@ -155,6 +161,60 @@ export default function EditEmploymentOfferPage() {
   // Custom Doc Dialog State
   const [isCustomDocOpen, setIsCustomDocOpen] = useState(false);
   const [customDocForm, setCustomDocForm] = useState({ label: "", type: "other", isRequired: true, description: "" });
+
+  const handleEnterEdit = () => {
+    if (offer) {
+      setEditForm({
+        contractType: offer.contractType || "",
+        ccnlName: offer.ccnlName || "",
+        levelCode: offer.levelCode || "",
+        proposedStartDate: offer.proposedStartDate || "",
+        proposedEndDate: offer.proposedEndDate || "",
+        weeklyHours: offer.weeklyHours || 40,
+        workingTime: offer.workingTime || "Tempo pieno (Full-time)",
+        trialPeriodDays: offer.trialPeriodDays || 0,
+        proposedGrossMonthly: offer.proposedGrossMonthly || 0,
+        monthlyPayments: offer.monthlyPayments || 13,
+        proposedGrossAnnual: offer.proposedGrossAnnual || 0,
+        salaryNotes: offer.salaryNotes || ""
+      });
+      setIsEditing(true);
+    }
+  };
+
+  const handleUpdateEditField = (key: keyof EmploymentOffer, value: any) => {
+    setEditForm(prev => {
+      const next = { ...prev, [key]: value };
+      
+      // Auto calculation for salary
+      if (key === 'proposedGrossMonthly' || key === 'monthlyPayments') {
+        const monthly = key === 'proposedGrossMonthly' ? (value ? Number(value) : 0) : (prev.proposedGrossMonthly || 0);
+        const payments = key === 'monthlyPayments' ? (value ? Number(value) : 13) : (prev.monthlyPayments || 13);
+        
+        if (monthly > 0) {
+          next.proposedGrossAnnual = Number((monthly * payments).toFixed(2));
+        } else {
+          next.proposedGrossAnnual = 0;
+        }
+      }
+      
+      return next;
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!user || !entityId || !offerId) return;
+    setSaving(true);
+    try {
+      await updateEmploymentOffer(entityId, offerId, editForm, user.uid);
+      setIsEditing(false);
+      toast({ title: "Proposition mise à jour" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSend = async () => {
     if (!user || !entityId || !offerId || !offer) return;
@@ -283,7 +343,7 @@ export default function EditEmploymentOfferPage() {
       const docSnap = await getDoc(doc(db!, `entities/${entityId}/documents`, item.fileId));
       if (!docSnap.exists()) throw new Error("Document introuvable.");
       const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
-      window.open(url, "_blank");
+      window.open(url, '_blank');
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally { setLoadingFileId(null); }
@@ -343,7 +403,21 @@ export default function EditEmploymentOfferPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-             {canManage && (offer.status === 'draft' || offer.status === 'ready_to_send' || offer.status === 'sent' || offer.status === 'viewed') && (
+             {canManage && !isEditing && (offer.status === 'draft' || offer.status === 'internal_review' || offer.status === 'ready_to_send') && (
+               <Button variant="outline" onClick={handleEnterEdit} className="rounded-xl font-bold bg-white gap-2">
+                  <Edit className="w-4 h-4" /> Modifier la proposition
+               </Button>
+             )}
+             {isEditing && (
+               <>
+                 <Button variant="ghost" onClick={() => setIsEditing(false)} disabled={saving}>Annuler</Button>
+                 <Button onClick={handleSaveEdit} disabled={saving} className="bg-green-600 text-white font-black rounded-xl px-6 shadow-lg gap-2">
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Enregistrer les modifications
+                 </Button>
+               </>
+             )}
+             {canManage && (offer.status === 'draft' || offer.status === 'ready_to_send' || offer.status === 'sent' || offer.status === 'viewed') && !isEditing && (
                <Button onClick={handleSend} disabled={sending} className="bg-primary text-white font-black rounded-xl px-6 shadow-lg shadow-primary/10 gap-2">
                   {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   {offer.status === 'draft' || offer.status === 'ready_to_send' ? "Envoyer au candidat" : "Renvoyer l'offre"}
@@ -365,7 +439,6 @@ export default function EditEmploymentOfferPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           
-          {/* Review Sections */}
           <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -390,6 +463,7 @@ export default function EditEmploymentOfferPage() {
                 <DetailItem label="Intitulé du Poste" value={offer.jobTitleName} icon={Briefcase} />
                 <DetailItem label="Département" value={offer.departmentName} icon={Building2} />
                 <DetailItem label="Site d'affectation" value={offer.worksiteName} icon={MapPin} />
+                {offer.recruitmentNeedTitle && <DetailItem label="Projet de recrutement" value={offer.recruitmentNeedTitle} icon={Info} />}
              </CardContent>
           </Card>
 
@@ -399,15 +473,54 @@ export default function EditEmploymentOfferPage() {
                    <FileText className="w-4 h-4" /> Conditions Contractuelles
                 </CardTitle>
              </CardHeader>
-             <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
-                <DetailItem label="Type de contrat" value={offer.contractType} />
-                <DetailItem label="Temps de travail" value={offer.workingTime || "Temps plein"} icon={Clock} />
-                <DetailItem label="CCNL appliqué" value={offer.ccnlName} icon={Scale} />
-                <DetailItem label="Niveau / Livello" value={offer.levelCode ? `${offer.levelCode} (${offer.levelLabel || ''})` : '—'} />
-                <DetailItem label="Date de début prévue" value={formatDate(offer.proposedStartDate)} icon={Calendar} />
-                <DetailItem label="Date de fin (si CDD)" value={formatDate(offer.proposedEndDate)} icon={Calendar} />
-                <DetailItem label="Heures hebdomadaires" value={offer.weeklyHours ? `${offer.weeklyHours}h` : '—'} />
-                <DetailItem label="Période d'essai (jours)" value={offer.trialPeriodDays} />
+             <CardContent className="p-8">
+                {isEditing ? (
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">Type de contrat</Label>
+                         <Input value={editForm.contractType ?? ""} onChange={(e) => handleUpdateEditField('contractType', e.target.value)} className="rounded-xl" />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">Temps de travail</Label>
+                         <Input value={editForm.workingTime ?? ""} onChange={(e) => handleUpdateEditField('workingTime', e.target.value)} className="rounded-xl" />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">CCNL appliqué</Label>
+                         <Input value={editForm.ccnlName ?? ""} onChange={(e) => handleUpdateEditField('ccnlName', e.target.value)} className="rounded-xl" />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">Niveau / Livello</Label>
+                         <Input value={editForm.levelCode ?? ""} onChange={(e) => handleUpdateEditField('levelCode', e.target.value)} className="rounded-xl" />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">Date de début prévue</Label>
+                         <Input type="date" value={editForm.proposedStartDate ?? ""} onChange={(e) => handleUpdateEditField('proposedStartDate', e.target.value)} className="rounded-xl" />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">Date de fin prévue (CDD)</Label>
+                         <Input type="date" value={editForm.proposedEndDate ?? ""} onChange={(e) => handleUpdateEditField('proposedEndDate', e.target.value)} className="rounded-xl" />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">Heures hebdomadaires</Label>
+                         <Input type="number" value={editForm.weeklyHours ?? ""} onChange={(e) => handleUpdateEditField('weeklyHours', e.target.value ? parseFloat(e.target.value) : 0)} className="rounded-xl" />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] uppercase font-black text-muted-foreground">Période d'essai (jours)</Label>
+                         <Input type="number" value={editForm.trialPeriodDays ?? ""} onChange={(e) => handleUpdateEditField('trialPeriodDays', e.target.value ? parseInt(e.target.value) : 0)} className="rounded-xl" />
+                      </div>
+                   </div>
+                ) : (
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                      <DetailItem label="Type de contrat" value={offer.contractType} />
+                      <DetailItem label="Temps de travail" value={offer.workingTime || "Temps plein"} icon={Clock} />
+                      <DetailItem label="CCNL appliqué" value={offer.ccnlName} icon={Scale} />
+                      <DetailItem label="Niveau / Livello" value={offer.levelCode ? `${offer.levelCode} (${offer.levelLabel || ''})` : '—'} />
+                      <DetailItem label="Date de début prévue" value={formatDate(offer.proposedStartDate)} icon={Calendar} />
+                      <DetailItem label="Date de fin (si CDD)" value={formatDate(offer.proposedEndDate)} icon={Calendar} />
+                      <DetailItem label="Heures hebdomadaires" value={offer.weeklyHours ? `${offer.weeklyHours}h` : '—'} />
+                      <DetailItem label="Période d'essai (jours)" value={offer.trialPeriodDays} />
+                   </div>
+                )}
              </CardContent>
           </Card>
 
@@ -417,25 +530,70 @@ export default function EditEmploymentOfferPage() {
                    <Euro className="w-4 h-4" /> Rémunération
                 </CardTitle>
              </CardHeader>
-             <CardContent className="p-8 space-y-6">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                   <div className="bg-slate-50 p-4 rounded-2xl border text-center">
-                      <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Brut Mensuel</p>
-                      <p className="text-xl font-black text-slate-800">€ {offer.proposedGrossMonthly?.toLocaleString('fr-FR') || "—"}</p>
+             <CardContent className="p-8 space-y-8">
+                {isEditing ? (
+                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                      <div className="space-y-2">
+                         <Label className="text-[10px] font-black uppercase text-muted-foreground">Brut Mensuel (€)</Label>
+                         <Input 
+                           type="number" 
+                           step="0.01" 
+                           value={editForm.proposedGrossMonthly ?? ""} 
+                           onChange={(e) => handleUpdateEditField('proposedGrossMonthly', e.target.value ? parseFloat(e.target.value) : 0)} 
+                           className="rounded-xl"
+                         />
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] font-black uppercase text-muted-foreground">Mensualités</Label>
+                         <Select 
+                           value={String(editForm.monthlyPayments ?? 13)} 
+                           onValueChange={(v) => handleUpdateEditField('monthlyPayments', parseInt(v))}
+                         >
+                           <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
+                           <SelectContent>
+                              <SelectItem value="12">12 mensualités</SelectItem>
+                              <SelectItem value="13">13 mensualités</SelectItem>
+                              <SelectItem value="14">14 mensualités</SelectItem>
+                           </SelectContent>
+                         </Select>
+                      </div>
+                      <div className="space-y-2">
+                         <Label className="text-[10px] font-black uppercase text-muted-foreground">RAL (Auto-calculé)</Label>
+                         <Input 
+                           type="number" 
+                           value={editForm.proposedGrossAnnual ?? ""} 
+                           readOnly
+                           className="rounded-xl bg-slate-50 font-bold"
+                         />
+                      </div>
+                      <div className="col-span-full space-y-2">
+                         <Label className="text-[10px] font-black uppercase text-muted-foreground">Notes sur la rémunération</Label>
+                         <Textarea 
+                           value={editForm.salaryNotes ?? ""} 
+                           onChange={(e) => handleUpdateEditField('salaryNotes', e.target.value)} 
+                           className="rounded-xl min-h-[80px]"
+                         />
+                      </div>
                    </div>
-                   <div className="bg-slate-50 p-4 rounded-2xl border text-center">
-                      <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Mensualités</p>
-                      <p className="text-xl font-black text-slate-800">{offer.monthlyPayments || "—"}</p>
+                ) : (
+                   <div className="space-y-6">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                         <div className="bg-slate-50 p-4 rounded-2xl border text-center">
+                            <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Brut Mensuel</p>
+                            <p className="text-xl font-black text-slate-800">€ {offer.proposedGrossMonthly?.toLocaleString('fr-FR') || "—"}</p>
+                            <p className="text-[8px] text-muted-foreground font-bold uppercase mt-1">{offer.monthlyPayments || 13} mensualités</p>
+                         </div>
+                         <div className="md:col-span-2 bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center ring-2 ring-primary/5">
+                            <p className="text-[9px] font-black uppercase text-primary/60 mb-1">RAL (Annuel)</p>
+                            <p className="text-xl font-black text-primary">€ {offer.proposedGrossAnnual?.toLocaleString('fr-FR') || "—"}</p>
+                         </div>
+                      </div>
+                      {offer.salaryNotes && (
+                        <div className="p-4 bg-slate-50 border-l-4 border-primary rounded-r-xl text-xs text-slate-600 italic">
+                           "{offer.salaryNotes}"
+                        </div>
+                      )}
                    </div>
-                   <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center ring-2 ring-primary/5">
-                      <p className="text-[9px] font-black uppercase text-primary/60 mb-1">RAL (Annuel)</p>
-                      <p className="text-xl font-black text-primary">€ {offer.proposedGrossAnnual?.toLocaleString('fr-FR') || "—"}</p>
-                   </div>
-                </div>
-                {offer.salaryNotes && (
-                  <div className="p-4 bg-slate-50 border-l-4 border-primary rounded-r-xl text-xs text-slate-600 italic">
-                     "{offer.salaryNotes}"
-                  </div>
                 )}
              </CardContent>
           </Card>
@@ -566,72 +724,14 @@ export default function EditEmploymentOfferPage() {
         </div>
 
         <div className="space-y-8">
-           {/* Final Conversion Decision Card */}
-           {(isAccepted || isConverted) && (
-             <Card className={cn("border-2 rounded-[2.5rem] shadow-2xl overflow-hidden transition-all", canConvert ? "border-green-500 ring-4 ring-green-50" : "border-primary/10 opacity-80")}>
-                <CardHeader className={cn("py-6 px-8 border-b", canConvert ? "bg-green-600 text-white" : "bg-primary/90 text-white")}>
-                   <div className="flex items-center gap-3">
-                      <div className="bg-white/20 p-2.5 rounded-xl"><UserPlus className="w-6 h-6" /></div>
-                      <CardTitle className="text-xl font-black">Embauche finale</CardTitle>
-                   </div>
-                </CardHeader>
-                <CardContent className="p-8 space-y-6">
-                   {isConverted ? (
-                      <div className="space-y-4 text-center">
-                         <div className="bg-green-100 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto text-green-600"><CheckCircle2 className="w-10 h-10" /></div>
-                         <p className="font-bold text-slate-800">Le recrutement est finalisé.</p>
-                         <Button asChild className="w-full h-12 rounded-xl font-black bg-primary text-white shadow-lg">
-                            <Link href={`/entity/${entityId}/employees/${offer.employeeId}`}>Voir la fiche employé</Link>
-                         </Button>
-                      </div>
-                   ) : (
-                      <>
-                        <div className="space-y-4">
-                           {blockers.length > 0 ? (
-                             <div className="space-y-3">
-                                <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest px-1">Actions requises avant création :</p>
-                                <div className="space-y-2">
-                                   {blockers.map((b, i) => (
-                                     <div key={i} className="flex items-start gap-2 text-xs font-bold text-red-600 bg-red-50 p-3 rounded-xl border border-red-100">
-                                        <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                                        <span>{b}</span>
-                                     </div>
-                                   ))}
-                                </div>
-                             </div>
-                           ) : (
-                             <div className="p-4 bg-green-50 border border-green-200 rounded-2xl flex items-start gap-3 animate-in zoom-in-95">
-                                <CheckCircle2 className="w-6 h-6 text-green-600 shrink-0" />
-                                <p className="text-sm font-bold text-green-800 leading-tight">Le dossier est complet. Toutes les validations compliance sont terminées. Vous pouvez créer l'employé.</p>
-                             </div>
-                           )}
-                        </div>
-
-                        <Button 
-                          onClick={() => setIsConvertDialogOpen(true)} 
-                          disabled={!canConvert || converting} 
-                          className={cn("w-full h-16 rounded-2xl text-lg font-black shadow-xl transition-all", 
-                            canConvert ? "bg-green-600 hover:bg-green-700 text-white" : "bg-slate-100 text-slate-300"
-                          )}
-                        >
-                           {converting ? <Loader2 className="w-6 h-6 animate-spin mr-2" /> : <UserPlus className="w-6 h-6 mr-2" />}
-                           Créer l'employé
-                        </Button>
-                      </>
-                   )}
-                </CardContent>
-             </Card>
-           )}
-
-           {/* Suivi Sidebar */}
-           <Card className="rounded-[2rem] border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
+           <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                    <History className="w-4 h-4" /> Suivi Proposition
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 space-y-4">
-                <AuditRow label="Statut" value={offer.status.toUpperCase()} />
+                <AuditRow label="Statut" value={STATUS_LABELS[offer.status] || offer.status.toUpperCase()} />
                 <AuditRow label="Vues" value={`${offer.viewCount || 0} fois`} />
                 <AuditRow label="Dernier envoi" value={formatDateTime(offer.sentAt)} />
                 <AuditRow label="Dernière vue" value={formatDateTime(offer.lastViewedAt || offer.viewedAt)} />
@@ -814,3 +914,15 @@ function formatDate(val: any): string {
     return format(d, "dd/MM/yyyy", { locale: fr });
   } catch (e) { return "—"; }
 }
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: "Brouillon",
+  internal_review: "En validation",
+  ready_to_send: "Prête à envoyer",
+  sent: "Envoyée",
+  viewed: "Consultée",
+  accepted: "Acceptée",
+  declined: "Refusée",
+  expired: "Expirée",
+  cancelled: "Annulée"
+};
