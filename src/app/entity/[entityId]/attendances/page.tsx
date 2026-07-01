@@ -183,7 +183,7 @@ export default function AttendancesPage() {
         tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
         tableHeader.alignment = { vertical: 'middle', horizontal: 'center' };
 
-        const startRow = sheet.lastRow.number + 1;
+        const startRow = (sheet.lastRow?.number || 0) + 1;
         
         days.forEach(day => {
           const row = sheet.addRow({
@@ -216,7 +216,7 @@ export default function AttendancesPage() {
           row.getCell(17).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
         });
 
-        const endRow = sheet.lastRow.number;
+        const endRow = sheet.lastRow?.number || startRow;
         const totalRow = sheet.addRow([]);
         totalRow.getCell(1).value = "TOTAL MENSUEL";
         totalRow.getCell(1).font = { bold: true };
@@ -228,7 +228,12 @@ export default function AttendancesPage() {
         totalRow.font = { bold: true };
         
         sheet.addRow([]); // Spacer
-        sheet.addPageBreak();
+        
+        // Correct way to add a page break in ExcelJS is on a specific row
+        const breakRow = sheet.lastRow;
+        if (breakRow) {
+           (breakRow as any).addPageBreak?.();
+        }
       });
       
     } else {
