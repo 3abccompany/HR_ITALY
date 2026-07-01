@@ -181,32 +181,21 @@ export default function ContractDetailPage() {
   const [isValidationDialogOpen, setIsValidationDialogOpen] = useState(false);
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
 
-  // Registry & Selection States
-  const [activeLevels, setActiveLevels] = useState<any[]>([]);
-  const [loadingLevels, setLoadingLevels] = useState(false);
-
-  // Members lookup for audit labels
-  const membershipsQuery = useMemo(() => {
-    if (!db || !entityId) return null;
-    return query(collection(db, "memberships"), where("entityId", "==", entityId));
-  }, [db, entityId]);
-
-  const { data: memberships } = useCollection<any>(membershipsQuery, "contract.members_lookup");
-
-  const membersMap = useMemo(() => {
-    const map = new Map<string, string>();
-    memberships?.forEach(m => {
-      map.set(m.uid, m.userDisplayName || m.userEmail || "Utilisateur");
-    });
-    return map;
-  }, [memberships]);
-
+  // Actor label resolution helper
   const getActorLabel = (uid?: string) => {
     if (!uid) return "Utilisateur inconnu";
     if (uid === 'system' || uid.startsWith('system:')) return "Système";
     if (uid === 'candidate_portal') return "Candidat (Portail)";
     if (uid === 'employee') return "Le Salarié";
-    return membersMap.get(uid) || "Utilisateur inconnu";
+    
+    // Check if the actor is the current user
+    if (user && uid === user.uid) {
+      return membership?.userDisplayName || membership?.userEmail || "Moi";
+    }
+
+    // Since we cannot query global memberships/users from the client, 
+    // we use a generic but clear label for other admin users.
+    return "Utilisateur RH";
   };
 
   // Renewal State
@@ -971,74 +960,74 @@ export default function ContractDetailPage() {
           {!isImported && (isDraft || isPendingSignature || isPendingActivation) && (
             <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", !contract.generatedPdfStoragePath ? "border-orange-100 bg-orange-50/5" : "border-primary/10")}>
               <CardHeader className="bg-primary/5 border-b py-5 px-8 flex flex-row items-center justify-between">
-                  <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                    <FileCode className="w-4 h-4" /> 1. Document de travail (PDF)
-                  </CardTitle>
-                  <div className="flex items-center gap-2">
-                    {!!isPdfObsolete ? (
-                      <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[8px] font-black uppercase">PDF Obsolète</Badge>
-                    ) : contract.generatedPdfStoragePath ? (
-                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase">PDF à jour</Badge>
-                    ) : (
-                      <Badge variant="outline" className="bg-slate-100 text-slate-400 border-slate-200 text-[8px] font-black uppercase">Non généré</Badge>
-                    )}
-                  </div>
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                  <FileCode className="w-4 h-4" /> 1. Document de travail (PDF)
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  {!!isPdfObsolete ? (
+                    <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[8px] font-black uppercase">PDF Obsolète</Badge>
+                  ) : contract.generatedPdfStoragePath ? (
+                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase">PDF à jour</Badge>
+                  ) : (
+                    <Badge variant="outline" className="bg-slate-100 text-slate-400 border-slate-200 text-[8px] font-black uppercase">Non généré</Badge>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="p-8">
-                  <div className="space-y-6">
-                    {contract.generatedPdfStoragePath && (
-                      <div className="flex items-center justify-between gap-6 p-4 bg-white rounded-2xl border shadow-sm group">
-                        <div className="flex items-center gap-4 min-w-0">
-                            <div className="bg-primary/5 p-3 rounded-2xl text-primary"><FileText className="w-5 h-5" /></div>
-                            <div className="min-w-0">
-                              <p className="text-sm font-black text-slate-800 truncate">{contract.generatedPdfFileName}</p>
-                              <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">V{contract.generatedPdfVersion} — {formatDateTime(contract.generatedPdfAt)}</p>
-                            </div>
-                        </div>
-                        <Button variant="ghost" size="sm" asChild className="rounded-xl font-bold opacity-0 group-hover:opacity-100 transition-all">
-                            <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-4 h-4 mr-1.5" /> Voir le PDF</a>
-                        </Button>
+                <div className="space-y-6">
+                  {contract.generatedPdfStoragePath && (
+                    <div className="flex items-center justify-between gap-6 p-4 bg-white rounded-2xl border shadow-sm group">
+                      <div className="flex items-center gap-4 min-w-0">
+                          <div className="bg-primary/5 p-3 rounded-2xl text-primary"><FileText className="w-5 h-5" /></div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-black text-slate-800 truncate">{contract.generatedPdfFileName}</p>
+                            <p className="text-[10px] text-muted-foreground font-bold uppercase mt-0.5">V{contract.generatedPdfVersion} — {formatDateTime(contract.generatedPdfAt)}</p>
+                          </div>
                       </div>
-                    )}
-
-                    {!!isPdfObsolete && (
-                      <Alert className="bg-orange-50 border-orange-200 rounded-xl">
-                        <AlertTriangle className="h-4 w-4 text-orange-600" />
-                        <AlertDescription className="text-xs font-bold text-orange-800">
-                          Le contrat a été modifié. Le PDF actuel est obsolète. Veuillez régénérer le document.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-
-                    <div className="flex flex-wrap gap-3">
-                       <Button onClick={handleGeneratePdf} disabled={!!(generatingPdf || isEditing)} className="h-11 rounded-xl font-black gap-2 px-6">
-                          {!!generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
-                          {contract.generatedPdfStoragePath ? "Régénérer le PDF" : "Générer le PDF du contrat"}
-                       </Button>
-
-                       {(isDraft || isPendingSignature) && (
-                         <Button 
-                           onClick={handleTransitionToSignature}
-                           disabled={!!(processing || generatingPdf || !contract.generatedPdfStoragePath || isPdfObsolete)}
-                           variant="outline"
-                           className="h-11 rounded-xl font-bold text-accent border-accent/20 hover:bg-accent/5 gap-2"
-                         >
-                           <FileSignature className="w-4 h-4" /> Prêt pour signature
-                         </Button>
-                       )}
-
-                       {!!canSendToEmployee && (
-                         <Button 
-                           onClick={handleSendToEmployee}
-                           variant="outline"
-                           className="h-11 rounded-xl font-bold text-primary border-primary/20 hover:bg-primary/5 gap-2"
-                           disabled={!!processing}
-                         >
-                           <Send className="w-4 h-4" /> Envoyer au salarié
-                         </Button>
-                       )}
+                      <Button variant="ghost" size="sm" asChild className="rounded-xl font-bold opacity-0 group-hover:opacity-100 transition-all">
+                          <a href={contract.generatedPdfUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-4 h-4 mr-1.5" /> Voir le PDF</a>
+                      </Button>
                     </div>
+                  )}
+
+                  {!!isPdfObsolete && (
+                    <Alert className="bg-orange-50 border-orange-200 rounded-xl">
+                      <AlertTriangle className="h-4 w-4 text-orange-600" />
+                      <AlertDescription className="text-xs font-bold text-orange-800">
+                        Le contrat a été modifié. Le PDF actuel est obsolète. Veuillez régénérer le document.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  <div className="flex flex-wrap gap-3">
+                     <Button onClick={handleGeneratePdf} disabled={!!(generatingPdf || isEditing)} className="h-11 rounded-xl font-black gap-2 px-6">
+                        {!!generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+                        {contract.generatedPdfStoragePath ? "Régénérer le PDF" : "Générer le PDF du contrat"}
+                     </Button>
+
+                     {(isDraft || isPendingSignature) && (
+                       <Button 
+                         onClick={handleTransitionToSignature}
+                         disabled={!!(processing || generatingPdf || !contract.generatedPdfStoragePath || isPdfObsolete)}
+                         variant="outline"
+                         className="h-11 rounded-xl font-bold text-accent border-accent/20 hover:bg-accent/5 gap-2"
+                       >
+                         <FileSignature className="w-4 h-4" /> Prêt pour signature
+                       </Button>
+                     )}
+
+                     {!!canSendToEmployee && (
+                       <Button 
+                         onClick={handleSendToEmployee}
+                         variant="outline"
+                         className="h-11 rounded-xl font-bold text-primary border-primary/20 hover:bg-primary/5 gap-2"
+                         disabled={!!processing}
+                       >
+                         <Send className="w-4 h-4" /> Envoyer au salarié
+                       </Button>
+                     )}
                   </div>
+                </div>
               </CardContent>
             </Card>
           )}
