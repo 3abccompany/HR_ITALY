@@ -21,7 +21,9 @@ import {
   Phone,
   Fingerprint,
   Edit,
-  X
+  X,
+  Trash2,
+  Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -557,7 +559,7 @@ export default function EditEmploymentOfferPage() {
                          <Label className="text-[10px] font-black uppercase text-muted-foreground">Mensualités</Label>
                          <Select 
                            value={String(editForm.monthlyPayments ?? 13)} 
-                           onValueChange={(v) => handleUpdateEditField('monthlyPayments', parseInt(v))}
+                           onValueChange={(v: string) => handleUpdateEditField('monthlyPayments', parseInt(v))}
                          >
                            <SelectTrigger className="rounded-xl">
                               <SelectValue />
@@ -768,7 +770,7 @@ export default function EditEmploymentOfferPage() {
               </div>
               <div className="space-y-2">
                  <Label className="text-[10px] uppercase font-black">Type</Label>
-                 <Select value={customDocForm.type} onValueChange={(v) => setCustomDocForm(p => ({...p, type: v}))}>
+                 <Select value={customDocForm.type} onValueChange={(v: string) => setCustomDocForm(p => ({...p, type: v}))}>
                     <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
                        <SelectItem value="identity_document">Identité</SelectItem>
