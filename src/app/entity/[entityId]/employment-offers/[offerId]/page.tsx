@@ -40,7 +40,13 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { updateEmploymentOffer, initiateOfferSend } from "@/services/employment-offer.service";
+import { 
+  updateEmploymentOffer, 
+  initiateOfferSend, 
+  getActiveOfferForCandidate, 
+  getLatestOfferForCandidate, 
+  createEmploymentOfferDraft 
+} from "@/services/employment-offer.service";
 import { convertOfferToEmployeeAction } from "@/services/employee-conversion.service";
 import { 
   ensurePreHireDossier, 
@@ -284,7 +290,9 @@ export default function EditEmploymentOfferPage() {
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur lors de l'envoi", description: err.message });
-    } finally { setSending(false); }
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleConvert = async () => {
@@ -298,7 +306,9 @@ export default function EditEmploymentOfferPage() {
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally { setConverting(false); }
+    } finally {
+      setConverting(false);
+    }
   };
 
   const handleInitDossier = async () => {
@@ -354,10 +364,11 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
-  const handleSendDocRequest = async (eId: string, dId: string, uId: string) => {
+  const handleSendDocRequestLocal = async () => {
+    if (!user || !dossier) return;
     setSaving(true);
     try {
-      await sendDocumentRequestEmail(eId, dId, uId);
+      await sendDocumentRequestEmail(entityId, dossier.dossierId, user.uid);
       toast({ title: "Relance envoyée", description: "Le candidat a été invité à compléter son dossier." });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -691,7 +702,7 @@ export default function EditEmploymentOfferPage() {
                        <Button 
                           variant="outline" 
                           size="sm" 
-                          onClick={() => user && dossier && handleSendDocRequest(entityId, dossier.dossierId, user.uid)} 
+                          onClick={handleSendDocRequestLocal} 
                           disabled={saving || !user} 
                           className="h-8 rounded-xl font-bold bg-white gap-2"
                         >
@@ -980,10 +991,10 @@ export default function EditEmploymentOfferPage() {
   );
 
   async function handlePrepareOffer(forceNew = false) {
-    if (!user || !candidate || !entityId) return;
+    if (!user || !offer || !entityId) return;
     setProcessing(true);
     try {
-      const activeOffer = await getActiveOfferForCandidate(entityId, candidate.candidateId);
+      const activeOffer = await getActiveOfferForCandidate(entityId, offer.candidateId);
       if (activeOffer) {
         toast({ title: "Proposition active", description: "Une proposition est déjà en cours pour ce candidat." });
         router.push(`/entity/${entityId}/employment-offers/${activeOffer.offerId}`);
@@ -991,7 +1002,7 @@ export default function EditEmploymentOfferPage() {
       }
 
       if (!forceNew) {
-        const latestOffer = await getLatestOfferForCandidate(entityId, candidate.candidateId);
+        const latestOffer = await getLatestOfferForCandidate(entityId, offer.candidateId);
         if (latestOffer) {
           setRevisionDialogOpen(true);
           setProcessing(false);
@@ -1001,7 +1012,7 @@ export default function EditEmploymentOfferPage() {
 
       let need = null;
       let profile = null;
-      const effectiveNeedId = (candidate as any).recruitmentNeedId || submission?.recruitmentNeedId;
+      const effectiveNeedId = offer.recruitmentNeedId;
 
       if (effectiveNeedId) {
          const needRef = doc(db!, `entities/${entityId}/recruitmentNeeds`, effectiveNeedId);
@@ -1011,7 +1022,7 @@ export default function EditEmploymentOfferPage() {
          }
       }
 
-      const effectiveProfileId = (candidate as any).jobProfileId || need?.jobProfileId;
+      const effectiveProfileId = offer.jobProfileId;
       if (effectiveProfileId) {
          const profileRef = doc(db!, `entities/${entityId}/jobProfiles`, effectiveProfileId);
          const p = await getDoc(profileRef);
@@ -1020,9 +1031,21 @@ export default function EditEmploymentOfferPage() {
          }
       }
 
-      const { offerId } = await createEmploymentOfferDraft({
+      // Construct a mock candidate object to satisfy the drafting service
+      const candidateMock = {
+        candidateId: offer.candidateId,
+        personId: offer.personId,
+        displayName: offer.candidateDisplayName,
+        email: offer.candidateEmail,
+        phone: offer.candidatePhone,
+        applicationSubmissionId: offer.applicationSubmissionId,
+        positionApplied: offer.jobTitleName,
+        department: offer.departmentName,
+      } as any;
+
+      const { offerId: newOfferId } = await createEmploymentOfferDraft({
         entityId,
-        candidate,
+        candidate: candidateMock,
         need,
         profile,
         actorUid: user.uid,
@@ -1031,7 +1054,7 @@ export default function EditEmploymentOfferPage() {
 
       toast({ title: "Proposition initialisée", description: "Brouillon prêt pour édition." });
       setRevisionDialogOpen(false);
-      router.push(`/entity/${entityId}/employment-offers/${offerId}`);
+      router.push(`/entity/${entityId}/employment-offers/${newOfferId}`);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
