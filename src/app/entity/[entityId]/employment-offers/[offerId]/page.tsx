@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -34,10 +33,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
-import { doc, DocumentReference, collection, query, where, Query, updateDoc, serverTimestamp, getDoc, orderBy } from "firebase/firestore";
+import { doc, DocumentReference, collection, query, where, Query, getDoc, orderBy } from "firebase/firestore";
 import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer";
 import { PreHireDossier, PreHireDocument, PreHireDocumentStatus } from "@/types/pre-hire-dossier";
-import { RecruitmentNeed } from "@/types/recruitment-need";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
@@ -51,7 +49,6 @@ import {
   addCustomPreHireDocumentRequest,
   deleteCustomPreHireDocumentRequest
 } from "@/services/pre-hire-dossier.service";
-import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 import { getDocumentDownloadUrl, uploadPreHireDocument } from "@/services/document.service";
 import {
   Dialog,
@@ -79,9 +76,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
-import { format, isBefore, startOfDay, differenceInDays } from "date-fns";
+import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
+/**
+ * Employment Offer Detail Page / Onboarding Funnel.
+ * Phase 1: Enhanced display sections and send control.
+ */
 export default function EditEmploymentOfferPage() {
   const params = useParams();
   const router = useRouter();
@@ -94,11 +95,16 @@ export default function EditEmploymentOfferPage() {
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
-  const offerRef = useMemo(() => db && entityId && offerId ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null, [db, entityId, offerId]);
+  const offerRef = useMemo(() => 
+    db && entityId && offerId ? (doc(db, `entities/${entityId}/employmentOffers`, offerId) as DocumentReference<EmploymentOffer>) : null,
+  [db, entityId, offerId]);
+  
   const { data: offer, loading: loadingOffer } = useDoc<EmploymentOffer>(offerRef);
 
   // Pre-Hire Dossier Query
-  const dossierQuery = useMemo(() => db && entityId && offerId ? query(collection(db, `entities/${entityId}/preHireDossiers`), where("employmentOfferId", "==", offerId)) as Query<PreHireDossier> : null, [db, entityId, offerId]);
+  const dossierQuery = useMemo(() => 
+    db && entityId && offerId ? query(collection(db, `entities/${entityId}/preHireDossiers`), where("employmentOfferId", "==", offerId)) as Query<PreHireDossier> : null,
+  [db, entityId, offerId]);
   const { data: dossiers } = useCollection<PreHireDossier>(dossierQuery);
   const dossier = dossiers?.[0];
 
@@ -126,9 +132,7 @@ export default function EditEmploymentOfferPage() {
     [db, entityId, offerId]
   );
   
-  const { data: communications } = useCollection<any>(
-    mandatoryCommunicationQuery
-  );
+  const { data: communications } = useCollection<any>(mandatoryCommunicationQuery);
   
   const mandatoryCommunication = communications?.find(
     (item: any) => item.type === "UNILAV_ASSUNZIONE"
@@ -141,7 +145,7 @@ export default function EditEmploymentOfferPage() {
   const [rejectItem, setRejectItem] = useState<{ id: string, reason: string } | null>(null);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
-  // New Upload States
+  // Upload States
   const [pendingUploadItem, setPendingUploadItem] = useState<PreHireDocument | null>(null);
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
   const [pendingExpiresAt, setPendingExpiresAt] = useState("");
@@ -230,6 +234,18 @@ export default function EditEmploymentOfferPage() {
     }
   };
 
+  const handleSendDocRequest = async (eId: string, dId: string, uId: string) => {
+    setSaving(true);
+    try {
+      await sendDocumentRequestEmail(eId, dId, uId);
+      toast({ title: "Relance envoyée", description: "Le candidat a été invité à compléter son dossier." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleUploadPreHireDoc = (item: PreHireDocument, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user || !offer || !dossier) return;
@@ -278,7 +294,7 @@ export default function EditEmploymentOfferPage() {
   const isConverted = offer?.conversionStatus === 'converted';
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
 
-  const canUpdate = hasPermission("contracts.create") || hasPermission("contracts.update");
+  const canManage = hasPermission("contracts.create") || hasPermission("contracts.update");
 
   const blockers = useMemo(() => {
     const list: string[] = [];
@@ -311,7 +327,7 @@ export default function EditEmploymentOfferPage() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto pb-32 space-y-12">
-      {/* 1. Header with Stepper */}
+      {/* Header with Onboarding Stepper */}
       <div className="space-y-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -327,7 +343,7 @@ export default function EditEmploymentOfferPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-             {canUpdate && (offer.status === 'draft' || offer.status === 'ready_to_send' || offer.status === 'sent' || offer.status === 'viewed') && (
+             {canManage && (offer.status === 'draft' || offer.status === 'ready_to_send' || offer.status === 'sent' || offer.status === 'viewed') && (
                <Button onClick={handleSend} disabled={sending} className="bg-primary text-white font-black rounded-xl px-6 shadow-lg shadow-primary/10 gap-2">
                   {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   {offer.status === 'draft' || offer.status === 'ready_to_send' ? "Envoyer au candidat" : "Renvoyer l'offre"}
@@ -336,7 +352,7 @@ export default function EditEmploymentOfferPage() {
           </div>
         </div>
 
-        {/* Stepper Component */}
+        {/* Dynamic Funnel Progress Bar */}
         <div className="grid grid-cols-5 gap-4 px-4">
            <Step label="Brouillon" active={offer.status === 'draft'} completed={offer.status !== 'draft'} icon={FileSignature} date={formatDateTime(offer.createdAt)} />
            <Step label="Envoyée" active={offer.status === 'sent'} completed={['sent', 'viewed', 'accepted', 'declined'].includes(offer.status)} icon={Send} date={formatDateTime(offer.sentAt)} />
@@ -349,13 +365,11 @@ export default function EditEmploymentOfferPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           
-          {/* Phase cards displayed when offer is progressing or being reviewed */}
-          
-          {/* 2. Candidate Identity Section */}
+          {/* Review Sections */}
           <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <User className="w-4 h-4" /> Identité & Contact
+                   <User className="w-4 h-4" /> Identité Candidat
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
@@ -366,43 +380,37 @@ export default function EditEmploymentOfferPage() {
              </CardContent>
           </Card>
 
-          {/* 3. Job Context Section */}
           <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <Briefcase className="w-4 h-4" /> Poste & Localisation
+                   <Building2 className="w-4 h-4" /> Contexte Poste
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
                 <DetailItem label="Intitulé du Poste" value={offer.jobTitleName} icon={Briefcase} />
                 <DetailItem label="Département" value={offer.departmentName} icon={Building2} />
                 <DetailItem label="Site d'affectation" value={offer.worksiteName} icon={MapPin} />
-                <DetailItem label="Référence Besoin RH" value={offer.recruitmentNeedId} icon={Info} />
              </CardContent>
           </Card>
 
-          {/* 4. Contract Terms Section */}
           <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
                    <FileText className="w-4 h-4" /> Conditions Contractuelles
                 </CardTitle>
              </CardHeader>
-             <CardContent className="p-8 space-y-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                   <DetailItem label="Type de contrat" value={offer.contractType} />
-                   <DetailItem label="Temps de travail" value={offer.workingTime} icon={Clock} />
-                   <DetailItem label="CCNL appliqué" value={offer.ccnlName} icon={Scale} />
-                   <DetailItem label="Niveau / Livello" value={offer.levelCode ? `${offer.levelCode} (${offer.levelLabel || ''})` : '—'} />
-                   <DetailItem label="Date de début prévue" value={formatDate(offer.proposedStartDate)} icon={Calendar} />
-                   <DetailItem label="Date de fin (si CDD)" value={formatDate(offer.proposedEndDate)} icon={Calendar} />
-                   <DetailItem label="Heures hebdomadaires" value={offer.weeklyHours ? `${offer.weeklyHours}h` : '—'} />
-                   <DetailItem label="Période d'essai (jours)" value={offer.trialPeriodDays} />
-                </div>
+             <CardContent className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
+                <DetailItem label="Type de contrat" value={offer.contractType} />
+                <DetailItem label="Temps de travail" value={offer.workingTime || "Temps plein"} icon={Clock} />
+                <DetailItem label="CCNL appliqué" value={offer.ccnlName} icon={Scale} />
+                <DetailItem label="Niveau / Livello" value={offer.levelCode ? `${offer.levelCode} (${offer.levelLabel || ''})` : '—'} />
+                <DetailItem label="Date de début prévue" value={formatDate(offer.proposedStartDate)} icon={Calendar} />
+                <DetailItem label="Date de fin (si CDD)" value={formatDate(offer.proposedEndDate)} icon={Calendar} />
+                <DetailItem label="Heures hebdomadaires" value={offer.weeklyHours ? `${offer.weeklyHours}h` : '—'} />
+                <DetailItem label="Période d'essai (jours)" value={offer.trialPeriodDays} />
              </CardContent>
           </Card>
 
-          {/* 5. Salary Section */}
           <Card className="border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
              <CardHeader className="bg-primary/5 border-b py-4 px-8">
                 <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
@@ -417,23 +425,22 @@ export default function EditEmploymentOfferPage() {
                    </div>
                    <div className="bg-slate-50 p-4 rounded-2xl border text-center">
                       <p className="text-[9px] font-black uppercase text-muted-foreground mb-1">Mensualités</p>
-                      <p className="text-xl font-black text-slate-800">{offer.monthlyPayments || "13"}</p>
+                      <p className="text-xl font-black text-slate-800">{offer.monthlyPayments || "—"}</p>
                    </div>
                    <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center ring-2 ring-primary/5">
-                      <p className="text-[9px] font-black uppercase text-primary/60 mb-1">Estimation RAL</p>
+                      <p className="text-[9px] font-black uppercase text-primary/60 mb-1">RAL (Annuel)</p>
                       <p className="text-xl font-black text-primary">€ {offer.proposedGrossAnnual?.toLocaleString('fr-FR') || "—"}</p>
                    </div>
                 </div>
                 {offer.salaryNotes && (
                   <div className="p-4 bg-slate-50 border-l-4 border-primary rounded-r-xl text-xs text-slate-600 italic">
-                     <p className="font-bold text-[10px] uppercase not-italic mb-1 opacity-50">Notes sur la rémunération</p>
                      "{offer.salaryNotes}"
                   </div>
                 )}
              </CardContent>
           </Card>
 
-          {/* 6. Post-Acceptance Sections (RH Dossier & UniLav) */}
+          {/* Compliance Phase (visible after acceptance) */}
           {(offer.status === 'accepted' || isConverted) && (
             <>
               <Card className={cn("border-2 rounded-[2rem] overflow-hidden shadow-xl transition-all", dossier?.readyForConversion ? "border-green-100 bg-green-50/5" : "border-primary/5")}>
@@ -483,11 +490,7 @@ export default function EditEmploymentOfferPage() {
                              <div className="min-w-0">
                                 <div className="flex items-center gap-2">
                                   <p className="text-sm font-black text-slate-800 truncate">{item.label}</p>
-                                  {item.isRequired ? (
-                                    <Badge variant="outline" className="text-[8px] font-black uppercase h-4 px-1.5 border-red-200 text-red-700 bg-red-50">Requis</Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="text-[8px] font-black uppercase h-4 px-1.5 border-slate-200 text-slate-400 bg-slate-50">Optionnel</Badge>
-                                  )}
+                                  {item.isRequired && <Badge variant="outline" className="text-[8px] font-black uppercase h-4 border-red-200 text-red-700 bg-red-50">Requis</Badge>}
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                    {getDocStatusBadge(item.status)}
@@ -549,7 +552,7 @@ export default function EditEmploymentOfferPage() {
                 </CardHeader>
                 <CardContent className="p-8 space-y-6 text-center">
                     <p className="text-sm text-slate-600">
-                      Accédez au dossier de communication obligatoire pour renseigner le protocole ou transmettre les données au consultant.
+                      Gérez les déclarations obligatoires auprès des autorités compétentes.
                     </p>
                     <Button asChild variant="outline" className="w-full h-11 rounded-xl font-bold border-dashed border-2 gap-2 hover:bg-slate-50">
                        <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
@@ -620,32 +623,26 @@ export default function EditEmploymentOfferPage() {
              </Card>
            )}
 
-           {/* Trackability sidebar */}
-           <Card className="rounded-[2rem] border-primary/5 shadow-lg bg-secondary/5 overflow-hidden">
-             <CardHeader className="py-5 px-8 border-b bg-secondary/10">
-                <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                   <History className="w-4 h-4" /> Suivi de la proposition
+           {/* Suivi Sidebar */}
+           <Card className="rounded-[2rem] border-primary/10 shadow-xl rounded-[2rem] overflow-hidden bg-white">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <History className="w-4 h-4" /> Suivi Proposition
                 </CardTitle>
              </CardHeader>
-             <CardContent className="p-6 space-y-4">
-                <AuditRow label="Brouillon créé" value={formatDate(offer.createdAt)} />
+             <CardContent className="p-8 space-y-4">
+                <AuditRow label="Statut" value={offer.status.toUpperCase()} />
+                <AuditRow label="Vues" value={`${offer.viewCount || 0} fois`} />
                 <AuditRow label="Dernier envoi" value={formatDateTime(offer.sentAt)} />
-                <AuditRow label="Nombre de vues" value={`${offer.viewCount || 0} fois`} />
                 <AuditRow label="Dernière vue" value={formatDateTime(offer.lastViewedAt || offer.viewedAt)} />
-                {offer.respondedAt && (
-                   <>
-                     <Separator className="opacity-20" />
-                     <AuditRow label="Réponse candidat" value={offer.candidateResponse === 'accepted' ? "Acceptée" : "Refusée"} />
-                     <AuditRow label="Date réponse" value={formatDateTime(offer.respondedAt)} />
-                   </>
-                )}
+                <Separator className="opacity-50" />
+                <AuditRow label="Créée le" value={formatDateTime(offer.createdAt)} />
              </CardContent>
            </Card>
         </div>
       </div>
 
-      {/* Global Modals */}
-
+      {/* Dialogs */}
       <Dialog open={isCustomDocOpen} onOpenChange={setIsCustomDocOpen}>
         <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
            <DialogHeader>
@@ -685,7 +682,6 @@ export default function EditEmploymentOfferPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Upload Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent className="rounded-[2.5rem] sm:max-w-[450px]">
           <DialogHeader><DialogTitle className="text-xl font-black text-primary">Téléverser le document</DialogTitle></DialogHeader>
@@ -709,7 +705,7 @@ export default function EditEmploymentOfferPage() {
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmer l'embauche</AlertDialogTitle>
-            <AlertDialogDescription>Le dossier compliance est validé. Souhaitez-vous créer officiellement le profil employé et générer le contrat de travail ?</AlertDialogDescription>
+            <AlertDialogDescription>Le dossier compliance est validé. Souhaitez-vous créer officiellement le profil employé ?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={converting}>Annuler</AlertDialogCancel>
