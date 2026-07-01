@@ -166,73 +166,119 @@ export default function AttendancesPage() {
       { header: "Notes / Correction", key: "notes", width: 40 },
     ];
 
-    sheet.columns = columns;
-
-    // Header Style
-    const headerRow = sheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
-    headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
-    sheet.views = [{ state: 'frozen', ySplit: 1 }];
-
-    // Data Generation
     let days: Date[] = [];
     if (periodType === "monthly") {
       const pStart = startOfMonth(new Date(year, month - 1));
       days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
+      
+      // MONTHLY MODE: Employee Blocks with Totals
+      employees.forEach(emp => {
+        const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode} — Département: ${emp.departmentName || "N/A"} — Site: ${emp.worksiteName || "N/A"}`]);
+        empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        empHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
+        sheet.mergeCells(empHeaderRow.number, 1, empHeaderRow.number, columns.length);
+
+        const tableHeader = sheet.addRow(columns.map(c => c.header));
+        tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+        tableHeader.alignment = { vertical: 'middle', horizontal: 'center' };
+
+        const startRow = sheet.lastRow.number + 1;
+        
+        days.forEach(day => {
+          const row = sheet.addRow({
+            employeeCode: emp.employeeCode,
+            employeeName: emp.displayName,
+            date: format(day, "yyyy-MM-dd"),
+            day: format(day, "EEEE", { locale: fr }),
+            department: emp.departmentName || "",
+            worksite: emp.worksiteName || "",
+            pause: 0
+          });
+
+          // Style and Formulas
+          const currentRow = row.number;
+          row.getCell(3).numFmt = 'yyyy-mm-dd';
+          ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
+          ['A', 'B', 'C', 'D', 'E', 'F'].forEach(col => {
+             row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+          });
+          
+          row.getCell(14).value = { 
+            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
+            result: 0 
+          };
+          row.getCell(14).numFmt = '0.00';
+          row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+          row.getCell(14).font = { bold: true };
+
+          row.getCell(16).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+          row.getCell(17).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
+        });
+
+        const endRow = sheet.lastRow.number;
+        const totalRow = sheet.addRow([]);
+        totalRow.getCell(1).value = "TOTAL MENSUEL";
+        totalRow.getCell(1).font = { bold: true };
+        totalRow.getCell(14).value = { formula: `SUM(N${startRow}:N${endRow})` };
+        totalRow.getCell(14).numFmt = '0.00';
+        totalRow.getCell(15).value = { formula: `SUM(O${startRow}:O${endRow})` };
+        totalRow.getCell(15).numFmt = '0.00';
+        totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+        totalRow.font = { bold: true };
+        
+        sheet.addRow([]); // Spacer
+        sheet.addPageBreak();
+      });
+      
     } else {
+      // WEEKLY DETAILED MODE: Single Table
       const pStart = startOfDay(new Date(start));
       days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
+      
+      sheet.columns = columns;
+      const headerRow = sheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
+      headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+      sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+      let currentRow = 2;
+      employees.forEach(emp => {
+        days.forEach(day => {
+          const row = sheet.addRow({
+            employeeCode: emp.employeeCode,
+            employeeName: emp.displayName,
+            date: format(day, "yyyy-MM-dd"),
+            day: format(day, "EEEE", { locale: fr }),
+            department: emp.departmentName || "",
+            worksite: emp.worksiteName || "",
+            pause: 0
+          });
+
+          row.getCell('C').numFmt = 'yyyy-mm-dd';
+          ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
+          ['A', 'B', 'C', 'D', 'E', 'F'].forEach(col => {
+             row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+          });
+
+          row.getCell('N').value = { 
+            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
+            result: 0 
+          };
+          row.getCell('N').numFmt = '0.00';
+          row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+          row.getCell('N').font = { bold: true };
+
+          row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+          row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
+          currentRow++;
+        });
+      });
     }
 
-    let currentRow = 2;
-    employees.forEach(emp => {
-      days.forEach(day => {
-        const row = sheet.addRow({
-          employeeCode: emp.employeeCode,
-          employeeName: emp.displayName,
-          date: format(day, "yyyy-MM-dd"),
-          day: format(day, "EEEE", { locale: fr }),
-          department: emp.departmentName || "",
-          worksite: emp.worksiteName || "",
-          pause: 0
-        });
-
-        // Formatting
-        row.getCell('C').numFmt = 'yyyy-mm-dd';
-        ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-        
-        // Identity shading
-        ['A', 'B', 'C', 'D', 'E', 'F'].forEach(col => {
-           row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
-        });
-
-        // Formula for Calculated Hours (N)
-        // G=AM_In, H=AM_Out, I=PM_In, J=PM_Out, K=HS_In, L=HS_Out, M=Pause
-        row.getCell('N').value = { 
-          formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
-          result: 0 
-        };
-        row.getCell('N').numFmt = '0.00';
-        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-        row.getCell('N').font = { bold: true };
-
-        // Data Validation (Dropdowns)
-        row.getCell('P').dataValidation = {
-          type: 'list',
-          allowBlank: true,
-          formulae: [`"${ABSENCE_CODES.join(',')}"`]
-        };
-
-        row.getCell('Q').dataValidation = {
-          type: 'list',
-          allowBlank: true,
-          formulae: ['"Oui,Non"']
-        };
-
-        currentRow++;
-      });
-    });
+    // Adjust column widths for all detailed modes
+    sheet.getColumn(18).width = 40;
   };
 
   const setupCompactSheet = (sheet: ExcelJS.Worksheet, start: string, employees: Employee[]) => {
@@ -278,9 +324,6 @@ export default function AttendancesPage() {
          row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
       });
 
-      // Daily Hour cells format and Absence validation
-      // Hours are in E, G, I, K, M, O, Q
-      // Absences are in F, H, J, L, N, P, R
       const hourCols = ['E', 'G', 'I', 'K', 'M', 'O', 'Q'];
       const absCols = ['F', 'H', 'J', 'L', 'N', 'P', 'R'];
 
@@ -296,7 +339,6 @@ export default function AttendancesPage() {
         };
       });
 
-      // Formula for Total (S)
       row.getCell('S').value = { 
         formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`,
         result: 0 
