@@ -132,7 +132,7 @@ export default function AttendancesPage() {
 
   // --- Template State ---
   const [periodType, setPeriodType] = useState<"monthly" | "weekly">("monthly");
-  const [inputMode, setInputMode] = useState<"detailed" | "compact" | "vertical">("vertical");
+  const [inputMode, setInputMode] = useState<"detailed" | "compact" | "vertical">("detailed");
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
@@ -769,7 +769,6 @@ export default function AttendancesPage() {
                       <Select value={inputMode} onValueChange={(v: any) => setInputMode(v)}>
                         <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="vertical">Saisie verticale simplifiée</SelectItem>
                           <SelectItem value="detailed">Détaillé horizontal (HH:mm)</SelectItem>
                           <SelectItem value="compact">Compact hebdomadaire (Décimal)</SelectItem>
                         </SelectContent>
