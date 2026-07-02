@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
@@ -783,10 +784,10 @@ export default function AttendancesPage() {
           row.getCell(3).numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
-          // Overnight-safe formula: IF(end >= start, end - start, end + 1 - start)
-          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
-          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
-          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
+          // Overnight-safe logic using MOD(end-start, 1) to handle wrap around
+          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
+          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
           
           row.getCell(14).value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
           row.getCell(14).numFmt = '0.00';
@@ -820,9 +821,10 @@ export default function AttendancesPage() {
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
-          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
-          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
-          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
+          // Overnight-safe logic using MOD(end-start, 1) to handle wrap around
+          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
+          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
           
           row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
           row.getCell('N').numFmt = '0.00';
@@ -992,7 +994,7 @@ export default function AttendancesPage() {
                         {periodType === "monthly" ? (
                             <div className="grid grid-cols-2 gap-3">
                               <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
-                              <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
+                              <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value)} className="rounded-xl" /></div>
                             </div>
                         ) : (
                             <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
