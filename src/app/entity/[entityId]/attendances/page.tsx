@@ -41,7 +41,10 @@ import {
   Building2,
   MapPin,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -204,6 +207,7 @@ export default function AttendancesPage() {
     absenceOnly: false,
     anomalyOnly: false
   });
+  const [dateSortDirection, setDateSortDirection] = useState<"asc" | "desc">("desc");
 
   const canRead = hasPermission("attendances.read");
   const canCreate = hasPermission("attendances.create") || hasPermission("attendances.write");
@@ -235,7 +239,7 @@ export default function AttendancesPage() {
   const filteredRegistry = useMemo(() => {
     if (!registryAttendances) return [];
     
-    return registryAttendances.filter(a => {
+    let result = registryAttendances.filter(a => {
       // 1. Month/Year filter
       const date = parseISO(a.attendanceDate);
       if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
@@ -255,8 +259,24 @@ export default function AttendancesPage() {
       if (registryFilters.anomalyOnly && !a.anomalyFlag) return false;
 
       return true;
-    }).sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate) || (a.employeeDisplayName || "").localeCompare(b.employeeDisplayName || ""));
-  }, [registryAttendances, selectedMonth, selectedYear, registryFilters]);
+    });
+
+    // Client-side sorting by date
+    result.sort((a, b) => {
+      const dateA = a.attendanceDate || "";
+      const dateB = b.attendanceDate || "";
+      
+      const dateComparison = dateA.localeCompare(dateB);
+      if (dateComparison !== 0) {
+        return dateSortDirection === "asc" ? dateComparison : -dateComparison;
+      }
+
+      // Secondary sort: Employee Name (always ASC)
+      return (a.employeeDisplayName || "").localeCompare(b.employeeDisplayName || "");
+    });
+
+    return result;
+  }, [registryAttendances, selectedMonth, selectedYear, registryFilters, dateSortDirection]);
 
   const registryStats = useMemo(() => {
     const stats = {
@@ -1151,7 +1171,15 @@ export default function AttendancesPage() {
                         <TableHeader className="bg-slate-50 sticky top-0 z-10">
                            <TableRow>
                               <TableHead className="pl-8">Employé</TableHead>
-                              <TableHead>Date</TableHead>
+                              <TableHead 
+                                className="cursor-pointer hover:bg-muted/30 transition-colors group"
+                                onClick={() => setDateSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  Date
+                                  {dateSortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                                </div>
+                              </TableHead>
                               <TableHead>Site / Dépt</TableHead>
                               <TableHead className="text-center">Heures</TableHead>
                               <TableHead className="text-center">Jour</TableHead>
@@ -1253,36 +1281,34 @@ export default function AttendancesPage() {
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-4 pt-4 text-slate-600">
-                <p className="text-sm">
-                  Vous êtes sur le point d'importer les présences en brouillon dans le registre. Vous allez importer <strong>{previewRows.length}</strong> enregistrements.
-                </p>
-                
-                {previewStats.warning > 0 && (
-                  <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
-                    <span className="text-xs font-bold text-orange-800 leading-tight">
-                      Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
-                    </span>
-                  </div>
-                )}
-                
-                <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
-                   <div className="flex justify-between text-xs">
-                     <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
-                     <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
-                   </div>
-                   <div className="flex justify-between text-xs">
-                     <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
-                     <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
-                   </div>
-                </div>
-              </div>
+            <AlertDialogDescription>
+              Vous êtes sur le point d'importer les présences en brouillon dans le registre. Vous allez importer <strong>{previewRows.length}</strong> enregistrements.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <AlertDialogFooter>
+          <div className="space-y-4 pt-4 text-slate-600">
+            {previewStats.warning > 0 && (
+              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                <span className="text-xs font-bold text-orange-800 leading-tight">
+                  Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
+                </span>
+              </div>
+            )}
+            
+            <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
+               <div className="flex justify-between text-xs">
+                 <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
+                 <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
+               </div>
+               <div className="flex justify-between text-xs">
+                 <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
+                 <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
+               </div>
+            </div>
+          </div>
+
+          <AlertDialogFooter className="mt-6">
             <AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel>
             <AlertDialogAction 
               onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} 
