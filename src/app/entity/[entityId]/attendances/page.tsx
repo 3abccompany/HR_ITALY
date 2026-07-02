@@ -32,7 +32,8 @@ import {
   RefreshCw,
   Plus,
   Save,
-  CheckCircle
+  CheckCircle,
+  FileBadge
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -133,7 +134,7 @@ function formatExcelTimeValue(value: any): string {
 }
 
 function formatRowDate(dateStr: string, dayName: string): string {
-  if (dateStr === "TBD") return dayName;
+  if (!dateStr || dateStr === "TBD") return dayName;
   try {
     const d = parseISO(dateStr);
     if (!isNaN(d.getTime())) return format(d, "dd/MM");
@@ -914,11 +915,11 @@ export default function AttendancesPage() {
                  </div>
 
                  <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
-                    {previewRows[0]?.date === "TBD" && (
+                    {inputMode !== 'detailed' && (
                        <div className="bg-blue-50 p-4 border-b flex items-center gap-3 text-blue-800">
                           <Info className="w-5 h-5 shrink-0" />
                           <p className="text-xs font-bold leading-tight">
-                            Mode compact détecté : Les dates précises sont extrapolées à partir du jour de la semaine. Les ventilations fines sont estimées.
+                            Note : En mode compact, la répartition jour/nuit et les heures supplémentaires sont estimées par le système sur une base de 08:00 - 16:00 si seuls les totaux sont fournis.
                           </p>
                        </div>
                     )}
