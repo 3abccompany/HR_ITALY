@@ -26,13 +26,12 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { useCollection, useFirebase } from "@/firebase";
-import { collection, query, where, orderBy, Query } from "firebase/firestore";
+import { collection, query, where, Query } from "firebase/firestore";
 import { Employee } from "@/types/employee";
-import { Department, JobTitle } from "@/types/organization";
+import { Department } from "@/types/organization";
 import { Worksite } from "@/types/worksite";
 import { AttendancePreviewRow, AttendancePunch } from "@/types/attendance";
 import { validatePreviewRow, calculatePunchHours } from "@/services/attendance.service";
@@ -58,6 +57,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useToast } from "@/hooks/use-toast";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import ExcelJS from "exceljs";
 
 const ABSENCE_CODES = [
@@ -78,6 +79,7 @@ export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
+  const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
 
   // --- Template State ---
@@ -96,7 +98,6 @@ export default function AttendancesPage() {
 
   // --- Permissions ---
   const canRead = hasPermission("attendances.read");
-  const canCreate = hasPermission("attendances.create") || hasPermission("attendances.write");
 
   // --- Registry Data Fetching ---
   const empQuery = useMemo(() => 
