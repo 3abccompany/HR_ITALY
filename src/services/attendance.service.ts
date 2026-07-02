@@ -166,9 +166,9 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
   }
 
   // 2. Date Check
-  if (!row.date || row.date === "INVALID") {
+  if (!row.date || row.date === "INVALID" || row.date === "TBD" || row.date.trim() === "") {
     status = "error";
-    messages.push("Date invalide ou manquante.");
+    messages.push("Date de présence invalide ou manquante.");
   }
 
   // 3. Time Parsing/Calculation Integrity

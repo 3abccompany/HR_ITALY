@@ -245,6 +245,7 @@ export default function AttendancesPage() {
       };
 
       if (mode === 'compact_time') {
+        const baseDate = parseISO(startDate);
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const code = row.getCell(1).value?.toString();
@@ -261,6 +262,7 @@ export default function AttendancesPage() {
           ];
 
           dayMap.forEach((day, index) => {
+            const actualDate = format(addDays(baseDate, index), "yyyy-MM-dd");
             const timeIn = formatExcelTimeValue(row.getCell(day.in).value);
             const timeOut = formatExcelTimeValue(row.getCell(day.out).value);
             const pause = Number(getVal(row, day.pause)) || 0;
@@ -285,7 +287,7 @@ export default function AttendancesPage() {
               messages: [],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
-              date: "TBD",
+              date: actualDate,
               dayName: day.label,
               worksite: row.getCell(4).value?.toString() || "",
               punches,
@@ -342,8 +344,17 @@ export default function AttendancesPage() {
           }
 
           const finalValid = hasManualEntry ? Number(valHVal) : splits.total;
+          
           const rawDate = getVal(row, 3);
-          const dateStr = rawDate instanceof Date ? format(rawDate, "yyyy-MM-dd") : (rawDate?.toString() || "");
+          let dateStr = "";
+          if (rawDate instanceof Date) {
+            dateStr = format(rawDate, "yyyy-MM-dd");
+          } else if (typeof rawDate === 'number') {
+            const date = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
+            dateStr = format(date, "yyyy-MM-dd");
+          } else if (rawDate) {
+            dateStr = rawDate.toString();
+          }
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
@@ -371,6 +382,7 @@ export default function AttendancesPage() {
         });
       } else {
         // Compact decimal
+        const baseDate = parseISO(startDate);
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const code = row.getCell(1).value?.toString();
@@ -383,6 +395,7 @@ export default function AttendancesPage() {
           ];
 
           dayMap.forEach((day, index) => {
+            const actualDate = format(addDays(baseDate, index), "yyyy-MM-dd");
             const hVal = getVal(row, day.h);
             const h = Number(hVal) || 0;
             const a = row.getCell(day.a).value?.toString();
@@ -398,7 +411,7 @@ export default function AttendancesPage() {
               messages: [],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
-              date: "TBD",
+              date: actualDate,
               dayName: day.label,
               worksite: row.getCell(4).value?.toString() || "",
               punches: [],
@@ -481,9 +494,6 @@ export default function AttendancesPage() {
     setIsImporting(true);
     try {
       // 1. Prepare Metadata
-      const firstRow = previewRows[0];
-      const lastRow = previewRows[previewRows.length - 1];
-
       await executeAttendanceImport({
         entityId,
         actorUid: user.uid,
@@ -803,7 +813,7 @@ export default function AttendancesPage() {
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-6 px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <FileSpreadsheet className="w-4 h-4" /> Modèle Excel
+                   <FileBadge className="w-4 h-4" /> Modèle Excel
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 space-y-6">
@@ -996,21 +1006,20 @@ export default function AttendancesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle>
             <AlertDialogDescription>
-              Vérifiez le résumé des données avant de confirmer l'importation des présences en mode brouillon.
+              Vous êtes sur le point d'importer les présences en brouillon.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
           <div className="space-y-4 pt-4">
             <p className="text-sm text-slate-600">
-              Vous êtes sur le point d'importer <strong>{previewRows.length}</strong> enregistrements de présence en mode brouillon.
+              Vous allez importer <strong>{previewRows.length}</strong> enregistrements.
             </p>
             
             {previewStats.warning > 0 && (
               <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
                 <span className="text-xs font-bold text-orange-800">
-                  Attention : {previewStats.warning} ligne(s) contiennent des alertes (ex: cumul heures et absence). 
-                  Souhaitez-vous quand même continuer ?
+                  Attention : {previewStats.warning} ligne(s) contiennent des alertes.
                 </span>
               </div>
             )}
