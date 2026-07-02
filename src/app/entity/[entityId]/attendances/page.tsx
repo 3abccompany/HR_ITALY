@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
   Clock, 
@@ -28,7 +28,9 @@ import {
   Sun,
   AlertTriangle,
   Layout,
-  XCircle
+  XCircle,
+  RefreshCw,
+  Plus
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -185,25 +187,32 @@ export default function AttendancesPage() {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(buffer);
 
-      const sheet = workbook.getWorksheet("Présences");
+      // Support detection of "Données import" sheet for new mode or legacy "Présences"
+      const sheet = workbook.getWorksheet("Données import") || workbook.getWorksheet("Présences");
       if (!sheet) throw new Error("Format de fichier non reconnu. Veuillez utiliser un modèle généré par le système.");
 
-      // Detection
-      let mode: 'compact' | 'compact_time' | 'detailed' = 'detailed';
-      const row1 = sheet.getRow(1);
-      let isCompactTime = false;
-      row1.eachCell((cell) => {
-        const val = cell.value?.toString() || "";
-        if (val.includes("Entrée") && val.includes("/")) isCompactTime = true;
-      });
-
-      if (isCompactTime) {
-        mode = 'compact_time';
+      // Mode detection
+      let mode: 'compact' | 'compact_time' | 'detailed' | 'vertical' = 'detailed';
+      
+      const sheetName = sheet.name;
+      if (sheetName === "Données import") {
+        mode = 'vertical';
       } else {
+        const row1 = sheet.getRow(1);
+        let isCompactTime = false;
         row1.eachCell((cell) => {
           const val = cell.value?.toString() || "";
-          if (val.includes("Lundi") && val.includes("Heures")) mode = 'compact';
+          if (val.includes("Entrée") && val.includes("/")) isCompactTime = true;
         });
+
+        if (isCompactTime) {
+          mode = 'compact_time';
+        } else {
+          row1.eachCell((cell) => {
+            const val = cell.value?.toString() || "";
+            if (val.includes("Lundi") && val.includes("Heures")) mode = 'compact';
+          });
+        }
       }
 
       const rows: AttendancePreviewRow[] = [];
@@ -217,7 +226,59 @@ export default function AttendancesPage() {
         return cell.value;
       };
 
-      if (mode === 'compact_time') {
+      if (mode === 'vertical') {
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const code = row.getCell(1).value?.toString();
+          if (!code) return;
+
+          const timeIn = formatExcelTimeValue(row.getCell(7).value);
+          const timeOut = formatExcelTimeValue(row.getCell(8).value);
+          const pause = Number(getVal(row, 9)) || 0;
+          const absence = row.getCell(10).value?.toString();
+          const isHoliday = row.getCell(11).value?.toString() === "Oui";
+          const notes = row.getCell(12).value?.toString();
+
+          const punches: AttendancePunch[] = (timeIn && timeOut && timeIn !== "INVALID" && timeOut !== "INVALID") 
+            ? [{ type: 'AM' as const, timeIn, timeOut }] 
+            : [];
+          
+          const hasInput = punches.length > 0 || !!absence || isHoliday || !!notes;
+          if (!hasInput) {
+            ignoredCount++;
+            return;
+          }
+
+          const splits = calculateAttendanceSplits(punches, pause, isHoliday);
+
+          const rawDate = getVal(row, 3);
+          const dateStr = rawDate instanceof Date ? format(rawDate, "yyyy-MM-dd") : (rawDate?.toString() || "");
+
+          const previewRow: AttendancePreviewRow = {
+            rowId: `${rowNumber}`,
+            status: "valid",
+            messages: [],
+            employeeCode: code,
+            employeeName: row.getCell(2).value?.toString() || "",
+            date: dateStr,
+            dayName: row.getCell(4).value?.toString() || "",
+            worksite: row.getCell(6).value?.toString() || "",
+            punches,
+            pauseMinutes: pause,
+            calculatedHours: splits.total,
+            dayHours: splits.day,
+            nightHours: splits.night,
+            overtimeHours: splits.overtime,
+            holidayWorkedHours: splits.holiday,
+            validatedHours: splits.total,
+            absenceCode: absence || undefined,
+            isHoliday,
+            notes: notes || ""
+          };
+
+          rows.push(validatePreviewRow(previewRow, employeesMapByCode));
+        });
+      } else if (mode === 'compact_time') {
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const code = row.getCell(1).value?.toString();
@@ -337,13 +398,13 @@ export default function AttendancesPage() {
             validatedHours: finalValid,
             absenceCode: absence || undefined,
             isHoliday,
-            notes: notes || undefined
+            notes: notes || ""
           };
 
           rows.push(validatePreviewRow(previewRow, employeesMapByCode));
         });
       } else {
-        // Legacy Compact mode decimal unpivoting
+        // Compact decimal
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const code = row.getCell(1).value?.toString();
@@ -441,7 +502,7 @@ export default function AttendancesPage() {
   };
 
   const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
-    const columns = [
+    const columns: any[] = [
       { header: "Code employé", key: "employeeCode", width: 15 },
       { header: "Nom employé", key: "employeeName", width: 25 },
       { header: "Date", key: "date", width: 15 },
@@ -461,6 +522,8 @@ export default function AttendancesPage() {
       { header: "Férié", key: "holiday", width: 10 },
       { header: "Notes / Correction", key: "notes", width: 40 },
     ];
+
+    sheet.columns = columns;
 
     let days: Date[] = [];
     if (periodType === "monthly") {
@@ -527,12 +590,10 @@ export default function AttendancesPage() {
       const pStart = startOfDay(new Date(start));
       days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
       
-      sheet.columns = columns;
       const headerRow = sheet.getRow(1);
       headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
       headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
 
-      let currentRow = 2;
       employees.forEach(emp => {
         days.forEach(day => {
           const row = sheet.addRow({
@@ -545,6 +606,7 @@ export default function AttendancesPage() {
             pause: prefillPause
           });
 
+          const currentRow = row.number;
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
 
@@ -560,7 +622,6 @@ export default function AttendancesPage() {
           row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
           row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
           row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
-          currentRow++;
         });
       });
     }
@@ -579,27 +640,31 @@ export default function AttendancesPage() {
 
     weekDays.forEach(day => {
       const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
-      columns.push({ header: `${dayLabel} - Entrée`, width: 12 });
-      columns.push({ header: `${dayLabel} - Sortie`, width: 12 });
-      columns.push({ header: `${dayLabel} - Pause`, width: 10 });
-      columns.push({ header: `${dayLabel} - Absence`, width: 15 });
+      columns.push({ header: `${dayLabel} - Entrée`, key: `in_${format(day, "dd")}`, width: 12 });
+      columns.push({ header: `${dayLabel} - Sortie`, key: `out_${format(day, "dd")}`, width: 12 });
+      columns.push({ header: `${dayLabel} - Pause`, key: `pause_${format(day, "dd")}`, width: 10 });
+      columns.push({ header: `${dayLabel} - Absence`, key: `abs_${format(day, "dd")}`, width: 15 });
     });
 
-    sheet.columns = columns as any;
+    sheet.columns = columns;
     const headerRow = sheet.getRow(1);
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
 
     employees.forEach(emp => {
-      const rowData: any = [
-        emp.employeeCode,
-        emp.displayName,
-        emp.departmentName || "",
-        emp.worksiteName || "",
-      ];
+      const rowData: any = {
+        employeeCode: emp.employeeCode,
+        employeeName: emp.displayName,
+        department: emp.departmentName || "",
+        worksite: emp.worksiteName || "",
+      };
 
-      weekDays.forEach(() => {
-        rowData.push("", "", prefillPause, "");
+      weekDays.forEach(day => {
+        const dd = format(day, "dd");
+        rowData[`in_${dd}`] = "";
+        rowData[`out_${dd}`] = "";
+        rowData[`pause_${dd}`] = prefillPause;
+        rowData[`abs_${dd}`] = "";
       });
 
       const row = sheet.addRow(rowData);
@@ -620,7 +685,7 @@ export default function AttendancesPage() {
     const pStart = startOfDay(new Date(start));
     const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
     
-    const columns = [
+    const columns: any[] = [
       { header: "Code employé", key: "employeeCode", width: 15 },
       { header: "Nom employé", key: "employeeName", width: 25 },
       { header: "Département", key: "department", width: 20 },
@@ -641,26 +706,27 @@ export default function AttendancesPage() {
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
 
-    let currentRow = 2;
     employees.forEach(emp => {
-      const row = sheet.addRow({
+      const rowData: any = {
         employeeCode: emp.employeeCode,
         employeeName: emp.displayName,
         department: emp.departmentName || "",
         worksite: emp.worksiteName || ""
-      });
+      };
+      
+      const row = sheet.addRow(rowData);
+      const currentRow = row.number;
 
-      const absCols = ['F', 'H', 'J', 'L', 'N', 'P', 'R'];
+      const absCols = [6, 8, 10, 12, 14, 16, 18];
       absCols.forEach(col => {
         row.getCell(col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
       });
 
-      row.getCell('S').value = { 
+      row.getCell(19).value = { 
         formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`,
         result: 0 
       };
-      row.getCell('S').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-      currentRow++;
+      row.getCell(19).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
     });
   };
 
