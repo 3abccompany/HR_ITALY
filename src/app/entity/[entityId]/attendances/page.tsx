@@ -22,7 +22,8 @@ import {
   ShieldCheck,
   FileWarning,
   ListFilter,
-  Search
+  Search,
+  Coffee
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,7 @@ const ABSENCE_CODES = [
 /**
  * Attendance Registry Page.
  * Phase 3: Excel Upload and Preview with Validation.
- * Phase 2B-Harden: Improved Pause handling.
+ * Phase 2B-Harden: Improved Pause handling and default settings.
  */
 export default function AttendancesPage() {
   const params = useParams();
@@ -90,6 +91,8 @@ export default function AttendancesPage() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
+  const [defaultPause, setDefaultPause] = useState("0");
+  const [customPause, setCustomPause] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
 
   // --- Upload / Preview State ---
@@ -179,13 +182,13 @@ export default function AttendancesPage() {
             { type: 'OT', timeIn: row.getCell(11).value?.toString(), timeOut: row.getCell(12).value?.toString() },
           ];
 
-          // Refined Pause handling: default to 0 if empty
+          // Pause handling: default to 0 if empty
           const pauseVal = getVal(row, 13);
           const pause = (pauseVal === null || pauseVal === undefined || pauseVal === "") ? 0 : Number(pauseVal);
 
           const calc = calculatePunchHours(punches, pause);
           
-          // Refined Validated Hours: default to calc if empty
+          // Validated Hours: default to calc if empty
           const validVal = getVal(row, 15);
           const valid = (validVal === null || validVal === undefined || validVal === "") ? calc : Number(validVal);
 
@@ -243,11 +246,11 @@ export default function AttendancesPage() {
               messages: [],
               employeeCode: code,
               employeeName: name,
-              date: "TBD", // Compact mode unpivoting date to be resolved later or inferred
+              date: "TBD", // Compact mode unpivoting date
               dayName: day.label,
               worksite: site,
               punches: [],
-              pauseMinutes: 0, // No pause columns in compact
+              pauseMinutes: 0, 
               calculatedHours: h,
               validatedHours: h,
               absenceCode: a,
@@ -287,8 +290,11 @@ export default function AttendancesPage() {
       const sheet1 = workbook.addWorksheet("Présences");
       const sheet2 = workbook.addWorksheet("Guide & Référentiels");
 
+      // Resolve effective pause for template
+      const resolvedPause = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
+
       if (inputMode === "detailed") {
-        setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees);
+        setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees, resolvedPause);
       } else {
         setupCompactSheet(sheet1, startDate, employees);
       }
@@ -313,7 +319,7 @@ export default function AttendancesPage() {
     }
   };
 
-  const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[]) => {
+  const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
     const columns = [
       { header: "Code employé", key: "employeeCode", width: 15 },
       { header: "Nom employé", key: "employeeName", width: 25 },
@@ -360,7 +366,7 @@ export default function AttendancesPage() {
             day: format(day, "EEEE", { locale: fr }),
             department: emp.departmentName || "",
             worksite: emp.worksiteName || "",
-            pause: 0
+            pause: prefillPause
           });
 
           const currentRow = row.number;
@@ -368,7 +374,7 @@ export default function AttendancesPage() {
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
           row.getCell(14).value = { 
-            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
+            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (I${currentRow}-H${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60), 0)`,
             result: 0 
           };
           row.getCell(14).numFmt = '0.00';
@@ -409,7 +415,7 @@ export default function AttendancesPage() {
             day: format(day, "EEEE", { locale: fr }),
             department: emp.departmentName || "",
             worksite: emp.worksiteName || "",
-            pause: 0
+            pause: prefillPause
           });
 
           row.getCell('C').numFmt = 'yyyy-mm-dd';
@@ -485,6 +491,8 @@ export default function AttendancesPage() {
     sheet.addRow(["3. Pause : Saisir en minutes réelles (ex: 30, 45). Si pas de pause : 0 ou laisser vide."]);
     sheet.addRow(["4. Ne pas saisir 30 par défaut si la pause n'a pas été prise."]);
     sheet.addRow(["5. Mode Compact : La pause doit déjà être déduite du total saisi (heures nettes)."]);
+    sheet.addRow(["6. Le réglage 'Pause par défaut' sert seulement à pré-remplir le modèle."]);
+    sheet.addRow(["7. La valeur officielle importée sera celle saisie dans le fichier Excel."]);
     sheet.addRow([]);
     sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
     ABSENCE_CODES.forEach(c => sheet.addRow([c]));
@@ -501,6 +509,8 @@ export default function AttendancesPage() {
 
   if (membershipLoading) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
   if (!canRead) return null;
+
+  const showCustomPause = defaultPause === 'custom';
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 pb-32">
@@ -536,6 +546,37 @@ export default function AttendancesPage() {
                         <SelectContent><SelectItem value="detailed">Détaillé horaires (HH:mm)</SelectItem><SelectItem value="compact">Compact hebdomadaire (Décimal)</SelectItem></SelectContent>
                       </Select>
                    </div>
+                   
+                   {inputMode === 'detailed' && (
+                      <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                         <Label className="text-[10px] uppercase font-black flex items-center gap-1">
+                           <Coffee className="w-3 h-3" /> Pause par défaut du modèle détaillé
+                         </Label>
+                         <div className="flex gap-2">
+                            <Select value={defaultPause} onValueChange={setDefaultPause}>
+                              <SelectTrigger className="rounded-xl flex-1"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="0">0 min</SelectItem>
+                                <SelectItem value="15">15 min</SelectItem>
+                                <SelectItem value="30">30 min</SelectItem>
+                                <SelectItem value="45">45 min</SelectItem>
+                                <SelectItem value="60">60 min</SelectItem>
+                                <SelectItem value="custom">Personnalisé</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {showCustomPause && (
+                              <Input 
+                                type="number" 
+                                placeholder="Minutes..." 
+                                value={customPause} 
+                                onChange={(e) => setCustomPause(e.target.value)}
+                                className="w-24 rounded-xl"
+                              />
+                            )}
+                         </div>
+                      </div>
+                   )}
+
                    {periodType === "monthly" ? (
                       <div className="grid grid-cols-2 gap-3 animate-in fade-in">
                         <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
@@ -566,7 +607,7 @@ export default function AttendancesPage() {
                 )}>
                    <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
                    {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <TableIcon className="w-8 h-8 text-accent/30" />}
-                   <p className="text-xs font-bold text-slate-600">{isReading ? "Analyse en cours..." : "Cliquer ou glisser le fichier rempli"}</p>
+                   <p className="text-xs font-bold text-slate-600">{isReading ? "Analyse en cours..." : "Cliquer ou glissez le fichier rempli"}</p>
                    <p className="text-[10px] text-muted-foreground uppercase font-black">Format .xlsx uniquement</p>
                 </div>
                 {uploadError && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="w-4 h-4" /><AlertDescription>{uploadError}</AlertDescription></Alert>}
@@ -601,6 +642,7 @@ export default function AttendancesPage() {
                                 <TableHead className="pl-6 w-[80px]">Status</TableHead>
                                 <TableHead>Collaborateur</TableHead>
                                 <TableHead>Date</TableHead>
+                                <TableHead className="text-center">Pause</TableHead>
                                 <TableHead className="text-center">Heures (Val.)</TableHead>
                                 <TableHead>Absence</TableHead>
                                 <TableHead className="pr-6">Messages</TableHead>
@@ -630,6 +672,9 @@ export default function AttendancesPage() {
                                         </span>
                                         <span className="text-[10px] text-muted-foreground uppercase">{row.dayName}</span>
                                      </div>
+                                  </TableCell>
+                                  <TableCell className="text-center font-bold text-[10px] text-muted-foreground">
+                                     {row.punches && row.punches.length > 0 ? `${row.pauseMinutes}m` : "—"}
                                   </TableCell>
                                   <TableCell className="text-center font-black text-xs text-primary">{row.validatedHours.toFixed(2)}</TableCell>
                                   <TableCell>
