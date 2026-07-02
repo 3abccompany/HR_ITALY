@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useRef } from "react";
@@ -26,7 +27,8 @@ import {
   Coffee,
   Moon,
   Sun,
-  AlertTriangle
+  AlertTriangle,
+  Layout
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -84,19 +86,16 @@ function formatExcelTimeValue(value: any): string {
   if (value === null || value === undefined || value === "") return "";
   
   let effectiveValue = value;
-  // Handle formula results
   if (typeof value === 'object' && 'result' in value) {
     effectiveValue = value.result;
   }
 
-  // Case 1: Date object (ExcelJS default for time cells)
   if (effectiveValue instanceof Date) {
     const h = effectiveValue.getHours().toString().padStart(2, '0');
     const m = effectiveValue.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
   }
 
-  // Case 2: Numeric fraction (e.g. 0.3354166667 for 08:03)
   if (typeof effectiveValue === 'number') {
     const totalMinutes = Math.round(effectiveValue * 24 * 60);
     const h = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
@@ -104,7 +103,6 @@ function formatExcelTimeValue(value: any): string {
     return `${h}:${m}`;
   }
 
-  // Case 3: String (fallback or already formatted)
   if (typeof effectiveValue === 'string') {
     const clean = effectiveValue.trim();
     if (/^\d{1,2}:\d{2}$/.test(clean)) {
@@ -116,9 +114,6 @@ function formatExcelTimeValue(value: any): string {
   return "INVALID";
 }
 
-/**
- * Safe date display logic for preview table.
- */
 function formatRowDate(dateStr: string, dayName: string): string {
   if (dateStr === "TBD") return dayName;
   try {
@@ -137,7 +132,7 @@ export default function AttendancesPage() {
 
   // --- Template State ---
   const [periodType, setPeriodType] = useState<"monthly" | "weekly">("monthly");
-  const [inputMode, setInputMode] = useState<"detailed" | "compact">("detailed");
+  const [inputMode, setInputMode] = useState<"detailed" | "compact" | "vertical">("vertical");
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
@@ -152,10 +147,8 @@ export default function AttendancesPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Permissions ---
   const canRead = hasPermission("attendances.read");
 
-  // --- Registry Data Fetching ---
   const empQuery = useMemo(() => 
     db ? query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active")) as Query<Employee> : null,
   [db, entityId]);
@@ -178,8 +171,6 @@ export default function AttendancesPage() {
     return map;
   }, [employees]);
 
-  // --- Excel Parsing Logic ---
-
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -194,15 +185,23 @@ export default function AttendancesPage() {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(buffer);
 
-      const sheet = workbook.getWorksheet("Présences");
-      if (!sheet) throw new Error("La feuille 'Présences' est introuvable.");
+      // Detection 1: Normalized Vertical/Standard sheet
+      const importSheet = workbook.getWorksheet("Données import");
+      const standardSheet = workbook.getWorksheet("Présences");
+      
+      const sheet = importSheet || standardSheet;
+      if (!sheet) throw new Error("Format de fichier non reconnu. Veuillez utiliser un modèle généré par le système.");
 
-      let mode: 'compact' | 'detailed' = 'detailed';
-      const row1 = sheet.getRow(1);
-      row1.eachCell((cell) => {
-        const val = cell.value?.toString() || "";
-        if (val.includes("Lundi") && val.includes("Heures")) mode = 'compact';
-      });
+      let mode: 'compact' | 'detailed' | 'vertical' = 'detailed';
+      if (importSheet) {
+        mode = 'vertical';
+      } else {
+        const row1 = sheet.getRow(1);
+        row1.eachCell((cell) => {
+          const val = cell.value?.toString() || "";
+          if (val.includes("Lundi") && val.includes("Heures")) mode = 'compact';
+        });
+      }
 
       const rows: AttendancePreviewRow[] = [];
       let ignoredCount = 0;
@@ -210,12 +209,62 @@ export default function AttendancesPage() {
       const getVal = (row: ExcelJS.Row, col: number) => {
         const cell = row.getCell(col);
         if (cell.value && typeof cell.value === 'object' && 'result' in cell.value) {
-          return cell.value.result;
+          return (cell.value as any).result;
         }
         return cell.value;
       };
 
-      if (mode === 'detailed') {
+      if (mode === 'vertical') {
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const code = row.getCell(1).value?.toString();
+          if (!code) return;
+
+          const timeIn = formatExcelTimeValue(row.getCell(7).value);
+          const timeOut = formatExcelTimeValue(row.getCell(8).value);
+          const pause = Number(getVal(row, 9)) || 0;
+          const absence = row.getCell(10).value?.toString();
+          const isHoliday = row.getCell(11).value?.toString() === "Oui";
+          const notes = row.getCell(12).value?.toString();
+
+          const punches: AttendancePunch[] = timeIn && timeOut ? [{ type: 'AM', timeIn, timeOut }] : [];
+          const hasInput = punches.length > 0 || !!absence || isHoliday || !!notes;
+
+          if (!hasInput) {
+            ignoredCount++;
+            return;
+          }
+
+          const rawDate = getVal(row, 3);
+          const dateStr = rawDate instanceof Date ? format(rawDate, "yyyy-MM-dd") : (rawDate?.toString() || "");
+
+          const splits = calculateAttendanceSplits(punches, pause, isHoliday);
+
+          const previewRow: AttendancePreviewRow = {
+            rowId: `${rowNumber}`,
+            status: "valid",
+            messages: [],
+            employeeCode: code,
+            employeeName: row.getCell(2).value?.toString() || "",
+            date: dateStr,
+            dayName: row.getCell(4).value?.toString() || "",
+            worksite: row.getCell(6).value?.toString() || "",
+            punches,
+            pauseMinutes: pause,
+            calculatedHours: splits.total,
+            dayHours: splits.day,
+            nightHours: splits.night,
+            overtimeHours: splits.overtime,
+            holidayWorkedHours: splits.holiday,
+            validatedHours: splits.total,
+            absenceCode: absence || undefined,
+            isHoliday,
+            notes: notes || undefined
+          };
+
+          rows.push(validatePreviewRow(previewRow, employeesMapByCode));
+        });
+      } else if (mode === 'detailed') {
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const firstCell = row.getCell(1).value?.toString() || "";
@@ -230,14 +279,8 @@ export default function AttendancesPage() {
           const pmOut = formatExcelTimeValue(row.getCell(10).value);
           const otIn = formatExcelTimeValue(row.getCell(11).value);
           const otOut = formatExcelTimeValue(row.getCell(12).value);
-          
-          const pauseVal = getVal(row, 13);
-          const pause = (pauseVal === null || pauseVal === undefined || pauseVal === "") ? 0 : Number(pauseVal);
-
+          const pause = Number(getVal(row, 13)) || 0;
           const valHVal = getVal(row, 15);
-          const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
-          const validatedH = hasManualEntry ? Number(valHVal) : 0;
-          
           const absence = row.getCell(16).value?.toString();
           const isHoliday = row.getCell(17).value?.toString() === "Oui";
           const notes = row.getCell(18).value?.toString();
@@ -246,23 +289,21 @@ export default function AttendancesPage() {
             { type: 'AM', timeIn: amIn, timeOut: amOut },
             { type: 'PM', timeIn: pmIn, timeOut: pmOut },
             { type: 'OT', timeIn: otIn, timeOut: otOut },
-          ];
+          ].filter(p => !!(p.timeIn && p.timeOut && p.timeIn !== "INVALID"));
 
-          const hasPunches = punches.some(p => !!(p.timeIn && p.timeOut && p.timeIn !== "INVALID"));
-          const hasInput = hasPunches || hasManualEntry || !!absence || isHoliday || !!notes;
+          const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
+          const hasInput = punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes;
 
           if (!hasInput) {
             ignoredCount++;
             return;
           }
 
-          const rawDate = getVal(row, 3);
-          let dateStr = "";
-          if (rawDate instanceof Date) dateStr = format(rawDate, "yyyy-MM-dd");
-          else if (typeof rawDate === 'string') dateStr = rawDate;
-
           const splits = calculateAttendanceSplits(punches, pause, isHoliday);
-          const finalValid = hasManualEntry ? validatedH : splits.total;
+          const finalValid = hasManualEntry ? Number(valHVal) : splits.total;
+
+          const rawDate = getVal(row, 3);
+          const dateStr = rawDate instanceof Date ? format(rawDate, "yyyy-MM-dd") : (rawDate?.toString() || "");
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
@@ -289,13 +330,11 @@ export default function AttendancesPage() {
           rows.push(validatePreviewRow(previewRow, employeesMapByCode));
         });
       } else {
+        // Compact mode unpivoting
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const code = row.getCell(1).value?.toString();
           if (!code) return;
-
-          const name = row.getCell(2).value?.toString() || "";
-          const site = row.getCell(4).value?.toString() || "";
 
           const dayMap = [
             { label: "Lundi", h: 5, a: 6 }, { label: "Mardi", h: 7, a: 8 }, { label: "Mercredi", h: 9, a: 10 },
@@ -305,7 +344,7 @@ export default function AttendancesPage() {
 
           dayMap.forEach((day, index) => {
             const hVal = getVal(row, day.h);
-            const h = (hVal === null || hVal === undefined || hVal === "") ? 0 : Number(hVal);
+            const h = Number(hVal) || 0;
             const a = row.getCell(day.a).value?.toString();
 
             if (h === 0 && !a) {
@@ -318,14 +357,14 @@ export default function AttendancesPage() {
               status: "valid",
               messages: [],
               employeeCode: code,
-              employeeName: name,
+              employeeName: row.getCell(2).value?.toString() || "",
               date: "TBD",
               dayName: day.label,
-              worksite: site,
+              worksite: row.getCell(4).value?.toString() || "",
               punches: [],
               pauseMinutes: 0, 
               calculatedHours: h,
-              dayHours: h, // In compact mode, we assume all entered hours are Day unless corrected manually
+              dayHours: h, 
               nightHours: 0,
               overtimeHours: 0,
               holidayWorkedHours: 0,
@@ -361,18 +400,20 @@ export default function AttendancesPage() {
     setIsDownloading(true);
     try {
       const workbook = new ExcelJS.Workbook();
-      const sheet1 = workbook.addWorksheet("Présences");
-      const sheet2 = workbook.addWorksheet("Guide & Référentiels");
-
       const resolvedPause = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
 
-      if (inputMode === "detailed") {
+      if (inputMode === "vertical") {
+        setupVerticalSheet(workbook, periodType, selectedYear, selectedMonth, startDate, employees, resolvedPause);
+      } else if (inputMode === "detailed") {
+        const sheet1 = workbook.addWorksheet("Présences");
         setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees, resolvedPause);
       } else {
+        const sheet1 = workbook.addWorksheet("Présences");
         setupCompactSheet(sheet1, startDate, employees);
       }
 
-      setupGuideSheet(sheet2, departments, worksites);
+      const guideSheet = workbook.addWorksheet("Guide & Référentiels");
+      setupGuideSheet(guideSheet);
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -385,6 +426,113 @@ export default function AttendancesPage() {
     } finally {
       setIsDownloading(false);
     }
+  };
+
+  const setupVerticalSheet = (workbook: ExcelJS.Workbook, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
+    const entrySheet = workbook.addWorksheet("Saisie");
+    const dataSheet = workbook.addWorksheet("Données import");
+    dataSheet.state = 'hidden';
+
+    // 1. Setup Normalized Data Sheet
+    const columns = [
+      { header: "Code employé", key: "employeeCode", width: 15 },
+      { header: "Nom employé", key: "employeeName", width: 25 },
+      { header: "Date", key: "date", width: 15 },
+      { header: "Jour", key: "day", width: 10 },
+      { header: "Département", key: "department", width: 20 },
+      { header: "Site", key: "worksite", width: 20 },
+      { header: "Heure Entrée", key: "timeIn", width: 12 },
+      { header: "Heure Sortie", key: "timeOut", width: 12 },
+      { header: "Pause", key: "pause", width: 10 },
+      { header: "Absence", key: "absence", width: 15 },
+      { header: "Férié", key: "holiday", width: 10 },
+      { header: "Notes", key: "notes", width: 30 },
+    ];
+    dataSheet.columns = columns;
+
+    // 2. Setup User Sheet Appearance
+    entrySheet.getColumn('A').width = 25;
+    entrySheet.getColumn('B').width = 35;
+
+    let currentEntryRow = 1;
+    let currentDataRow = 2;
+
+    let days: Date[] = [];
+    if (periodType === "monthly") {
+      const pStart = startOfMonth(new Date(year, month - 1));
+      days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
+    } else {
+      const pStart = startOfDay(new Date(start));
+      days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
+    }
+
+    employees.forEach(emp => {
+      days.forEach(day => {
+        const dateStr = format(day, "yyyy-MM-dd");
+        const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
+
+        // Header for the block
+        const header = entrySheet.addRow([`BLOC DE SAISIE : ${emp.displayName}`]);
+        header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
+        entrySheet.mergeCells(header.number, 1, header.number, 2);
+
+        const r1 = entrySheet.addRow(["Code Employé", emp.employeeCode]);
+        const r2 = entrySheet.addRow(["Période", dayLabel]);
+        const r3 = entrySheet.addRow(["Lieu", emp.worksiteName || ""]);
+        
+        [r1, r2, r3].forEach(row => {
+          row.getCell(1).font = { bold: true };
+          row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
+          row.getCell(2).font = { italic: true };
+          row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+        });
+
+        const entryRow = entrySheet.addRow(["Heure ENTRÉE", ""]);
+        const exitRow = entrySheet.addRow(["Heure SORTIE", ""]);
+        const pauseRow = entrySheet.addRow(["Pause (min)", prefillPause]);
+        const absRow = entrySheet.addRow(["Absence", ""]);
+        const holRow = entrySheet.addRow(["Férié", "Non"]);
+        const noteRow = entrySheet.addRow(["Notes", ""]);
+
+        // Input Styling
+        [entryRow, exitRow, pauseRow, absRow, holRow, noteRow].forEach(row => {
+          row.height = 25;
+          row.getCell(1).font = { bold: true, color: { argb: "FF1F1F66" } };
+          row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+          row.getCell(2).border = { 
+            top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} 
+          };
+        });
+
+        // Data Validations
+        entryRow.getCell(2).numFmt = 'hh:mm';
+        exitRow.getCell(2).numFmt = 'hh:mm';
+        absRow.getCell(2).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+        holRow.getCell(2).dataValidation = { type: 'list', allowBlank: false, formulae: ['"Oui,Non"'] };
+
+        // Link to Data Sheet
+        const dataRow = dataSheet.addRow({
+          employeeCode: emp.employeeCode,
+          employeeName: emp.displayName,
+          date: dateStr,
+          day: format(day, "EEEE", { locale: fr }),
+          department: emp.departmentName || "",
+          site: emp.worksiteName || "",
+          timeIn: { formula: `'Saisie'!${entryRow.getCell(2).address}` },
+          timeOut: { formula: `'Saisie'!${exitRow.getCell(2).address}` },
+          pause: { formula: `'Saisie'!${pauseRow.getCell(2).address}` },
+          absence: { formula: `'Saisie'!${absRow.getCell(2).address}` },
+          holiday: { formula: `'Saisie'!${holRow.getCell(2).address}` },
+          notes: { formula: `'Saisie'!${noteRow.getCell(2).address}` },
+        });
+        
+        dataRow.getCell(7).numFmt = 'hh:mm';
+        dataRow.getCell(8).numFmt = 'hh:mm';
+
+        entrySheet.addRow([]); // Spacer
+      });
+    });
   };
 
   const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
@@ -441,7 +589,6 @@ export default function AttendancesPage() {
           row.getCell(3).numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
-          // Overnight-safe Calculation Formula for each pair (AM: G/H, PM: I/J, HS: K/L)
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
           const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
@@ -465,8 +612,8 @@ export default function AttendancesPage() {
         totalRow.getCell(15).numFmt = '0.00';
         totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         
-        const breakRow = sheet.getRow(sheet.lastRow?.number || totalRow.number);
-        if (breakRow) (breakRow as any).addPageBreak?.();
+        const breakRow = sheet.getRow(totalRow.number);
+        if (breakRow) breakRow.addPageBreak();
       });
       
     } else {
@@ -560,14 +707,14 @@ export default function AttendancesPage() {
     });
   };
 
-  const setupGuideSheet = (sheet: ExcelJS.Worksheet, departments?: Department[], worksites?: Worksite[]) => {
+  const setupGuideSheet = (sheet: ExcelJS.Worksheet) => {
     sheet.getColumn('A').width = 40;
     sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
-    sheet.addRow(["1. Mode Détaillé : Saisir horaires HH:mm."]);
-    sheet.addRow(["2. Mode Compact : Saisir totaux décimaux (ex: 6.5)."]);
-    sheet.addRow(["3. Pause : Saisir en minutes réelles (ex: 30, 45). Si pas de pause : 0."]);
-    sheet.addRow(["4. En mode compact, saisir les heures nettes validées, pause déjà déduite."]);
-    sheet.addRow(["5. Heures de nuit : Calculées entre 22:00 et 06:00 par le système."]);
+    sheet.addRow(["1. Mode Vertical : Remplissez les blocs par jour. Les données sont liées automatiquement."]);
+    sheet.addRow(["2. Mode Détaillé : Saisissez les horaires HH:mm."]);
+    sheet.addRow(["3. Mode Compact : Saisissez les totaux décimaux nets (ex: 6.5)."]);
+    sheet.addRow(["4. Pause : Saisir en minutes réelles (ex: 30, 45). Si pas de pause : 0."]);
+    sheet.addRow(["5. En mode compact, la pause doit être déjà déduite de votre saisie."]);
     sheet.addRow([]);
     sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
     ABSENCE_CODES.forEach(c => sheet.addRow([c]));
@@ -584,7 +731,6 @@ export default function AttendancesPage() {
       nightHours: 0,
       overtimeHours: 0,
       absencesCount: previewRows.filter(r => !!r.absenceCode).length,
-      importableDays: previewRows.length
     };
 
     previewRows.forEach(r => {
@@ -620,21 +766,18 @@ export default function AttendancesPage() {
              <CardContent className="p-8 space-y-6">
                 <div className="space-y-4">
                    <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Type de période</Label>
-                      <Select value={periodType} onValueChange={(v: any) => { setPeriodType(v); setInputMode(v === 'monthly' ? 'detailed' : 'compact'); }}>
-                        <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
-                        <SelectContent><SelectItem value="monthly">Mensuel</SelectItem><SelectItem value="weekly">Hebdomadaire</SelectItem></SelectContent>
-                      </Select>
-                   </div>
-                   <div className="space-y-2">
                       <Label className="text-[10px] uppercase font-black">Mode de saisie</Label>
                       <Select value={inputMode} onValueChange={(v: any) => setInputMode(v)}>
-                        <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
-                        <SelectContent><SelectItem value="detailed">Détaillé horaires (HH:mm)</SelectItem><SelectItem value="compact">Compact hebdomadaire (Décimal)</SelectItem></SelectContent>
+                        <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="vertical">Saisie verticale simplifiée</SelectItem>
+                          <SelectItem value="detailed">Détaillé horizontal (HH:mm)</SelectItem>
+                          <SelectItem value="compact">Compact hebdomadaire (Décimal)</SelectItem>
+                        </SelectContent>
                       </Select>
                    </div>
                    
-                   {inputMode === 'detailed' && (
+                   {inputMode !== 'compact' && (
                       <div className="space-y-2">
                          <Label className="text-[10px] uppercase font-black flex items-center gap-1">
                            <Coffee className="w-3 h-3" /> Pause par défaut
@@ -658,10 +801,18 @@ export default function AttendancesPage() {
                       </div>
                    )}
 
+                   <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-black">Type de période</Label>
+                      <Select value={periodType} onValueChange={(v: any) => setPeriodType(v)}>
+                        <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="monthly">Mensuel</SelectItem><SelectItem value="weekly">Hebdomadaire</SelectItem></SelectContent>
+                      </Select>
+                   </div>
+
                    {periodType === "monthly" ? (
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
-                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
+                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value)} className="rounded-xl" /></div>
                       </div>
                    ) : (
                       <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
@@ -669,7 +820,7 @@ export default function AttendancesPage() {
                 </div>
                 <Button onClick={handleDownloadTemplate} disabled={isDownloading} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
                    {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-                   Télécharger modèle
+                   Générer le modèle
                 </Button>
              </CardContent>
           </Card>
@@ -686,8 +837,8 @@ export default function AttendancesPage() {
                   isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40"
                 )}>
                    <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
-                   {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <TableIcon className="w-8 h-8 text-accent/30" />}
-                   <p className="text-xs font-bold text-slate-600">Choisir le fichier rempli</p>
+                   {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <Layout className="w-8 h-8 text-accent/30" />}
+                   <p className="text-xs font-bold text-slate-600">Cliquer pour importer le fichier rempli</p>
                    <p className="text-[10px] text-muted-foreground uppercase font-black">.xlsx uniquement</p>
                 </div>
                 {uploadError && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="w-4 h-4" /><AlertDescription>{uploadError}</AlertDescription></Alert>}
@@ -714,7 +865,7 @@ export default function AttendancesPage() {
                        <div className="bg-orange-50 p-4 border-b flex items-center gap-3 text-orange-800">
                           <AlertTriangle className="w-5 h-5 shrink-0" />
                           <p className="text-xs font-bold leading-tight">
-                            Mode compact détecté : Ventilation jour/nuit et heures sup. non disponible automatiquement.
+                            Mode compact détecté : Ventilation automatique jour/nuit non disponible.
                           </p>
                        </div>
                     )}
