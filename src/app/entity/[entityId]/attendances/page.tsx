@@ -51,8 +51,6 @@ import { cn } from "@/lib/utils";
 import { useCollection, useFirebase, useUser } from "@/firebase";
 import { collection, query, where, Query, orderBy } from "firebase/firestore";
 import { Employee } from "@/types/employee";
-import { Department } from "@/types/organization";
-import { Worksite } from "@/types/worksite";
 import { 
   AttendancePreviewRow, 
   AttendancePunch, 
@@ -60,19 +58,19 @@ import {
   AttendanceImportBatch 
 } from "@/types/attendance";
 import { 
-  validatePreviewRow, 
   calculateAttendanceSplits, 
-  executeAttendanceImport 
+  executeAttendanceImport,
+  validatePreviewRow
 } from "@/services/attendance.service";
 import { 
   format, 
-  startOfMonth, 
-  endOfMonth, 
-  eachDayOfInterval, 
   addDays, 
   startOfDay,
   startOfWeek,
-  parseISO
+  parseISO,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { 
@@ -243,7 +241,7 @@ export default function AttendancesPage() {
       if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
 
       // 2. Status
-      if (registryFilters.status !== "all" && a.status !== filters.status) return false;
+      if (registryFilters.status !== "all" && a.status !== registryFilters.status) return false;
 
       // 3. Search
       if (registryFilters.search) {
@@ -257,7 +255,7 @@ export default function AttendancesPage() {
       if (registryFilters.anomalyOnly && !a.anomalyFlag) return false;
 
       return true;
-    }).sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate) || a.employeeDisplayName!.localeCompare(b.employeeDisplayName!));
+    }).sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate) || (a.employeeDisplayName || "").localeCompare(b.employeeDisplayName || ""));
   }, [registryAttendances, selectedMonth, selectedYear, registryFilters]);
 
   const registryStats = useMemo(() => {
@@ -1255,36 +1253,34 @@ export default function AttendancesPage() {
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle>
-            <AlertDialogDescription>
-              Vous êtes sur le point d'importer les présences en brouillon dans le registre.
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-4 text-slate-600">
+                <p className="text-sm">
+                  Vous êtes sur le point d'importer les présences en brouillon dans le registre. Vous allez importer <strong>{previewRows.length}</strong> enregistrements.
+                </p>
+                
+                {previewStats.warning > 0 && (
+                  <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                    <span className="text-xs font-bold text-orange-800 leading-tight">
+                      Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
+                    </span>
+                  </div>
+                )}
+                
+                <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
+                   <div className="flex justify-between text-xs">
+                     <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
+                     <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
+                   </div>
+                   <div className="flex justify-between text-xs">
+                     <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
+                     <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
+                   </div>
+                </div>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
-
-          <div className="space-y-4 pt-4">
-            <p className="text-sm text-slate-600">
-              Vous allez importer <strong>{previewRows.length}</strong> enregistrements.
-            </p>
-            
-            {previewStats.warning > 0 && (
-              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
-                <span className="text-xs font-bold text-orange-800 leading-tight">
-                  Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
-                </span>
-              </div>
-            )}
-            
-            <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
-               <div className="flex justify-between text-xs">
-                 <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
-                 <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
-               </div>
-               <div className="flex justify-between text-xs">
-                 <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
-                 <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
-               </div>
-            </div>
-          </div>
 
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel>

@@ -44,22 +44,16 @@ export interface AttendanceRecord {
   calculatedHours: number;
   validatedHours: number;
   
-  // Detailed Distribution (Simplified for MVP)
+  // Detailed Distribution
   dayHours: number;
   nightHours: number;
   overtimeHours: number;
-  
-  // Detailed Distribution (Snapshot or Calculated - Legacy/Future support)
-  ordinaryDayHours?: number;
-  ordinaryNightHours?: number;
-  otDayHours?: number;
-  otNightHours?: number;
+  holidayWorkedHours?: number;
   
   // Context & Exceptions
   holidayFlag: boolean;
   holidayName?: string | null;
-  holidayWorkedHours?: number;
-  absenceCode?: string | null; // e.g., 'F' for Ferie, 'M' for Malattia
+  absenceCode?: string | null;
   
   // Audit & Anomalies
   anomalyFlag: boolean;
@@ -85,42 +79,32 @@ export type ImportBatchStatus = "previewed" | "imported" | "cancelled" | "failed
 export interface AttendanceImportBatch {
   id?: string;
   batchId: string;
-  importBatchId?: string; // Legacy support
   entityId: string;
   periodType: "weekly" | "monthly";
   periodStart: string; // YYYY-MM-DD
   periodEnd: string;   // YYYY-MM-DD
-  fileName?: string;
   sourceFileName?: string;
   templateMode?: string;
   
   // Summary Stats
-  totalRows: number;
   totalPreviewRows?: number;
-  validRows: number;
-  warningRows: number;
-  warningRowsCount?: number;
-  errorRows: number;
-  importedRows: number;
   importedRowsCount?: number;
+  warningRowsCount?: number;
   ignoredRowsCount?: number;
-  
   totalWorkedHours?: number;
   dayHours?: number;
   nightHours?: number;
   overtimeHours?: number;
   absenceRowsCount?: number;
   
-  status: ImportBatchStatus | string;
+  status: ImportBatchStatus;
   notes?: string;
   
   // Audit
   createdAt: Date | FieldValue;
   createdBy: string;
-  updatedAt?: Date | FieldValue;
-  updatedBy?: string;
-  importedAt?: Date | FieldValue | null;
-  importedBy?: string | null;
+  updatedAt: Date | FieldValue;
+  updatedBy: string;
 }
 
 export interface AttendancePreviewRow {
