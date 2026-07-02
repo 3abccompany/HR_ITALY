@@ -33,7 +33,13 @@ import {
   Plus,
   Save,
   CheckCircle,
-  FileBadge
+  FileBadge,
+  History,
+  History as HistoryIcon,
+  ArrowUpRight,
+  User,
+  Building2,
+  MapPin
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,11 +47,16 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { useCollection, useFirebase, useUser } from "@/firebase";
-import { collection, query, where, Query } from "firebase/firestore";
+import { collection, query, where, Query, orderBy } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Department } from "@/types/organization";
 import { Worksite } from "@/types/worksite";
-import { AttendancePreviewRow, AttendancePunch } from "@/types/attendance";
+import { 
+  AttendancePreviewRow, 
+  AttendancePunch, 
+  AttendanceRecord, 
+  AttendanceImportBatch 
+} from "@/types/attendance";
 import { 
   validatePreviewRow, 
   calculateAttendanceSplits, 
@@ -85,6 +96,7 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from "@/components/ui/alert-dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ExcelJS from "exceljs";
 
 const ABSENCE_CODES = [
@@ -96,6 +108,16 @@ const ABSENCE_CODES = [
   "expectation",
   "other"
 ];
+
+const STATUS_LABELS: Record<string, string> = {
+  draft_imported: "Brouillon importé",
+  draft: "Brouillon",
+  validated: "Validée",
+  corrected: "Corrigée",
+  cancelled: "Annulée",
+  locked: "Verrouillée",
+  archived: "Archivée"
+};
 
 /**
  * Helper to convert various ExcelJS cell values (Date, Number, String) 
@@ -134,10 +156,10 @@ function formatExcelTimeValue(value: any): string {
 }
 
 function formatRowDate(dateStr: string, dayName: string): string {
-  if (!dateStr || dateStr === "TBD") return dayName;
+  if (!dateStr || dateStr === "TBD" || dateStr === "INVALID") return dayName;
   try {
     const d = parseISO(dateStr);
-    if (!isNaN(d.getTime())) return format(d, "dd/MM");
+    if (!isNaN(d.getTime())) return format(d, "dd/MM", { locale: fr });
   } catch (e) {}
   return "Date invalide";
 }
@@ -150,7 +172,10 @@ export default function AttendancesPage() {
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
 
-  // --- Template State ---
+  // --- UI Layout State ---
+  const [activeTab, setActiveTab] = useState("import");
+
+  // --- Template / Global State ---
   const [periodType, setPeriodType] = useState<"monthly" | "weekly">("weekly");
   const [inputMode, setInputMode] = useState<"detailed" | "compact_time" | "compact">("detailed");
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -172,30 +197,86 @@ export default function AttendancesPage() {
   const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
+  // --- Registry State ---
+  const [registryFilters, setRegistryFilters] = useState({
+    status: "all",
+    search: "",
+    absenceOnly: false,
+    anomalyOnly: false
+  });
+
   const canRead = hasPermission("attendances.read");
   const canCreate = hasPermission("attendances.create") || hasPermission("attendances.write");
 
+  // --- Collection Queries ---
   const empQuery = useMemo(() => 
     db ? query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active")) as Query<Employee> : null,
   [db, entityId]);
-  
-  const deptsQuery = useMemo(() => 
-    db ? query(collection(db, `entities/${entityId}/departments`), where("status", "==", "active")) as Query<Department> : null,
-  [db, entityId]);
 
-  const worksitesQuery = useMemo(() => 
-    db ? query(collection(db, `entities/${entityId}/worksites`), where("status", "==", "active")) as Query<Worksite> : null,
-  [db, entityId]);
+  const attendancesQuery = useMemo(() => 
+    db && entityId && canRead ? query(collection(db, `entities/${entityId}/attendances`)) as Query<AttendanceRecord> : null,
+  [db, entityId, canRead]);
 
-  const { data: employees } = useCollection<Employee>(empQuery);
-  const { data: departments } = useCollection<Department>(deptsQuery);
-  const { data: worksites } = useCollection<Worksite>(worksitesQuery);
+  const batchesQuery = useMemo(() => 
+    db && entityId && canRead ? query(collection(db, `entities/${entityId}/attendanceImportBatches`), orderBy("createdAt", "desc")) as Query<AttendanceImportBatch> : null,
+  [db, entityId, canRead]);
+
+  const { data: employees } = useCollection<Employee>(empQuery, "attendances.employees");
+  const { data: registryAttendances, loading: loadingRegistry } = useCollection<AttendanceRecord>(attendancesQuery, "attendances.registry");
+  const { data: registryBatches, loading: loadingBatches } = useCollection<AttendanceImportBatch>(batchesQuery, "attendances.batches");
 
   const employeesMapByCode = useMemo(() => {
     const map = new Map<string, Employee>();
     employees?.forEach(e => map.set(e.employeeCode, e));
     return map;
   }, [employees]);
+
+  // --- Filtering Registry ---
+  const filteredRegistry = useMemo(() => {
+    if (!registryAttendances) return [];
+    
+    return registryAttendances.filter(a => {
+      // 1. Month/Year filter
+      const date = parseISO(a.attendanceDate);
+      if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
+
+      // 2. Status
+      if (registryFilters.status !== "all" && a.status !== registryFilters.status) return false;
+
+      // 3. Search
+      if (registryFilters.search) {
+        const term = registryFilters.search.toLowerCase();
+        const match = a.employeeDisplayName?.toLowerCase().includes(term) || a.employeeCode.toLowerCase().includes(term);
+        if (!match) return false;
+      }
+
+      // 4. Flags
+      if (registryFilters.absenceOnly && !a.absenceCode) return false;
+      if (registryFilters.anomalyOnly && !a.anomalyFlag) return false;
+
+      return true;
+    }).sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate) || a.employeeDisplayName!.localeCompare(b.employeeDisplayName!));
+  }, [registryAttendances, selectedMonth, selectedYear, registryFilters]);
+
+  const registryStats = useMemo(() => {
+    const stats = {
+      total: filteredRegistry.length,
+      draftCount: filteredRegistry.filter(a => a.status === 'draft_imported').length,
+      totalHours: 0,
+      dayHours: 0,
+      nightHours: 0,
+      overtimeHours: 0,
+      absences: filteredRegistry.filter(a => !!a.absenceCode).length,
+      anomalies: filteredRegistry.filter(a => a.anomalyFlag).length
+    };
+    filteredRegistry.forEach(a => {
+      stats.totalHours += a.validatedHours || 0;
+      stats.dayHours += a.dayHours || 0;
+      stats.nightHours += a.nightHours || 0;
+      stats.overtimeHours += a.overtimeHours || 0;
+    });
+    return stats;
+  }, [filteredRegistry]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -484,7 +565,7 @@ export default function AttendancesPage() {
   const handleImportClick = () => {
     if (!previewRows.length) return;
     if (previewStats.error > 0) {
-       toast({ variant: "destructive", title: "Action bloquée", description: "Veuillez corriger les erreurs (lignes rouges) avant d'importer." });
+       toast({ variant: "destructive", title: "Action bloquée", description: "Veuillez corriger les erreurs avant d'importer." });
        return;
     }
     setIsImportConfirmOpen(true);
@@ -494,7 +575,6 @@ export default function AttendancesPage() {
     if (!user || !entityId || !previewRows.length) return;
     setIsImporting(true);
     try {
-      // 1. Prepare Metadata
       await executeAttendanceImport({
         entityId,
         actorUid: user.uid,
@@ -519,12 +599,15 @@ export default function AttendancesPage() {
 
       toast({ 
         title: "Importation terminée", 
-        description: `${previewRows.length} enregistrements ont été importés avec succès.` 
+        description: `${previewRows.length} enregistrements ont été importés en brouillon.` 
       });
       
       setPreviewRows([]);
       setIgnoredRowsCount(0);
       setIsImportConfirmOpen(false);
+      
+      // Auto-switch to registry to see results
+      setActiveTab("registry");
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur d'importation", description: err.message });
     } finally {
@@ -562,7 +645,7 @@ export default function AttendancesPage() {
       days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
       
       employees.forEach(emp => {
-        const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode} — Département: ${emp.departmentName || "N/A"} — Site: ${emp.worksiteName || "N/A"}`]);
+        const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode}`]);
         empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
         empHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
         sheet.mergeCells(empHeaderRow.number, 1, empHeaderRow.number, columns.length);
@@ -610,18 +693,13 @@ export default function AttendancesPage() {
         totalRow.getCell(15).value = { formula: `SUM(O${startRow}:O${endRow})` };
         totalRow.getCell(15).numFmt = '0.00';
         totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-        
-        const lastRowObj = sheet.lastRow;
-        if (lastRowObj) {
-           lastRowObj.addPageBreak();
-        }
       });
       
     } else {
       const pStart = startOfDay(new Date(start));
       days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
       
-      const headerRow = sheet.getRow(1);
+      const headerRow = sheet.addRow(columns.map(c => c.header));
       headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
       headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
 
@@ -700,7 +778,6 @@ export default function AttendancesPage() {
 
       const row = sheet.addRow(rowData);
       
-      // Time Formats and Validation
       for (let i = 0; i < 7; i++) {
         const startIdx = 5 + (i * 4);
         row.getCell(startIdx).numFmt = 'hh:mm';
@@ -730,7 +807,6 @@ export default function AttendancesPage() {
     });
 
     columns.push({ header: "Total semaine", key: "total", width: 15 });
-    columns.push({ header: "Notes générales", key: "notes", width: 40 });
 
     sheet.columns = columns;
     const headerRow = sheet.getRow(1);
@@ -757,7 +833,7 @@ export default function AttendancesPage() {
         formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`,
         result: 0 
       };
-      row.getCell(19).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+      row.getCell(19).numFmt = '0.00';
     });
   };
 
@@ -767,8 +843,7 @@ export default function AttendancesPage() {
     sheet.addRow(["1. Mode Détaillé : Saisissez les horaires HH:mm."]);
     sheet.addRow(["2. Mode Compact Horaires : Une ligne par employé, saisie des horaires jour par jour."]);
     sheet.addRow(["3. Mode Compact Décimal : Saisissez les totaux décimaux nets (ex: 6.5)."]);
-    sheet.addRow(["4. Pause : Saisir en minutes réelles (ex: 30, 45). Si pas de pause : 0."]);
-    sheet.addRow(["5. En mode compact décimal, la pause doit être déjà déduite de votre saisie."]);
+    sheet.addRow(["4. Pause : Saisir en minutes réelles (ex: 30)."]);
     sheet.addRow([]);
     sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
     ABSENCE_CODES.forEach(c => sheet.addRow([c]));
@@ -809,205 +884,377 @@ export default function AttendancesPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 space-y-6">
-          <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
-             <CardHeader className="bg-primary/5 border-b py-6 px-8">
-                <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
-                   <FileBadge className="w-4 h-4" /> Modèle Excel
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-8 space-y-6">
-                <div className="space-y-4">
-                   <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Mode de saisie</Label>
-                      <Select value={inputMode} onValueChange={(v: any) => setInputMode(v)}>
-                        <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="compact_time">Compact horaires hebdomadaire</SelectItem>
-                          <SelectItem value="detailed">Détaillé horizontal (HH:mm)</SelectItem>
-                          <SelectItem value="compact">Saisie manuelle heures totales (Décimal)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                   </div>
-                   
-                   {inputMode !== 'compact' && (
-                      <div className="space-y-2">
-                         <Label className="text-[10px] uppercase font-black flex items-center gap-1">
-                           <Coffee className="w-3 h-3" /> Pause par défaut
-                         </Label>
-                         <div className="flex gap-2">
-                            <Select value={defaultPause} onValueChange={setDefaultPause}>
-                              <SelectTrigger className="rounded-xl flex-1"><SelectValue /></SelectTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+         <TabsList className="bg-white border rounded-xl p-1 h-11">
+            <TabsTrigger value="import" className="rounded-lg px-6 font-bold gap-2"><Upload className="w-4 h-4" /> Importer</TabsTrigger>
+            <TabsTrigger value="registry" className="rounded-lg px-6 font-bold gap-2"><HistoryIcon className="w-4 h-4" /> Registre & Historique</TabsTrigger>
+         </TabsList>
+
+         <TabsContent value="import" className="mt-0">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-1 space-y-6">
+                <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
+                  <CardHeader className="bg-primary/5 border-b py-6 px-8">
+                      <CardTitle className="text-sm font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                        <FileBadge className="w-4 h-4" /> Modèle Excel
+                      </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-8 space-y-6">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                            <Label className="text-[10px] uppercase font-black">Mode de saisie</Label>
+                            <Select value={inputMode} onValueChange={(v: any) => setInputMode(v)}>
+                              <SelectTrigger className="rounded-xl h-11"><SelectValue /></SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="0">0 min</SelectItem>
-                                <SelectItem value="15">15 min</SelectItem>
-                                <SelectItem value="30">30 min</SelectItem>
-                                <SelectItem value="45">45 min</SelectItem>
-                                <SelectItem value="60">60 min</SelectItem>
-                                <SelectItem value="custom">Perso...</SelectItem>
+                                <SelectItem value="compact_time">Compact horaires hebdomadaire</SelectItem>
+                                <SelectItem value="detailed">Détaillé horizontal (HH:mm)</SelectItem>
+                                <SelectItem value="compact">Saisie manuelle heures totales (Décimal)</SelectItem>
                               </SelectContent>
                             </Select>
-                            {defaultPause === 'custom' && (
-                              <Input type="number" placeholder="Min..." value={customPause} onChange={(e) => setCustomPause(e.target.value)} className="w-20 rounded-xl" />
+                        </div>
+                        
+                        {inputMode !== 'compact' && (
+                            <div className="space-y-2">
+                              <Label className="text-[10px] uppercase font-black flex items-center gap-1">
+                                <Coffee className="w-3 h-3" /> Pause par défaut
+                              </Label>
+                              <div className="flex gap-2">
+                                  <Select value={defaultPause} onValueChange={setDefaultPause}>
+                                    <SelectTrigger className="rounded-xl flex-1"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="0">0 min</SelectItem>
+                                      <SelectItem value="15">15 min</SelectItem>
+                                      <SelectItem value="30">30 min</SelectItem>
+                                      <SelectItem value="45">45 min</SelectItem>
+                                      <SelectItem value="60">60 min</SelectItem>
+                                      <SelectItem value="custom">Perso...</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  {defaultPause === 'custom' && (
+                                    <Input type="number" placeholder="Min..." value={customPause} onChange={(e) => setCustomPause(e.target.value)} className="w-20 rounded-xl" />
+                                  )}
+                              </div>
+                            </div>
+                        )}
+
+                        <div className="space-y-2">
+                            <Label className="text-[10px] uppercase font-black">Type de période</Label>
+                            <Select value={periodType} onValueChange={(v: any) => setPeriodType(v)} disabled={inputMode === 'compact_time' || inputMode === 'compact'}>
+                              <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
+                              <SelectContent><SelectItem value="weekly">Hebdomadaire</SelectItem><SelectItem value="monthly">Mensuel</SelectItem></SelectContent>
+                            </Select>
+                        </div>
+
+                        {periodType === "monthly" ? (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
+                              <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
+                            </div>
+                        ) : (
+                            <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
+                        )}
+                      </div>
+                      <Button onClick={handleDownloadTemplate} disabled={isDownloading} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
+                        {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+                        Générer le modèle
+                      </Button>
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-[2rem] border-accent/20 shadow-xl shadow-accent/5 overflow-hidden">
+                  <CardHeader className="bg-accent/10 border-b py-6 px-8">
+                      <CardTitle className="text-sm font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
+                        <Upload className="w-4 h-4" /> Importer
+                      </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-8 space-y-4">
+                      <div className={cn(
+                        "border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
+                        isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40"
+                      )}>
+                        <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+                        {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <Layout className="w-8 h-8 text-accent/30" />}
+                        <p className="text-xs font-bold text-slate-600">Cliquer pour importer le fichier rempli</p>
+                        <p className="text-[10px] text-muted-foreground uppercase font-black">.xlsx uniquement</p>
+                      </div>
+                      {uploadError && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="w-4 h-4" /><AlertDescription>{uploadError}</AlertDescription></Alert>}
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="lg:col-span-2 space-y-6">
+                {previewRows.length > 0 ? (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 bg-white p-6 rounded-[2rem] border shadow-lg">
+                          <SummaryStat label="H. Totales" value={previewStats.totalHours.toFixed(1)} color="blue" />
+                          <SummaryStat label="H. Jour" value={previewStats.dayHours.toFixed(1)} color="slate" />
+                          <SummaryStat label="H. Nuit" value={previewStats.nightHours.toFixed(1)} color="indigo" />
+                          <SummaryStat label="H. Sup" value={previewStats.overtimeHours.toFixed(1)} color="orange" />
+                          <SummaryStat label="Absences" value={previewStats.absencesCount} color="slate" />
+                          <SummaryStat label="Alertes" value={previewStats.warning} color="orange" />
+                          <SummaryStat label="Erreurs" value={previewStats.error} color="red" />
+                          <SummaryStat label="Ignorées" value={ignoredRowsCount} color="slate" />
+                      </div>
+
+                      <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
+                          {inputMode !== 'detailed' && (
+                            <div className="bg-blue-50 p-4 border-b flex items-center gap-3 text-blue-800">
+                                <Info className="w-5 h-5 shrink-0" />
+                                <p className="text-xs font-bold leading-tight">
+                                  Note : En mode compact, la répartition jour/nuit et les heures supplémentaires sont estimées par le système.
+                                </p>
+                            </div>
+                          )}
+                          <ScrollArea className="h-[600px] w-full">
+                            <Table>
+                                <TableHeader className="bg-slate-50 sticky top-0 z-10">
+                                  <TableRow>
+                                      <TableHead className="pl-6 w-[80px]">Status</TableHead>
+                                      <TableHead>Collaborateur</TableHead>
+                                      <TableHead>Date</TableHead>
+                                      <TableHead className="text-center">H. Totales</TableHead>
+                                      <TableHead className="text-center">Jour</TableHead>
+                                      <TableHead className="text-center">Nuit</TableHead>
+                                      <TableHead className="text-center">Sup.</TableHead>
+                                      <TableHead>Messages</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {previewRows.map((row) => (
+                                    <TableRow key={row.rowId} className={cn("group transition-colors", row.status === 'error' ? "bg-red-50/30" : row.status === 'warning' ? "bg-orange-50/30" : "hover:bg-slate-50")}>
+                                        <TableCell className="pl-6">{getStatusIcon(row.status)}</TableCell>
+                                        <TableCell>
+                                          <div className="flex flex-col">
+                                              <span className="font-bold text-slate-800 text-xs">{row.employeeName}</span>
+                                              <span className="text-[10px] text-muted-foreground font-mono">{row.employeeCode}</span>
+                                          </div>
+                                        </TableCell>
+                                        <TableCell>
+                                          <div className="flex flex-col">
+                                              <span className="text-xs font-medium">{formatRowDate(row.date, row.dayName)}</span>
+                                              <span className="text-[10px] text-muted-foreground uppercase">{row.dayName}</span>
+                                          </div>
+                                        </TableCell>
+                                        <TableCell className="text-center font-black text-xs text-primary bg-primary/5">{row.validatedHours.toFixed(2)}</TableCell>
+                                        <TableCell className="text-center text-xs font-medium text-slate-600"><div className="flex items-center justify-center gap-1">{row.dayHours > 0 && <Sun className="w-2.5 h-2.5 text-orange-400" />} {row.dayHours.toFixed(2)}</div></TableCell>
+                                        <TableCell className="text-center text-xs font-medium text-slate-600"><div className="flex items-center justify-center gap-1">{row.nightHours > 0 && <Moon className="w-2.5 h-2.5 text-indigo-400" />} {row.nightHours.toFixed(2)}</div></TableCell>
+                                        <TableCell className="text-center text-xs font-black text-orange-600">{row.overtimeHours > 0 ? `+${row.overtimeHours.toFixed(2)}` : "—"}</TableCell>
+                                        <TableCell className="pr-6">
+                                          <div className="space-y-1">
+                                              {row.messages.map((m, idx) => (
+                                                <div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>• {m}</div>
+                                              ))}
+                                              {row.absenceCode && <Badge variant="outline" className="text-[8px] uppercase border-orange-200 text-orange-700 bg-orange-50 font-black">{row.absenceCode}</Badge>}
+                                              {row.isHoliday && <Badge variant="outline" className="text-[8px] uppercase border-blue-200 text-blue-700 bg-blue-50 font-black ml-1">Férié</Badge>}
+                                          </div>
+                                        </TableCell>
+                                      </TableRow>
+                                  ))}
+                                </TableBody>
+                            </Table>
+                            <ScrollBar orientation="horizontal" />
+                          </ScrollArea>
+                          <div className="bg-secondary/20 p-4 border-t flex items-center justify-between px-8">
+                            <div className="flex items-center gap-2 text-[10px] font-black uppercase text-muted-foreground tracking-widest">
+                                <CheckCircle2 className="w-4 h-4 text-green-600" /> {previewStats.valid + previewStats.warning} lignes prêtes.
+                            </div>
+                            {canCreate && (
+                              <Button 
+                                onClick={handleImportClick} 
+                                disabled={isImporting || previewRows.length === 0 || previewStats.error > 0} 
+                                className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10"
+                              >
+                                {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                                Lancer l'importation
+                              </Button>
                             )}
-                         </div>
-                      </div>
-                   )}
-
-                   <div className="space-y-2">
-                      <Label className="text-[10px] uppercase font-black">Type de période</Label>
-                      <Select value={periodType} onValueChange={(v: any) => setPeriodType(v)} disabled={inputMode === 'compact_time' || inputMode === 'compact'}>
-                        <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
-                        <SelectContent><SelectItem value="weekly">Hebdomadaire</SelectItem><SelectItem value="monthly">Mensuel</SelectItem></SelectContent>
-                      </Select>
-                   </div>
-
-                   {periodType === "monthly" ? (
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
-                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
-                      </div>
-                   ) : (
-                      <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
-                   )}
-                </div>
-                <Button onClick={handleDownloadTemplate} disabled={isDownloading} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
-                   {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-                   Générer le modèle
-                </Button>
-             </CardContent>
-          </Card>
-
-          <Card className="rounded-[2rem] border-accent/20 shadow-xl shadow-accent/5 overflow-hidden">
-             <CardHeader className="bg-accent/10 border-b py-6 px-8">
-                <CardTitle className="text-sm font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
-                   <Upload className="w-4 h-4" /> Importer
-                </CardTitle>
-             </CardHeader>
-             <CardContent className="p-8 space-y-4">
-                <div className={cn(
-                  "border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
-                  isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40"
-                )}>
-                   <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
-                   {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <Layout className="w-8 h-8 text-accent/30" />}
-                   <p className="text-xs font-bold text-slate-600">Cliquer pour importer le fichier rempli</p>
-                   <p className="text-[10px] text-muted-foreground uppercase font-black">.xlsx uniquement</p>
-                </div>
-                {uploadError && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="w-4 h-4" /><AlertDescription>{uploadError}</AlertDescription></Alert>}
-             </CardContent>
-          </Card>
-        </div>
-
-        <div className="lg:col-span-2 space-y-6">
-           {previewRows.length > 0 ? (
-              <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
-                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 bg-white p-6 rounded-[2rem] border shadow-lg">
-                    <SummaryStat label="H. Totales" value={previewStats.totalHours.toFixed(1)} color="blue" />
-                    <SummaryStat label="H. Jour" value={previewStats.dayHours.toFixed(1)} color="slate" />
-                    <SummaryStat label="H. Nuit" value={previewStats.nightHours.toFixed(1)} color="indigo" />
-                    <SummaryStat label="H. Sup" value={previewStats.overtimeHours.toFixed(1)} color="orange" />
-                    <SummaryStat label="Absences" value={previewStats.absencesCount} color="slate" />
-                    <SummaryStat label="Alertes" value={previewStats.warning} color="orange" />
-                    <SummaryStat label="Erreurs" value={previewStats.error} color="red" />
-                    <SummaryStat label="Ignorées" value={ignoredRowsCount} color="slate" />
-                 </div>
-
-                 <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
-                    {inputMode !== 'detailed' && (
-                       <div className="bg-blue-50 p-4 border-b flex items-center gap-3 text-blue-800">
-                          <Info className="w-5 h-5 shrink-0" />
-                          <p className="text-xs font-bold leading-tight">
-                            Note : En mode compact, la répartition jour/nuit et les heures supplémentaires sont estimées par le système sur une base de 08:00 - 16:00 si seuls les totaux sont fournis.
-                          </p>
-                       </div>
-                    )}
-                    <ScrollArea className="h-[600px] w-full">
-                       <Table>
-                          <TableHeader className="bg-slate-50 sticky top-0 z-10">
-                             <TableRow>
-                                <TableHead className="pl-6 w-[80px]">Status</TableHead>
-                                <TableHead>Collaborateur</TableHead>
-                                <TableHead>Date</TableHead>
-                                <TableHead className="text-center">H. Totales</TableHead>
-                                <TableHead className="text-center">Jour</TableHead>
-                                <TableHead className="text-center">Nuit</TableHead>
-                                <TableHead className="text-center">Sup.</TableHead>
-                                <TableHead>Messages</TableHead>
-                             </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                             {previewRows.map((row) => (
-                               <TableRow key={row.rowId} className={cn("group transition-colors", row.status === 'error' ? "bg-red-50/30" : row.status === 'warning' ? "bg-orange-50/30" : "hover:bg-slate-50")}>
-                                  <TableCell className="pl-6">{getStatusIcon(row.status)}</TableCell>
-                                  <TableCell>
-                                     <div className="flex flex-col">
-                                        <span className="font-bold text-slate-800 text-xs">{row.employeeName}</span>
-                                        <span className="text-[10px] text-muted-foreground font-mono">{row.employeeCode}</span>
-                                     </div>
-                                  </TableCell>
-                                  <TableCell>
-                                     <div className="flex flex-col">
-                                        <span className="text-xs font-medium">{formatRowDate(row.date, row.dayName)}</span>
-                                        <span className="text-[10px] text-muted-foreground uppercase">{row.dayName}</span>
-                                     </div>
-                                  </TableCell>
-                                  <TableCell className="text-center font-black text-xs text-primary bg-primary/5">{row.validatedHours.toFixed(2)}</TableCell>
-                                  <TableCell className="text-center text-xs font-medium text-slate-600"><div className="flex items-center justify-center gap-1">{row.dayHours > 0 && <Sun className="w-2.5 h-2.5 text-orange-400" />} {row.dayHours.toFixed(2)}</div></TableCell>
-                                  <TableCell className="text-center text-xs font-medium text-slate-600"><div className="flex items-center justify-center gap-1">{row.nightHours > 0 && <Moon className="w-2.5 h-2.5 text-indigo-400" />} {row.nightHours.toFixed(2)}</div></TableCell>
-                                  <TableCell className="text-center text-xs font-black text-orange-600">{row.overtimeHours > 0 ? `+${row.overtimeHours.toFixed(2)}` : "—"}</TableCell>
-                                  <TableCell className="pr-6">
-                                     <div className="space-y-1">
-                                        {row.messages.map((m, idx) => (
-                                          <div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>• {m}</div>
-                                        ))}
-                                        {row.absenceCode && <Badge variant="outline" className="text-[8px] uppercase border-orange-200 text-orange-700 bg-orange-50 font-black">{row.absenceCode}</Badge>}
-                                        {row.isHoliday && <Badge variant="outline" className="text-[8px] uppercase border-blue-200 text-blue-700 bg-blue-50 font-black ml-1">Férié</Badge>}
-                                     </div>
-                                  </TableCell>
-                                </TableRow>
-                             ))}
-                          </TableBody>
-                       </Table>
-                       <ScrollBar orientation="horizontal" />
-                    </ScrollArea>
-                    <div className="bg-secondary/20 p-4 border-t flex items-center justify-between px-8">
-                       <div className="flex items-center gap-2 text-[10px] font-black uppercase text-muted-foreground tracking-widest">
-                          <CheckCircle2 className="w-4 h-4 text-green-600" /> {previewStats.valid + previewStats.warning} lignes prêtes.
-                       </div>
-                       {canCreate && (
-                         <Button 
-                           onClick={handleImportClick} 
-                           disabled={isImporting || previewRows.length === 0 || previewStats.error > 0} 
-                           className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10"
-                         >
-                           {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                           Importer en brouillon
-                         </Button>
-                       )}
+                          </div>
+                      </Card>
                     </div>
-                 </Card>
+                ) : (
+                    <div className="flex flex-col items-center justify-center min-h-[500px] border-2 border-dashed rounded-[3rem] bg-secondary/5 opacity-50 space-y-4">
+                      <div className="bg-white p-6 rounded-full shadow-sm"><TableIcon className="w-12 h-12 text-slate-200" /></div>
+                      <div className="text-center space-y-1">
+                        <h3 className="font-black text-slate-400 uppercase text-xs tracking-widest">Prévisualisation</h3>
+                        <p className="text-xs text-slate-400 italic">Téléversez un fichier pour voir la ventilation des heures.</p>
+                      </div>
+                    </div>
+                )}
               </div>
-           ) : (
-              <div className="flex flex-col items-center justify-center min-h-[500px] border-2 border-dashed rounded-[3rem] bg-secondary/5 opacity-50 space-y-4">
-                 <div className="bg-white p-6 rounded-full shadow-sm"><TableIcon className="w-12 h-12 text-slate-200" /></div>
-                 <div className="text-center space-y-1">
-                   <h3 className="font-black text-slate-400 uppercase text-xs tracking-widest">Prévisualisation</h3>
-                   <p className="text-xs text-slate-400 italic">Téléversez un fichier pour voir la ventilation des heures.</p>
-                 </div>
-              </div>
-           )}
-        </div>
-      </div>
+            </div>
+         </TabsContent>
 
-      {/* Confirmation Dialog for Import */}
+         <TabsContent value="registry" className="mt-0 space-y-8 animate-in fade-in slide-in-from-bottom-2">
+            
+            {/* Registry Filters & Summary */}
+            <div className="space-y-6">
+               <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center bg-white rounded-xl border p-1 shadow-sm h-11">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedMonth(prev => prev === 1 ? 12 : prev - 1)}><ChevronLeft className="w-4 h-4" /></Button>
+                    <span className="px-4 text-xs font-black uppercase tracking-widest text-primary min-w-[140px] text-center">
+                       {format(new Date(selectedYear, selectedMonth - 1), 'MMMM yyyy', { locale: fr })}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedMonth(prev => prev === 12 ? 1 : prev + 1)}><ChevronRight className="w-4 h-4" /></Button>
+                  </div>
+
+                  <div className="relative flex-1 min-w-[200px]">
+                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                     <Input 
+                        placeholder="Filtrer par employé ou matricule..." 
+                        value={registryFilters.search}
+                        onChange={(e) => setRegistryFilters(p => ({...p, search: e.target.value}))}
+                        className="h-11 rounded-xl pl-10 bg-white border-primary/10"
+                     />
+                  </div>
+
+                  <Select value={registryFilters.status} onValueChange={(v) => setRegistryFilters(p => ({...p, status: v}))}>
+                     <SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10"><SelectValue placeholder="Tous statuts" /></SelectTrigger>
+                     <SelectContent>
+                        <SelectItem value="all">Tous les statuts</SelectItem>
+                        {Object.entries(STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
+                     </SelectContent>
+                  </Select>
+
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11">
+                     <input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => setRegistryFilters(p => ({...p, absenceOnly: e.target.checked}))} className="rounded" />
+                     <Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label>
+                  </div>
+                  
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11">
+                     <input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => setRegistryFilters(p => ({...p, anomalyOnly: e.target.checked}))} className="rounded" />
+                     <Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label>
+                  </div>
+               </div>
+
+               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+                  <SummaryStat label="Lignes" value={registryStats.total} color="blue" />
+                  <SummaryStat label="Brouillons" value={registryStats.draftCount} color="indigo" />
+                  <SummaryStat label="H. Totales" value={registryStats.totalHours.toFixed(1)} color="slate" />
+                  <SummaryStat label="H. Jour" value={registryStats.dayHours.toFixed(1)} color="slate" />
+                  <SummaryStat label="H. Nuit" value={registryStats.nightHours.toFixed(1)} color="indigo" />
+                  <SummaryStat label="H. Sup" value={registryStats.overtimeHours.toFixed(1)} color="orange" />
+                  <SummaryStat label="Absences" value={registryStats.absences} color="slate" />
+                  <SummaryStat label="Anomalies" value={registryStats.anomalies} color="red" />
+               </div>
+            </div>
+
+            <div className="space-y-12">
+               {/* Main Table */}
+               <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
+                  <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                     <CardTitle className="text-xs font-black uppercase tracking-widest text-primary flex items-center gap-2">
+                        <LayoutList className="w-4 h-4" /> Pointages & Absences
+                     </CardTitle>
+                  </CardHeader>
+                  <ScrollArea className="max-h-[600px] w-full">
+                     <Table>
+                        <TableHeader className="bg-slate-50 sticky top-0 z-10">
+                           <TableRow>
+                              <TableHead className="pl-8">Employé</TableHead>
+                              <TableHead>Date</TableHead>
+                              <TableHead>Site / Dépt</TableHead>
+                              <TableHead className="text-center">Heures</TableHead>
+                              <TableHead className="text-center">Jour</TableHead>
+                              <TableHead className="text-center">Nuit</TableHead>
+                              <TableHead className="text-center">Sup.</TableHead>
+                              <TableHead>Absence</TableHead>
+                              <TableHead>Statut</TableHead>
+                              <TableHead className="pr-8 text-right">Batch</TableHead>
+                           </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                           {loadingRegistry ? (
+                              <TableRow><TableCell colSpan={10} className="text-center py-20"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
+                           ) : filteredRegistry.length === 0 ? (
+                              <TableRow><TableCell colSpan={10} className="text-center py-24 text-muted-foreground italic">Aucun enregistrement pour cette période.</TableCell></TableRow>
+                           ) : (
+                              filteredRegistry.map(a => (
+                                 <TableRow key={a.attendanceId} className="hover:bg-slate-50 transition-colors">
+                                    <TableCell className="pl-8 py-4">
+                                       <div className="flex flex-col">
+                                          <span className="font-bold text-slate-800 text-xs">{a.employeeDisplayName}</span>
+                                          <span className="text-[10px] text-muted-foreground font-mono uppercase">{a.employeeCode}</span>
+                                       </div>
+                                    </TableCell>
+                                    <TableCell>
+                                       <div className="text-xs font-medium">{format(parseISO(a.attendanceDate), 'dd/MM/yyyy')}</div>
+                                    </TableCell>
+                                    <TableCell>
+                                       <div className="flex flex-col gap-0.5">
+                                          <span className="text-[10px] font-bold text-slate-700 truncate max-w-[120px]">{a.worksiteName || "—"}</span>
+                                          <span className="text-[9px] text-muted-foreground uppercase">{a.departmentName || "—"}</span>
+                                       </div>
+                                    </TableCell>
+                                    <TableCell className="text-center font-black text-xs text-primary">{a.validatedHours?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-center text-xs font-medium text-slate-500">{a.dayHours?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-center text-xs font-medium text-slate-500">{a.nightHours?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-center text-xs font-black text-orange-600">{a.overtimeHours > 0 ? `+${a.overtimeHours.toFixed(2)}` : "—"}</TableCell>
+                                    <TableCell>
+                                       {a.absenceCode && <Badge variant="outline" className="text-[8px] uppercase bg-orange-50 text-orange-700 border-orange-100 font-black">{a.absenceCode}</Badge>}
+                                    </TableCell>
+                                    <TableCell>
+                                       <Badge variant="outline" className={cn("text-[9px] font-black uppercase h-5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700")}>
+                                          {STATUS_LABELS[a.status] || a.status}
+                                       </Badge>
+                                    </TableCell>
+                                    <TableCell className="pr-8 text-right">
+                                       <span className="text-[8px] font-mono opacity-40" title={a.importBatchId || "Manuel"}>{a.importBatchId?.substring(0, 8) || "MANUAL"}</span>
+                                    </TableCell>
+                                 </TableRow>
+                              ))
+                           )}
+                        </TableBody>
+                     </Table>
+                  </ScrollArea>
+               </Card>
+
+               {/* Batch History List */}
+               <div className="space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-muted-foreground px-2 flex items-center gap-2">
+                     <HistoryIcon className="w-4 h-4" /> Historique des imports
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     {loadingBatches ? (
+                        <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" />
+                     ) : !registryBatches || registryBatches.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic px-2">Aucun import enregistré.</p>
+                     ) : (
+                        registryBatches.map(b => (
+                           <Card key={b.id} className="rounded-2xl border-primary/5 shadow-sm hover:shadow-md transition-all overflow-hidden bg-white group">
+                              <CardContent className="p-0">
+                                 <div className="p-4 bg-slate-50/50 border-b flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                       <div className="bg-primary/10 p-2 rounded-xl text-primary"><FileSpreadsheet className="w-4 h-4" /></div>
+                                       <div>
+                                          <p className="text-xs font-black text-slate-800 truncate max-w-[200px]">{b.sourceFileName}</p>
+                                          <p className="text-[9px] text-muted-foreground font-bold uppercase">{format(parseSafeDate(b.createdAt) || new Date(), 'dd/MM/yyyy HH:mm')}</p>
+                                       </div>
+                                    </div>
+                                    <Badge variant="outline" className="bg-white text-[9px] font-black uppercase text-slate-400">{b.status}</Badge>
+                                 </div>
+                                 <div className="p-5 grid grid-cols-4 gap-2">
+                                    <BatchMiniStat label="Lignes" value={b.importedRowsCount} />
+                                    <BatchMiniStat label="Heures" value={b.totalWorkedHours?.toFixed(1)} />
+                                    <BatchMiniStat label="Alertes" value={b.warningRowsCount} color={b.warningRowsCount! > 0 ? "orange" : "slate"} />
+                                    <BatchMiniStat label="Absences" value={b.absenceRowsCount} />
+                                 </div>
+                              </CardContent>
+                           </Card>
+                        ))
+                     )}
+                  </div>
+               </div>
+            </div>
+         </TabsContent>
+      </Tabs>
+
+      {/* Confirmation Dialog */}
       <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle>
             <AlertDialogDescription>
-              Vous êtes sur le point d'importer les présences en brouillon.
+              Vous êtes sur le point d'importer les présences en brouillon dans le registre.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -1019,8 +1266,8 @@ export default function AttendancesPage() {
             {previewStats.warning > 0 && (
               <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
-                <span className="text-xs font-bold text-orange-800">
-                  Attention : {previewStats.warning} ligne(s) contiennent des alertes.
+                <span className="text-xs font-bold text-orange-800 leading-tight">
+                  Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
                 </span>
               </div>
             )}
@@ -1031,8 +1278,8 @@ export default function AttendancesPage() {
                  <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
                </div>
                <div className="flex justify-between text-xs">
-                 <span className="text-muted-foreground uppercase font-bold">Absences :</span>
-                 <span className="font-black text-primary">{previewStats.absencesCount}</span>
+                 <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
+                 <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
                </div>
             </div>
           </div>
@@ -1042,10 +1289,10 @@ export default function AttendancesPage() {
             <AlertDialogAction 
               onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} 
               disabled={isImporting}
-              className="bg-primary font-black rounded-xl px-6"
+              className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/20"
             >
               {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />}
-              Lancer l'importation
+              Confirmer l'importation
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1065,11 +1312,25 @@ function SummaryStat({ label, value, color }: { label: string, value: number | s
   };
   
   return (
-    <div className={cn("p-2 rounded-2xl border flex flex-col items-center min-w-[70px]", colorMap[color] || colorMap.slate)}>
+    <div className={cn("p-3 rounded-2xl border flex flex-col items-center min-w-[70px] shadow-sm", colorMap[color] || colorMap.slate)}>
       <span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
       <span className="text-sm font-black leading-none mt-1">{value}</span>
     </div>
   );
+}
+
+function BatchMiniStat({ label, value, color = "slate" }: { label: string, value: any, color?: string }) {
+   const colors: Record<string, string> = {
+      slate: "text-slate-600",
+      orange: "text-orange-600",
+      blue: "text-blue-600"
+   };
+   return (
+      <div className="flex flex-col text-center">
+         <span className="text-[7px] font-black uppercase text-muted-foreground opacity-60 tracking-widest">{label}</span>
+         <span className={cn("text-xs font-black", colors[color])}>{value ?? 0}</span>
+      </div>
+   );
 }
 
 function getStatusIcon(status: string) {
@@ -1079,4 +1340,12 @@ function getStatusIcon(status: string) {
     case 'error': return <XCircle className="w-4 h-4 text-red-500" />;
     default: return null;
   }
+}
+
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+  if (typeof val?.toDate === 'function') return val.toDate();
+  if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+  return new Date(val);
 }
