@@ -35,7 +35,6 @@ import {
   Save,
   CheckCircle,
   FileBadge,
-  History,
   History as HistoryIcon,
   ArrowUpRight,
   User,
@@ -171,7 +170,7 @@ function formatExcelTimeValue(value: any): string {
 }
 
 function formatRowDate(dateStr: string, dayName: string): string {
-  if (!dateStr || dateStr === "TBD" || dateStr === "INVALID") return dayName;
+  if (!dateStr || dateStr === "INVALID") return dayName;
   try {
     const d = parseISO(dateStr);
     if (!isNaN(d.getTime())) return format(d, "dd/MM", { locale: fr });
@@ -781,19 +780,18 @@ export default function AttendancesPage() {
             pause: prefillPause
           });
           const currentRow = row.number;
-          row.getCell(3).numFmt = 'yyyy-mm-dd';
+          row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
-          // Overnight-safe logic using MOD(end-start, 1) to handle wrap around
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
           const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
           
-          row.getCell(14).value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
-          row.getCell(14).numFmt = '0.00';
-          row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-          row.getCell(16).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-          row.getCell(17).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
+          row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
+          row.getCell('N').numFmt = '0.00';
+          row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+          row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+          row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
         });
         const endRow = sheet.lastRow?.number || startRow;
         const totalRow = sheet.addRow([]);
@@ -821,7 +819,6 @@ export default function AttendancesPage() {
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
-          // Overnight-safe logic using MOD(end-start, 1) to handle wrap around
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
           const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
@@ -994,7 +991,7 @@ export default function AttendancesPage() {
                         {periodType === "monthly" ? (
                             <div className="grid grid-cols-2 gap-3">
                               <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
-                              <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value)} className="rounded-xl" /></div>
+                              <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
                             </div>
                         ) : (
                             <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
@@ -1263,9 +1260,43 @@ export default function AttendancesPage() {
             <div className="space-y-4">
                <h3 className="text-xs font-black uppercase tracking-widest text-muted-foreground px-2 flex items-center gap-2"><HistoryIcon className="w-4 h-4" /> Historique des imports</h3>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {loadingBatches ? (<Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" />) : !registryBatches || registryBatches.length === 0 ? (<p className="text-xs text-muted-foreground italic px-2">Aucun import enregistré.</p>) : (
+                  {loadingBatches ? (
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" />
+                  ) : !registryBatches || registryBatches.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic px-2">Aucun import enregistré.</p>
+                  ) : (
                      registryBatches.map(b => (
-                        <Card key={b.id} className="rounded-2xl border-primary/5 shadow-sm hover:shadow-md transition-all overflow-hidden bg-white group"><CardContent className="p-0"><div className="p-4 bg-slate-50/50 border-b flex items-center justify-between"><div className="flex items-center gap-3"><div className="bg-primary/10 p-2 rounded-xl text-primary"><FileSpreadsheet className="w-4 h-4" /></div><div><p className="text-xs font-black text-slate-800 truncate max-w-[200px]">{b.sourceFileName}</p><p className="text-[9px] text-muted-foreground font-bold uppercase">{format(parseSafeDate(b.createdAt) || new Date(), 'dd/MM/yyyy HH:mm')}</p></div></div><Badge variant="outline" className="bg-white text-[9px] font-black uppercase text-slate-400">{b.status}</Badge></div><div className="p-5 grid grid-cols-5 gap-2"><BatchMiniStat label="Lignes" value={b.importedRowsCount} /><BatchMiniStat label="Validées" value={b.validatedRowsCount} color="green" /><BatchMiniStat label="Heures" value={b.totalWorkedHours?.toFixed(1)} /><BatchMiniStat label="Alertes" value={b.warningRowsCount} color={b.warningRowsCount! > 0 ? "orange" : "slate"} /><BatchMiniStat label="Absences" value={b.absenceRowsCount} /></div></CardContent></Card>
+                        <Card key={b.id} className="rounded-2xl border-primary/5 shadow-sm hover:shadow-md transition-all overflow-hidden bg-white group">
+                          <CardContent className="p-0">
+                            <div className="p-4 bg-slate-50/50 border-b flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="bg-primary/10 p-2 rounded-xl text-primary">
+                                  <FileSpreadsheet className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <p className="text-xs font-black text-slate-800 truncate max-w-[200px]">{b.sourceFileName}</p>
+                                  <p className="text-[9px] text-muted-foreground font-bold uppercase">
+                                    {format(parseSafeDate(b.createdAt) || new Date(), 'dd/MM/yyyy HH:mm', { locale: fr })}
+                                  </p>
+                                </div>
+                              </div>
+                              <Badge variant="outline" className="bg-white text-[9px] font-black uppercase text-slate-400">
+                                {b.status}
+                              </Badge>
+                            </div>
+                            <div className="p-5 grid grid-cols-5 gap-2">
+                              <BatchMiniStat label="Lignes" value={b.importedRowsCount} />
+                              <BatchMiniStat label="Validées" value={b.validatedRowsCount} color="green" />
+                              <BatchMiniStat label="Heures" value={b.totalWorkedHours?.toFixed(1)} />
+                              <BatchMiniStat 
+                                label="Alertes" 
+                                value={b.warningRowsCount} 
+                                color={b.warningRowsCount && b.warningRowsCount > 0 ? "orange" : "slate"} 
+                              />
+                              <BatchMiniStat label="Absences" value={b.absenceRowsCount} />
+                            </div>
+                          </CardContent>
+                        </Card>
                      ))
                   )}
                </div>
@@ -1279,7 +1310,9 @@ export default function AttendancesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmer l'importation</AlertDialogTitle>
             <AlertDialogDescription asChild>
-               <span className="text-muted-foreground text-sm">Vous êtes sur le point d'importer les présences en brouillon.</span>
+               <span className="text-muted-foreground text-sm">
+                 Vous êtes sur le point d'importer les présences en brouillon.
+               </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -1311,7 +1344,11 @@ export default function AttendancesPage() {
               disabled={isImporting} 
               className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/10"
             >
-              {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+              {isImporting ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 mr-2" />
+              )}
               Confirmer l'importation
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1323,7 +1360,9 @@ export default function AttendancesPage() {
            <AlertDialogHeader>
               <AlertDialogTitle className="text-xl font-black text-primary">Valider les brouillons filtrés ?</AlertDialogTitle>
               <AlertDialogDescription asChild>
-                 <span className="text-muted-foreground text-sm">Vous allez valider <strong>{draftIdsToValidate.length}</strong> enregistrements. Cette action rendra ces données définitives pour la paie.</span>
+                 <span className="text-muted-foreground text-sm">
+                   Vous allez valider <strong>{draftIdsToValidate.length}</strong> enregistrements. Cette action rendra ces données définitives pour la paie.
+                 </span>
               </AlertDialogDescription>
            </AlertDialogHeader>
            {registryStats.anomalies > 0 && (
@@ -1345,8 +1384,20 @@ export default function AttendancesPage() {
 }
 
 function SummaryStat({ label, value, color }: { label: string, value: number | string, color: string }) {
-  const colorMap: Record<string, string> = { slate: "bg-slate-50 text-slate-600 border-slate-100", green: "bg-green-50 text-green-600 border-green-100", orange: "bg-orange-50 text-orange-600 border-orange-100", red: "bg-red-50 text-red-600 border-red-100", blue: "bg-blue-50 text-blue-600 border-blue-100", indigo: "bg-indigo-50 text-indigo-600 border-indigo-100" };
-  return (<div className={cn("p-3 rounded-2xl border flex flex-col items-center min-w-[70px] shadow-sm", colorMap[color] || colorMap.slate)}><span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span><span className="text-sm font-black leading-none mt-1">{value}</span></div>);
+  const colorMap: Record<string, string> = { 
+    slate: "bg-slate-50 text-slate-600 border-slate-100", 
+    green: "bg-green-50 text-green-600 border-green-100", 
+    orange: "bg-orange-50 text-orange-600 border-orange-100", 
+    red: "bg-red-50 text-red-600 border-red-100", 
+    blue: "bg-blue-50 text-blue-600 border-blue-100", 
+    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100" 
+  };
+  return (
+    <div className={cn("p-3 rounded-2xl border flex flex-col items-center min-w-[70px] shadow-sm", colorMap[color] || colorMap.slate)}>
+      <span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
+      <span className="text-sm font-black leading-none mt-1">{value}</span>
+    </div>
+  );
 }
 
 function GroupStat({ label, value, color = "blue" }: { label: string, value: string, color?: string }) {
@@ -1360,12 +1411,27 @@ function GroupStat({ label, value, color = "blue" }: { label: string, value: str
 }
 
 function BatchMiniStat({ label, value, color = "slate" }: { label: string, value: any, color?: string }) {
-   const colors: Record<string, string> = { slate: "text-slate-600", orange: "text-orange-600", blue: "text-blue-600", green: "text-green-600" };
-   return (<div className="flex flex-col text-center"><span className="text-[7px] font-black uppercase text-muted-foreground opacity-60 tracking-widest">{label}</span><span className={cn("text-xs font-black", colors[color])}>{value ?? 0}</span></div>);
+   const colors: Record<string, string> = { 
+     slate: "text-slate-600", 
+     orange: "text-orange-600", 
+     blue: "text-blue-600", 
+     green: "text-green-600" 
+   };
+   return (
+     <div className="flex flex-col text-center">
+       <span className="text-[7px] font-black uppercase text-muted-foreground opacity-60 tracking-widest">{label}</span>
+       <span className={cn("text-xs font-black", colors[color])}>{value ?? 0}</span>
+     </div>
+   );
 }
 
 function getStatusIcon(status: string) {
-  switch (status) { case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />; case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />; case 'error': return <XCircle className="w-4 h-4 text-red-500" />; default: return null; }
+  switch (status) { 
+    case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />; 
+    case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />; 
+    case 'error': return <XCircle className="w-4 h-4 text-red-500" />; 
+    default: return null; 
+  }
 }
 
 function parseSafeDate(val: any): Date | null {
