@@ -750,7 +750,7 @@ export default function AttendancesPage() {
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
-          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(I${currentRow}>=J${currentRow},(I${currentRow}-J${currentRow})*24,(I${currentRow}+1-J${currentRow})*24),0)`;
+          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
           row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
           row.getCell('N').numFmt = '0.00';
@@ -786,7 +786,7 @@ export default function AttendancesPage() {
       const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
       weekDays.forEach(day => {
         const dd = format(day, "dd");
-        rowData[`in_${dd}`] = ""; rowata[`out_${dd}`] = ""; rowData[`pause_${dd}`] = prefillPause; rowData[`abs_${dd}`] = "";
+        rowData[`in_${dd}`] = ""; rowData[`out_${dd}`] = ""; rowData[`pause_${dd}`] = prefillPause; rowData[`abs_${dd}`] = "";
       });
       const row = sheet.addRow(rowData);
       for (let i = 0; i < 7; i++) {
@@ -1111,7 +1111,49 @@ export default function AttendancesPage() {
       </Tabs>
 
       {/* Confirmation Dialogs */}
-      <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}><AlertDialogContent className="rounded-[2.5rem]"><AlertDialogHeader><AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle><AlertDialogDescription>Vous êtes sur le point d'importer les présences en brouillon dans le registre. Vous allez importer <strong>{previewRows.length}</strong> enregistrements.</AlertDialogDescription></AlertDialogHeader><div className="space-y-4 pt-4 text-slate-600">{previewStats.warning > 0 && (<div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" /><span className="text-xs font-bold text-orange-800 leading-tight">Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.</span></div>)}<div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2"><div className="flex justify-between text-xs"><span className="text-muted-foreground uppercase font-bold">Total Heures :</span><span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span></div><div className="flex justify-between text-xs"><span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span><span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span></div></div></div><AlertDialogFooter className="mt-6"><AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel><AlertDialogAction onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} disabled={isImporting} className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/10">{isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}Confirmer l'importation</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
+        <AlertDialogContent className="rounded-[2.5rem]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmer l'importation</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vous êtes sur le point d'importer les présences en brouillon.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="space-y-4 pt-4 text-slate-600">
+            {previewStats.warning > 0 && (
+              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                <span className="text-xs font-bold text-orange-800 leading-tight">
+                  Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
+                </span>
+              </div>
+            )}
+            <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
+                <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
+                <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
+              </div>
+            </div>
+          </div>
+
+          <AlertDialogFooter className="mt-6">
+            <AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} 
+              disabled={isImporting} 
+              className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/10"
+            >
+              {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+              Confirmer l'importation
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={isValidationConfirmOpen} onOpenChange={setIsValidationConfirmOpen}>
         <AlertDialogContent className="rounded-[2.5rem]">

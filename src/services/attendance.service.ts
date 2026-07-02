@@ -11,7 +11,8 @@ import {
   where,
   documentId,
   increment,
-  getDoc
+  getDoc,
+  updateDoc
 } from "firebase/firestore";
 import { 
   AttendanceRecord, 
