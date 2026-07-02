@@ -995,31 +995,38 @@ export default function AttendancesPage() {
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-4">
-              <p>Vous êtes sur le point d'importer <strong>{previewRows.length}</strong> enregistrements de présence en mode brouillon.</p>
-              
-              {previewStats.warning > 0 && (
-                <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
-                  <p className="text-xs font-bold text-orange-800">
-                    Attention : {previewStats.warning} ligne(s) contiennent des alertes (ex: cumul heures et absence). 
-                    Souhaitez-vous quand même continuer ?
-                  </p>
-                </div>
-              )}
-              
-              <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
-                 <div className="flex justify-between text-xs">
-                   <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
-                   <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
-                 </div>
-                 <div className="flex justify-between text-xs">
-                   <span className="text-muted-foreground uppercase font-bold">Absences :</span>
-                   <span className="font-black text-primary">{previewStats.absencesCount}</span>
-                 </div>
-              </div>
+            <AlertDialogDescription>
+              Vérifiez le résumé des données avant de confirmer l'importation des présences en mode brouillon.
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <div className="space-y-4 pt-4">
+            <p className="text-sm text-slate-600">
+              Vous êtes sur le point d'importer <strong>{previewRows.length}</strong> enregistrements de présence en mode brouillon.
+            </p>
+            
+            {previewStats.warning > 0 && (
+              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                <span className="text-xs font-bold text-orange-800">
+                  Attention : {previewStats.warning} ligne(s) contiennent des alertes (ex: cumul heures et absence). 
+                  Souhaitez-vous quand même continuer ?
+                </span>
+              </div>
+            )}
+            
+            <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
+               <div className="flex justify-between text-xs">
+                 <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
+                 <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
+               </div>
+               <div className="flex justify-between text-xs">
+                 <span className="text-muted-foreground uppercase font-bold">Absences :</span>
+                 <span className="font-black text-primary">{previewStats.absencesCount}</span>
+               </div>
+            </div>
+          </div>
+
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel>
             <AlertDialogAction 
