@@ -46,7 +46,8 @@ import {
   ArrowDown,
   ChevronsUpDown,
   MoreVertical,
-  CheckSquare
+  CheckSquare,
+  ChevronUp
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -110,6 +111,7 @@ import {
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import ExcelJS from "exceljs";
 
 const ABSENCE_CODES = [
@@ -176,6 +178,23 @@ function formatRowDate(dateStr: string, dayName: string): string {
   return "Date invalide";
 }
 
+interface GroupedEmployeeAttendance {
+  employeeId: string;
+  employeeCode: string;
+  employeeDisplayName: string;
+  departmentName?: string | null;
+  worksiteName?: string | null;
+  records: AttendanceRecord[];
+  totalHours: number;
+  dayHours: number;
+  nightHours: number;
+  overtimeHours: number;
+  absenceCount: number;
+  anomalyCount: number;
+  draftCount: number;
+  validatedCount: number;
+}
+
 export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -217,10 +236,10 @@ export default function AttendancesPage() {
     anomalyOnly: false
   });
   const [dateSortDirection, setDateSortDirection] = useState<"asc" | "desc">("desc");
+  const [expandedEmployees, setExpandedEmployees] = useState<Set<string>>(new Set());
 
   // --- Validation State ---
   const [isValidating, setIsValidating] = useState(false);
-  const [validationPendingIds, setValidationPendingIds] = useState<string[]>([]);
   const [isValidationConfirmOpen, setIsValidationConfirmOpen] = useState(false);
 
   const canRead = hasPermission("attendances.read");
@@ -254,7 +273,7 @@ export default function AttendancesPage() {
   const filteredRegistry = useMemo(() => {
     if (!registryAttendances) return [];
     
-    let result = registryAttendances.filter(a => {
+    return registryAttendances.filter(a => {
       // 1. Month/Year filter
       const date = parseISO(a.attendanceDate);
       if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
@@ -275,21 +294,60 @@ export default function AttendancesPage() {
 
       return true;
     });
+  }, [registryAttendances, selectedMonth, selectedYear, registryFilters]);
 
-    // Client-side sorting by date
-    result.sort((a, b) => {
-      const dateA = a.attendanceDate || "";
-      const dateB = b.attendanceDate || "";
-      
-      const dateComparison = dateA.localeCompare(dateB);
-      if (dateComparison !== 0) {
-        return dateSortDirection === "asc" ? dateComparison : -dateComparison;
+  // --- Grouping Registry by Employee ---
+  const groupedEmployeeData = useMemo(() => {
+    const groups = new Map<string, GroupedEmployeeAttendance>();
+
+    filteredRegistry.forEach(a => {
+      const key = a.employeeId || a.employeeCode;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          employeeId: a.employeeId,
+          employeeCode: a.employeeCode,
+          employeeDisplayName: a.employeeDisplayName || "Employé inconnu",
+          departmentName: a.departmentName,
+          worksiteName: a.worksiteName,
+          records: [],
+          totalHours: 0,
+          dayHours: 0,
+          nightHours: 0,
+          overtimeHours: 0,
+          absenceCount: 0,
+          anomalyCount: 0,
+          draftCount: 0,
+          validatedCount: 0
+        });
       }
-      return (a.employeeDisplayName || "").localeCompare(b.employeeDisplayName || "");
+
+      const group = groups.get(key)!;
+      group.records.push(a);
+      group.totalHours += a.validatedHours || 0;
+      group.dayHours += a.dayHours || 0;
+      group.nightHours += a.nightHours || 0;
+      group.overtimeHours += a.overtimeHours || 0;
+      if (a.absenceCode) group.absenceCount++;
+      if (a.anomalyFlag) group.anomalyCount++;
+      if (a.status === 'draft_imported') group.draftCount++;
+      if (a.status === 'validated') group.validatedCount++;
     });
 
-    return result;
-  }, [registryAttendances, selectedMonth, selectedYear, registryFilters, dateSortDirection]);
+    // Sort groups by employee name
+    const sortedGroups = Array.from(groups.values()).sort((a, b) => 
+      a.employeeDisplayName.localeCompare(b.employeeDisplayName)
+    );
+
+    // Sort records within each group
+    sortedGroups.forEach(g => {
+      g.records.sort((r1, r2) => {
+        const comparison = r1.attendanceDate.localeCompare(r2.attendanceDate);
+        return dateSortDirection === 'asc' ? comparison : -comparison;
+      });
+    });
+
+    return sortedGroups;
+  }, [filteredRegistry, dateSortDirection]);
 
   const registryStats = useMemo(() => {
     const stats = {
@@ -670,6 +728,15 @@ export default function AttendancesPage() {
     }
   };
 
+  const toggleEmployeeExpansion = (employeeId: string) => {
+    setExpandedEmployees(prev => {
+      const next = new Set(prev);
+      if (next.has(employeeId)) next.delete(employeeId);
+      else next.add(employeeId);
+      return next;
+    });
+  };
+
   const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
     const columns: any[] = [
       { header: "Code employé", key: "employeeCode", width: 15 },
@@ -715,9 +782,12 @@ export default function AttendancesPage() {
           const currentRow = row.number;
           row.getCell(3).numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
+          
+          // Overnight-safe formula: IF(end >= start, end - start, end + 1 - start)
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
           const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
+          
           row.getCell(14).value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
           row.getCell(14).numFmt = '0.00';
           row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
@@ -749,9 +819,11 @@ export default function AttendancesPage() {
           const currentRow = row.number;
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
+          
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
           const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
+          
           row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
           row.getCell('N').numFmt = '0.00';
           row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
@@ -1051,6 +1123,7 @@ export default function AttendancesPage() {
                   )}
                </div>
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4">
+                  <SummaryStat label="Employés" value={groupedEmployeeData.length} color="indigo" />
                   <SummaryStat label="Lignes" value={registryStats.total} color="blue" />
                   <SummaryStat label="Brouillons" value={registryStats.draftCount} color="indigo" />
                   <SummaryStat label="Validées" value={registryStats.validatedCount} color="green" />
@@ -1059,43 +1132,131 @@ export default function AttendancesPage() {
                   <SummaryStat label="H. Nuit" value={registryStats.nightHours.toFixed(1)} color="indigo" />
                   <SummaryStat label="H. Sup" value={registryStats.overtimeHours.toFixed(1)} color="orange" />
                   <SummaryStat label="Absences" value={registryStats.absences} color="slate" />
-                  <SummaryStat label="Anomalies" value={registryStats.anomalies} color="red" />
                </div>
             </div>
 
-            <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
-               <CardHeader className="bg-primary/5 border-b py-4 px-8"><CardTitle className="text-xs font-black uppercase tracking-widest text-primary flex items-center gap-2"><LayoutList className="w-4 h-4" /> Pointages & Absences</CardTitle></CardHeader>
-               <ScrollArea className="max-h-[600px] w-full">
-                  <Table>
-                     <TableHeader className="bg-slate-50 sticky top-0 z-10"><TableRow><TableHead className="pl-8">Employé</TableHead><TableHead className="cursor-pointer" onClick={() => setDateSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}><div className="flex items-center gap-1.5">Date{dateSortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}</div></TableHead><TableHead>Site / Dépt</TableHead><TableHead className="text-center">Heures</TableHead><TableHead className="text-center">Jour</TableHead><TableHead className="text-center">Nuit</TableHead><TableHead className="text-center">Sup.</TableHead><TableHead>Absence</TableHead><TableHead>Statut</TableHead><TableHead className="pr-8 text-right">Actions</TableHead></TableRow></TableHeader>
-                     <TableBody>
-                        {loadingRegistry ? (<TableRow><TableCell colSpan={10} className="text-center py-20"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>) : filteredRegistry.length === 0 ? (<TableRow><TableCell colSpan={10} className="text-center py-24 text-muted-foreground italic">Aucun enregistrement pour cette période.</TableCell></TableRow>) : (
-                           filteredRegistry.map(a => (
-                              <TableRow key={a.id} className="hover:bg-slate-50 transition-colors">
-                                 <TableCell className="pl-8 py-4"><div className="flex flex-col"><span className="font-bold text-slate-800 text-xs">{a.employeeDisplayName}</span><span className="text-[10px] text-muted-foreground font-mono uppercase">{a.employeeCode}</span></div></TableCell>
-                                 <TableCell><div className="text-xs font-medium">{format(parseISO(a.attendanceDate), 'dd/MM/yyyy')}</div></TableCell>
-                                 <TableCell><div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold text-slate-700 truncate max-w-[120px]">{a.worksiteName || "—"}</span><span className="text-[9px] text-muted-foreground uppercase">{a.departmentName || "—"}</span></div></TableCell>
-                                 <TableCell className="text-center font-black text-xs text-primary">{a.validatedHours?.toFixed(2)}</TableCell>
-                                 <TableCell className="text-center text-xs font-medium text-slate-500">{a.dayHours?.toFixed(2)}</TableCell>
-                                 <TableCell className="text-center text-xs font-medium text-slate-500">{a.nightHours?.toFixed(2)}</TableCell>
-                                 <TableCell className="text-center text-xs font-black text-orange-600">{a.overtimeHours > 0 ? `+${a.overtimeHours.toFixed(2)}` : "—"}</TableCell>
-                                 <TableCell>{a.absenceCode && <Badge variant="outline" className="text-[8px] uppercase bg-orange-50 text-orange-700 border-orange-100 font-black">{a.absenceCode}</Badge>}</TableCell>
-                                 <TableCell><Badge variant="outline" className={cn("text-[9px] font-black uppercase h-5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700")}>{STATUS_LABELS[a.status] || a.status}</Badge></TableCell>
-                                 <TableCell className="pr-8 text-right">
-                                    <div className="flex justify-end gap-1">
-                                       {canValidate && a.status === 'draft_imported' && (
-                                         <Button variant="ghost" size="icon" onClick={() => handleValidateSingle(a)} disabled={isValidating} className="h-8 w-8 text-green-600"><CheckCircle2 className="w-4 h-4" /></Button>
-                                       )}
-                                       <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-xs opacity-50">Modifier (À venir)</DropdownMenuItem><DropdownMenuItem className="text-xs opacity-50">Annuler (À venir)</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+            <div className="space-y-4">
+               {loadingRegistry ? (
+                  <div className="py-20 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary/20" /></div>
+               ) : groupedEmployeeData.length === 0 ? (
+                  <Card className="rounded-3xl border-dashed border-2 py-24 bg-secondary/5">
+                     <div className="text-center space-y-3">
+                        <ListFilter className="w-12 h-12 text-muted-foreground/20 mx-auto" />
+                        <p className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Aucune présence trouvée pour cette période.</p>
+                     </div>
+                  </Card>
+               ) : (
+                  <div className="space-y-4">
+                     {groupedEmployeeData.map((group) => (
+                        <Card key={group.employeeId || group.employeeCode} className="rounded-[1.5rem] border-primary/5 shadow-sm hover:shadow-md transition-all overflow-hidden bg-white">
+                           <Collapsible 
+                              open={expandedEmployees.has(group.employeeId || group.employeeCode)} 
+                              onOpenChange={() => toggleEmployeeExpansion(group.employeeId || group.employeeCode)}
+                           >
+                              <div className="flex flex-col lg:flex-row lg:items-center justify-between p-5 gap-6">
+                                 <div className="flex items-center gap-4 min-w-[280px]">
+                                    <div className="bg-primary/5 p-3 rounded-2xl text-primary shrink-0">
+                                       <User className="w-6 h-6" />
                                     </div>
-                                 </TableCell>
-                              </TableRow>
-                           ))
-                        )}
-                     </TableBody>
-                  </Table>
-               </ScrollArea>
-            </Card>
+                                    <div className="min-w-0">
+                                       <h3 className="font-bold text-slate-900 truncate">{group.employeeDisplayName}</h3>
+                                       <div className="flex items-center gap-2 mt-1">
+                                          <span className="text-[10px] font-mono text-muted-foreground uppercase bg-slate-100 px-1.5 py-0.5 rounded">{group.employeeCode}</span>
+                                          {group.departmentName && (
+                                            <>
+                                              <span className="text-slate-300 text-[8px]">•</span>
+                                              <span className="text-[10px] font-bold text-primary/60 uppercase">{group.departmentName}</span>
+                                            </>
+                                          )}
+                                       </div>
+                                    </div>
+                                 </div>
+
+                                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-4 flex-1">
+                                    <GroupStat label="H. Totales" value={group.totalHours.toFixed(1)} />
+                                    <GroupStat label="H. Jour" value={group.dayHours.toFixed(1)} color="slate" />
+                                    <GroupStat label="H. Nuit" value={group.nightHours.toFixed(1)} color="indigo" />
+                                    <GroupStat label="H. Sup" value={group.overtimeHours.toFixed(1)} color="orange" />
+                                    <div className="flex items-center gap-2">
+                                       {group.absenceCount > 0 && <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[9px] font-black">{group.absenceCount} Abs.</Badge>}
+                                       {group.anomalyCount > 0 && <Badge variant="destructive" className="bg-red-600 text-white border-none text-[9px] font-black">{group.anomalyCount} Ano.</Badge>}
+                                    </div>
+                                 </div>
+
+                                 <div className="flex items-center gap-3 shrink-0">
+                                    <div className="text-right hidden sm:block">
+                                       <p className="text-[9px] font-black uppercase text-muted-foreground tracking-tighter">{group.records.length} jour(s)</p>
+                                       <div className="flex items-center gap-1.5 mt-0.5">
+                                          {group.draftCount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-slate-300" title="Brouillons" />}
+                                          {group.validatedCount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="Validés" />}
+                                       </div>
+                                    </div>
+                                    <CollapsibleTrigger asChild>
+                                       <Button variant="ghost" size="icon" className="rounded-xl h-10 w-10">
+                                          {expandedEmployees.has(group.employeeId || group.employeeCode) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                                       </Button>
+                                    </CollapsibleTrigger>
+                                 </div>
+                              </div>
+
+                              <CollapsibleContent className="animate-in fade-in slide-in-from-top-2">
+                                 <div className="px-5 pb-5 border-t bg-slate-50/30">
+                                    <Table>
+                                       <TableHeader>
+                                          <TableRow className="hover:bg-transparent">
+                                             <TableHead className="h-10 text-[9px] font-black uppercase">Date</TableHead>
+                                             <TableHead className="h-10 text-[9px] font-black uppercase">Lieu</TableHead>
+                                             <TableHead className="h-10 text-[9px] font-black uppercase text-center">H. Totales</TableHead>
+                                             <TableHead className="h-10 text-[9px] font-black uppercase text-center">Jour</TableHead>
+                                             <TableHead className="h-10 text-[9px] font-black uppercase text-center">Nuit</TableHead>
+                                             <TableHead className="h-10 text-[9px] font-black uppercase text-center">Sup.</TableHead>
+                                             <TableHead className="h-10 text-[9px] font-black uppercase">Absence / Statut</TableHead>
+                                             <TableHead className="h-10 text-right pr-4 text-[9px] font-black uppercase">Actions</TableHead>
+                                          </TableRow>
+                                       </TableHeader>
+                                       <TableBody>
+                                          {group.records.map(a => (
+                                             <TableRow key={a.id} className="hover:bg-white transition-colors">
+                                                <TableCell className="py-3">
+                                                   <span className="text-xs font-bold">{format(parseISO(a.attendanceDate), 'dd/MM/yyyy')}</span>
+                                                </TableCell>
+                                                <TableCell>
+                                                   <span className="text-[10px] font-medium text-slate-500 truncate max-w-[100px] inline-block">{a.worksiteName || "—"}</span>
+                                                </TableCell>
+                                                <TableCell className="text-center">
+                                                   <Badge variant="outline" className="font-black text-xs bg-primary/5 text-primary border-none">{a.validatedHours?.toFixed(2)}</Badge>
+                                                </TableCell>
+                                                <TableCell className="text-center text-xs text-slate-500">{a.dayHours?.toFixed(2)}</TableCell>
+                                                <TableCell className="text-center text-xs text-slate-500">{a.nightHours?.toFixed(2)}</TableCell>
+                                                <TableCell className="text-center text-xs font-black text-orange-600">{a.overtimeHours > 0 ? `+${a.overtimeHours.toFixed(2)}` : "—"}</TableCell>
+                                                <TableCell>
+                                                   <div className="flex items-center gap-2">
+                                                      {a.absenceCode && <Badge className="bg-orange-600 text-white text-[8px] font-black uppercase border-none">{a.absenceCode}</Badge>}
+                                                      <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
+                                                         {STATUS_LABELS[a.status] || a.status}
+                                                      </Badge>
+                                                      {a.anomalyFlag && <AlertCircle className="w-3 h-3 text-red-500" />}
+                                                   </div>
+                                                </TableCell>
+                                                <TableCell className="text-right pr-4">
+                                                   {canValidate && a.status === 'draft_imported' && (
+                                                      <Button variant="ghost" size="icon" onClick={() => handleValidateSingle(a)} disabled={isValidating} className="h-7 w-7 text-green-600">
+                                                         <CheckCircle2 className="w-3.5 h-3.5" />
+                                                      </Button>
+                                                   )}
+                                                </TableCell>
+                                             </TableRow>
+                                          ))}
+                                       </TableBody>
+                                    </Table>
+                                 </div>
+                              </CollapsibleContent>
+                           </Collapsible>
+                        </Card>
+                     ))}
+                  </div>
+               )}
+            </div>
 
             <div className="space-y-4">
                <h3 className="text-xs font-black uppercase tracking-widest text-muted-foreground px-2 flex items-center gap-2"><HistoryIcon className="w-4 h-4" /> Historique des imports</h3>
@@ -1115,8 +1276,8 @@ export default function AttendancesPage() {
         <AlertDialogContent className="rounded-[2.5rem]">
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmer l'importation</AlertDialogTitle>
-            <AlertDialogDescription>
-              Vous êtes sur le point d'importer les présences en brouillon.
+            <AlertDialogDescription asChild>
+               <span className="text-muted-foreground text-sm">Vous êtes sur le point d'importer les présences en brouillon.</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -1159,7 +1320,9 @@ export default function AttendancesPage() {
         <AlertDialogContent className="rounded-[2.5rem]">
            <AlertDialogHeader>
               <AlertDialogTitle className="text-xl font-black text-primary">Valider les brouillons filtrés ?</AlertDialogTitle>
-              <AlertDialogDescription>Vous allez valider <strong>{draftIdsToValidate.length}</strong> enregistrements. Cette action rendra ces données définitives pour la paie.</AlertDialogDescription>
+              <AlertDialogDescription asChild>
+                 <span className="text-muted-foreground text-sm">Vous allez valider <strong>{draftIdsToValidate.length}</strong> enregistrements. Cette action rendra ces données définitives pour la paie.</span>
+              </AlertDialogDescription>
            </AlertDialogHeader>
            {registryStats.anomalies > 0 && (
              <div className="p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 mt-4">
@@ -1182,6 +1345,16 @@ export default function AttendancesPage() {
 function SummaryStat({ label, value, color }: { label: string, value: number | string, color: string }) {
   const colorMap: Record<string, string> = { slate: "bg-slate-50 text-slate-600 border-slate-100", green: "bg-green-50 text-green-600 border-green-100", orange: "bg-orange-50 text-orange-600 border-orange-100", red: "bg-red-50 text-red-600 border-red-100", blue: "bg-blue-50 text-blue-600 border-blue-100", indigo: "bg-indigo-50 text-indigo-600 border-indigo-100" };
   return (<div className={cn("p-3 rounded-2xl border flex flex-col items-center min-w-[70px] shadow-sm", colorMap[color] || colorMap.slate)}><span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span><span className="text-sm font-black leading-none mt-1">{value}</span></div>);
+}
+
+function GroupStat({ label, value, color = "blue" }: { label: string, value: string, color?: string }) {
+   const colors: Record<string, string> = { blue: "text-blue-700 bg-blue-50", slate: "text-slate-600 bg-slate-50", orange: "text-orange-700 bg-orange-50", indigo: "text-indigo-700 bg-indigo-50" };
+   return (
+      <div className={cn("px-3 py-2 rounded-xl border border-transparent flex flex-col items-center justify-center", colors[color])}>
+         <span className="text-[7px] font-black uppercase opacity-60 leading-none">{label}</span>
+         <span className="text-xs font-black mt-1">{value}</span>
+      </div>
+   );
 }
 
 function BatchMiniStat({ label, value, color = "slate" }: { label: string, value: any, color?: string }) {
