@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import { 
   Clock, 
@@ -15,7 +15,13 @@ import {
   FileDown,
   ChevronDown,
   LayoutList,
-  Columns
+  Columns,
+  Table as TableIcon,
+  X,
+  ArrowRight,
+  ShieldCheck,
+  FileWarning,
+  ListFilter
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,6 +34,8 @@ import { collection, query, where, orderBy, Query } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Department, JobTitle } from "@/types/organization";
 import { Worksite } from "@/types/worksite";
+import { AttendancePreviewRow, AttendancePunch } from "@/types/attendance";
+import { validatePreviewRow, calculatePunchHours } from "@/services/attendance.service";
 import { 
   format, 
   startOfMonth, 
@@ -35,7 +43,8 @@ import {
   eachDayOfInterval, 
   addDays, 
   startOfDay,
-  startOfWeek
+  startOfWeek,
+  parseISO
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { 
@@ -47,6 +56,8 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ExcelJS from "exceljs";
 
 const ABSENCE_CODES = [
@@ -61,7 +72,7 @@ const ABSENCE_CODES = [
 
 /**
  * Attendance Registry Page.
- * Phase 2B: Advanced Excel Template Generation with Formulas and Compact View.
+ * Phase 3: Excel Upload and Preview with Validation.
  */
 export default function AttendancesPage() {
   const params = useParams();
@@ -76,6 +87,12 @@ export default function AttendancesPage() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
   const [isDownloading, setIsDownloading] = useState(false);
+
+  // --- Upload / Preview State ---
+  const [isReading, setIsReading] = useState(false);
+  const [previewRows, setPreviewRows] = useState<AttendancePreviewRow[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Permissions ---
   const canRead = hasPermission("attendances.read");
@@ -98,6 +115,152 @@ export default function AttendancesPage() {
   const { data: departments } = useCollection<Department>(deptsQuery);
   const { data: worksites } = useCollection<Worksite>(worksitesQuery);
 
+  const employeesMapByCode = useMemo(() => {
+    const map = new Map<string, Employee>();
+    employees?.forEach(e => map.set(e.employeeCode, e));
+    return map;
+  }, [employees]);
+
+  // --- Excel Parsing Logic ---
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsReading(true);
+    setUploadError(null);
+    setPreviewRows([]);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+
+      const sheet = workbook.getWorksheet("Présences");
+      if (!sheet) throw new Error("La feuille 'Présences' est introuvable dans le fichier.");
+
+      // 1. Detect Mode
+      let mode: 'compact' | 'detailed' = 'detailed';
+      const row1 = sheet.getRow(1);
+      row1.eachCell((cell) => {
+        const val = cell.value?.toString() || "";
+        if (val.includes("Lundi") && val.includes("Heures")) mode = 'compact';
+      });
+
+      const rows: AttendancePreviewRow[] = [];
+      const getVal = (row: ExcelJS.Row, col: number) => {
+        const cell = row.getCell(col);
+        if (cell.value && typeof cell.value === 'object' && 'result' in cell.value) {
+          return cell.value.result;
+        }
+        return cell.value;
+      };
+
+      if (mode === 'detailed') {
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const firstCell = row.getCell(1).value?.toString() || "";
+          if (firstCell.startsWith("Employé:") || firstCell.includes("Code employé") || firstCell.includes("TOTAL")) return;
+
+          const code = row.getCell(1).value?.toString();
+          if (!code) return;
+
+          const rawDate = getVal(row, 3);
+          let dateStr = "";
+          if (rawDate instanceof Date) dateStr = format(rawDate, "yyyy-MM-dd");
+          else if (typeof rawDate === 'string') dateStr = rawDate;
+
+          const punches: AttendancePunch[] = [
+            { type: 'AM', timeIn: row.getCell(7).value?.toString(), timeOut: row.getCell(8).value?.toString() },
+            { type: 'PM', timeIn: row.getCell(9).value?.toString(), timeOut: row.getCell(10).value?.toString() },
+            { type: 'OT', timeIn: row.getCell(11).value?.toString(), timeOut: row.getCell(12).value?.toString() },
+          ];
+
+          const pause = Number(getVal(row, 13)) || 0;
+          const calc = calculatePunchHours(punches, pause);
+          const valid = Number(getVal(row, 15)) || calc;
+
+          const previewRow: AttendancePreviewRow = {
+            rowId: `${rowNumber}`,
+            status: "valid",
+            messages: [],
+            employeeCode: code,
+            employeeName: row.getCell(2).value?.toString() || "",
+            date: dateStr,
+            dayName: row.getCell(4).value?.toString() || "",
+            worksite: row.getCell(6).value?.toString() || "",
+            punches,
+            pauseMinutes: pause,
+            calculatedHours: calc,
+            validatedHours: valid,
+            absenceCode: row.getCell(16).value?.toString() || undefined,
+            isHoliday: row.getCell(17).value?.toString() === "Oui",
+            notes: row.getCell(18).value?.toString() || undefined
+          };
+
+          rows.push(validatePreviewRow(previewRow, employeesMapByCode));
+        });
+      } else {
+        // COMPACT MODE UNPIVOTING
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const code = row.getCell(1).value?.toString();
+          if (!code) return;
+
+          const name = row.getCell(2).value?.toString() || "";
+          const site = row.getCell(4).value?.toString() || "";
+
+          // Day columns mapping
+          const dayMap = [
+            { label: "Lundi", h: 5, a: 6 },
+            { label: "Mardi", h: 7, a: 8 },
+            { label: "Mercredi", h: 9, a: 10 },
+            { label: "Jeudi", h: 11, a: 12 },
+            { label: "Vendredi", h: 13, a: 14 },
+            { label: "Samedi", h: 15, a: 16 },
+            { label: "Dimanche", h: 17, a: 18 },
+          ];
+
+          dayMap.forEach((day, index) => {
+            const h = Number(getVal(row, day.h)) || 0;
+            const a = row.getCell(day.a).value?.toString();
+
+            if (h === 0 && !a) return;
+
+            const previewRow: AttendancePreviewRow = {
+              rowId: `${rowNumber}_${index}`,
+              status: "valid",
+              messages: [],
+              employeeCode: code,
+              employeeName: name,
+              date: "TBD", // Compact mode doesn't store exact date per cell, usually inferred from filename/start date
+              dayName: day.label,
+              worksite: site,
+              punches: [],
+              pauseMinutes: 0,
+              calculatedHours: h,
+              validatedHours: h,
+              absenceCode: a,
+              isHoliday: false,
+              notes: ""
+            };
+
+            rows.push(validatePreviewRow(previewRow, employeesMapByCode));
+          });
+        });
+      }
+
+      setPreviewRows(rows);
+      toast({ title: "Fichier analysé", description: `${rows.length} lignes extraites pour vérification.` });
+    } catch (err: any) {
+      console.error("[Excel Parsing Error]", err);
+      setUploadError(err.message || "Erreur lors de la lecture du fichier.");
+    } finally {
+      setIsReading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const handleDownloadTemplate = async () => {
     if (!employees || employees.length === 0) {
       alert("Aucun employé actif trouvé pour générer le modèle.");
@@ -114,18 +277,14 @@ export default function AttendancesPage() {
       const sheet1 = workbook.addWorksheet("Présences");
       const sheet2 = workbook.addWorksheet("Guide & Référentiels");
 
-      // --- Setup Columns & Logic based on Mode ---
-      
       if (inputMode === "detailed") {
         setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees);
       } else {
         setupCompactSheet(sheet1, startDate, employees);
       }
 
-      // --- Sheet 2: Guide & Masters ---
       setupGuideSheet(sheet2, departments, worksites);
 
-      // --- Finalize and Download ---
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = window.URL.createObjectURL(blob);
@@ -171,7 +330,6 @@ export default function AttendancesPage() {
       const pStart = startOfMonth(new Date(year, month - 1));
       days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
       
-      // MONTHLY MODE: Employee Blocks with Totals
       employees.forEach(emp => {
         const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode} — Département: ${emp.departmentName || "N/A"} — Site: ${emp.worksiteName || "N/A"}`]);
         empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -181,7 +339,6 @@ export default function AttendancesPage() {
         const tableHeader = sheet.addRow(columns.map(c => c.header));
         tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
         tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
-        tableHeader.alignment = { vertical: 'middle', horizontal: 'center' };
 
         const startRow = (sheet.lastRow?.number || 0) + 1;
         
@@ -196,13 +353,9 @@ export default function AttendancesPage() {
             pause: 0
           });
 
-          // Style and Formulas
           const currentRow = row.number;
           row.getCell(3).numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-          ['A', 'B', 'C', 'D', 'E', 'F'].forEach(col => {
-             row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
-          });
           
           row.getCell(14).value = { 
             formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
@@ -210,8 +363,6 @@ export default function AttendancesPage() {
           };
           row.getCell(14).numFmt = '0.00';
           row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-          row.getCell(14).font = { bold: true };
-
           row.getCell(16).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
           row.getCell(17).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
         });
@@ -219,25 +370,17 @@ export default function AttendancesPage() {
         const endRow = sheet.lastRow?.number || startRow;
         const totalRow = sheet.addRow([]);
         totalRow.getCell(1).value = "TOTAL MENSUEL";
-        totalRow.getCell(1).font = { bold: true };
         totalRow.getCell(14).value = { formula: `SUM(N${startRow}:N${endRow})` };
         totalRow.getCell(14).numFmt = '0.00';
         totalRow.getCell(15).value = { formula: `SUM(O${startRow}:O${endRow})` };
         totalRow.getCell(15).numFmt = '0.00';
         totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-        totalRow.font = { bold: true };
         
-        sheet.addRow([]); // Spacer
-        
-        // Correct way to add a page break in ExcelJS is on a specific row
         const breakRow = sheet.lastRow;
-        if (breakRow) {
-           (breakRow as any).addPageBreak?.();
-        }
+        if (breakRow) (breakRow as any).addPageBreak?.();
       });
       
     } else {
-      // WEEKLY DETAILED MODE: Single Table
       const pStart = startOfDay(new Date(start));
       days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
       
@@ -245,8 +388,6 @@ export default function AttendancesPage() {
       const headerRow = sheet.getRow(1);
       headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
       headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
-      headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
-      sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
       let currentRow = 2;
       employees.forEach(emp => {
@@ -263,9 +404,6 @@ export default function AttendancesPage() {
 
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-          ['A', 'B', 'C', 'D', 'E', 'F'].forEach(col => {
-             row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
-          });
 
           row.getCell('N').value = { 
             formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
@@ -273,17 +411,12 @@ export default function AttendancesPage() {
           };
           row.getCell('N').numFmt = '0.00';
           row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-          row.getCell('N').font = { bold: true };
-
           row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
           row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
           currentRow++;
         });
       });
     }
-
-    // Adjust column widths for all detailed modes
-    sheet.getColumn(18).width = 40;
   };
 
   const setupCompactSheet = (sheet: ExcelJS.Worksheet, start: string, employees: Employee[]) => {
@@ -307,13 +440,9 @@ export default function AttendancesPage() {
     columns.push({ header: "Notes générales", key: "notes", width: 40 });
 
     sheet.columns = columns;
-
-    // Header Style
     const headerRow = sheet.getRow(1);
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } }; // Sky 700
-    headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
 
     let currentRow = 2;
     employees.forEach(emp => {
@@ -324,24 +453,9 @@ export default function AttendancesPage() {
         worksite: emp.worksiteName || ""
       });
 
-      // Identity shading (A-D)
-      ['A', 'B', 'C', 'D'].forEach(col => {
-         row.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
-      });
-
-      const hourCols = ['E', 'G', 'I', 'K', 'M', 'O', 'Q'];
       const absCols = ['F', 'H', 'J', 'L', 'N', 'P', 'R'];
-
-      hourCols.forEach(col => {
-        row.getCell(col).numFmt = '0.00';
-      });
-
       absCols.forEach(col => {
-        row.getCell(col).dataValidation = {
-          type: 'list',
-          allowBlank: true,
-          formulae: [`"${ABSENCE_CODES.join(',')}"`]
-        };
+        row.getCell(col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
       });
 
       row.getCell('S').value = { 
@@ -349,73 +463,43 @@ export default function AttendancesPage() {
         result: 0 
       };
       row.getCell('S').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-      row.getCell('S').font = { bold: true };
-
       currentRow++;
     });
   };
 
   const setupGuideSheet = (sheet: ExcelJS.Worksheet, departments?: Department[], worksites?: Worksite[]) => {
     sheet.getColumn('A').width = 40;
-    sheet.getColumn('B').width = 40;
-
     sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
-    sheet.addRow(["MODES DISPONIBLES :"]);
-    sheet.addRow(["1. Mode Détaillé : Saisir les horaires au format HH:mm (ex: 08:30)."]);
-    sheet.addRow(["2. Mode Compact : Saisir les totaux quotidiens en décimal (ex: 6.5 pour 6h30)."]);
+    sheet.addRow(["1. Mode Détaillé : Saisir horaires HH:mm."]);
+    sheet.addRow(["2. Mode Compact : Saisir totaux décimaux (ex: 6.5)."]);
     sheet.addRow([]);
-    sheet.addRow(["RÈGLES D'IMPORTATION :"]);
-    sheet.addRow(["- Ne pas modifier le 'Code employé' : c'est la clé d'identification."]);
-    sheet.addRow(["- Le 'Code absence' doit correspondre exactement aux valeurs de la liste."]);
-    sheet.addRow(["- 'Heures validées' (Mode détaillé) : si rempli, ce montant sera prioritaire."]);
-    sheet.addRow([]);
-
     sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
-    const absenceDetails = [
-      ["paid_leave", "Congé payé"],
-      ["paid_permission", "Autorisation rémunérée"],
-      ["unpaid_permission", "Autorisation non rémunérée"],
-      ["sickness", "Maladie"],
-      ["justified_absence", "Absence justifiée"],
-      ["expectation", "Aspettativa / disponibilité"],
-      ["other", "Autre"]
-    ];
-    absenceDetails.forEach(c => sheet.addRow(c));
-    sheet.addRow([]);
-
-    sheet.addRow(["RÉFÉRENTIELS ACTIFS"]).font = { bold: true };
-    sheet.addRow(["Départements :", departments?.map(d => d.name).join(", ") || "Aucun"]);
-    sheet.addRow(["Sites :", worksites?.map(w => w.name).join(", ") || "Aucun"]);
+    ABSENCE_CODES.forEach(c => sheet.addRow([c]));
   };
 
-  if (membershipLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-        <Loader2 className="w-10 h-10 animate-spin text-primary opacity-20" />
-        <p className="text-[10px] font-black uppercase text-muted-foreground tracking-[0.2em]">Chargement...</p>
-      </div>
-    );
-  }
+  const previewStats = useMemo(() => {
+    return {
+      total: previewRows.length,
+      valid: previewRows.filter(r => r.status === 'valid').length,
+      warning: previewRows.filter(r => r.status === 'warning').length,
+      error: previewRows.filter(r => r.status === 'error').length,
+    };
+  }, [previewRows]);
 
+  if (membershipLoading) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
   if (!canRead) return null;
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-8 pb-32">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 pb-32">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="bg-primary p-2 rounded-xl text-white shadow-lg shadow-primary/20">
-            <Clock className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-black text-primary tracking-tight">Présences</h1>
-            <p className="text-muted-foreground text-sm font-medium">{entity?.nomEntreprise}</p>
-          </div>
+          <div className="bg-primary p-2 rounded-xl text-white shadow-lg shadow-primary/20"><Clock className="w-6 h-6" /></div>
+          <div><h1 className="text-3xl font-black text-primary tracking-tight">Présences</h1><p className="text-muted-foreground text-sm font-medium">{entity?.nomEntreprise}</p></div>
         </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Template Generation Card */}
+        {/* Template Generation */}
         <div className="lg:col-span-1 space-y-6">
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-6 px-8">
@@ -427,166 +511,170 @@ export default function AttendancesPage() {
                 <div className="space-y-4">
                    <div className="space-y-2">
                       <Label className="text-[10px] uppercase font-black">Type de période</Label>
-                      <Select value={periodType} onValueChange={(v: any) => {
-                        setPeriodType(v);
-                        if (v === 'monthly') setInputMode('detailed');
-                        else setInputMode('compact');
-                      }}>
+                      <Select value={periodType} onValueChange={(v: any) => { setPeriodType(v); setInputMode(v === 'monthly' ? 'detailed' : 'compact'); }}>
                         <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                           <SelectItem value="monthly">Mensuel</SelectItem>
-                           <SelectItem value="weekly">Hebdomadaire</SelectItem>
-                        </SelectContent>
+                        <SelectContent><SelectItem value="monthly">Mensuel</SelectItem><SelectItem value="weekly">Hebdomadaire</SelectItem></SelectContent>
                       </Select>
                    </div>
-
                    <div className="space-y-2">
                       <Label className="text-[10px] uppercase font-black">Mode de saisie</Label>
                       <Select value={inputMode} onValueChange={(v: any) => setInputMode(v)}>
-                        <SelectTrigger className="rounded-xl">
-                          <div className="flex items-center gap-2">
-                            {inputMode === 'detailed' ? <Clock className="w-3.5 h-3.5" /> : <LayoutList className="w-3.5 h-3.5" />}
-                            <SelectValue />
-                          </div>
-                        </SelectTrigger>
-                        <SelectContent>
-                           <SelectItem value="detailed">Détaillé horaires (HH:mm)</SelectItem>
-                           <SelectItem value="compact">Compact hebdomadaire (Décimal)</SelectItem>
-                        </SelectContent>
+                        <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="detailed">Détaillé horaires (HH:mm)</SelectItem><SelectItem value="compact">Compact hebdomadaire (Décimal)</SelectItem></SelectContent>
                       </Select>
                    </div>
-
                    {periodType === "monthly" ? (
                       <div className="grid grid-cols-2 gap-3 animate-in fade-in">
-                        <div className="space-y-2">
-                           <Label className="text-[10px] uppercase font-black">Mois</Label>
-                           <Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}>
-                              <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                 {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                                   <SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>
-                                 ))}
-                              </SelectContent>
-                           </Select>
-                        </div>
-                        <div className="space-y-2">
-                           <Label className="text-[10px] uppercase font-black">Année</Label>
-                           <Input 
-                            type="number" 
-                            value={selectedYear} 
-                            onChange={(e) => setSelectedYear(parseInt(e.target.value))} 
-                            className="rounded-xl"
-                           />
-                        </div>
+                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
+                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
                       </div>
                    ) : (
-                      <div className="space-y-2 animate-in fade-in">
-                         <Label className="text-[10px] uppercase font-black">Date de début (Lundi conseillé)</Label>
-                         <Input 
-                          type="date" 
-                          value={startDate} 
-                          onChange={(e) => setStartDate(e.target.value)} 
-                          className="rounded-xl"
-                         />
-                      </div>
+                      <div className="space-y-2 animate-in fade-in"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
                    )}
                 </div>
-
-                <Separator className="opacity-50" />
-
-                <Button 
-                  onClick={handleDownloadTemplate} 
-                  disabled={isDownloading || !canCreate} 
-                  className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10"
-                >
+                <Button onClick={handleDownloadTemplate} disabled={isDownloading} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
                    {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
                    Télécharger le modèle
                 </Button>
+             </CardContent>
+          </Card>
 
-                <p className="text-[10px] text-muted-foreground text-center italic">
-                   Généré pour {employees?.length || 0} employés actifs.
-                </p>
+          {/* Upload Card */}
+          <Card className="rounded-[2rem] border-accent/20 shadow-xl shadow-accent/5 overflow-hidden">
+             <CardHeader className="bg-accent/10 border-b py-6 px-8">
+                <CardTitle className="text-sm font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
+                   <Upload className="w-4 h-4" /> Importer un fichier Excel
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-4">
+                <div className={cn(
+                  "border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center",
+                  isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40 cursor-pointer"
+                )}>
+                   <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+                   {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <TableIcon className="w-8 h-8 text-accent/30" />}
+                   <p className="text-xs font-bold text-slate-600">{isReading ? "Analyse en cours..." : "Cliquer ou glisser le fichier rempli"}</p>
+                   <p className="text-[10px] text-muted-foreground uppercase font-black">Format .xlsx uniquement</p>
+                </div>
+                {uploadError && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="w-4 h-4" /><AlertDescription>{uploadError}</AlertDescription></Alert>}
              </CardContent>
           </Card>
         </div>
 
-        {/* Workflow & Instructions */}
+        {/* Preview Area */}
         <div className="lg:col-span-2 space-y-6">
-          <Alert className="bg-blue-50 border-blue-100 text-blue-800 rounded-[2rem] p-6 shadow-sm">
-            <Info className="h-5 w-5 text-blue-600" />
-            <div className="ml-2">
-              <AlertTitle className="font-black text-xs uppercase tracking-widest mb-1">Amélioration du flux de saisie</AlertTitle>
-              <AlertDescription className="text-sm leading-relaxed opacity-90">
-                Le modèle Excel inclut désormais des <strong>formules de calcul automatique</strong> et des <strong>listes de choix</strong> pour les codes d'absence, réduisant les erreurs de saisie avant l'importation.
-              </AlertDescription>
-            </div>
-          </Alert>
+           {previewRows.length > 0 ? (
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+                 <div className="flex items-center justify-between bg-white p-6 rounded-[2rem] border shadow-lg">
+                    <div className="flex gap-4">
+                       <SummaryStat label="Lignes" value={previewStats.total} color="slate" />
+                       <SummaryStat label="Valides" value={previewStats.valid} color="green" />
+                       <SummaryStat label="Alerte" value={previewStats.warning} color="orange" />
+                       <SummaryStat label="Erreur" value={previewStats.error} color="red" />
+                    </div>
+                    <div className="flex gap-2">
+                       <Button variant="ghost" onClick={() => setPreviewRows([])} className="rounded-xl h-12 px-6 font-bold uppercase text-xs">Annuler</Button>
+                       <Button disabled className="h-12 rounded-xl px-10 font-black shadow-lg shadow-green-100 gap-2 opacity-50">
+                          <CheckCircle2 className="w-4 h-4" /> Importer
+                       </Button>
+                    </div>
+                 </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <WorkflowStepCard 
-              step="1"
-              title="Préparation"
-              description="Téléchargez le modèle. Choisissez 'Détaillé' pour un suivi heure par heure ou 'Compact' pour une saisie rapide par jour."
-              icon={Download}
-              active={true}
-            />
-            <WorkflowStepCard 
-              step="2"
-              title="Saisie assistée"
-              description="Utilisez les menus déroulants pour les absences. Excel calcule les totaux en temps réel via des formules intégrées."
-              icon={FileSpreadsheet}
-              active={false}
-            />
-            <WorkflowStepCard 
-              step="3"
-              title="Importation"
-              description="Bientôt : Téléversez le fichier pour synchroniser les données avec le registre Firestore de l'entité."
-              icon={Upload}
-              active={false}
-            />
-            <WorkflowStepCard 
-              step="4"
-              title="Validation RH"
-              description="Contrôlez les écarts entre les heures calculées et validées avant clôture de la période."
-              icon={CheckCircle2}
-              active={false}
-            />
-          </div>
+                 <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
+                    <ScrollArea className="h-[600px] w-full">
+                       <Table>
+                          <TableHeader className="bg-slate-50 sticky top-0 z-10">
+                             <TableRow>
+                                <TableHead className="pl-6 w-[80px]">Status</TableHead>
+                                <TableHead>Collaborateur</TableHead>
+                                <TableHead>Date</TableHead>
+                                <TableHead className="text-center">Heures (Val.)</TableHead>
+                                <TableHead>Absence</TableHead>
+                                <TableHead className="pr-6">Messages</TableHead>
+                             </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                             {previewRows.map((row) => (
+                               <TableRow key={row.rowId} className={cn("group transition-colors", row.status === 'error' ? "bg-red-50/30" : row.status === 'warning' ? "bg-orange-50/30" : "hover:bg-slate-50")}>
+                                  <TableCell className="pl-6">{getStatusIcon(row.status)}</TableCell>
+                                  <TableCell>
+                                     <div className="flex flex-col">
+                                        <span className="font-bold text-slate-800 text-xs">{row.employeeName || row.employeeCode}</span>
+                                        <span className="text-[10px] text-muted-foreground font-mono">{row.employeeCode}</span>
+                                     </div>
+                                  </TableCell>
+                                  <TableCell>
+                                     <div className="flex flex-col">
+                                        <span className="text-xs font-medium">{row.date === "TBD" ? row.dayName : format(parseISO(row.date), "dd/MM")}</span>
+                                        <span className="text-[10px] text-muted-foreground uppercase">{row.dayName}</span>
+                                     </div>
+                                  </TableCell>
+                                  <TableCell className="text-center font-black text-xs text-primary">{row.validatedHours.toFixed(2)}</TableCell>
+                                  <TableCell>
+                                     {row.absenceCode ? <Badge variant="outline" className="text-[9px] uppercase font-bold border-orange-200 text-orange-700 bg-orange-50">{row.absenceCode}</Badge> : "—"}
+                                  </TableCell>
+                                  <TableCell className="pr-6">
+                                     <div className="space-y-1">
+                                        {row.messages.map((m, idx) => (
+                                          <div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>
+                                             • {m}
+                                          </div>
+                                        ))}
+                                     </div>
+                                  </TableCell>
+                               </TableRow>
+                             ))}
+                          </TableBody>
+                       </Table>
+                       <ScrollBar orientation="horizontal" />
+                    </ScrollArea>
+                    <div className="bg-secondary/20 p-4 border-t flex items-center justify-between text-[10px] font-black uppercase text-muted-foreground tracking-widest px-8">
+                       <span>Aperçu de validation</span>
+                       <span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Import réel prévu en phase suivante</span>
+                    </div>
+                 </Card>
+              </div>
+           ) : (
+              <div className="flex flex-col items-center justify-center min-h-[500px] border-2 border-dashed rounded-[3rem] bg-secondary/5 opacity-50 space-y-4">
+                 <div className="bg-white p-6 rounded-full shadow-sm"><TableIcon className="w-12 h-12 text-slate-200" /></div>
+                 <div className="text-center space-y-1">
+                   <h3 className="font-black text-slate-400 uppercase text-xs tracking-widest">Prévisualisation d'import</h3>
+                   <p className="text-xs text-slate-400 italic">Téléversez un fichier pour voir le rapport de conformité.</p>
+                 </div>
+              </div>
+           )}
         </div>
-
       </div>
-
-      <Separator className="my-12 opacity-50" />
-
-      <Card className="rounded-[2rem] border-dashed border-2 bg-secondary/5 opacity-50 flex flex-col items-center justify-center p-16 text-center grayscale">
-        <Calendar className="w-12 h-12 text-muted-foreground mb-4 opacity-20" />
-        <h3 className="font-black text-muted-foreground uppercase text-xs tracking-[0.2em]">Registre des pointages</h3>
-        <p className="text-xs text-muted-foreground mt-2 italic max-w-xs">
-          Les données importées apparaîtront ici après la mise en service du module d'importation (Phase 3).
-        </p>
-      </Card>
     </div>
   );
 }
 
-function WorkflowStepCard({ step, title, description, icon: Icon, active }: any) {
-  return (
-    <Card className={cn(
-      "rounded-[2rem] border-primary/10 shadow-sm relative overflow-hidden transition-all group",
-      !active ? "opacity-50 grayscale" : "hover:shadow-md hover:border-primary/20 bg-white"
-    )}>
-      <div className="absolute top-4 right-6 text-4xl font-black text-primary/5 group-hover:text-primary/10 transition-colors select-none">
-        0{step}
+function SummaryStat({ label, value, color }: { label: string, value: number, color: string }) {
+   const colors: any = {
+      slate: "bg-slate-50 text-slate-600 border-slate-100",
+      green: "bg-green-50 text-green-600 border-green-100",
+      orange: "bg-orange-50 text-orange-600 border-orange-100",
+      red: "bg-red-50 text-red-600 border-red-100"
+   };
+   return (
+      <div className={cn("px-4 py-2 rounded-2xl border flex flex-col items-center min-w-[80px]", colors[color])}>
+         <span className="text-[9px] font-black uppercase tracking-tighter opacity-70">{label}</span>
+         <span className="text-lg font-black leading-none mt-1">{value}</span>
       </div>
-      <CardContent className="p-8 space-y-4">
-        <div className={cn("p-3 rounded-2xl w-fit", active ? "bg-primary/5 text-primary" : "bg-secondary text-muted-foreground")}>
-          <Icon className="w-6 h-6" />
-        </div>
-        <div className="space-y-1">
-          <h4 className="font-black text-lg text-slate-800">{title}</h4>
-          <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
-        </div>
-      </CardContent>
-    </Card>
+   );
+}
+
+function getStatusIcon(status: string) {
+   switch (status) {
+      case 'valid': return <CheckCircle2 className="w-5 h-5 text-green-500" />;
+      case 'warning': return <FileWarning className="w-5 h-5 text-orange-500" />;
+      case 'error': return <XCircle className="w-5 h-5 text-red-500" />;
+      default: return null;
+   }
+}
+
+function XCircle(props: any) {
+  return (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" /><path d="m9 9 6 6" /></svg>
   );
 }

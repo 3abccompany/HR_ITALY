@@ -99,3 +99,25 @@ export interface AttendanceImportBatch {
   importedAt?: Date | FieldValue | null;
   importedBy?: string | null;
 }
+
+export interface AttendancePreviewRow {
+  rowId: string;
+  status: "valid" | "warning" | "error";
+  messages: string[];
+  
+  employeeCode: string;
+  employeeName: string;
+  employeeId?: string;
+  date: string;
+  dayName: string;
+  worksite?: string;
+  department?: string;
+  
+  punches: AttendancePunch[];
+  pauseMinutes: number;
+  calculatedHours: number;
+  validatedHours: number;
+  absenceCode?: string;
+  isHoliday: boolean;
+  notes?: string;
+}

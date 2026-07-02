@@ -10,7 +10,8 @@ import {
 import { 
   AttendanceRecord, 
   AttendancePunch, 
-  AttendanceImportBatch 
+  AttendanceImportBatch,
+  AttendancePreviewRow
 } from "@/types/attendance";
 import { createAuditLog } from "./audit.service";
 
@@ -72,6 +73,68 @@ export function validateAttendanceRecordBasic(record: Partial<AttendanceRecord>)
   return {
     isValid: errors.length === 0,
     errors
+  };
+}
+
+/**
+ * Validates a preview row and assigns status/messages.
+ */
+export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<string, any>): AttendancePreviewRow {
+  const messages: string[] = [];
+  let status: "valid" | "warning" | "error" = "valid";
+
+  // 1. Identity Check
+  if (!row.employeeCode) {
+    status = "error";
+    messages.push("Code employé manquant.");
+  } else if (!employeesMap.has(row.employeeCode)) {
+    status = "error";
+    messages.push(`Code employé '${row.employeeCode}' introuvable dans ce tenant.`);
+  }
+
+  // 2. Date Check
+  if (!row.date) {
+    status = "error";
+    messages.push("Date manquante ou invalide.");
+  }
+
+  // 3. Hours Check
+  if (row.validatedHours < 0 || row.calculatedHours < 0) {
+    status = "error";
+    messages.push("Le total d'heures ne peut pas être négatif.");
+  }
+
+  if (row.validatedHours > 12) {
+    if (status !== 'error') status = "warning";
+    messages.push("Alerte: Durée de travail journalière élevée (> 12h).");
+  }
+
+  // 4. Overlap Check
+  if (row.validatedHours > 0 && row.absenceCode) {
+    if (status !== 'error') status = "warning";
+    messages.push("Alerte: Heures travaillées et code d'absence présents sur la même journée.");
+  }
+
+  // 5. Empty check
+  if (row.validatedHours === 0 && !row.absenceCode) {
+    // This is common for weekends, don't necessarily flag as warning unless preferred
+  }
+
+  const ABSENCE_CODES = [
+    "paid_leave", "paid_permission", "unpaid_permission", 
+    "sickness", "justified_absence", "expectation", "other"
+  ];
+
+  if (row.absenceCode && !ABSENCE_CODES.includes(row.absenceCode)) {
+    status = "error";
+    messages.push(`Code absence '${row.absenceCode}' non reconnu.`);
+  }
+
+  return {
+    ...row,
+    status,
+    messages,
+    employeeId: employeesMap.get(row.employeeCode)?.employeeId
   };
 }
 
