@@ -247,7 +247,6 @@ export async function executeAttendanceImport(params: {
   }
 
   // 2. Database Pre-flight Check (existing records)
-  // Check for existing records in chunks of 30 (Firestore limit for 'in')
   const allIds = Array.from(keysInFile);
   for (let i = 0; i < allIds.length; i += 30) {
     const chunk = allIds.slice(i, i + 30);
@@ -272,10 +271,15 @@ export async function executeAttendanceImport(params: {
 
   // Set Batch Metadata
   const finalBatchData: AttendanceImportBatch = {
+    totalRows: 0, // Fallback defaults
+    validRows: 0,
+    warningRows: 0,
+    errorRows: 0,
+    importedRows: 0,
     ...(batchMetadata as any),
     batchId,
     entityId,
-    status: "imported", // Or draft_imported if already defined
+    status: "draft_imported",
     createdAt: now,
     createdBy: actorUid,
     updatedAt: now,
@@ -284,7 +288,6 @@ export async function executeAttendanceImport(params: {
   mainBatch.set(batchRef, finalBatchData);
 
   // 4. Chunked Writes for Records
-  // Using multiple batches if count > 450
   const chunks: AttendancePreviewRow[][] = [];
   for (let i = 0; i < previewRows.length; i += 450) {
     chunks.push(previewRows.slice(i, i + 450));
@@ -334,7 +337,7 @@ export async function executeAttendanceImport(params: {
         createdBy: actorUid,
         updatedAt: now,
         updatedBy: actorUid,
-        shiftType: "day" // Default required by type
+        shiftType: "day"
       };
 
       chunkBatch.set(recordRef, record);
@@ -372,6 +375,7 @@ export async function createAttendanceImportBatch(entityId: string, data: Partia
 
   const payload = {
     ...data,
+    batchId: importBatchId,
     importBatchId,
     entityId,
     status: data.status || "previewed",
