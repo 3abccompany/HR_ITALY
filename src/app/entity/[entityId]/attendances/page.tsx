@@ -75,8 +75,7 @@ const ABSENCE_CODES = [
 
 /**
  * Attendance Registry Page.
- * Phase 3: Excel Upload and Preview with Validation.
- * Phase 2B-Harden: Improved Pause handling and default settings.
+ * Phase 3+: Excel Upload and Preview with automated totals and empty row filtering.
  */
 export default function AttendancesPage() {
   const params = useParams();
@@ -98,6 +97,7 @@ export default function AttendancesPage() {
   // --- Upload / Preview State ---
   const [isReading, setIsReading] = useState(false);
   const [previewRows, setPreviewRows] = useState<AttendancePreviewRow[]>([]);
+  const [ignoredRowsCount, setIgnoredRowsCount] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -136,6 +136,7 @@ export default function AttendancesPage() {
     setIsReading(true);
     setUploadError(null);
     setPreviewRows([]);
+    setIgnoredRowsCount(0);
 
     try {
       const buffer = await file.arrayBuffer();
@@ -154,6 +155,8 @@ export default function AttendancesPage() {
       });
 
       const rows: AttendancePreviewRow[] = [];
+      let ignoredCount = 0;
+
       const getVal = (row: ExcelJS.Row, col: number) => {
         const cell = row.getCell(col);
         if (cell.value && typeof cell.value === 'object' && 'result' in cell.value) {
@@ -171,26 +174,47 @@ export default function AttendancesPage() {
           const code = row.getCell(1).value?.toString();
           if (!code) return;
 
+          // --- Meaningful Row Detection (Detailed) ---
+          const amIn = row.getCell(7).value?.toString();
+          const amOut = row.getCell(8).value?.toString();
+          const pmIn = row.getCell(9).value?.toString();
+          const pmOut = row.getCell(10).value?.toString();
+          const otIn = row.getCell(11).value?.toString();
+          const otOut = row.getCell(12).value?.toString();
+          
+          const valHVal = getVal(row, 15);
+          const validatedH = (valHVal === null || valHVal === undefined || valHVal === "") ? 0 : Number(valHVal);
+          
+          const absence = row.getCell(16).value?.toString();
+          const isHoliday = row.getCell(17).value?.toString() === "Oui";
+          const notes = row.getCell(18).value?.toString();
+
+          const hasPunches = !!(amIn || amOut || pmIn || pmOut || otIn || otOut);
+          const hasInput = hasPunches || validatedH > 0 || !!absence || isHoliday || !!notes;
+
+          if (!hasInput) {
+            ignoredCount++;
+            return;
+          }
+
           const rawDate = getVal(row, 3);
           let dateStr = "";
           if (rawDate instanceof Date) dateStr = format(rawDate, "yyyy-MM-dd");
           else if (typeof rawDate === 'string') dateStr = rawDate;
 
           const punches: AttendancePunch[] = [
-            { type: 'AM', timeIn: row.getCell(7).value?.toString(), timeOut: row.getCell(8).value?.toString() },
-            { type: 'PM', timeIn: row.getCell(9).value?.toString(), timeOut: row.getCell(10).value?.toString() },
-            { type: 'OT', timeIn: row.getCell(11).value?.toString(), timeOut: row.getCell(12).value?.toString() },
+            { type: 'AM', timeIn: amIn, timeOut: amOut },
+            { type: 'PM', timeIn: pmIn, timeOut: pmOut },
+            { type: 'OT', timeIn: otIn, timeOut: otOut },
           ];
 
-          // Pause handling: default to 0 if empty
           const pauseVal = getVal(row, 13);
           const pause = (pauseVal === null || pauseVal === undefined || pauseVal === "") ? 0 : Number(pauseVal);
 
           const calc = calculatePunchHours(punches, pause);
           
-          // Validated Hours: default to calc if empty
-          const validVal = getVal(row, 15);
-          const valid = (validVal === null || validVal === undefined || validVal === "") ? calc : Number(validVal);
+          // Official validatedHours: use user entry if provided, otherwise fallback to app calculation
+          const finalValid = (valHVal === null || valHVal === undefined || valHVal === "") ? calc : Number(valHVal);
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
@@ -204,10 +228,10 @@ export default function AttendancesPage() {
             punches,
             pauseMinutes: pause,
             calculatedHours: calc,
-            validatedHours: valid,
-            absenceCode: row.getCell(16).value?.toString() || undefined,
-            isHoliday: row.getCell(17).value?.toString() === "Oui",
-            notes: row.getCell(18).value?.toString() || undefined
+            validatedHours: finalValid,
+            absenceCode: absence || undefined,
+            isHoliday,
+            notes: notes || undefined
           };
 
           rows.push(validatePreviewRow(previewRow, employeesMapByCode));
@@ -222,7 +246,6 @@ export default function AttendancesPage() {
           const name = row.getCell(2).value?.toString() || "";
           const site = row.getCell(4).value?.toString() || "";
 
-          // Day columns mapping
           const dayMap = [
             { label: "Lundi", h: 5, a: 6 },
             { label: "Mardi", h: 7, a: 8 },
@@ -238,7 +261,10 @@ export default function AttendancesPage() {
             const h = (hVal === null || hVal === undefined || hVal === "") ? 0 : Number(hVal);
             const a = row.getCell(day.a).value?.toString();
 
-            if (h === 0 && !a) return;
+            if (h === 0 && !a) {
+              ignoredCount++;
+              return;
+            }
 
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
@@ -246,7 +272,7 @@ export default function AttendancesPage() {
               messages: [],
               employeeCode: code,
               employeeName: name,
-              date: "TBD", // Compact mode unpivoting date
+              date: "TBD",
               dayName: day.label,
               worksite: site,
               punches: [],
@@ -264,7 +290,8 @@ export default function AttendancesPage() {
       }
 
       setPreviewRows(rows);
-      toast({ title: "Fichier analysé", description: `${rows.length} lignes extraites pour vérification.` });
+      setIgnoredRowsCount(ignoredCount);
+      toast({ title: "Fichier analysé", description: `${rows.length} lignes extraites, ${ignoredCount} lignes vides ignorées.` });
     } catch (err: any) {
       console.error("[Excel Parsing Error]", err);
       setUploadError(err.message || "Erreur lors de la lecture du fichier.");
@@ -290,7 +317,6 @@ export default function AttendancesPage() {
       const sheet1 = workbook.addWorksheet("Présences");
       const sheet2 = workbook.addWorksheet("Guide & Référentiels");
 
-      // Resolve effective pause for template
       const resolvedPause = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
 
       if (inputMode === "detailed") {
@@ -374,7 +400,7 @@ export default function AttendancesPage() {
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
           row.getCell(14).value = { 
-            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (I${currentRow}-H${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60), 0)`,
+            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60), 0)`,
             result: 0 
           };
           row.getCell(14).numFmt = '0.00';
@@ -499,12 +525,22 @@ export default function AttendancesPage() {
   };
 
   const previewStats = useMemo(() => {
-    return {
+    const stats = {
       total: previewRows.length,
       valid: previewRows.filter(r => r.status === 'valid').length,
       warning: previewRows.filter(r => r.status === 'warning').length,
       error: previewRows.filter(r => r.status === 'error').length,
+      totalCalcHours: 0,
+      totalValidHours: 0,
+      importableDays: previewRows.length
     };
+
+    previewRows.forEach(r => {
+      stats.totalCalcHours += r.calculatedHours || 0;
+      stats.totalValidHours += r.validatedHours || 0;
+    });
+
+    return stats;
   }, [previewRows]);
 
   if (membershipLoading) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
@@ -619,15 +655,15 @@ export default function AttendancesPage() {
         <div className="lg:col-span-2 space-y-6">
            {previewRows.length > 0 ? (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
-                 <div className="flex items-center justify-between bg-white p-6 rounded-[2rem] border shadow-lg">
-                    <div className="flex gap-4">
-                       <SummaryStat label="Lignes" value={previewStats.total} color="slate" />
-                       <SummaryStat label="Valides" value={previewStats.valid} color="green" />
-                       <SummaryStat label="Alerte" value={previewStats.warning} color="orange" />
-                       <SummaryStat label="Erreur" value={previewStats.error} color="red" />
+                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between bg-white p-6 rounded-[2rem] border shadow-lg gap-6">
+                    <div className="flex flex-wrap gap-4">
+                       <SummaryStat label="Lignes importables" value={previewStats.importableDays} color="blue" />
+                       <SummaryStat label="H. Calculées" value={previewStats.totalCalcHours.toFixed(1)} color="slate" />
+                       <SummaryStat label="H. Validées" value={previewStats.totalValidHours.toFixed(1)} color="green" />
+                       {ignoredRowsCount > 0 && <SummaryStat label="Vides ignorées" value={ignoredRowsCount} color="slate" />}
                     </div>
-                    <div className="flex gap-2">
-                       <Button variant="ghost" onClick={() => setPreviewRows([])} className="rounded-xl h-12 px-6 font-bold uppercase text-xs">Annuler</Button>
+                    <div className="flex gap-2 shrink-0">
+                       <Button variant="ghost" onClick={() => { setPreviewRows([]); setIgnoredRowsCount(0); }} className="rounded-xl h-12 px-6 font-bold uppercase text-xs">Annuler</Button>
                        <Button disabled className="h-12 rounded-xl px-10 font-black shadow-lg shadow-green-100 gap-2 opacity-50">
                           <CheckCircle2 className="w-4 h-4" /> Importer
                        </Button>
@@ -696,8 +732,11 @@ export default function AttendancesPage() {
                        <ScrollBar orientation="horizontal" />
                     </ScrollArea>
                     <div className="bg-secondary/20 p-4 border-t flex items-center justify-between text-[10px] font-black uppercase text-muted-foreground tracking-widest px-8">
-                       <span>Aperçu de validation</span>
-                       <span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Import réel prévu en phase suivante</span>
+                       <span className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-green-600" /> 
+                          {previewStats.valid} lignes valides prêtes pour l'intégration.
+                       </span>
+                       <span className="flex items-center gap-2 font-bold"><ShieldCheck className="w-4 h-4" /> Import réel prévu en phase suivante</span>
                     </div>
                  </Card>
               </div>
@@ -716,16 +755,17 @@ export default function AttendancesPage() {
   );
 }
 
-function SummaryStat({ label, value, color }: { label: string, value: number, color: string }) {
+function SummaryStat({ label, value, color }: { label: string, value: number | string, color: string }) {
    const colors: any = {
       slate: "bg-slate-50 text-slate-600 border-slate-100",
       green: "bg-green-50 text-green-600 border-green-100",
       orange: "bg-orange-50 text-orange-600 border-orange-100",
-      red: "bg-red-50 text-red-600 border-red-100"
+      red: "bg-red-50 text-red-600 border-red-100",
+      blue: "bg-blue-50 text-blue-600 border-blue-100"
    };
    return (
-      <div className={cn("px-4 py-2 rounded-2xl border flex flex-col items-center min-w-[80px]", colors[color])}>
-         <span className="text-[9px] font-black uppercase tracking-tighter opacity-70">{label}</span>
+      <div className={cn("px-4 py-2 rounded-2xl border flex flex-col items-center min-w-[80px]", colors[color] || colors.slate)}>
+         <span className="text-[9px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
          <span className="text-lg font-black leading-none mt-1">{value}</span>
       </div>
    );
