@@ -30,20 +30,26 @@ import {
   Layout,
   XCircle,
   RefreshCw,
-  Plus
+  Plus,
+  Save,
+  CheckCircle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
-import { useCollection, useFirebase } from "@/firebase";
+import { useCollection, useFirebase, useUser } from "@/firebase";
 import { collection, query, where, Query } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { Department } from "@/types/organization";
 import { Worksite } from "@/types/worksite";
 import { AttendancePreviewRow, AttendancePunch } from "@/types/attendance";
-import { validatePreviewRow, calculateAttendanceSplits } from "@/services/attendance.service";
+import { 
+  validatePreviewRow, 
+  calculateAttendanceSplits, 
+  executeAttendanceImport 
+} from "@/services/attendance.service";
 import { 
   format, 
   startOfMonth, 
@@ -68,6 +74,16 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { 
+  AlertDialog, 
+  AlertDialogAction, 
+  AlertDialogCancel, 
+  AlertDialogContent, 
+  AlertDialogDescription, 
+  AlertDialogFooter, 
+  AlertDialogHeader, 
+  AlertDialogTitle 
+} from "@/components/ui/alert-dialog";
 import ExcelJS from "exceljs";
 
 const ABSENCE_CODES = [
@@ -129,12 +145,13 @@ export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
+  const { user } = useUser();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
 
   // --- Template State ---
   const [periodType, setPeriodType] = useState<"monthly" | "weekly">("weekly");
-  const [inputMode, setInputMode] = useState<"detailed" | "compact_time" | "compact">("compact_time");
+  const [inputMode, setInputMode] = useState<"detailed" | "compact_time" | "compact">("detailed");
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
@@ -147,9 +164,15 @@ export default function AttendancesPage() {
   const [previewRows, setPreviewRows] = useState<AttendancePreviewRow[]>([]);
   const [ignoredRowsCount, setIgnoredRowsCount] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [sourceFileName, setSourceFileName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // --- Import Action State ---
+  const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+
   const canRead = hasPermission("attendances.read");
+  const canCreate = hasPermission("attendances.create") || hasPermission("attendances.write");
 
   const empQuery = useMemo(() => 
     db ? query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active")) as Query<Employee> : null,
@@ -181,38 +204,33 @@ export default function AttendancesPage() {
     setUploadError(null);
     setPreviewRows([]);
     setIgnoredRowsCount(0);
+    setSourceFileName(file.name);
 
     try {
       const buffer = await file.arrayBuffer();
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(buffer);
 
-      // Support detection of "Données import" sheet for new mode or legacy "Présences"
-      const sheet = workbook.getWorksheet("Données import") || workbook.getWorksheet("Présences");
+      const sheet = workbook.getWorksheet("Présences");
       if (!sheet) throw new Error("Format de fichier non reconnu. Veuillez utiliser un modèle généré par le système.");
 
       // Mode detection
-      let mode: 'compact' | 'compact_time' | 'detailed' | 'vertical' = 'detailed';
+      const row1 = sheet.getRow(1);
+      let mode: 'compact' | 'compact_time' | 'detailed' = 'detailed';
       
-      const sheetName = sheet.name;
-      if (sheetName === "Données import") {
-        mode = 'vertical';
+      let isCompactTime = false;
+      row1.eachCell((cell) => {
+        const val = cell.value?.toString() || "";
+        if (val.includes("Entrée") && val.includes("/")) isCompactTime = true;
+      });
+
+      if (isCompactTime) {
+        mode = 'compact_time';
       } else {
-        const row1 = sheet.getRow(1);
-        let isCompactTime = false;
         row1.eachCell((cell) => {
           const val = cell.value?.toString() || "";
-          if (val.includes("Entrée") && val.includes("/")) isCompactTime = true;
+          if (val.includes("Lundi") && val.includes("Heures")) mode = 'compact';
         });
-
-        if (isCompactTime) {
-          mode = 'compact_time';
-        } else {
-          row1.eachCell((cell) => {
-            const val = cell.value?.toString() || "";
-            if (val.includes("Lundi") && val.includes("Heures")) mode = 'compact';
-          });
-        }
       }
 
       const rows: AttendancePreviewRow[] = [];
@@ -226,59 +244,7 @@ export default function AttendancesPage() {
         return cell.value;
       };
 
-      if (mode === 'vertical') {
-        sheet.eachRow((row, rowNumber) => {
-          if (rowNumber === 1) return;
-          const code = row.getCell(1).value?.toString();
-          if (!code) return;
-
-          const timeIn = formatExcelTimeValue(row.getCell(7).value);
-          const timeOut = formatExcelTimeValue(row.getCell(8).value);
-          const pause = Number(getVal(row, 9)) || 0;
-          const absence = row.getCell(10).value?.toString();
-          const isHoliday = row.getCell(11).value?.toString() === "Oui";
-          const notes = row.getCell(12).value?.toString();
-
-          const punches: AttendancePunch[] = (timeIn && timeOut && timeIn !== "INVALID" && timeOut !== "INVALID") 
-            ? [{ type: 'AM' as const, timeIn, timeOut }] 
-            : [];
-          
-          const hasInput = punches.length > 0 || !!absence || isHoliday || !!notes;
-          if (!hasInput) {
-            ignoredCount++;
-            return;
-          }
-
-          const splits = calculateAttendanceSplits(punches, pause, isHoliday);
-
-          const rawDate = getVal(row, 3);
-          const dateStr = rawDate instanceof Date ? format(rawDate, "yyyy-MM-dd") : (rawDate?.toString() || "");
-
-          const previewRow: AttendancePreviewRow = {
-            rowId: `${rowNumber}`,
-            status: "valid",
-            messages: [],
-            employeeCode: code,
-            employeeName: row.getCell(2).value?.toString() || "",
-            date: dateStr,
-            dayName: row.getCell(4).value?.toString() || "",
-            worksite: row.getCell(6).value?.toString() || "",
-            punches,
-            pauseMinutes: pause,
-            calculatedHours: splits.total,
-            dayHours: splits.day,
-            nightHours: splits.night,
-            overtimeHours: splits.overtime,
-            holidayWorkedHours: splits.holiday,
-            validatedHours: splits.total,
-            absenceCode: absence || undefined,
-            isHoliday,
-            notes: notes || ""
-          };
-
-          rows.push(validatePreviewRow(previewRow, employeesMapByCode));
-        });
-      } else if (mode === 'compact_time') {
+      if (mode === 'compact_time') {
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const code = row.getCell(1).value?.toString();
@@ -366,6 +332,8 @@ export default function AttendancesPage() {
           ].filter(p => !!(p.timeIn && p.timeOut && p.timeIn !== "INVALID"));
 
           const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
+          const splits = calculateAttendanceSplits(punches, pause, isHoliday);
+          
           const hasInput = punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes;
 
           if (!hasInput) {
@@ -373,9 +341,7 @@ export default function AttendancesPage() {
             return;
           }
 
-          const splits = calculateAttendanceSplits(punches, pause, isHoliday);
           const finalValid = hasManualEntry ? Number(valHVal) : splits.total;
-
           const rawDate = getVal(row, 3);
           const dateStr = rawDate instanceof Date ? format(rawDate, "yyyy-MM-dd") : (rawDate?.toString() || "");
 
@@ -498,6 +464,60 @@ export default function AttendancesPage() {
       window.URL.revokeObjectURL(url);
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleImportClick = () => {
+    if (!previewRows.length) return;
+    if (previewStats.error > 0) {
+       toast({ variant: "destructive", title: "Action bloquée", description: "Veuillez corriger les erreurs (lignes rouges) avant d'importer." });
+       return;
+    }
+    setIsImportConfirmOpen(true);
+  };
+
+  const handleExecuteImport = async () => {
+    if (!user || !entityId || !previewRows.length) return;
+    setIsImporting(true);
+    try {
+      // 1. Prepare Metadata
+      const firstRow = previewRows[0];
+      const lastRow = previewRows[previewRows.length - 1];
+
+      await executeAttendanceImport({
+        entityId,
+        actorUid: user.uid,
+        previewRows,
+        batchMetadata: {
+          sourceFileName,
+          templateMode: inputMode,
+          periodType,
+          periodStart: periodType === 'weekly' ? startDate : `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`,
+          periodEnd: periodType === 'weekly' ? format(addDays(new Date(startDate), 6), "yyyy-MM-dd") : format(endOfMonth(new Date(selectedYear, selectedMonth - 1)), "yyyy-MM-dd"),
+          totalPreviewRows: previewRows.length,
+          importedRowsCount: previewRows.length,
+          warningRowsCount: previewStats.warning,
+          ignoredRowsCount,
+          totalWorkedHours: previewStats.totalHours,
+          dayHours: previewStats.dayHours,
+          nightHours: previewStats.nightHours,
+          overtimeHours: previewStats.overtimeHours,
+          absenceRowsCount: previewStats.absencesCount,
+        }
+      });
+
+      toast({ 
+        title: "Importation terminée", 
+        description: `${previewRows.length} enregistrements ont été importés avec succès.` 
+      });
+      
+      setPreviewRows([]);
+      setIgnoredRowsCount(0);
+      setIsImportConfirmOpen(false);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur d'importation", description: err.message });
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -888,7 +908,7 @@ export default function AttendancesPage() {
                        <div className="bg-blue-50 p-4 border-b flex items-center gap-3 text-blue-800">
                           <Info className="w-5 h-5 shrink-0" />
                           <p className="text-xs font-bold leading-tight">
-                            Mode compact détecté : Les dates précises sont extrapolées à partir du jour de la semaine.
+                            Mode compact détecté : Les dates précises sont extrapolées à partir du jour de la semaine. Les ventilations fines sont estimées.
                           </p>
                        </div>
                     )}
@@ -941,9 +961,20 @@ export default function AttendancesPage() {
                        </Table>
                        <ScrollBar orientation="horizontal" />
                     </ScrollArea>
-                    <div className="bg-secondary/20 p-4 border-t flex items-center justify-between text-[10px] font-black uppercase text-muted-foreground tracking-widest px-8">
-                       <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-600" /> {previewStats.valid} lignes prêtes.</span>
-                       <span className="flex items-center gap-2 font-bold"><ShieldCheck className="w-4 h-4" /> Import réel prévu en phase suivante</span>
+                    <div className="bg-secondary/20 p-4 border-t flex items-center justify-between px-8">
+                       <div className="flex items-center gap-2 text-[10px] font-black uppercase text-muted-foreground tracking-widest">
+                          <CheckCircle2 className="w-4 h-4 text-green-600" /> {previewStats.valid + previewStats.warning} lignes prêtes.
+                       </div>
+                       {canCreate && (
+                         <Button 
+                           onClick={handleImportClick} 
+                           disabled={isImporting || previewRows.length === 0 || previewStats.error > 0} 
+                           className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10"
+                         >
+                           {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                           Importer en brouillon
+                         </Button>
+                       )}
                     </div>
                  </Card>
               </div>
@@ -958,6 +989,50 @@ export default function AttendancesPage() {
            )}
         </div>
       </div>
+
+      {/* Confirmation Dialog for Import */}
+      <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
+        <AlertDialogContent className="rounded-[2.5rem]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-4">
+              <p>Vous êtes sur le point d'importer <strong>{previewRows.length}</strong> enregistrements de présence en mode brouillon.</p>
+              
+              {previewStats.warning > 0 && (
+                <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                  <p className="text-xs font-bold text-orange-800">
+                    Attention : {previewStats.warning} ligne(s) contiennent des alertes (ex: cumul heures et absence). 
+                    Souhaitez-vous quand même continuer ?
+                  </p>
+                </div>
+              )}
+              
+              <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
+                 <div className="flex justify-between text-xs">
+                   <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
+                   <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
+                 </div>
+                 <div className="flex justify-between text-xs">
+                   <span className="text-muted-foreground uppercase font-bold">Absences :</span>
+                   <span className="font-black text-primary">{previewStats.absencesCount}</span>
+                 </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} 
+              disabled={isImporting}
+              className="bg-primary font-black rounded-xl px-6"
+            >
+              {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+              Lancer l'importation
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

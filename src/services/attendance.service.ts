@@ -5,7 +5,11 @@ import {
   setDoc, 
   writeBatch, 
   serverTimestamp, 
-  FieldValue 
+  FieldValue,
+  getDocs,
+  query,
+  where,
+  documentId
 } from "firebase/firestore";
 import { 
   AttendanceRecord, 
@@ -220,7 +224,145 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
 }
 
 /**
+ * Performs a real draft import of attendance records into Firestore.
+ * Standardizes mapping, checks for duplicates, and executes batch writes.
+ */
+export async function executeAttendanceImport(params: {
+  entityId: string;
+  actorUid: string;
+  previewRows: AttendancePreviewRow[];
+  batchMetadata: Partial<AttendanceImportBatch>;
+}) {
+  const { entityId, actorUid, previewRows, batchMetadata } = params;
+  if (!db) throw new Error("Firestore not initialized");
+
+  // 1. Internal Duplicate Check (within file)
+  const keysInFile = new Set<string>();
+  for (const row of previewRows) {
+    const key = `${row.employeeId}_${row.date}`;
+    if (keysInFile.has(key)) {
+      throw new Error(`DOUBLON_INTERNE: Plusieurs entrées trouvées pour le collaborateur ${row.employeeName} à la date du ${row.date}.`);
+    }
+    keysInFile.add(key);
+  }
+
+  // 2. Database Pre-flight Check (existing records)
+  // Check for existing records in chunks of 30 (Firestore limit for 'in')
+  const allIds = Array.from(keysInFile);
+  for (let i = 0; i < allIds.length; i += 30) {
+    const chunk = allIds.slice(i, i + 30);
+    const q = query(
+      collection(db, `entities/${entityId}/attendances`),
+      where(documentId(), "in", chunk)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const existingId = snap.docs[0].id;
+      const [empId, date] = existingId.split('_');
+      throw new Error(`CONFLIT_EXISTANT: Un enregistrement de présence existe déjà pour le collaborateur ${empId} à la date du ${date}.`);
+    }
+  }
+
+  // 3. Prepare Batch
+  const batchId = doc(collection(db, "temp")).id;
+  const batchRef = doc(db, `entities/${entityId}/attendanceImportBatches`, batchId);
+  const now = serverTimestamp();
+
+  const mainBatch = writeBatch(db);
+
+  // Set Batch Metadata
+  const finalBatchData: AttendanceImportBatch = {
+    ...(batchMetadata as any),
+    batchId,
+    entityId,
+    status: "imported", // Or draft_imported if already defined
+    createdAt: now,
+    createdBy: actorUid,
+    updatedAt: now,
+    updatedBy: actorUid,
+  };
+  mainBatch.set(batchRef, finalBatchData);
+
+  // 4. Chunked Writes for Records
+  // Using multiple batches if count > 450
+  const chunks: AttendancePreviewRow[][] = [];
+  for (let i = 0; i < previewRows.length; i += 450) {
+    chunks.push(previewRows.slice(i, i + 450));
+  }
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkBatch = i === 0 ? mainBatch : writeBatch(db);
+    const currentRows = chunks[i];
+
+    currentRows.forEach(row => {
+      const attendanceId = buildAttendanceId(row.employeeId!, row.date);
+      const recordRef = doc(db!, `entities/${entityId}/attendances`, attendanceId);
+
+      const record: AttendanceRecord = {
+        attendanceId,
+        entityId,
+        employeeId: row.employeeId!,
+        personId: row.personId || null,
+        employeeCode: row.employeeCode,
+        employeeDisplayName: row.employeeName,
+        attendanceDate: row.date,
+        
+        worksiteName: row.worksite || null,
+        departmentName: row.department || null,
+        
+        punches: row.punches || [],
+        pauseMinutes: row.pauseMinutes || 0,
+        calculatedHours: row.calculatedHours,
+        validatedHours: row.validatedHours,
+        dayHours: row.dayHours,
+        nightHours: row.nightHours,
+        overtimeHours: row.overtimeHours,
+        holidayWorkedHours: row.holidayWorkedHours,
+        
+        absenceCode: row.absenceCode || null,
+        holidayFlag: row.isHoliday,
+        notes: row.notes || "",
+        
+        anomalyFlag: row.status === "warning",
+        anomalyMessages: row.messages,
+        
+        status: "draft_imported",
+        source: "excel_import",
+        importBatchId: batchId,
+        
+        createdAt: now,
+        createdBy: actorUid,
+        updatedAt: now,
+        updatedBy: actorUid,
+        shiftType: "day" // Default required by type
+      };
+
+      chunkBatch.set(recordRef, record);
+    });
+
+    await chunkBatch.commit();
+  }
+
+  // 5. Audit Log
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "attendance.batch_imported",
+    resourceType: "attendanceImportBatch",
+    resourceId: batchId,
+    details: { 
+      rows: previewRows.length, 
+      period: `${batchMetadata.periodStart} to ${batchMetadata.periodEnd}`,
+      totalHours: batchMetadata.totalWorkedHours
+    }
+  });
+
+  return { batchId, count: previewRows.length };
+}
+
+/**
  * Creates an import batch metadata record.
+ * @deprecated Use executeAttendanceImport for atomic transactional logic.
  */
 export async function createAttendanceImportBatch(entityId: string, data: Partial<AttendanceImportBatch>, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -243,6 +385,7 @@ export async function createAttendanceImportBatch(entityId: string, data: Partia
 
 /**
  * Bulk insertion of attendance records using Firestore batches.
+ * @deprecated Use executeAttendanceImport for atomic transactional logic.
  */
 export async function createAttendanceRecordsBatch(
   entityId: string, 
