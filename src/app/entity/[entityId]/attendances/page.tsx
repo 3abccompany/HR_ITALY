@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useRef } from "react";
@@ -28,7 +27,8 @@ import {
   Moon,
   Sun,
   AlertTriangle,
-  Layout
+  Layout,
+  XCircle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -227,7 +227,7 @@ export default function AttendancesPage() {
           const isHoliday = row.getCell(11).value?.toString() === "Oui";
           const notes = row.getCell(12).value?.toString();
 
-          const punches: AttendancePunch[] = timeIn && timeOut ? [{ type: 'AM', timeIn, timeOut }] : [];
+          const punches: AttendancePunch[] = timeIn && timeOut ? [{ type: 'AM' as const, timeIn, timeOut }] : [];
           const hasInput = punches.length > 0 || !!absence || isHoliday || !!notes;
 
           if (!hasInput) {
@@ -286,9 +286,9 @@ export default function AttendancesPage() {
           const notes = row.getCell(18).value?.toString();
 
           const punches: AttendancePunch[] = [
-            { type: 'AM', timeIn: amIn, timeOut: amOut },
-            { type: 'PM', timeIn: pmIn, timeOut: pmOut },
-            { type: 'OT', timeIn: otIn, timeOut: otOut },
+            { type: 'AM' as const, timeIn: amIn, timeOut: amOut },
+            { type: 'PM' as const, timeIn: pmIn, timeOut: pmOut },
+            { type: 'OT' as const, timeIn: otIn, timeOut: otOut },
           ].filter(p => !!(p.timeIn && p.timeOut && p.timeIn !== "INVALID"));
 
           const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
@@ -454,9 +454,6 @@ export default function AttendancesPage() {
     entrySheet.getColumn('A').width = 25;
     entrySheet.getColumn('B').width = 35;
 
-    let currentEntryRow = 1;
-    let currentDataRow = 2;
-
     let days: Date[] = [];
     if (periodType === "monthly") {
       const pStart = startOfMonth(new Date(year, month - 1));
@@ -612,8 +609,10 @@ export default function AttendancesPage() {
         totalRow.getCell(15).numFmt = '0.00';
         totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         
-        const breakRow = sheet.getRow(totalRow.number);
-        if (breakRow) breakRow.addPageBreak();
+        const lastRowObj = sheet.lastRow;
+        if (lastRowObj) {
+           lastRowObj.addPageBreak();
+        }
       });
       
     } else {
@@ -963,10 +962,4 @@ function getStatusIcon(status: string) {
       case 'error': return <XCircle className="w-4 h-4 text-red-500" />;
       default: return null;
    }
-}
-
-function XCircle(props: any) {
-  return (
-    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" /><path d="m9 9 6 6" /></svg>
-  );
 }
