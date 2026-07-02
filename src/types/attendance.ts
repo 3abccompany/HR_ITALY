@@ -20,7 +20,7 @@ export interface AttendancePunch {
 }
 
 export interface AttendanceRecord {
-  id?: string;
+  id: string;
   attendanceId: string; // Format: {employeeId}_{YYYY-MM-DD}
   entityId: string;
   employeeId: string;
@@ -67,6 +67,10 @@ export interface AttendanceRecord {
   source: AttendanceSource;
   importBatchId?: string | null;
   
+  // Validation Metadata
+  validatedAt?: Date | FieldValue | null;
+  validatedBy?: string | null;
+
   // Standard Metadata
   createdAt: Date | FieldValue;
   createdBy: string;
@@ -74,10 +78,17 @@ export interface AttendanceRecord {
   updatedBy: string;
 }
 
-export type ImportBatchStatus = "previewed" | "imported" | "cancelled" | "failed" | "draft_imported";
+export type ImportBatchStatus = 
+  | "previewed" 
+  | "imported" 
+  | "cancelled" 
+  | "failed" 
+  | "draft_imported" 
+  | "partially_validated" 
+  | "validated";
 
 export interface AttendanceImportBatch {
-  id?: string;
+  id: string;
   batchId: string;
   entityId: string;
   periodType: "weekly" | "monthly";
@@ -89,6 +100,7 @@ export interface AttendanceImportBatch {
   // Summary Stats
   totalPreviewRows?: number;
   importedRowsCount?: number;
+  validatedRowsCount?: number;
   warningRowsCount?: number;
   ignoredRowsCount?: number;
   totalWorkedHours?: number;

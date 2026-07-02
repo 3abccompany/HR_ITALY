@@ -44,7 +44,9 @@ import {
   ChevronRight,
   ArrowUp,
   ArrowDown,
-  ChevronsUpDown
+  ChevronsUpDown,
+  MoreVertical,
+  CheckSquare
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -63,7 +65,8 @@ import {
 import { 
   calculateAttendanceSplits, 
   executeAttendanceImport,
-  validatePreviewRow
+  validatePreviewRow,
+  validateAttendanceRecords
 } from "@/services/attendance.service";
 import { 
   format, 
@@ -99,6 +102,13 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from "@/components/ui/alert-dialog";
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger,
+  DropdownMenuSeparator
+} from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ExcelJS from "exceljs";
 
@@ -123,8 +133,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 /**
- * Helper to convert various ExcelJS cell values (Date, Number, String) 
- * into a standard "HH:mm" format for internal processing.
+ * Helper to convert various ExcelJS cell values into a standard "HH:mm" format.
  */
 function formatExcelTimeValue(value: any): string {
   if (value === null || value === undefined || value === "") return "";
@@ -209,8 +218,14 @@ export default function AttendancesPage() {
   });
   const [dateSortDirection, setDateSortDirection] = useState<"asc" | "desc">("desc");
 
+  // --- Validation State ---
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationPendingIds, setValidationPendingIds] = useState<string[]>([]);
+  const [isValidationConfirmOpen, setIsValidationConfirmOpen] = useState(false);
+
   const canRead = hasPermission("attendances.read");
   const canCreate = hasPermission("attendances.create") || hasPermission("attendances.write");
+  const canValidate = hasPermission("attendances.validate");
 
   // --- Collection Queries ---
   const empQuery = useMemo(() => 
@@ -270,8 +285,6 @@ export default function AttendancesPage() {
       if (dateComparison !== 0) {
         return dateSortDirection === "asc" ? dateComparison : -dateComparison;
       }
-
-      // Secondary sort: Employee Name (always ASC)
       return (a.employeeDisplayName || "").localeCompare(b.employeeDisplayName || "");
     });
 
@@ -282,6 +295,7 @@ export default function AttendancesPage() {
     const stats = {
       total: filteredRegistry.length,
       draftCount: filteredRegistry.filter(a => a.status === 'draft_imported').length,
+      validatedCount: filteredRegistry.filter(a => a.status === 'validated').length,
       totalHours: 0,
       dayHours: 0,
       nightHours: 0,
@@ -297,6 +311,10 @@ export default function AttendancesPage() {
     });
     return stats;
   }, [filteredRegistry]);
+
+  const draftIdsToValidate = useMemo(() => 
+    filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
+  [filteredRegistry]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -375,14 +393,9 @@ export default function AttendancesPage() {
               : [];
             
             const hasInput = punches.length > 0 || !!absence;
-
-            if (!hasInput) {
-              ignoredCount++;
-              return;
-            }
+            if (!hasInput) { ignoredCount++; return; }
 
             const splits = calculateAttendanceSplits(punches, pause, false);
-
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
               status: "valid",
@@ -404,7 +417,6 @@ export default function AttendancesPage() {
               isHoliday: false,
               notes: ""
             };
-
             rows.push(validatePreviewRow(previewRow, employeesMapByCode));
           });
         });
@@ -437,16 +449,11 @@ export default function AttendancesPage() {
 
           const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
           const splits = calculateAttendanceSplits(punches, pause, isHoliday);
-          
           const hasInput = punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes;
 
-          if (!hasInput) {
-            ignoredCount++;
-            return;
-          }
+          if (!hasInput) { ignoredCount++; return; }
 
           const finalValid = hasManualEntry ? Number(valHVal) : splits.total;
-          
           const rawDate = getVal(row, 3);
           let dateStr = "";
           if (rawDate instanceof Date) {
@@ -479,7 +486,6 @@ export default function AttendancesPage() {
             isHoliday,
             notes: notes || ""
           };
-
           rows.push(validatePreviewRow(previewRow, employeesMapByCode));
         });
       } else {
@@ -502,10 +508,7 @@ export default function AttendancesPage() {
             const h = Number(hVal) || 0;
             const a = row.getCell(day.a).value?.toString();
 
-            if (h === 0 && !a) {
-              ignoredCount++;
-              return;
-            }
+            if (h === 0 && !a) { ignoredCount++; return; }
 
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
@@ -528,7 +531,6 @@ export default function AttendancesPage() {
               isHoliday: false,
               notes: ""
             };
-
             rows.push(validatePreviewRow(previewRow, employeesMapByCode));
           });
         });
@@ -566,8 +568,8 @@ export default function AttendancesPage() {
         setupCompactSheet(sheet1, startDate, employees);
       }
 
-      const guideSheet = workbook.addWorksheet("Guide & Référentiels");
-      setupGuideSheet(guideSheet);
+      workbook.addWorksheet("Guide & Référentiels");
+      setupGuideSheet(workbook.getWorksheet("Guide & Référentiels")!);
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -625,13 +627,46 @@ export default function AttendancesPage() {
       setPreviewRows([]);
       setIgnoredRowsCount(0);
       setIsImportConfirmOpen(false);
-      
-      // Auto-switch to registry to see results
       setActiveTab("registry");
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur d'importation", description: err.message });
     } finally {
       setIsImporting(false);
+    }
+  };
+
+  const handleValidateSingle = async (attendance: AttendanceRecord) => {
+    if (!user || !entityId || !canValidate) return;
+    setIsValidating(true);
+    try {
+      await validateAttendanceRecords({
+        entityId,
+        attendanceIds: [attendance.id],
+        actorUid: user.uid
+      });
+      toast({ title: "Présence validée" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const handleValidateBulk = async () => {
+    if (!user || !entityId || !canValidate || draftIdsToValidate.length === 0) return;
+    setIsValidating(true);
+    try {
+      await validateAttendanceRecords({
+        entityId,
+        attendanceIds: draftIdsToValidate,
+        actorUid: user.uid
+      });
+      toast({ title: "Validation terminée", description: `${draftIdsToValidate.length} enregistrements ont été validés.` });
+      setIsValidationConfirmOpen(false);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setIsValidating(false);
     }
   };
 
@@ -656,55 +691,39 @@ export default function AttendancesPage() {
       { header: "Férié", key: "holiday", width: 10 },
       { header: "Notes / Correction", key: "notes", width: 40 },
     ];
-
     sheet.columns = columns;
 
     let days: Date[] = [];
     if (periodType === "monthly") {
       const pStart = startOfMonth(new Date(year, month - 1));
       days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
-      
       employees.forEach(emp => {
         const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode}`]);
         empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
         empHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
         sheet.mergeCells(empHeaderRow.number, 1, empHeaderRow.number, columns.length);
-
         const tableHeader = sheet.addRow(columns.map(c => c.header));
         tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
         tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
-
         const startRow = (sheet.lastRow?.number || 0) + 1;
-        
         days.forEach(day => {
           const row = sheet.addRow({
-            employeeCode: emp.employeeCode,
-            employeeName: emp.displayName,
-            date: format(day, "yyyy-MM-dd"),
-            day: format(day, "EEEE", { locale: fr }),
-            department: emp.departmentName || "",
-            worksite: emp.worksiteName || "",
+            employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
+            day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
             pause: prefillPause
           });
-
           const currentRow = row.number;
           row.getCell(3).numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-          
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
           const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
-
-          row.getCell(14).value = { 
-            formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`,
-            result: 0 
-          };
+          row.getCell(14).value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
           row.getCell(14).numFmt = '0.00';
           row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
           row.getCell(16).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
           row.getCell(17).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
         });
-
         const endRow = sheet.lastRow?.number || startRow;
         const totalRow = sheet.addRow([]);
         totalRow.getCell(1).value = "TOTAL MENSUEL";
@@ -714,39 +733,26 @@ export default function AttendancesPage() {
         totalRow.getCell(15).numFmt = '0.00';
         totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
       });
-      
     } else {
       const pStart = startOfDay(new Date(start));
       days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-      
       const headerRow = sheet.addRow(columns.map(c => c.header));
       headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
       headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
-
       employees.forEach(emp => {
         days.forEach(day => {
           const row = sheet.addRow({
-            employeeCode: emp.employeeCode,
-            employeeName: emp.displayName,
-            date: format(day, "yyyy-MM-dd"),
-            day: format(day, "EEEE", { locale: fr }),
-            department: emp.departmentName || "",
-            worksite: emp.worksiteName || "",
+            employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
+            day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
             pause: prefillPause
           });
-
           const currentRow = row.number;
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-
           const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
-          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
+          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(I${currentRow}>=J${currentRow},(I${currentRow}-J${currentRow})*24,(I${currentRow}+1-J${currentRow})*24),0)`;
           const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
-
-          row.getCell('N').value = { 
-            formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`,
-            result: 0 
-          };
+          row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
           row.getCell('N').numFmt = '0.00';
           row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
           row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
@@ -759,14 +765,12 @@ export default function AttendancesPage() {
   const setupCompactTimeEntrySheet = (sheet: ExcelJS.Worksheet, start: string, employees: Employee[], prefillPause: number) => {
     const pStart = startOfDay(new Date(start));
     const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-    
     const columns: any[] = [
       { header: "Code employé", key: "employeeCode", width: 15 },
       { header: "Nom employé", key: "employeeName", width: 25 },
       { header: "Département", key: "department", width: 20 },
       { header: "Site", key: "worksite", width: 20 },
     ];
-
     weekDays.forEach(day => {
       const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
       columns.push({ header: `${dayLabel} - Entrée`, key: `in_${format(day, "dd")}`, width: 12 });
@@ -774,30 +778,17 @@ export default function AttendancesPage() {
       columns.push({ header: `${dayLabel} - Pause`, key: `pause_${format(day, "dd")}`, width: 10 });
       columns.push({ header: `${dayLabel} - Absence`, key: `abs_${format(day, "dd")}`, width: 15 });
     });
-
     sheet.columns = columns;
     const headerRow = sheet.getRow(1);
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
-
     employees.forEach(emp => {
-      const rowData: any = {
-        employeeCode: emp.employeeCode,
-        employeeName: emp.displayName,
-        department: emp.departmentName || "",
-        worksite: emp.worksiteName || "",
-      };
-
+      const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
       weekDays.forEach(day => {
         const dd = format(day, "dd");
-        rowData[`in_${dd}`] = "";
-        rowData[`out_${dd}`] = "";
-        rowData[`pause_${dd}`] = prefillPause;
-        rowData[`abs_${dd}`] = "";
+        rowData[`in_${dd}`] = ""; rowata[`out_${dd}`] = ""; rowData[`pause_${dd}`] = prefillPause; rowData[`abs_${dd}`] = "";
       });
-
       const row = sheet.addRow(rowData);
-      
       for (let i = 0; i < 7; i++) {
         const startIdx = 5 + (i * 4);
         row.getCell(startIdx).numFmt = 'hh:mm';
@@ -805,54 +796,37 @@ export default function AttendancesPage() {
         row.getCell(startIdx + 3).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
       }
     });
-
     sheet.views = [{ state: 'frozen', xSplit: 4, ySplit: 1 }];
   };
 
   const setupCompactSheet = (sheet: ExcelJS.Worksheet, start: string, employees: Employee[]) => {
     const pStart = startOfDay(new Date(start));
     const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-    
     const columns: any[] = [
       { header: "Code employé", key: "employeeCode", width: 15 },
       { header: "Nom employé", key: "employeeName", width: 25 },
       { header: "Département", key: "department", width: 20 },
       { header: "Site", key: "worksite", width: 20 },
     ];
-
     weekDays.forEach(day => {
       const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
       columns.push({ header: `${dayLabel} - Heures`, key: `h_${format(day, "dd")}`, width: 15 });
       columns.push({ header: `${dayLabel} - Absence`, key: `a_${format(day, "dd")}`, width: 15 });
     });
-
     columns.push({ header: "Total semaine", key: "total", width: 15 });
-
     sheet.columns = columns;
     const headerRow = sheet.getRow(1);
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
-
     employees.forEach(emp => {
-      const rowData: any = {
-        employeeCode: emp.employeeCode,
-        employeeName: emp.displayName,
-        department: emp.departmentName || "",
-        worksite: emp.worksiteName || ""
-      };
-      
+      const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
       const row = sheet.addRow(rowData);
       const currentRow = row.number;
-
       const absCols = [6, 8, 10, 12, 14, 16, 18];
       absCols.forEach(col => {
         row.getCell(col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
       });
-
-      row.getCell(19).value = { 
-        formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`,
-        result: 0 
-      };
+      row.getCell(19).value = { formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`, result: 0 };
       row.getCell(19).numFmt = '0.00';
     });
   };
@@ -870,25 +844,8 @@ export default function AttendancesPage() {
   };
 
   const previewStats = useMemo(() => {
-    const stats = {
-      total: previewRows.length,
-      valid: previewRows.filter(r => r.status === 'valid').length,
-      warning: previewRows.filter(r => r.status === 'warning').length,
-      error: previewRows.filter(r => r.status === 'error').length,
-      totalHours: 0,
-      dayHours: 0,
-      nightHours: 0,
-      overtimeHours: 0,
-      absencesCount: previewRows.filter(r => !!r.absenceCode).length,
-    };
-
-    previewRows.forEach(r => {
-      stats.totalHours += r.validatedHours || 0;
-      stats.dayHours += r.dayHours || 0;
-      stats.nightHours += r.nightHours || 0;
-      stats.overtimeHours += r.overtimeHours || 0;
-    });
-
+    const stats = { total: previewRows.length, valid: previewRows.filter(r => r.status === 'valid').length, warning: previewRows.filter(r => r.status === 'warning').length, error: previewRows.filter(r => r.status === 'error').length, totalHours: 0, dayHours: 0, nightHours: 0, overtimeHours: 0, absencesCount: previewRows.filter(r => !!r.absenceCode).length };
+    previewRows.forEach(r => { stats.totalHours += r.validatedHours || 0; stats.dayHours += r.dayHours || 0; stats.nightHours += r.nightHours || 0; stats.overtimeHours += r.overtimeHours || 0; });
     return stats;
   }, [previewRows]);
 
@@ -932,12 +889,9 @@ export default function AttendancesPage() {
                               </SelectContent>
                             </Select>
                         </div>
-                        
                         {inputMode !== 'compact' && (
                             <div className="space-y-2">
-                              <Label className="text-[10px] uppercase font-black flex items-center gap-1">
-                                <Coffee className="w-3 h-3" /> Pause par défaut
-                              </Label>
+                              <Label className="text-[10px] uppercase font-black flex items-center gap-1"><Coffee className="w-3 h-3" /> Pause par défaut</Label>
                               <div className="flex gap-2">
                                   <Select value={defaultPause} onValueChange={setDefaultPause}>
                                     <SelectTrigger className="rounded-xl flex-1"><SelectValue /></SelectTrigger>
@@ -956,7 +910,6 @@ export default function AttendancesPage() {
                               </div>
                             </div>
                         )}
-
                         <div className="space-y-2">
                             <Label className="text-[10px] uppercase font-black">Type de période</Label>
                             <Select value={periodType} onValueChange={(v: any) => setPeriodType(v)} disabled={inputMode === 'compact_time' || inputMode === 'compact'}>
@@ -964,7 +917,6 @@ export default function AttendancesPage() {
                               <SelectContent><SelectItem value="weekly">Hebdomadaire</SelectItem><SelectItem value="monthly">Mensuel</SelectItem></SelectContent>
                             </Select>
                         </div>
-
                         {periodType === "monthly" ? (
                             <div className="grid grid-cols-2 gap-3">
                               <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
@@ -975,8 +927,7 @@ export default function AttendancesPage() {
                         )}
                       </div>
                       <Button onClick={handleDownloadTemplate} disabled={isDownloading} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
-                        {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-                        Générer le modèle
+                        {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Générer le modèle
                       </Button>
                   </CardContent>
                 </Card>
@@ -988,10 +939,7 @@ export default function AttendancesPage() {
                       </CardTitle>
                   </CardHeader>
                   <CardContent className="p-8 space-y-4">
-                      <div className={cn(
-                        "border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
-                        isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40"
-                      )}>
+                      <div className={cn("border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer", isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40")}>
                         <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
                         {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <Layout className="w-8 h-8 text-accent/30" />}
                         <p className="text-xs font-bold text-slate-600">Cliquer pour importer le fichier rempli</p>
@@ -1017,14 +965,6 @@ export default function AttendancesPage() {
                       </div>
 
                       <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
-                          {inputMode !== 'detailed' && (
-                            <div className="bg-blue-50 p-4 border-b flex items-center gap-3 text-blue-800">
-                                <Info className="w-5 h-5 shrink-0" />
-                                <p className="text-xs font-bold leading-tight">
-                                  Note : En mode compact, la répartition jour/nuit et les heures supplémentaires sont estimées par le système.
-                                </p>
-                            </div>
-                          )}
                           <ScrollArea className="h-[600px] w-full">
                             <Table>
                                 <TableHeader className="bg-slate-50 sticky top-0 z-10">
@@ -1061,9 +1001,7 @@ export default function AttendancesPage() {
                                         <TableCell className="text-center text-xs font-black text-orange-600">{row.overtimeHours > 0 ? `+${row.overtimeHours.toFixed(2)}` : "—"}</TableCell>
                                         <TableCell className="pr-6">
                                           <div className="space-y-1">
-                                              {row.messages.map((m, idx) => (
-                                                <div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>• {m}</div>
-                                              ))}
+                                              {row.messages.map((m, idx) => (<div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>• {m}</div>))}
                                               {row.absenceCode && <Badge variant="outline" className="text-[8px] uppercase border-orange-200 text-orange-700 bg-orange-50 font-black">{row.absenceCode}</Badge>}
                                               {row.isHoliday && <Badge variant="outline" className="text-[8px] uppercase border-blue-200 text-blue-700 bg-blue-50 font-black ml-1">Férié</Badge>}
                                           </div>
@@ -1079,13 +1017,8 @@ export default function AttendancesPage() {
                                 <CheckCircle2 className="w-4 h-4 text-green-600" /> {previewStats.valid + previewStats.warning} lignes prêtes.
                             </div>
                             {canCreate && (
-                              <Button 
-                                onClick={handleImportClick} 
-                                disabled={isImporting || previewRows.length === 0 || previewStats.error > 0} 
-                                className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10"
-                              >
-                                {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                                Lancer l'importation
+                              <Button onClick={handleImportClick} disabled={isImporting || previewRows.length === 0 || previewStats.error > 0} className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
+                                {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Lancer l'importation
                               </Button>
                             )}
                           </div>
@@ -1094,10 +1027,7 @@ export default function AttendancesPage() {
                 ) : (
                     <div className="flex flex-col items-center justify-center min-h-[500px] border-2 border-dashed rounded-[3rem] bg-secondary/5 opacity-50 space-y-4">
                       <div className="bg-white p-6 rounded-full shadow-sm"><TableIcon className="w-12 h-12 text-slate-200" /></div>
-                      <div className="text-center space-y-1">
-                        <h3 className="font-black text-slate-400 uppercase text-xs tracking-widest">Prévisualisation</h3>
-                        <p className="text-xs text-slate-400 italic">Téléversez un fichier pour voir la ventilation des heures.</p>
-                      </div>
+                      <div className="text-center space-y-1"><h3 className="font-black text-slate-400 uppercase text-xs tracking-widest">Prévisualisation</h3><p className="text-xs text-slate-400 italic">Téléversez un fichier pour voir la ventilation des heures.</p></div>
                     </div>
                 )}
               </div>
@@ -1105,50 +1035,25 @@ export default function AttendancesPage() {
          </TabsContent>
 
          <TabsContent value="registry" className="mt-0 space-y-8 animate-in fade-in slide-in-from-bottom-2">
-            
-            {/* Registry Filters & Summary */}
             <div className="space-y-6">
                <div className="flex flex-wrap items-center gap-4">
                   <div className="flex items-center bg-white rounded-xl border p-1 shadow-sm h-11">
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedMonth(prev => prev === 1 ? 12 : prev - 1)}><ChevronLeft className="w-4 h-4" /></Button>
-                    <span className="px-4 text-xs font-black uppercase tracking-widest text-primary min-w-[140px] text-center">
-                       {format(new Date(selectedYear, selectedMonth - 1), 'MMMM yyyy', { locale: fr })}
-                    </span>
+                    <span className="px-4 text-xs font-black uppercase tracking-widest text-primary min-w-[140px] text-center">{format(new Date(selectedYear, selectedMonth - 1), 'MMMM yyyy', { locale: fr })}</span>
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedMonth(prev => prev === 12 ? 1 : prev + 1)}><ChevronRight className="w-4 h-4" /></Button>
                   </div>
-
-                  <div className="relative flex-1 min-w-[200px]">
-                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                     <Input 
-                        placeholder="Filtrer par employé ou matricule..." 
-                        value={registryFilters.search}
-                        onChange={(e) => setRegistryFilters(p => ({...p, search: e.target.value}))}
-                        className="h-11 rounded-xl pl-10 bg-white border-primary/10"
-                     />
-                  </div>
-
-                  <Select value={registryFilters.status} onValueChange={(v) => setRegistryFilters(p => ({...p, status: v}))}>
-                     <SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10"><SelectValue placeholder="Tous statuts" /></SelectTrigger>
-                     <SelectContent>
-                        <SelectItem value="all">Tous les statuts</SelectItem>
-                        {Object.entries(STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}
-                     </SelectContent>
-                  </Select>
-
-                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11">
-                     <input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => setRegistryFilters(p => ({...p, absenceOnly: e.target.checked}))} className="rounded" />
-                     <Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11">
-                     <input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => setRegistryFilters(p => ({...p, anomalyOnly: e.target.checked}))} className="rounded" />
-                     <Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label>
-                  </div>
+                  <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Filtrer par employé ou matricule..." value={registryFilters.search} onChange={(e) => setRegistryFilters(p => ({...p, search: e.target.value}))} className="h-11 rounded-xl pl-10 bg-white border-primary/10" /></div>
+                  <Select value={registryFilters.status} onValueChange={(v) => setRegistryFilters(p => ({...p, status: v}))}><SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10"><SelectValue placeholder="Tous statuts" /></SelectTrigger><SelectContent><SelectItem value="all">Tous les statuts</SelectItem>{Object.entries(STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}</SelectContent></Select>
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => setRegistryFilters(p => ({...p, absenceOnly: e.target.checked}))} className="rounded" /><Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label></div>
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => setRegistryFilters(p => ({...p, anomalyOnly: e.target.checked}))} className="rounded" /><Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label></div>
+                  {canValidate && draftIdsToValidate.length > 0 && (
+                    <Button onClick={() => setIsValidationConfirmOpen(true)} className="h-11 rounded-xl font-bold bg-green-600 hover:bg-green-700 text-white gap-2 shadow-lg"><CheckSquare className="w-4 h-4" /> Valider les brouillons filtrés</Button>
+                  )}
                </div>
-
-               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4">
                   <SummaryStat label="Lignes" value={registryStats.total} color="blue" />
                   <SummaryStat label="Brouillons" value={registryStats.draftCount} color="indigo" />
+                  <SummaryStat label="Validées" value={registryStats.validatedCount} color="green" />
                   <SummaryStat label="H. Totales" value={registryStats.totalHours.toFixed(1)} color="slate" />
                   <SummaryStat label="H. Jour" value={registryStats.dayHours.toFixed(1)} color="slate" />
                   <SummaryStat label="H. Nuit" value={registryStats.nightHours.toFixed(1)} color="indigo" />
@@ -1158,167 +1063,74 @@ export default function AttendancesPage() {
                </div>
             </div>
 
-            <div className="space-y-12">
-               {/* Main Table */}
-               <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
-                  <CardHeader className="bg-primary/5 border-b py-4 px-8">
-                     <CardTitle className="text-xs font-black uppercase tracking-widest text-primary flex items-center gap-2">
-                        <LayoutList className="w-4 h-4" /> Pointages & Absences
-                     </CardTitle>
-                  </CardHeader>
-                  <ScrollArea className="max-h-[600px] w-full">
-                     <Table>
-                        <TableHeader className="bg-slate-50 sticky top-0 z-10">
-                           <TableRow>
-                              <TableHead className="pl-8">Employé</TableHead>
-                              <TableHead 
-                                className="cursor-pointer hover:bg-muted/30 transition-colors group"
-                                onClick={() => setDateSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
-                              >
-                                <div className="flex items-center gap-1.5">
-                                  Date
-                                  {dateSortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-                                </div>
-                              </TableHead>
-                              <TableHead>Site / Dépt</TableHead>
-                              <TableHead className="text-center">Heures</TableHead>
-                              <TableHead className="text-center">Jour</TableHead>
-                              <TableHead className="text-center">Nuit</TableHead>
-                              <TableHead className="text-center">Sup.</TableHead>
-                              <TableHead>Absence</TableHead>
-                              <TableHead>Statut</TableHead>
-                              <TableHead className="pr-8 text-right">Batch</TableHead>
-                           </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                           {loadingRegistry ? (
-                              <TableRow><TableCell colSpan={10} className="text-center py-20"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
-                           ) : filteredRegistry.length === 0 ? (
-                              <TableRow><TableCell colSpan={10} className="text-center py-24 text-muted-foreground italic">Aucun enregistrement pour cette période.</TableCell></TableRow>
-                           ) : (
-                              filteredRegistry.map(a => (
-                                 <TableRow key={a.attendanceId} className="hover:bg-slate-50 transition-colors">
-                                    <TableCell className="pl-8 py-4">
-                                       <div className="flex flex-col">
-                                          <span className="font-bold text-slate-800 text-xs">{a.employeeDisplayName}</span>
-                                          <span className="text-[10px] text-muted-foreground font-mono uppercase">{a.employeeCode}</span>
-                                       </div>
-                                    </TableCell>
-                                    <TableCell>
-                                       <div className="text-xs font-medium">{format(parseISO(a.attendanceDate), 'dd/MM/yyyy')}</div>
-                                    </TableCell>
-                                    <TableCell>
-                                       <div className="flex flex-col gap-0.5">
-                                          <span className="text-[10px] font-bold text-slate-700 truncate max-w-[120px]">{a.worksiteName || "—"}</span>
-                                          <span className="text-[9px] text-muted-foreground uppercase">{a.departmentName || "—"}</span>
-                                       </div>
-                                    </TableCell>
-                                    <TableCell className="text-center font-black text-xs text-primary">{a.validatedHours?.toFixed(2)}</TableCell>
-                                    <TableCell className="text-center text-xs font-medium text-slate-500">{a.dayHours?.toFixed(2)}</TableCell>
-                                    <TableCell className="text-center text-xs font-medium text-slate-500">{a.nightHours?.toFixed(2)}</TableCell>
-                                    <TableCell className="text-center text-xs font-black text-orange-600">{a.overtimeHours > 0 ? `+${a.overtimeHours.toFixed(2)}` : "—"}</TableCell>
-                                    <TableCell>
-                                       {a.absenceCode && <Badge variant="outline" className="text-[8px] uppercase bg-orange-50 text-orange-700 border-orange-100 font-black">{a.absenceCode}</Badge>}
-                                    </TableCell>
-                                    <TableCell>
-                                       <Badge variant="outline" className={cn("text-[9px] font-black uppercase h-5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700")}>
-                                          {STATUS_LABELS[a.status] || a.status}
-                                       </Badge>
-                                    </TableCell>
-                                    <TableCell className="pr-8 text-right">
-                                       <span className="text-[8px] font-mono opacity-40" title={a.importBatchId || "Manuel"}>{a.importBatchId?.substring(0, 8) || "MANUAL"}</span>
-                                    </TableCell>
-                                 </TableRow>
-                              ))
-                           )}
-                        </TableBody>
-                     </Table>
-                  </ScrollArea>
-               </Card>
-
-               {/* Batch History List */}
-               <div className="space-y-4">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-muted-foreground px-2 flex items-center gap-2">
-                     <HistoryIcon className="w-4 h-4" /> Historique des imports
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                     {loadingBatches ? (
-                        <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" />
-                     ) : !registryBatches || registryBatches.length === 0 ? (
-                        <p className="text-xs text-muted-foreground italic px-2">Aucun import enregistré.</p>
-                     ) : (
-                        registryBatches.map(b => (
-                           <Card key={b.id} className="rounded-2xl border-primary/5 shadow-sm hover:shadow-md transition-all overflow-hidden bg-white group">
-                              <CardContent className="p-0">
-                                 <div className="p-4 bg-slate-50/50 border-b flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                       <div className="bg-primary/10 p-2 rounded-xl text-primary"><FileSpreadsheet className="w-4 h-4" /></div>
-                                       <div>
-                                          <p className="text-xs font-black text-slate-800 truncate max-w-[200px]">{b.sourceFileName}</p>
-                                          <p className="text-[9px] text-muted-foreground font-bold uppercase">{format(parseSafeDate(b.createdAt) || new Date(), 'dd/MM/yyyy HH:mm')}</p>
-                                       </div>
+            <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
+               <CardHeader className="bg-primary/5 border-b py-4 px-8"><CardTitle className="text-xs font-black uppercase tracking-widest text-primary flex items-center gap-2"><LayoutList className="w-4 h-4" /> Pointages & Absences</CardTitle></CardHeader>
+               <ScrollArea className="max-h-[600px] w-full">
+                  <Table>
+                     <TableHeader className="bg-slate-50 sticky top-0 z-10"><TableRow><TableHead className="pl-8">Employé</TableHead><TableHead className="cursor-pointer" onClick={() => setDateSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}><div className="flex items-center gap-1.5">Date{dateSortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}</div></TableHead><TableHead>Site / Dépt</TableHead><TableHead className="text-center">Heures</TableHead><TableHead className="text-center">Jour</TableHead><TableHead className="text-center">Nuit</TableHead><TableHead className="text-center">Sup.</TableHead><TableHead>Absence</TableHead><TableHead>Statut</TableHead><TableHead className="pr-8 text-right">Actions</TableHead></TableRow></TableHeader>
+                     <TableBody>
+                        {loadingRegistry ? (<TableRow><TableCell colSpan={10} className="text-center py-20"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>) : filteredRegistry.length === 0 ? (<TableRow><TableCell colSpan={10} className="text-center py-24 text-muted-foreground italic">Aucun enregistrement pour cette période.</TableCell></TableRow>) : (
+                           filteredRegistry.map(a => (
+                              <TableRow key={a.id} className="hover:bg-slate-50 transition-colors">
+                                 <TableCell className="pl-8 py-4"><div className="flex flex-col"><span className="font-bold text-slate-800 text-xs">{a.employeeDisplayName}</span><span className="text-[10px] text-muted-foreground font-mono uppercase">{a.employeeCode}</span></div></TableCell>
+                                 <TableCell><div className="text-xs font-medium">{format(parseISO(a.attendanceDate), 'dd/MM/yyyy')}</div></TableCell>
+                                 <TableCell><div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold text-slate-700 truncate max-w-[120px]">{a.worksiteName || "—"}</span><span className="text-[9px] text-muted-foreground uppercase">{a.departmentName || "—"}</span></div></TableCell>
+                                 <TableCell className="text-center font-black text-xs text-primary">{a.validatedHours?.toFixed(2)}</TableCell>
+                                 <TableCell className="text-center text-xs font-medium text-slate-500">{a.dayHours?.toFixed(2)}</TableCell>
+                                 <TableCell className="text-center text-xs font-medium text-slate-500">{a.nightHours?.toFixed(2)}</TableCell>
+                                 <TableCell className="text-center text-xs font-black text-orange-600">{a.overtimeHours > 0 ? `+${a.overtimeHours.toFixed(2)}` : "—"}</TableCell>
+                                 <TableCell>{a.absenceCode && <Badge variant="outline" className="text-[8px] uppercase bg-orange-50 text-orange-700 border-orange-100 font-black">{a.absenceCode}</Badge>}</TableCell>
+                                 <TableCell><Badge variant="outline" className={cn("text-[9px] font-black uppercase h-5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700")}>{STATUS_LABELS[a.status] || a.status}</Badge></TableCell>
+                                 <TableCell className="pr-8 text-right">
+                                    <div className="flex justify-end gap-1">
+                                       {canValidate && a.status === 'draft_imported' && (
+                                         <Button variant="ghost" size="icon" onClick={() => handleValidateSingle(a)} disabled={isValidating} className="h-8 w-8 text-green-600"><CheckCircle2 className="w-4 h-4" /></Button>
+                                       )}
+                                       <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-xs opacity-50">Modifier (À venir)</DropdownMenuItem><DropdownMenuItem className="text-xs opacity-50">Annuler (À venir)</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
                                     </div>
-                                    <Badge variant="outline" className="bg-white text-[9px] font-black uppercase text-slate-400">{b.status}</Badge>
-                                 </div>
-                                 <div className="p-5 grid grid-cols-4 gap-2">
-                                    <BatchMiniStat label="Lignes" value={b.importedRowsCount} />
-                                    <BatchMiniStat label="Heures" value={b.totalWorkedHours?.toFixed(1)} />
-                                    <BatchMiniStat label="Alertes" value={b.warningRowsCount} color={b.warningRowsCount! > 0 ? "orange" : "slate"} />
-                                    <BatchMiniStat label="Absences" value={b.absenceRowsCount} />
-                                 </div>
-                              </CardContent>
-                           </Card>
-                        ))
-                     )}
-                  </div>
+                                 </TableCell>
+                              </TableRow>
+                           ))
+                        )}
+                     </TableBody>
+                  </Table>
+               </ScrollArea>
+            </Card>
+
+            <div className="space-y-4">
+               <h3 className="text-xs font-black uppercase tracking-widest text-muted-foreground px-2 flex items-center gap-2"><HistoryIcon className="w-4 h-4" /> Historique des imports</h3>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {loadingBatches ? (<Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" />) : !registryBatches || registryBatches.length === 0 ? (<p className="text-xs text-muted-foreground italic px-2">Aucun import enregistré.</p>) : (
+                     registryBatches.map(b => (
+                        <Card key={b.id} className="rounded-2xl border-primary/5 shadow-sm hover:shadow-md transition-all overflow-hidden bg-white group"><CardContent className="p-0"><div className="p-4 bg-slate-50/50 border-b flex items-center justify-between"><div className="flex items-center gap-3"><div className="bg-primary/10 p-2 rounded-xl text-primary"><FileSpreadsheet className="w-4 h-4" /></div><div><p className="text-xs font-black text-slate-800 truncate max-w-[200px]">{b.sourceFileName}</p><p className="text-[9px] text-muted-foreground font-bold uppercase">{format(parseSafeDate(b.createdAt) || new Date(), 'dd/MM/yyyy HH:mm')}</p></div></div><Badge variant="outline" className="bg-white text-[9px] font-black uppercase text-slate-400">{b.status}</Badge></div><div className="p-5 grid grid-cols-5 gap-2"><BatchMiniStat label="Lignes" value={b.importedRowsCount} /><BatchMiniStat label="Validées" value={b.validatedRowsCount} color="green" /><BatchMiniStat label="Heures" value={b.totalWorkedHours?.toFixed(1)} /><BatchMiniStat label="Alertes" value={b.warningRowsCount} color={b.warningRowsCount! > 0 ? "orange" : "slate"} /><BatchMiniStat label="Absences" value={b.absenceRowsCount} /></div></CardContent></Card>
+                     ))
+                  )}
                </div>
             </div>
          </TabsContent>
       </Tabs>
 
-      {/* Confirmation Dialog */}
-      <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
+      {/* Confirmation Dialogs */}
+      <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}><AlertDialogContent className="rounded-[2.5rem]"><AlertDialogHeader><AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle><AlertDialogDescription>Vous êtes sur le point d'importer les présences en brouillon dans le registre. Vous allez importer <strong>{previewRows.length}</strong> enregistrements.</AlertDialogDescription></AlertDialogHeader><div className="space-y-4 pt-4 text-slate-600">{previewStats.warning > 0 && (<div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" /><span className="text-xs font-bold text-orange-800 leading-tight">Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.</span></div>)}<div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2"><div className="flex justify-between text-xs"><span className="text-muted-foreground uppercase font-bold">Total Heures :</span><span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span></div><div className="flex justify-between text-xs"><span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span><span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span></div></div></div><AlertDialogFooter className="mt-6"><AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel><AlertDialogAction onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} disabled={isImporting} className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/10">{isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}Confirmer l'importation</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+
+      <AlertDialog open={isValidationConfirmOpen} onOpenChange={setIsValidationConfirmOpen}>
         <AlertDialogContent className="rounded-[2.5rem]">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-xl font-black text-primary">Confirmer l'importation</AlertDialogTitle>
-            <AlertDialogDescription>
-              Vous êtes sur le point d'importer les présences en brouillon dans le registre. Vous allez importer <strong>{previewRows.length}</strong> enregistrements.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-
-          <div className="space-y-4 pt-4 text-slate-600">
-            {previewStats.warning > 0 && (
-              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
-                <span className="text-xs font-bold text-orange-800 leading-tight">
-                  Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
-                </span>
-              </div>
-            )}
-            
-            <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
-               <div className="flex justify-between text-xs">
-                 <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
-                 <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
-               </div>
-               <div className="flex justify-between text-xs">
-                 <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
-                 <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
-               </div>
-            </div>
-          </div>
-
-          <AlertDialogFooter className="mt-6">
-            <AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} 
-              disabled={isImporting}
-              className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/20"
-            >
-              {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-              Confirmer l'importation
-            </AlertDialogAction>
-          </AlertDialogFooter>
+           <AlertDialogHeader>
+              <AlertDialogTitle className="text-xl font-black text-primary">Valider les brouillons filtrés ?</AlertDialogTitle>
+              <AlertDialogDescription>Vous allez valider <strong>{draftIdsToValidate.length}</strong> enregistrements. Cette action rendra ces données définitives pour la paie.</AlertDialogDescription>
+           </AlertDialogHeader>
+           {registryStats.anomalies > 0 && (
+             <div className="p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 mt-4">
+                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                <span className="text-xs font-bold text-red-800 leading-tight">Attention : {registryStats.anomalies} ligne(s) contiennent des anomalies. Confirmer tout de même la validation ?</span>
+             </div>
+           )}
+           <AlertDialogFooter className="mt-6">
+              <AlertDialogCancel disabled={isValidating}>Annuler</AlertDialogCancel>
+              <AlertDialogAction onClick={(e) => { e.preventDefault(); handleValidateBulk(); }} disabled={isValidating} className="bg-green-600 hover:bg-green-700 font-black rounded-xl px-6 shadow-lg">
+                 {isValidating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />} Confirmer la validation
+              </AlertDialogAction>
+           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
@@ -1326,44 +1138,17 @@ export default function AttendancesPage() {
 }
 
 function SummaryStat({ label, value, color }: { label: string, value: number | string, color: string }) {
-  const colorMap: Record<string, string> = {
-    slate: "bg-slate-50 text-slate-600 border-slate-100",
-    green: "bg-green-50 text-green-600 border-green-100",
-    orange: "bg-orange-50 text-orange-600 border-orange-100",
-    red: "bg-red-50 text-red-600 border-red-100",
-    blue: "bg-blue-50 text-blue-600 border-blue-100",
-    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
-  };
-  
-  return (
-    <div className={cn("p-3 rounded-2xl border flex flex-col items-center min-w-[70px] shadow-sm", colorMap[color] || colorMap.slate)}>
-      <span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
-      <span className="text-sm font-black leading-none mt-1">{value}</span>
-    </div>
-  );
+  const colorMap: Record<string, string> = { slate: "bg-slate-50 text-slate-600 border-slate-100", green: "bg-green-50 text-green-600 border-green-100", orange: "bg-orange-50 text-orange-600 border-orange-100", red: "bg-red-50 text-red-600 border-red-100", blue: "bg-blue-50 text-blue-600 border-blue-100", indigo: "bg-indigo-50 text-indigo-600 border-indigo-100" };
+  return (<div className={cn("p-3 rounded-2xl border flex flex-col items-center min-w-[70px] shadow-sm", colorMap[color] || colorMap.slate)}><span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span><span className="text-sm font-black leading-none mt-1">{value}</span></div>);
 }
 
 function BatchMiniStat({ label, value, color = "slate" }: { label: string, value: any, color?: string }) {
-   const colors: Record<string, string> = {
-      slate: "text-slate-600",
-      orange: "text-orange-600",
-      blue: "text-blue-600"
-   };
-   return (
-      <div className="flex flex-col text-center">
-         <span className="text-[7px] font-black uppercase text-muted-foreground opacity-60 tracking-widest">{label}</span>
-         <span className={cn("text-xs font-black", colors[color])}>{value ?? 0}</span>
-      </div>
-   );
+   const colors: Record<string, string> = { slate: "text-slate-600", orange: "text-orange-600", blue: "text-blue-600", green: "text-green-600" };
+   return (<div className="flex flex-col text-center"><span className="text-[7px] font-black uppercase text-muted-foreground opacity-60 tracking-widest">{label}</span><span className={cn("text-xs font-black", colors[color])}>{value ?? 0}</span></div>);
 }
 
 function getStatusIcon(status: string) {
-  switch (status) {
-    case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-    case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />;
-    case 'error': return <XCircle className="w-4 h-4 text-red-500" />;
-    default: return null;
-  }
+  switch (status) { case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />; case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />; case 'error': return <XCircle className="w-4 h-4 text-red-500" />; default: return null; }
 }
 
 function parseSafeDate(val: any): Date | null {

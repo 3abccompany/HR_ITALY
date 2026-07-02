@@ -9,7 +9,9 @@ import {
   getDocs,
   query,
   where,
-  documentId
+  documentId,
+  increment,
+  getDoc
 } from "firebase/firestore";
 import { 
   AttendanceRecord, 
@@ -116,40 +118,6 @@ export function calculateAttendanceSplits(
 }
 
 /**
- * @deprecated Use calculateAttendanceSplits for full breakdown
- */
-export function calculatePunchHours(punches: AttendancePunch[], pauseMinutes: number = 0): number {
-  const result = calculateAttendanceSplits(punches, pauseMinutes);
-  return result.total;
-}
-
-/**
- * Basic data integrity check for an attendance record.
- */
-export function validateAttendanceRecordBasic(record: Partial<AttendanceRecord>): { isValid: boolean; errors: string[] } {
-  const errors: string[] = [];
-  
-  if (!record.employeeId) errors.push("ID employé manquant");
-  if (!record.employeeCode) errors.push("Matricule manquant");
-  if (!record.attendanceDate) errors.push("Date manquante");
-  if (!record.entityId) errors.push("ID entité manquant");
-  
-  if (record.pauseMinutes !== undefined && record.pauseMinutes < 0) {
-    errors.push("La pause ne peut pas être négative");
-  }
-
-  const hasPunches = record.punches && record.punches.some(p => p.timeIn && p.timeOut);
-  if (!hasPunches && !record.absenceCode) {
-    errors.push("L'enregistrement doit contenir au moins un pointage ou un code d'absence");
-  }
-
-  return {
-    isValid: errors.length === 0,
-    errors
-  };
-}
-
-/**
  * Validates a preview row and assigns status/messages.
  */
 export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<string, any>): AttendancePreviewRow {
@@ -225,7 +193,6 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
 
 /**
  * Performs a real draft import of attendance records into Firestore.
- * Standardizes mapping, checks for duplicates, and executes batch writes.
  */
 export async function executeAttendanceImport(params: {
   entityId: string;
@@ -236,7 +203,7 @@ export async function executeAttendanceImport(params: {
   const { entityId, actorUid, previewRows, batchMetadata } = params;
   if (!db) throw new Error("Firestore not initialized");
 
-  // 1. Internal Duplicate Check (within file)
+  // 1. Internal Duplicate Check
   const keysInFile = new Set<string>();
   for (const row of previewRows) {
     const key = `${row.employeeId}_${row.date}`;
@@ -246,7 +213,7 @@ export async function executeAttendanceImport(params: {
     keysInFile.add(key);
   }
 
-  // 2. Database Pre-flight Check (existing records)
+  // 2. Database Pre-flight Check
   const allIds = Array.from(keysInFile);
   for (let i = 0; i < allIds.length; i += 30) {
     const chunk = allIds.slice(i, i + 30);
@@ -257,8 +224,8 @@ export async function executeAttendanceImport(params: {
     const snap = await getDocs(q);
     if (!snap.empty) {
       const existingId = snap.docs[0].id;
-      const [empId, date] = existingId.split('_');
-      throw new Error(`CONFLIT_EXISTANT: Un enregistrement de présence existe déjà pour le collaborateur ${empId} à la date du ${date}.`);
+      const [_, date] = existingId.split('_');
+      throw new Error(`CONFLIT_EXISTANT: Un enregistrement de présence existe déjà pour la date du ${date}.`);
     }
   }
 
@@ -269,17 +236,13 @@ export async function executeAttendanceImport(params: {
 
   const mainBatch = writeBatch(db);
 
-  // Set Batch Metadata
-  const finalBatchData: AttendanceImportBatch = {
-    totalRows: 0, // Fallback defaults
-    validRows: 0,
-    warningRows: 0,
-    errorRows: 0,
-    importedRows: 0,
-    ...(batchMetadata as any),
+  const finalBatchData: Partial<AttendanceImportBatch> = {
+    ...batchMetadata,
+    id: batchId,
     batchId,
     entityId,
     status: "draft_imported",
+    validatedRowsCount: 0,
     createdAt: now,
     createdBy: actorUid,
     updatedAt: now,
@@ -287,7 +250,7 @@ export async function executeAttendanceImport(params: {
   };
   mainBatch.set(batchRef, finalBatchData);
 
-  // 4. Chunked Writes for Records
+  // 4. Chunked Writes
   const chunks: AttendancePreviewRow[][] = [];
   for (let i = 0; i < previewRows.length; i += 450) {
     chunks.push(previewRows.slice(i, i + 450));
@@ -301,7 +264,8 @@ export async function executeAttendanceImport(params: {
       const attendanceId = buildAttendanceId(row.employeeId!, row.date);
       const recordRef = doc(db!, `entities/${entityId}/attendances`, attendanceId);
 
-      const record: AttendanceRecord = {
+      const record: Partial<AttendanceRecord> = {
+        id: attendanceId,
         attendanceId,
         entityId,
         employeeId: row.employeeId!,
@@ -309,10 +273,8 @@ export async function executeAttendanceImport(params: {
         employeeCode: row.employeeCode,
         employeeDisplayName: row.employeeName,
         attendanceDate: row.date,
-        
         worksiteName: row.worksite || null,
         departmentName: row.department || null,
-        
         punches: row.punches || [],
         pauseMinutes: row.pauseMinutes || 0,
         calculatedHours: row.calculatedHours,
@@ -321,18 +283,14 @@ export async function executeAttendanceImport(params: {
         nightHours: row.nightHours,
         overtimeHours: row.overtimeHours,
         holidayWorkedHours: row.holidayWorkedHours,
-        
         absenceCode: row.absenceCode || null,
         holidayFlag: row.isHoliday,
         notes: row.notes || "",
-        
         anomalyFlag: row.status === "warning",
         anomalyMessages: row.messages,
-        
         status: "draft_imported",
         source: "excel_import",
         importBatchId: batchId,
-        
         createdAt: now,
         createdBy: actorUid,
         updatedAt: now,
@@ -346,89 +304,77 @@ export async function executeAttendanceImport(params: {
     await chunkBatch.commit();
   }
 
-  // 5. Audit Log
   await createAuditLog({
     userId: actorUid,
     entityId,
     action: "attendance.batch_imported",
     resourceType: "attendanceImportBatch",
     resourceId: batchId,
-    details: { 
-      rows: previewRows.length, 
-      period: `${batchMetadata.periodStart} to ${batchMetadata.periodEnd}`,
-      totalHours: batchMetadata.totalWorkedHours
-    }
   });
 
   return { batchId, count: previewRows.length };
 }
 
 /**
- * Creates an import batch metadata record.
- * @deprecated Use executeAttendanceImport for atomic transactional logic.
+ * Validates a set of attendance records (status draft_imported -> validated).
  */
-export async function createAttendanceImportBatch(entityId: string, data: Partial<AttendanceImportBatch>, actorUid: string) {
+export async function validateAttendanceRecords(params: {
+  entityId: string;
+  attendanceIds: string[];
+  actorUid: string;
+}) {
+  const { entityId, attendanceIds, actorUid } = params;
   if (!db) throw new Error("Firestore not initialized");
+  if (attendanceIds.length === 0) return;
 
-  const batchRef = doc(collection(db, `entities/${entityId}/attendanceImportBatches`));
-  const importBatchId = batchRef.id;
-
-  const payload = {
-    ...data,
-    batchId: importBatchId,
-    importBatchId,
-    entityId,
-    status: data.status || "previewed",
-    createdAt: serverTimestamp(),
-    createdBy: actorUid,
-  };
-
-  await setDoc(batchRef, payload);
-  return importBatchId;
-}
-
-/**
- * Bulk insertion of attendance records using Firestore batches.
- * @deprecated Use executeAttendanceImport for atomic transactional logic.
- */
-export async function createAttendanceRecordsBatch(
-  entityId: string, 
-  records: Partial<AttendanceRecord>[], 
-  actorUid: string
-) {
-  if (!db) throw new Error("Firestore not initialized");
-  if (records.length === 0) return;
-
-  const batch = writeBatch(db);
   const now = serverTimestamp();
+  const batchIdToUpdate = new Map<string, number>();
 
-  records.forEach(r => {
-    const attendanceId = r.attendanceId || buildAttendanceId(r.employeeId!, r.attendanceDate!);
-    const ref = doc(db!, `entities/${entityId}/attendances`, attendanceId);
+  // Process in chunks of 450 to respect Firestore limits
+  for (let i = 0; i < attendanceIds.length; i += 450) {
+    const chunk = attendanceIds.slice(i, i + 450);
+    const batch = writeBatch(db);
 
-    const payload: Partial<AttendanceRecord> = {
-      ...r,
-      attendanceId,
-      entityId,
-      status: r.status || "draft_imported",
-      source: r.source || "excel_import",
-      createdAt: now,
-      createdBy: actorUid,
+    for (const id of chunk) {
+      const ref = doc(db, `entities/${entityId}/attendances`, id);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) continue;
+      
+      const data = snap.data() as AttendanceRecord;
+      if (data.status !== 'draft_imported') continue;
+
+      batch.update(ref, {
+        status: "validated",
+        validatedAt: now,
+        validatedBy: actorUid,
+        updatedAt: now,
+        updatedBy: actorUid
+      });
+
+      if (data.importBatchId) {
+        batchIdToUpdate.set(data.importBatchId, (batchIdToUpdate.get(data.importBatchId) || 0) + 1);
+      }
+    }
+
+    await batch.commit();
+  }
+
+  // Update Batch Summaries
+  for (const [bId, count] of Array.from(batchIdToUpdate.entries())) {
+    const bRef = doc(db, `entities/${entityId}/attendanceImportBatches`, bId);
+    await updateDoc(bRef, {
+      validatedRowsCount: increment(count),
       updatedAt: now,
-      updatedBy: actorUid,
-    };
-
-    batch.set(ref, payload, { merge: true });
-  });
-
-  await batch.commit();
+      updatedBy: actorUid
+    });
+  }
 
   await createAuditLog({
     userId: actorUid,
     entityId,
-    action: "attendances.batch_import",
+    action: "attendance.bulk_validated",
     resourceType: "attendance",
-    resourceId: records.length.toString(),
-    details: { count: records.length }
+    resourceId: "multiple",
+    details: { count: attendanceIds.length }
   });
 }
