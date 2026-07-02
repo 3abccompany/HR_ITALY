@@ -227,7 +227,7 @@ export default function AttendancesPage() {
           const isHoliday = row.getCell(11).value?.toString() === "Oui";
           const notes = row.getCell(12).value?.toString();
 
-          const punches: AttendancePunch[] = timeIn && timeOut ? [{ type: 'AM' as const, timeIn, timeOut }] : [];
+          const punches: AttendancePunch[] = (timeIn && timeOut) ? [{ type: 'AM' as const, timeIn, timeOut }] : [];
           const hasInput = punches.length > 0 || !!absence || isHoliday || !!notes;
 
           if (!hasInput) {
@@ -811,7 +811,7 @@ export default function AttendancesPage() {
                    {periodType === "monthly" ? (
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
-                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value)} className="rounded-xl" /></div>
+                        <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
                       </div>
                    ) : (
                       <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
@@ -939,27 +939,28 @@ export default function AttendancesPage() {
 }
 
 function SummaryStat({ label, value, color }: { label: string, value: number | string, color: string }) {
-   const colors: any = {
-      slate: "bg-slate-50 text-slate-600 border-slate-100",
-      green: "bg-green-50 text-green-600 border-green-100",
-      orange: "bg-orange-50 text-orange-600 border-orange-100",
-      red: "bg-red-50 text-red-600 border-red-100",
-      blue: "bg-blue-50 text-blue-600 border-blue-100",
-      indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
-   };
-   return (
-      <div className={cn("p-2 rounded-2xl border flex flex-col items-center min-w-[70px]", colors[color] || colors.slate)}>
-         <span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
-         <span className="text-sm font-black leading-none mt-1">{value}</span>
-      </div>
-   );
+  const colorMap: Record<string, string> = {
+    slate: "bg-slate-50 text-slate-600 border-slate-100",
+    green: "bg-green-50 text-green-600 border-green-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    red: "bg-red-50 text-red-600 border-red-100",
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
+  };
+  
+  return (
+    <div className={cn("p-2 rounded-2xl border flex flex-col items-center min-w-[70px]", colorMap[color] || colorMap.slate)}>
+      <span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
+      <span className="text-sm font-black leading-none mt-1">{value}</span>
+    </div>
+  );
 }
 
 function getStatusIcon(status: string) {
-   switch (status) {
-      case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-      case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />;
-      case 'error': return <XCircle className="w-4 h-4 text-red-500" />;
-      default: return null;
-   }
+  switch (status) {
+    case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+    case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />;
+    case 'error': return <XCircle className="w-4 h-4 text-red-500" />;
+    default: return null;
+  }
 }
