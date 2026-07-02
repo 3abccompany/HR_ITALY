@@ -39,7 +39,9 @@ import {
   ArrowUpRight,
   User,
   Building2,
-  MapPin
+  MapPin,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -241,7 +243,7 @@ export default function AttendancesPage() {
       if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
 
       // 2. Status
-      if (registryFilters.status !== "all" && a.status !== registryFilters.status) return false;
+      if (registryFilters.status !== "all" && a.status !== filters.status) return false;
 
       // 3. Search
       if (registryFilters.search) {
@@ -1291,7 +1293,7 @@ export default function AttendancesPage() {
               disabled={isImporting}
               className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/20"
             >
-              {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+              {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
               Confirmer l'importation
             </AlertDialogAction>
           </AlertDialogFooter>

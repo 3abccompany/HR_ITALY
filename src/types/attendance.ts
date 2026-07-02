@@ -20,6 +20,7 @@ export interface AttendancePunch {
 }
 
 export interface AttendanceRecord {
+  id?: string;
   attendanceId: string; // Format: {employeeId}_{YYYY-MM-DD}
   entityId: string;
   employeeId: string;
@@ -82,6 +83,7 @@ export interface AttendanceRecord {
 export type ImportBatchStatus = "previewed" | "imported" | "cancelled" | "failed" | "draft_imported";
 
 export interface AttendanceImportBatch {
+  id?: string;
   batchId: string;
   importBatchId?: string; // Legacy support
   entityId: string;
