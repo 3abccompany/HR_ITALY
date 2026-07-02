@@ -606,7 +606,16 @@ export default function AttendancesPage() {
                                   </TableCell>
                                   <TableCell>
                                      <div className="flex flex-col">
-                                        <span className="text-xs font-medium">{row.date === "TBD" ? row.dayName : format(parseISO(row.date), "dd/MM")}</span>
+                                        <span className="text-xs font-medium">
+                                          {(() => {
+                                            if (row.date === "TBD") return row.dayName;
+                                            try {
+                                              const d = parseISO(row.date);
+                                              if (!isNaN(d.getTime())) return format(d, "dd/MM");
+                                            } catch(e) {}
+                                            return "Date invalide";
+                                          })()}
+                                        </span>
                                         <span className="text-[10px] text-muted-foreground uppercase">{row.dayName}</span>
                                      </div>
                                   </TableCell>
