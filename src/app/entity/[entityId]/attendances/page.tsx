@@ -441,8 +441,13 @@ export default function AttendancesPage() {
           row.getCell(3).numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
           
+          // Overnight-safe Calculation Formula for each pair (AM: G/H, PM: I/J, HS: K/L)
+          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
+          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
+          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
+
           row.getCell(14).value = { 
-            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60), 0)`,
+            formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`,
             result: 0 
           };
           row.getCell(14).numFmt = '0.00';
@@ -460,7 +465,7 @@ export default function AttendancesPage() {
         totalRow.getCell(15).numFmt = '0.00';
         totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         
-        const breakRow = sheet.getRow(sheet.lastRow!.number);
+        const breakRow = sheet.getRow(sheet.lastRow?.number || totalRow.number);
         if (breakRow) (breakRow as any).addPageBreak?.();
       });
       
@@ -489,8 +494,12 @@ export default function AttendancesPage() {
           row.getCell('C').numFmt = 'yyyy-mm-dd';
           ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
 
+          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),IF(H${currentRow}>=G${currentRow},(H${currentRow}-G${currentRow})*24,(H${currentRow}+1-G${currentRow})*24),0)`;
+          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),IF(J${currentRow}>=I${currentRow},(J${currentRow}-I${currentRow})*24,(J${currentRow}+1-I${currentRow})*24),0)`;
+          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),IF(L${currentRow}>=K${currentRow},(L${currentRow}-K${currentRow})*24,(L${currentRow}+1-K${currentRow})*24),0)`;
+
           row.getCell('N').value = { 
-            formula: `IFERROR(MAX(0, (H${currentRow}-G${currentRow})*24) + MAX(0, (J${currentRow}-I${currentRow})*24) + MAX(0, (L${currentRow}-K${currentRow})*24) - M${currentRow}/60, 0)`,
+            formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`,
             result: 0 
           };
           row.getCell('N').numFmt = '0.00';
