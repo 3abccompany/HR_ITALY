@@ -174,7 +174,7 @@ export default function AttendancesPage() {
           const code = row.getCell(1).value?.toString();
           if (!code) return;
 
-          // --- Meaningful Row Detection (Detailed) ---
+          // --- Extraction ---
           const amIn = row.getCell(7).value?.toString();
           const amOut = row.getCell(8).value?.toString();
           const pmIn = row.getCell(9).value?.toString();
@@ -183,14 +183,18 @@ export default function AttendancesPage() {
           const otOut = row.getCell(12).value?.toString();
           
           const valHVal = getVal(row, 15);
-          const validatedH = (valHVal === null || valHVal === undefined || valHVal === "") ? 0 : Number(valHVal);
+          const hasValidEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
+          const validatedH = hasValidEntry ? Number(valHVal) : 0;
           
           const absence = row.getCell(16).value?.toString();
           const isHoliday = row.getCell(17).value?.toString() === "Oui";
           const notes = row.getCell(18).value?.toString();
 
           const hasPunches = !!(amIn || amOut || pmIn || pmOut || otIn || otOut);
-          const hasInput = hasPunches || validatedH > 0 || !!absence || isHoliday || !!notes;
+          
+          // --- Meaningful Row Detection (Detailed) ---
+          // A row is only considered if the user provided SOME input.
+          const hasInput = hasPunches || hasValidEntry || !!absence || isHoliday || !!notes;
 
           if (!hasInput) {
             ignoredCount++;
@@ -213,8 +217,8 @@ export default function AttendancesPage() {
 
           const calc = calculatePunchHours(punches, pause);
           
-          // Official validatedHours: use user entry if provided, otherwise fallback to app calculation
-          const finalValid = (valHVal === null || valHVal === undefined || valHVal === "") ? calc : Number(valHVal);
+          // Fallback: Use manual validatedHours if provided, otherwise use calculated hours
+          const finalValid = hasValidEntry ? validatedH : calc;
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
@@ -725,7 +729,7 @@ export default function AttendancesPage() {
                                         ))}
                                      </div>
                                   </TableCell>
-                               </TableRow>
+                                </TableRow>
                              ))}
                           </TableBody>
                        </Table>
