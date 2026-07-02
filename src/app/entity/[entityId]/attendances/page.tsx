@@ -21,12 +21,13 @@ import {
   ArrowRight,
   ShieldCheck,
   FileWarning,
-  ListFilter
+  ListFilter,
+  Search
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useActiveMembership } from "@/hooks/use-active-membership";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { useCollection, useFirebase } from "@/firebase";
 import { collection, query, where, Query } from "firebase/firestore";
@@ -74,6 +75,7 @@ const ABSENCE_CODES = [
 /**
  * Attendance Registry Page.
  * Phase 3: Excel Upload and Preview with Validation.
+ * Phase 2B-Harden: Improved Pause handling.
  */
 export default function AttendancesPage() {
   const params = useParams();
@@ -177,9 +179,15 @@ export default function AttendancesPage() {
             { type: 'OT', timeIn: row.getCell(11).value?.toString(), timeOut: row.getCell(12).value?.toString() },
           ];
 
-          const pause = Number(getVal(row, 13)) || 0;
+          // Refined Pause handling: default to 0 if empty
+          const pauseVal = getVal(row, 13);
+          const pause = (pauseVal === null || pauseVal === undefined || pauseVal === "") ? 0 : Number(pauseVal);
+
           const calc = calculatePunchHours(punches, pause);
-          const valid = Number(getVal(row, 15)) || calc;
+          
+          // Refined Validated Hours: default to calc if empty
+          const validVal = getVal(row, 15);
+          const valid = (validVal === null || validVal === undefined || validVal === "") ? calc : Number(validVal);
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
@@ -223,7 +231,8 @@ export default function AttendancesPage() {
           ];
 
           dayMap.forEach((day, index) => {
-            const h = Number(getVal(row, day.h)) || 0;
+            const hVal = getVal(row, day.h);
+            const h = (hVal === null || hVal === undefined || hVal === "") ? 0 : Number(hVal);
             const a = row.getCell(day.a).value?.toString();
 
             if (h === 0 && !a) return;
@@ -234,11 +243,11 @@ export default function AttendancesPage() {
               messages: [],
               employeeCode: code,
               employeeName: name,
-              date: "TBD", // Compact mode doesn't store exact date per cell, usually inferred from filename/start date
+              date: "TBD", // Compact mode unpivoting date to be resolved later or inferred
               dayName: day.label,
               worksite: site,
               punches: [],
-              pauseMinutes: 0,
+              pauseMinutes: 0, // No pause columns in compact
               calculatedHours: h,
               validatedHours: h,
               absenceCode: a,
@@ -473,6 +482,9 @@ export default function AttendancesPage() {
     sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
     sheet.addRow(["1. Mode Détaillé : Saisir horaires HH:mm."]);
     sheet.addRow(["2. Mode Compact : Saisir totaux décimaux (ex: 6.5)."]);
+    sheet.addRow(["3. Pause : Saisir en minutes réelles (ex: 30, 45). Si pas de pause : 0 ou laisser vide."]);
+    sheet.addRow(["4. Ne pas saisir 30 par défaut si la pause n'a pas été prise."]);
+    sheet.addRow(["5. Mode Compact : La pause doit déjà être déduite du total saisi (heures nettes)."]);
     sheet.addRow([]);
     sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
     ABSENCE_CODES.forEach(c => sheet.addRow([c]));

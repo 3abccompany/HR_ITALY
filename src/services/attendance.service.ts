@@ -35,6 +35,8 @@ export function calculatePunchHours(punches: AttendancePunch[], pauseMinutes: nu
     const [hIn, mIn] = p.timeIn.split(':').map(Number);
     const [hOut, mOut] = p.timeOut.split(':').map(Number);
 
+    if (isNaN(hIn) || isNaN(mIn) || isNaN(hOut) || isNaN(mOut)) return;
+
     let start = hIn * 60 + mIn;
     let end = hOut * 60 + mOut;
 
@@ -98,7 +100,46 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
     messages.push("Date manquante ou invalide.");
   }
 
-  // 3. Hours Check
+  // 3. Pause Validation
+  const pause = row.pauseMinutes;
+  if (isNaN(pause) || pause < 0) {
+    status = "error";
+    messages.push("Pause invalide (doit être un nombre positif).");
+  }
+
+  // Calculate gross duration if punches exist to verify pause
+  let grossMinutes = 0;
+  if (row.punches && row.punches.length > 0) {
+    let hasCompletePunches = false;
+    row.punches.forEach(p => {
+      if (!p.timeIn || !p.timeOut) return;
+      if (typeof p.timeIn !== 'string' || typeof p.timeOut !== 'string') return;
+      if (!p.timeIn.includes(':') || !p.timeOut.includes(':')) return;
+
+      const [hIn, mIn] = p.timeIn.split(':').map(Number);
+      const [hOut, mOut] = p.timeOut.split(':').map(Number);
+      
+      if (!isNaN(hIn) && !isNaN(mIn) && !isNaN(hOut) && !isNaN(mOut)) {
+        hasCompletePunches = true;
+        let start = hIn * 60 + mIn;
+        let end = hOut * 60 + mOut;
+        if (end < start) end += 24 * 60; // night shift
+        grossMinutes += (end - start);
+      }
+    });
+
+    if (hasCompletePunches) {
+      if (pause > grossMinutes) {
+        status = "error";
+        messages.push("Pause supérieure à la durée travaillée.");
+      } else if (pause > 120) {
+        if (status !== 'error') status = "warning";
+        messages.push("Alerte: Pause supérieure à 2h.");
+      }
+    }
+  }
+
+  // 4. Hours Check
   if (row.validatedHours < 0 || row.calculatedHours < 0) {
     status = "error";
     messages.push("Le total d'heures ne peut pas être négatif.");
@@ -109,15 +150,10 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
     messages.push("Alerte: Durée de travail journalière élevée (> 12h).");
   }
 
-  // 4. Overlap Check
+  // 5. Overlap Check
   if (row.validatedHours > 0 && row.absenceCode) {
     if (status !== 'error') status = "warning";
     messages.push("Alerte: Heures travaillées et code d'absence présents sur la même journée.");
-  }
-
-  // 5. Empty check
-  if (row.validatedHours === 0 && !row.absenceCode) {
-    // This is common for weekends, don't necessarily flag as warning unless preferred
   }
 
   const ABSENCE_CODES = [
