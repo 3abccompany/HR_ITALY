@@ -570,7 +570,7 @@ export default function AttendancesPage() {
     const pStart = startOfDay(new Date(start));
     const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
     
-    const columns = [
+    const columns: any[] = [
       { header: "Code employé", key: "employeeCode", width: 15 },
       { header: "Nom employé", key: "employeeName", width: 25 },
       { header: "Département", key: "department", width: 20 },
