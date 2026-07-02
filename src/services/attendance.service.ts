@@ -31,9 +31,19 @@ export function calculatePunchHours(punches: AttendancePunch[], pauseMinutes: nu
 
   punches.forEach(p => {
     if (!p.timeIn || !p.timeOut) return;
+    
+    // Ignore invalid values flagged during formatting
+    if (p.timeIn === "INVALID" || p.timeOut === "INVALID") return;
 
-    const [hIn, mIn] = p.timeIn.split(':').map(Number);
-    const [hOut, mOut] = p.timeOut.split(':').map(Number);
+    const inParts = p.timeIn.split(':');
+    const outParts = p.timeOut.split(':');
+    
+    if (inParts.length !== 2 || outParts.length !== 2) return;
+
+    const hIn = parseInt(inParts[0], 10);
+    const mIn = parseInt(inParts[1], 10);
+    const hOut = parseInt(outParts[0], 10);
+    const mOut = parseInt(outParts[1], 10);
 
     if (isNaN(hIn) || isNaN(mIn) || isNaN(hOut) || isNaN(mOut)) return;
 
@@ -48,7 +58,8 @@ export function calculatePunchHours(punches: AttendancePunch[], pauseMinutes: nu
     totalMinutes += (end - start);
   });
 
-  const netMinutes = Math.max(0, totalMinutes - pauseMinutes);
+  const netMinutes = Math.max(0, totalMinutes - (Number(pauseMinutes) || 0));
+  // Standardize output as a number with 2 decimal precision
   return Number((netMinutes / 60).toFixed(2));
 }
 
@@ -95,12 +106,19 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
   }
 
   // 2. Date Check
-  if (!row.date) {
+  if (!row.date || row.date === "INVALID") {
     status = "error";
-    messages.push("Date manquante ou invalide.");
+    messages.push("Date invalide ou manquante.");
   }
 
-  // 3. Pause Validation
+  // 3. Time Parsing/Calculation Integrity
+  const invalidPunches = row.punches?.some(p => p.timeIn === "INVALID" || p.timeOut === "INVALID");
+  if (invalidPunches) {
+    status = "error";
+    messages.push("Format horaire invalide (attendu HH:mm).");
+  }
+
+  // 4. Pause Validation
   const pause = row.pauseMinutes;
   if (isNaN(pause) || pause < 0) {
     status = "error";
@@ -112,19 +130,24 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
   if (row.punches && row.punches.length > 0) {
     let hasCompletePunches = false;
     row.punches.forEach(p => {
-      if (!p.timeIn || !p.timeOut) return;
-      if (typeof p.timeIn !== 'string' || typeof p.timeOut !== 'string') return;
-      if (!p.timeIn.includes(':') || !p.timeOut.includes(':')) return;
+      if (!p.timeIn || !p.timeOut || p.timeIn === "INVALID" || p.timeOut === "INVALID") return;
 
-      const [hIn, mIn] = p.timeIn.split(':').map(Number);
-      const [hOut, mOut] = p.timeOut.split(':').map(Number);
+      const inParts = p.timeIn.split(':');
+      const outParts = p.timeOut.split(':');
       
-      if (!isNaN(hIn) && !isNaN(mIn) && !isNaN(hOut) && !isNaN(mOut)) {
-        hasCompletePunches = true;
-        let start = hIn * 60 + mIn;
-        let end = hOut * 60 + mOut;
-        if (end < start) end += 24 * 60; // night shift
-        grossMinutes += (end - start);
+      if (inParts.length === 2 && outParts.length === 2) {
+        const hIn = parseInt(inParts[0], 10);
+        const mIn = parseInt(inParts[1], 10);
+        const hOut = parseInt(outParts[0], 10);
+        const mOut = parseInt(outParts[1], 10);
+        
+        if (!isNaN(hIn) && !isNaN(mIn) && !isNaN(hOut) && !isNaN(mOut)) {
+          hasCompletePunches = true;
+          let start = hIn * 60 + mIn;
+          let end = hOut * 60 + mOut;
+          if (end < start) end += 24 * 60; // night shift
+          grossMinutes += (end - start);
+        }
       }
     });
 
@@ -139,7 +162,7 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
     }
   }
 
-  // 4. Hours Check
+  // 5. Hours Check
   if (row.validatedHours < 0 || row.calculatedHours < 0) {
     status = "error";
     messages.push("Le total d'heures ne peut pas être négatif.");
@@ -150,7 +173,7 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
     messages.push("Alerte: Durée de travail journalière élevée (> 12h).");
   }
 
-  // 5. Overlap Check
+  // 6. Overlap Check
   if (row.validatedHours > 0 && row.absenceCode) {
     if (status !== 'error') status = "warning";
     messages.push("Alerte: Heures travaillées et code d'absence présents sur la même journée.");

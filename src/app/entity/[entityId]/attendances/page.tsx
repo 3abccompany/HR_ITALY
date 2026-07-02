@@ -74,6 +74,47 @@ const ABSENCE_CODES = [
 ];
 
 /**
+ * Helper to convert various ExcelJS cell values (Date, Number, String) 
+ * into a standard "HH:mm" format for internal processing.
+ */
+function formatExcelTimeValue(value: any): string {
+  if (value === null || value === undefined || value === "") return "";
+  
+  let effectiveValue = value;
+  // Handle formula results
+  if (typeof value === 'object' && 'result' in value) {
+    effectiveValue = value.result;
+  }
+
+  // Case 1: Date object (ExcelJS default for time cells)
+  if (effectiveValue instanceof Date) {
+    const h = effectiveValue.getHours().toString().padStart(2, '0');
+    const m = effectiveValue.getMinutes().toString().padStart(2, '0');
+    return `${h}:${m}`;
+  }
+
+  // Case 2: Numeric fraction (e.g. 0.3354166667 for 08:03)
+  if (typeof effectiveValue === 'number') {
+    const totalMinutes = Math.round(effectiveValue * 24 * 60);
+    const h = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+    const m = (totalMinutes % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+  }
+
+  // Case 3: String (fallback or already formatted)
+  if (typeof effectiveValue === 'string') {
+    const clean = effectiveValue.trim();
+    if (/^\d{1,2}:\d{2}$/.test(clean)) {
+      const [h, m] = clean.split(':');
+      return `${h.padStart(2, '0')}:${m}`;
+    }
+  }
+
+  // If there was content but we couldn't parse it
+  return "INVALID";
+}
+
+/**
  * Attendance Registry Page.
  * Phase 3+: Excel Upload and Preview with automated totals and empty row filtering.
  */
@@ -174,17 +215,17 @@ export default function AttendancesPage() {
           const code = row.getCell(1).value?.toString();
           if (!code) return;
 
-          // --- Extraction ---
-          const amIn = row.getCell(7).value?.toString();
-          const amOut = row.getCell(8).value?.toString();
-          const pmIn = row.getCell(9).value?.toString();
-          const pmOut = row.getCell(10).value?.toString();
-          const otIn = row.getCell(11).value?.toString();
-          const otOut = row.getCell(12).value?.toString();
+          // --- Extraction with robust time parsing ---
+          const amIn = formatExcelTimeValue(row.getCell(7).value);
+          const amOut = formatExcelTimeValue(row.getCell(8).value);
+          const pmIn = formatExcelTimeValue(row.getCell(9).value);
+          const pmOut = formatExcelTimeValue(row.getCell(10).value);
+          const otIn = formatExcelTimeValue(row.getCell(11).value);
+          const otOut = formatExcelTimeValue(row.getCell(12).value);
           
           const valHVal = getVal(row, 15);
-          const hasValidEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
-          const validatedH = hasValidEntry ? Number(valHVal) : 0;
+          const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
+          const validatedH = hasManualEntry ? Number(valHVal) : 0;
           
           const absence = row.getCell(16).value?.toString();
           const isHoliday = row.getCell(17).value?.toString() === "Oui";
@@ -193,8 +234,7 @@ export default function AttendancesPage() {
           const hasPunches = !!(amIn || amOut || pmIn || pmOut || otIn || otOut);
           
           // --- Meaningful Row Detection (Detailed) ---
-          // A row is only considered if the user provided SOME input.
-          const hasInput = hasPunches || hasValidEntry || !!absence || isHoliday || !!notes;
+          const hasInput = hasPunches || hasManualEntry || !!absence || isHoliday || !!notes;
 
           if (!hasInput) {
             ignoredCount++;
@@ -215,10 +255,11 @@ export default function AttendancesPage() {
           const pauseVal = getVal(row, 13);
           const pause = (pauseVal === null || pauseVal === undefined || pauseVal === "") ? 0 : Number(pauseVal);
 
+          // Calculate duration from punches in-app
           const calc = calculatePunchHours(punches, pause);
           
-          // Fallback: Use manual validatedHours if provided, otherwise use calculated hours
-          const finalValid = hasValidEntry ? validatedH : calc;
+          // Logic: Prioritize manual "validatedHours" if user filled it, else use calculated duration
+          const finalValid = hasManualEntry ? validatedH : calc;
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
@@ -642,8 +683,8 @@ export default function AttendancesPage() {
              </CardHeader>
              <CardContent className="p-8 space-y-4">
                 <div className={cn(
-                  "border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center",
-                  isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40 cursor-pointer"
+                  "border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
+                  isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40"
                 )}>
                    <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
                    {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <TableIcon className="w-8 h-8 text-accent/30" />}
