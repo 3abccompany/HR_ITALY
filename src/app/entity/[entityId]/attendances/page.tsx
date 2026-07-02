@@ -23,7 +23,10 @@ import {
   FileWarning,
   ListFilter,
   Search,
-  Coffee
+  Coffee,
+  Moon,
+  Sun,
+  AlertTriangle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,7 +39,7 @@ import { Employee } from "@/types/employee";
 import { Department } from "@/types/organization";
 import { Worksite } from "@/types/worksite";
 import { AttendancePreviewRow, AttendancePunch } from "@/types/attendance";
-import { validatePreviewRow, calculatePunchHours } from "@/services/attendance.service";
+import { validatePreviewRow, calculateAttendanceSplits } from "@/services/attendance.service";
 import { 
   format, 
   startOfMonth, 
@@ -110,14 +113,21 @@ function formatExcelTimeValue(value: any): string {
     }
   }
 
-  // If there was content but we couldn't parse it
   return "INVALID";
 }
 
 /**
- * Attendance Registry Page.
- * Phase 3+: Excel Upload and Preview with automated totals and empty row filtering.
+ * Safe date display logic for preview table.
  */
+function formatRowDate(dateStr: string, dayName: string): string {
+  if (dateStr === "TBD") return dayName;
+  try {
+    const d = parseISO(dateStr);
+    if (!isNaN(d.getTime())) return format(d, "dd/MM");
+  } catch (e) {}
+  return "Date invalide";
+}
+
 export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -185,9 +195,8 @@ export default function AttendancesPage() {
       await workbook.xlsx.load(buffer);
 
       const sheet = workbook.getWorksheet("Présences");
-      if (!sheet) throw new Error("La feuille 'Présences' est introuvable dans le fichier.");
+      if (!sheet) throw new Error("La feuille 'Présences' est introuvable.");
 
-      // 1. Detect Mode
       let mode: 'compact' | 'detailed' = 'detailed';
       const row1 = sheet.getRow(1);
       row1.eachCell((cell) => {
@@ -215,7 +224,6 @@ export default function AttendancesPage() {
           const code = row.getCell(1).value?.toString();
           if (!code) return;
 
-          // --- Extraction with robust time parsing ---
           const amIn = formatExcelTimeValue(row.getCell(7).value);
           const amOut = formatExcelTimeValue(row.getCell(8).value);
           const pmIn = formatExcelTimeValue(row.getCell(9).value);
@@ -223,6 +231,9 @@ export default function AttendancesPage() {
           const otIn = formatExcelTimeValue(row.getCell(11).value);
           const otOut = formatExcelTimeValue(row.getCell(12).value);
           
+          const pauseVal = getVal(row, 13);
+          const pause = (pauseVal === null || pauseVal === undefined || pauseVal === "") ? 0 : Number(pauseVal);
+
           const valHVal = getVal(row, 15);
           const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
           const validatedH = hasManualEntry ? Number(valHVal) : 0;
@@ -231,9 +242,13 @@ export default function AttendancesPage() {
           const isHoliday = row.getCell(17).value?.toString() === "Oui";
           const notes = row.getCell(18).value?.toString();
 
-          const hasPunches = !!(amIn || amOut || pmIn || pmOut || otIn || otOut);
-          
-          // --- Meaningful Row Detection (Detailed) ---
+          const punches: AttendancePunch[] = [
+            { type: 'AM', timeIn: amIn, timeOut: amOut },
+            { type: 'PM', timeIn: pmIn, timeOut: pmOut },
+            { type: 'OT', timeIn: otIn, timeOut: otOut },
+          ];
+
+          const hasPunches = punches.some(p => !!(p.timeIn && p.timeOut && p.timeIn !== "INVALID"));
           const hasInput = hasPunches || hasManualEntry || !!absence || isHoliday || !!notes;
 
           if (!hasInput) {
@@ -246,20 +261,8 @@ export default function AttendancesPage() {
           if (rawDate instanceof Date) dateStr = format(rawDate, "yyyy-MM-dd");
           else if (typeof rawDate === 'string') dateStr = rawDate;
 
-          const punches: AttendancePunch[] = [
-            { type: 'AM', timeIn: amIn, timeOut: amOut },
-            { type: 'PM', timeIn: pmIn, timeOut: pmOut },
-            { type: 'OT', timeIn: otIn, timeOut: otOut },
-          ];
-
-          const pauseVal = getVal(row, 13);
-          const pause = (pauseVal === null || pauseVal === undefined || pauseVal === "") ? 0 : Number(pauseVal);
-
-          // Calculate duration from punches in-app
-          const calc = calculatePunchHours(punches, pause);
-          
-          // Logic: Prioritize manual "validatedHours" if user filled it, else use calculated duration
-          const finalValid = hasManualEntry ? validatedH : calc;
+          const splits = calculateAttendanceSplits(punches, pause, isHoliday);
+          const finalValid = hasManualEntry ? validatedH : splits.total;
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
@@ -272,7 +275,11 @@ export default function AttendancesPage() {
             worksite: row.getCell(6).value?.toString() || "",
             punches,
             pauseMinutes: pause,
-            calculatedHours: calc,
+            calculatedHours: splits.total,
+            dayHours: splits.day,
+            nightHours: splits.night,
+            overtimeHours: splits.overtime,
+            holidayWorkedHours: splits.holiday,
             validatedHours: finalValid,
             absenceCode: absence || undefined,
             isHoliday,
@@ -282,7 +289,6 @@ export default function AttendancesPage() {
           rows.push(validatePreviewRow(previewRow, employeesMapByCode));
         });
       } else {
-        // COMPACT MODE UNPIVOTING
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const code = row.getCell(1).value?.toString();
@@ -292,12 +298,8 @@ export default function AttendancesPage() {
           const site = row.getCell(4).value?.toString() || "";
 
           const dayMap = [
-            { label: "Lundi", h: 5, a: 6 },
-            { label: "Mardi", h: 7, a: 8 },
-            { label: "Mercredi", h: 9, a: 10 },
-            { label: "Jeudi", h: 11, a: 12 },
-            { label: "Vendredi", h: 13, a: 14 },
-            { label: "Samedi", h: 15, a: 16 },
+            { label: "Lundi", h: 5, a: 6 }, { label: "Mardi", h: 7, a: 8 }, { label: "Mercredi", h: 9, a: 10 },
+            { label: "Jeudi", h: 11, a: 12 }, { label: "Vendredi", h: 13, a: 14 }, { label: "Samedi", h: 15, a: 16 },
             { label: "Dimanche", h: 17, a: 18 },
           ];
 
@@ -323,6 +325,10 @@ export default function AttendancesPage() {
               punches: [],
               pauseMinutes: 0, 
               calculatedHours: h,
+              dayHours: h, // In compact mode, we assume all entered hours are Day unless corrected manually
+              nightHours: 0,
+              overtimeHours: 0,
+              holidayWorkedHours: 0,
               validatedHours: h,
               absenceCode: a,
               isHoliday: false,
@@ -336,7 +342,7 @@ export default function AttendancesPage() {
 
       setPreviewRows(rows);
       setIgnoredRowsCount(ignoredCount);
-      toast({ title: "Fichier analysé", description: `${rows.length} lignes extraites, ${ignoredCount} lignes vides ignorées.` });
+      toast({ title: "Fichier analysé", description: `${rows.length} lignes extraites.` });
     } catch (err: any) {
       console.error("[Excel Parsing Error]", err);
       setUploadError(err.message || "Erreur lors de la lecture du fichier.");
@@ -348,17 +354,13 @@ export default function AttendancesPage() {
 
   const handleDownloadTemplate = async () => {
     if (!employees || employees.length === 0) {
-      alert("Aucun employé actif trouvé pour générer le modèle.");
+      alert("Aucun employé actif trouvé.");
       return;
     }
 
     setIsDownloading(true);
     try {
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = "HR Nexus Studio";
-      workbook.lastModifiedBy = "HR Nexus Studio";
-      workbook.created = new Date();
-      
       const sheet1 = workbook.addWorksheet("Présences");
       const sheet2 = workbook.addWorksheet("Guide & Référentiels");
 
@@ -377,14 +379,9 @@ export default function AttendancesPage() {
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      const fileName = `modele_presences_${inputMode}_${periodType}_${format(new Date(), "yyyyMMdd")}.xlsx`;
-      anchor.download = fileName;
+      anchor.download = `modele_presences_${inputMode}_${periodType}_${format(new Date(), "yyyyMMdd")}.xlsx`;
       anchor.click();
       window.URL.revokeObjectURL(url);
-      
-    } catch (err: any) {
-      console.error("[Template Generation Error]", err);
-      alert("Une erreur est survenue lors de la génération du fichier.");
     } finally {
       setIsDownloading(false);
     }
@@ -463,7 +460,7 @@ export default function AttendancesPage() {
         totalRow.getCell(15).numFmt = '0.00';
         totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         
-        const breakRow = sheet.lastRow;
+        const breakRow = sheet.getRow(sheet.lastRow!.number);
         if (breakRow) (breakRow as any).addPageBreak?.();
       });
       
@@ -559,11 +556,9 @@ export default function AttendancesPage() {
     sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
     sheet.addRow(["1. Mode Détaillé : Saisir horaires HH:mm."]);
     sheet.addRow(["2. Mode Compact : Saisir totaux décimaux (ex: 6.5)."]);
-    sheet.addRow(["3. Pause : Saisir en minutes réelles (ex: 30, 45). Si pas de pause : 0 ou laisser vide."]);
-    sheet.addRow(["4. Ne pas saisir 30 par défaut si la pause n'a pas été prise."]);
-    sheet.addRow(["5. Mode Compact : La pause doit déjà être déduite du total saisi (heures nettes)."]);
-    sheet.addRow(["6. Le réglage 'Pause par défaut' sert seulement à pré-remplir le modèle."]);
-    sheet.addRow(["7. La valeur officielle importée sera celle saisie dans le fichier Excel."]);
+    sheet.addRow(["3. Pause : Saisir en minutes réelles (ex: 30, 45). Si pas de pause : 0."]);
+    sheet.addRow(["4. En mode compact, saisir les heures nettes validées, pause déjà déduite."]);
+    sheet.addRow(["5. Heures de nuit : Calculées entre 22:00 et 06:00 par le système."]);
     sheet.addRow([]);
     sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
     ABSENCE_CODES.forEach(c => sheet.addRow([c]));
@@ -575,14 +570,19 @@ export default function AttendancesPage() {
       valid: previewRows.filter(r => r.status === 'valid').length,
       warning: previewRows.filter(r => r.status === 'warning').length,
       error: previewRows.filter(r => r.status === 'error').length,
-      totalCalcHours: 0,
-      totalValidHours: 0,
+      totalHours: 0,
+      dayHours: 0,
+      nightHours: 0,
+      overtimeHours: 0,
+      absencesCount: previewRows.filter(r => !!r.absenceCode).length,
       importableDays: previewRows.length
     };
 
     previewRows.forEach(r => {
-      stats.totalCalcHours += r.calculatedHours || 0;
-      stats.totalValidHours += r.validatedHours || 0;
+      stats.totalHours += r.validatedHours || 0;
+      stats.dayHours += r.dayHours || 0;
+      stats.nightHours += r.nightHours || 0;
+      stats.overtimeHours += r.overtimeHours || 0;
     });
 
     return stats;
@@ -591,10 +591,8 @@ export default function AttendancesPage() {
   if (membershipLoading) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
   if (!canRead) return null;
 
-  const showCustomPause = defaultPause === 'custom';
-
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 pb-32">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 pb-24">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="bg-primary p-2 rounded-xl text-white shadow-lg shadow-primary/20"><Clock className="w-6 h-6" /></div>
@@ -603,7 +601,6 @@ export default function AttendancesPage() {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Template Generation */}
         <div className="lg:col-span-1 space-y-6">
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden">
              <CardHeader className="bg-primary/5 border-b py-6 px-8">
@@ -629,9 +626,9 @@ export default function AttendancesPage() {
                    </div>
                    
                    {inputMode === 'detailed' && (
-                      <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                      <div className="space-y-2">
                          <Label className="text-[10px] uppercase font-black flex items-center gap-1">
-                           <Coffee className="w-3 h-3" /> Pause par défaut du modèle détaillé
+                           <Coffee className="w-3 h-3" /> Pause par défaut
                          </Label>
                          <div className="flex gap-2">
                             <Select value={defaultPause} onValueChange={setDefaultPause}>
@@ -642,43 +639,36 @@ export default function AttendancesPage() {
                                 <SelectItem value="30">30 min</SelectItem>
                                 <SelectItem value="45">45 min</SelectItem>
                                 <SelectItem value="60">60 min</SelectItem>
-                                <SelectItem value="custom">Personnalisé</SelectItem>
+                                <SelectItem value="custom">Perso...</SelectItem>
                               </SelectContent>
                             </Select>
-                            {showCustomPause && (
-                              <Input 
-                                type="number" 
-                                placeholder="Minutes..." 
-                                value={customPause} 
-                                onChange={(e) => setCustomPause(e.target.value)}
-                                className="w-24 rounded-xl"
-                              />
+                            {defaultPause === 'custom' && (
+                              <Input type="number" placeholder="Min..." value={customPause} onChange={(e) => setCustomPause(e.target.value)} className="w-20 rounded-xl" />
                             )}
                          </div>
                       </div>
                    )}
 
                    {periodType === "monthly" ? (
-                      <div className="grid grid-cols-2 gap-3 animate-in fade-in">
+                      <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Mois</Label><Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 12 }, (_, i) => i + 1).map(m => (<SelectItem key={m} value={String(m)}>{format(new Date(2024, m - 1), "MMMM", { locale: fr })}</SelectItem>))}</SelectContent></Select></div>
                         <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Année</Label><Input type="number" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="rounded-xl" /></div>
                       </div>
                    ) : (
-                      <div className="space-y-2 animate-in fade-in"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
+                      <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
                    )}
                 </div>
                 <Button onClick={handleDownloadTemplate} disabled={isDownloading} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
                    {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-                   Télécharger le modèle
+                   Télécharger modèle
                 </Button>
              </CardContent>
           </Card>
 
-          {/* Upload Card */}
           <Card className="rounded-[2rem] border-accent/20 shadow-xl shadow-accent/5 overflow-hidden">
              <CardHeader className="bg-accent/10 border-b py-6 px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-accent-foreground flex items-center gap-2">
-                   <Upload className="w-4 h-4" /> Importer un fichier Excel
+                   <Upload className="w-4 h-4" /> Importer
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-8 space-y-4">
@@ -688,34 +678,37 @@ export default function AttendancesPage() {
                 )}>
                    <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
                    {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <TableIcon className="w-8 h-8 text-accent/30" />}
-                   <p className="text-xs font-bold text-slate-600">{isReading ? "Analyse en cours..." : "Cliquer ou glissez le fichier rempli"}</p>
-                   <p className="text-[10px] text-muted-foreground uppercase font-black">Format .xlsx uniquement</p>
+                   <p className="text-xs font-bold text-slate-600">Choisir le fichier rempli</p>
+                   <p className="text-[10px] text-muted-foreground uppercase font-black">.xlsx uniquement</p>
                 </div>
                 {uploadError && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="w-4 h-4" /><AlertDescription>{uploadError}</AlertDescription></Alert>}
              </CardContent>
           </Card>
         </div>
 
-        {/* Preview Area */}
         <div className="lg:col-span-2 space-y-6">
            {previewRows.length > 0 ? (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
-                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between bg-white p-6 rounded-[2rem] border shadow-lg gap-6">
-                    <div className="flex flex-wrap gap-4">
-                       <SummaryStat label="Lignes importables" value={previewStats.importableDays} color="blue" />
-                       <SummaryStat label="H. Calculées" value={previewStats.totalCalcHours.toFixed(1)} color="slate" />
-                       <SummaryStat label="H. Validées" value={previewStats.totalValidHours.toFixed(1)} color="green" />
-                       {ignoredRowsCount > 0 && <SummaryStat label="Vides ignorées" value={ignoredRowsCount} color="slate" />}
-                    </div>
-                    <div className="flex gap-2 shrink-0">
-                       <Button variant="ghost" onClick={() => { setPreviewRows([]); setIgnoredRowsCount(0); }} className="rounded-xl h-12 px-6 font-bold uppercase text-xs">Annuler</Button>
-                       <Button disabled className="h-12 rounded-xl px-10 font-black shadow-lg shadow-green-100 gap-2 opacity-50">
-                          <CheckCircle2 className="w-4 h-4" /> Importer
-                       </Button>
-                    </div>
+                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 bg-white p-6 rounded-[2rem] border shadow-lg">
+                    <SummaryStat label="H. Totales" value={previewStats.totalHours.toFixed(1)} color="blue" />
+                    <SummaryStat label="H. Jour" value={previewStats.dayHours.toFixed(1)} color="slate" />
+                    <SummaryStat label="H. Nuit" value={previewStats.nightHours.toFixed(1)} color="indigo" />
+                    <SummaryStat label="H. Sup" value={previewStats.overtimeHours.toFixed(1)} color="orange" />
+                    <SummaryStat label="Absences" value={previewStats.absencesCount} color="slate" />
+                    <SummaryStat label="Alertes" value={previewStats.warning} color="orange" />
+                    <SummaryStat label="Erreurs" value={previewStats.error} color="red" />
+                    <SummaryStat label="Ignorées" value={ignoredRowsCount} color="slate" />
                  </div>
 
                  <Card className="rounded-[2rem] border-primary/10 shadow-xl overflow-hidden bg-white">
+                    {previewRows[0]?.date === "TBD" && (
+                       <div className="bg-orange-50 p-4 border-b flex items-center gap-3 text-orange-800">
+                          <AlertTriangle className="w-5 h-5 shrink-0" />
+                          <p className="text-xs font-bold leading-tight">
+                            Mode compact détecté : Ventilation jour/nuit et heures sup. non disponible automatiquement.
+                          </p>
+                       </div>
+                    )}
                     <ScrollArea className="h-[600px] w-full">
                        <Table>
                           <TableHeader className="bg-slate-50 sticky top-0 z-10">
@@ -723,10 +716,11 @@ export default function AttendancesPage() {
                                 <TableHead className="pl-6 w-[80px]">Status</TableHead>
                                 <TableHead>Collaborateur</TableHead>
                                 <TableHead>Date</TableHead>
-                                <TableHead className="text-center">Pause</TableHead>
-                                <TableHead className="text-center">Heures (Val.)</TableHead>
-                                <TableHead>Absence</TableHead>
-                                <TableHead className="pr-6">Messages</TableHead>
+                                <TableHead className="text-center">H. Totales</TableHead>
+                                <TableHead className="text-center">Jour</TableHead>
+                                <TableHead className="text-center">Nuit</TableHead>
+                                <TableHead className="text-center">Sup.</TableHead>
+                                <TableHead>Messages</TableHead>
                              </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -735,39 +729,27 @@ export default function AttendancesPage() {
                                   <TableCell className="pl-6">{getStatusIcon(row.status)}</TableCell>
                                   <TableCell>
                                      <div className="flex flex-col">
-                                        <span className="font-bold text-slate-800 text-xs">{row.employeeName || row.employeeCode}</span>
+                                        <span className="font-bold text-slate-800 text-xs">{row.employeeName}</span>
                                         <span className="text-[10px] text-muted-foreground font-mono">{row.employeeCode}</span>
                                      </div>
                                   </TableCell>
                                   <TableCell>
                                      <div className="flex flex-col">
-                                        <span className="text-xs font-medium">
-                                          {(() => {
-                                            if (row.date === "TBD") return row.dayName;
-                                            try {
-                                              const d = parseISO(row.date);
-                                              if (!isNaN(d.getTime())) return format(d, "dd/MM");
-                                            } catch(e) {}
-                                            return "Date invalide";
-                                          })()}
-                                        </span>
+                                        <span className="text-xs font-medium">{formatRowDate(row.date, row.dayName)}</span>
                                         <span className="text-[10px] text-muted-foreground uppercase">{row.dayName}</span>
                                      </div>
                                   </TableCell>
-                                  <TableCell className="text-center font-bold text-[10px] text-muted-foreground">
-                                     {row.punches && row.punches.length > 0 ? `${row.pauseMinutes}m` : "—"}
-                                  </TableCell>
-                                  <TableCell className="text-center font-black text-xs text-primary">{row.validatedHours.toFixed(2)}</TableCell>
-                                  <TableCell>
-                                     {row.absenceCode ? <Badge variant="outline" className="text-[9px] uppercase font-bold border-orange-200 text-orange-700 bg-orange-50">{row.absenceCode}</Badge> : "—"}
-                                  </TableCell>
+                                  <TableCell className="text-center font-black text-xs text-primary bg-primary/5">{row.validatedHours.toFixed(2)}</TableCell>
+                                  <TableCell className="text-center text-xs font-medium text-slate-600"><div className="flex items-center justify-center gap-1">{row.dayHours > 0 && <Sun className="w-2.5 h-2.5 text-orange-400" />} {row.dayHours.toFixed(2)}</div></TableCell>
+                                  <TableCell className="text-center text-xs font-medium text-slate-600"><div className="flex items-center justify-center gap-1">{row.nightHours > 0 && <Moon className="w-2.5 h-2.5 text-indigo-400" />} {row.nightHours.toFixed(2)}</div></TableCell>
+                                  <TableCell className="text-center text-xs font-black text-orange-600">{row.overtimeHours > 0 ? `+${row.overtimeHours.toFixed(2)}` : "—"}</TableCell>
                                   <TableCell className="pr-6">
                                      <div className="space-y-1">
                                         {row.messages.map((m, idx) => (
-                                          <div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>
-                                             • {m}
-                                          </div>
+                                          <div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>• {m}</div>
                                         ))}
+                                        {row.absenceCode && <Badge variant="outline" className="text-[8px] uppercase border-orange-200 text-orange-700 bg-orange-50 font-black">{row.absenceCode}</Badge>}
+                                        {row.isHoliday && <Badge variant="outline" className="text-[8px] uppercase border-blue-200 text-blue-700 bg-blue-50 font-black ml-1">Férié</Badge>}
                                      </div>
                                   </TableCell>
                                 </TableRow>
@@ -777,10 +759,7 @@ export default function AttendancesPage() {
                        <ScrollBar orientation="horizontal" />
                     </ScrollArea>
                     <div className="bg-secondary/20 p-4 border-t flex items-center justify-between text-[10px] font-black uppercase text-muted-foreground tracking-widest px-8">
-                       <span className="flex items-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-green-600" /> 
-                          {previewStats.valid} lignes valides prêtes pour l'intégration.
-                       </span>
+                       <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-600" /> {previewStats.valid} lignes prêtes.</span>
                        <span className="flex items-center gap-2 font-bold"><ShieldCheck className="w-4 h-4" /> Import réel prévu en phase suivante</span>
                     </div>
                  </Card>
@@ -789,8 +768,8 @@ export default function AttendancesPage() {
               <div className="flex flex-col items-center justify-center min-h-[500px] border-2 border-dashed rounded-[3rem] bg-secondary/5 opacity-50 space-y-4">
                  <div className="bg-white p-6 rounded-full shadow-sm"><TableIcon className="w-12 h-12 text-slate-200" /></div>
                  <div className="text-center space-y-1">
-                   <h3 className="font-black text-slate-400 uppercase text-xs tracking-widest">Prévisualisation d'import</h3>
-                   <p className="text-xs text-slate-400 italic">Téléversez un fichier pour voir le rapport de conformité.</p>
+                   <h3 className="font-black text-slate-400 uppercase text-xs tracking-widest">Prévisualisation</h3>
+                   <p className="text-xs text-slate-400 italic">Téléversez un fichier pour voir la ventilation des heures.</p>
                  </div>
               </div>
            )}
@@ -806,21 +785,22 @@ function SummaryStat({ label, value, color }: { label: string, value: number | s
       green: "bg-green-50 text-green-600 border-green-100",
       orange: "bg-orange-50 text-orange-600 border-orange-100",
       red: "bg-red-50 text-red-600 border-red-100",
-      blue: "bg-blue-50 text-blue-600 border-blue-100"
+      blue: "bg-blue-50 text-blue-600 border-blue-100",
+      indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
    };
    return (
-      <div className={cn("px-4 py-2 rounded-2xl border flex flex-col items-center min-w-[80px]", colors[color] || colors.slate)}>
-         <span className="text-[9px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
-         <span className="text-lg font-black leading-none mt-1">{value}</span>
+      <div className={cn("p-2 rounded-2xl border flex flex-col items-center min-w-[70px]", colors[color] || colors.slate)}>
+         <span className="text-[7px] font-black uppercase tracking-tighter opacity-70 whitespace-nowrap">{label}</span>
+         <span className="text-sm font-black leading-none mt-1">{value}</span>
       </div>
    );
 }
 
 function getStatusIcon(status: string) {
    switch (status) {
-      case 'valid': return <CheckCircle2 className="w-5 h-5 text-green-500" />;
-      case 'warning': return <FileWarning className="w-5 h-5 text-orange-500" />;
-      case 'error': return <XCircle className="w-5 h-5 text-red-500" />;
+      case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+      case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />;
+      case 'error': return <XCircle className="w-4 h-4 text-red-500" />;
       default: return null;
    }
 }

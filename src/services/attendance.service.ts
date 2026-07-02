@@ -23,21 +23,40 @@ export function buildAttendanceId(employeeId: string, attendanceDate: string): s
 }
 
 /**
- * Calculates total hours for a set of punches.
- * Handles overnight shifts if timeOut < timeIn.
+ * Split results for an attendance calculation.
  */
-export function calculatePunchHours(punches: AttendancePunch[], pauseMinutes: number = 0): number {
-  let totalMinutes = 0;
+export interface AttendanceSplits {
+  total: number;
+  day: number;
+  night: number;
+  overtime: number;
+  holiday: number;
+}
+
+/**
+ * Calculates total hours and Day/Night/Overtime splits for a set of punches.
+ * Day period: 06:00 -> 22:00
+ * Night period: 22:00 -> 06:00
+ * Overtime: > 8h total
+ */
+export function calculateAttendanceSplits(
+  punches: AttendancePunch[], 
+  pauseMinutes: number = 0,
+  isHoliday: boolean = false,
+  ordinaryThreshold: number = 8
+): AttendanceSplits {
+  let grossDayMinutes = 0;
+  let grossNightMinutes = 0;
+
+  const DAY_START = 6 * 60;   // 06:00
+  const DAY_END = 22 * 60;     // 22:00
+  const TOTAL_MINS = 24 * 60;  // 1440
 
   punches.forEach(p => {
-    if (!p.timeIn || !p.timeOut) return;
-    
-    // Ignore invalid values flagged during formatting
-    if (p.timeIn === "INVALID" || p.timeOut === "INVALID") return;
+    if (!p.timeIn || !p.timeOut || p.timeIn === "INVALID" || p.timeOut === "INVALID") return;
 
     const inParts = p.timeIn.split(':');
     const outParts = p.timeOut.split(':');
-    
     if (inParts.length !== 2 || outParts.length !== 2) return;
 
     const hIn = parseInt(inParts[0], 10);
@@ -50,17 +69,54 @@ export function calculatePunchHours(punches: AttendancePunch[], pauseMinutes: nu
     let start = hIn * 60 + mIn;
     let end = hOut * 60 + mOut;
 
-    // If exit is before entry, assume it crosses midnight (Overnight)
+    // Standardize intervals for Day/Night calculation
+    const intervals: { s: number, e: number }[] = [];
     if (end < start) {
-      end += 24 * 60;
+      // Overnight shift
+      intervals.push({ s: start, e: TOTAL_MINS });
+      intervals.push({ s: 0, e: end });
+    } else {
+      intervals.push({ s: start, e: end });
     }
 
-    totalMinutes += (end - start);
+    intervals.forEach(range => {
+      // Overlap with Day [360, 1320]
+      const dayOverlap = Math.max(0, Math.min(range.e, DAY_END) - Math.max(range.s, DAY_START));
+      const totalOverlap = range.e - range.s;
+      
+      grossDayMinutes += dayOverlap;
+      grossNightMinutes += (totalOverlap - dayOverlap);
+    });
   });
 
-  const netMinutes = Math.max(0, totalMinutes - (Number(pauseMinutes) || 0));
-  // Standardize output as a number with 2 decimal precision
-  return Number((netMinutes / 60).toFixed(2));
+  const grossTotalMinutes = grossDayMinutes + grossNightMinutes;
+  const netTotalMinutes = Math.max(0, grossTotalMinutes - pauseMinutes);
+  
+  // Deduct pause proportionally from day/night
+  let netDayMinutes = grossDayMinutes;
+  let netNightMinutes = grossNightMinutes;
+
+  if (grossTotalMinutes > 0 && pauseMinutes > 0) {
+    const ratio = pauseMinutes / grossTotalMinutes;
+    netDayMinutes = Math.max(0, grossDayMinutes - (grossDayMinutes * ratio));
+    netNightMinutes = Math.max(0, grossNightMinutes - (grossNightMinutes * ratio));
+  }
+
+  const total = Number((netTotalMinutes / 60).toFixed(2));
+  const day = Number((netDayMinutes / 60).toFixed(2));
+  const night = Number((netNightMinutes / 60).toFixed(2));
+  const overtime = Number(Math.max(0, total - ordinaryThreshold).toFixed(2));
+  const holiday = isHoliday ? total : 0;
+
+  return { total, day, night, overtime, holiday };
+}
+
+/**
+ * @deprecated Use calculateAttendanceSplits for full breakdown
+ */
+export function calculatePunchHours(punches: AttendancePunch[], pauseMinutes: number = 0): number {
+  const result = calculateAttendanceSplits(punches, pauseMinutes);
+  return result.total;
 }
 
 /**
@@ -125,43 +181,6 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
     messages.push("Pause invalide (doit être un nombre positif).");
   }
 
-  // Calculate gross duration if punches exist to verify pause
-  let grossMinutes = 0;
-  if (row.punches && row.punches.length > 0) {
-    let hasCompletePunches = false;
-    row.punches.forEach(p => {
-      if (!p.timeIn || !p.timeOut || p.timeIn === "INVALID" || p.timeOut === "INVALID") return;
-
-      const inParts = p.timeIn.split(':');
-      const outParts = p.timeOut.split(':');
-      
-      if (inParts.length === 2 && outParts.length === 2) {
-        const hIn = parseInt(inParts[0], 10);
-        const mIn = parseInt(inParts[1], 10);
-        const hOut = parseInt(outParts[0], 10);
-        const mOut = parseInt(outParts[1], 10);
-        
-        if (!isNaN(hIn) && !isNaN(mIn) && !isNaN(hOut) && !isNaN(mOut)) {
-          hasCompletePunches = true;
-          let start = hIn * 60 + mIn;
-          let end = hOut * 60 + mOut;
-          if (end < start) end += 24 * 60; // night shift
-          grossMinutes += (end - start);
-        }
-      }
-    });
-
-    if (hasCompletePunches) {
-      if (pause > grossMinutes) {
-        status = "error";
-        messages.push("Pause supérieure à la durée travaillée.");
-      } else if (pause > 120) {
-        if (status !== 'error') status = "warning";
-        messages.push("Alerte: Pause supérieure à 2h.");
-      }
-    }
-  }
-
   // 5. Hours Check
   if (row.validatedHours < 0 || row.calculatedHours < 0) {
     status = "error";
@@ -189,11 +208,14 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
     messages.push(`Code absence '${row.absenceCode}' non reconnu.`);
   }
 
+  const emp = employeesMap.get(row.employeeCode);
+
   return {
     ...row,
     status,
     messages,
-    employeeId: employeesMap.get(row.employeeCode)?.employeeId
+    employeeId: emp?.employeeId,
+    personId: emp?.personId || null
   };
 }
 

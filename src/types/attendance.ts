@@ -108,6 +108,7 @@ export interface AttendancePreviewRow {
   employeeCode: string;
   employeeName: string;
   employeeId?: string;
+  personId?: string | null;
   date: string;
   dayName: string;
   worksite?: string;
@@ -115,7 +116,14 @@ export interface AttendancePreviewRow {
   
   punches: AttendancePunch[];
   pauseMinutes: number;
+  
+  // Calculated Splits
   calculatedHours: number;
+  dayHours: number;
+  nightHours: number;
+  overtimeHours: number;
+  holidayWorkedHours: number;
+  
   validatedHours: number;
   absenceCode?: string;
   isHoliday: boolean;
