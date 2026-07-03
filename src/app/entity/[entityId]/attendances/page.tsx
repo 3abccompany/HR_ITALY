@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
@@ -821,7 +820,7 @@ export default function AttendancesPage() {
     setExpandedEmployees(prev => {
       const next = new Set(prev);
       if (next.has(employeeId)) next.delete(employeeId);
-      else next.add(id);
+      else next.add(employeeId);
       return next;
     });
   };
