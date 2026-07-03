@@ -5,11 +5,12 @@ import { useParams } from "next/navigation";
 import { 
   CalendarDays, Plus, Loader2, Calendar as CalendarIcon, 
   Trash2, ShieldCheck, RefreshCw, AlertCircle, Info,
-  CheckCircle2, Filter, X, ListFilter
+  CheckCircle2, Filter, X, ListFilter, Save
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +18,6 @@ import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, where, orderBy, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
-  listHolidays, 
   seedItalianNationalHolidays, 
   createHoliday, 
   archiveHoliday 
@@ -40,7 +40,9 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
-import { startOfYear, endOfYear, format } from "date-fns";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { startOfYear, endOfYear, format, parseISO } from "date-fns";
+import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 
 const initialForm = {
@@ -86,7 +88,7 @@ export default function HolidaysRegistryPage() {
   const [archivingId, setArchivingId] = useState<string | null>(null);
 
   const canManage = hasPermission("settings.manage");
-  const canRead = hasPermission("settings.read");
+  const canRead = hasPermission("settings.read") || hasPermission("attendances.read");
 
   // --- Query ---
   const holidaysQuery = useMemo(() => {
