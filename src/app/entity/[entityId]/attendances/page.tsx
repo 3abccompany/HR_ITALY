@@ -114,6 +114,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import ExcelJS from "exceljs";
+import { listHolidays } from "@/services/holiday.service";
 
 const ABSENCE_CODES = [
   "paid_leave",
@@ -484,7 +485,8 @@ export default function AttendancesPage() {
           ];
 
           dayMap.forEach((day, index) => {
-            const actualDate = format(addDays(baseDate, index), "yyyy-MM-dd");
+            const actualDateObj = addDays(baseDate, index);
+            const actualDate = format(actualDateObj, "yyyy-MM-dd");
             const timeIn = formatExcelTimeValue(row.getCell(day.in).value);
             const timeOut = formatExcelTimeValue(row.getCell(day.out).value);
             const pause = Number(getVal(row, day.pause)) || 0;
@@ -495,13 +497,21 @@ export default function AttendancesPage() {
               : [];
             
             const hasInput = punches.length > 0 || !!absence;
-            if (!hasInput) { ignoredCount++; return; }
+            const dayNum = actualDateObj.getDay();
+            const isExpectedWorkDay = dayNum !== 0 && dayNum !== 6;
+
+            if (!hasInput) {
+              if (!isExpectedWorkDay) {
+                ignoredCount++;
+                return;
+              }
+            }
 
             const splits = calculateAttendanceSplits(punches, pause, false);
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
-              status: "valid",
-              messages: [],
+              status: hasInput ? "valid" : "warning",
+              messages: hasInput ? [] : ["Absence à analyser"],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
               date: actualDate,
@@ -553,9 +563,6 @@ export default function AttendancesPage() {
           const splits = calculateAttendanceSplits(punches, pause, isHoliday);
           const hasInput = punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes;
 
-          if (!hasInput) { ignoredCount++; return; }
-
-          const finalValid = hasManualEntry ? Number(valHVal) : splits.total;
           const rawDate = getVal(row, 3);
           let dateStr = "";
           if (rawDate instanceof Date) {
@@ -567,10 +574,22 @@ export default function AttendancesPage() {
             dateStr = rawDate.toString();
           }
 
+          if (!hasInput) {
+            const dateObj = parseISO(dateStr);
+            const dayNum = dateObj.getDay();
+            const isExpectedWorkDay = dayNum !== 0 && dayNum !== 6;
+            if (!isExpectedWorkDay) {
+              ignoredCount++;
+              return;
+            }
+          }
+
+          const finalValid = hasManualEntry ? Number(valHVal) : splits.total;
+
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
-            status: "valid",
-            messages: [],
+            status: hasInput ? "valid" : "warning",
+            messages: hasInput ? [] : ["Absence à analyser"],
             employeeCode: code,
             employeeName: row.getCell(2).value?.toString() || "",
             date: dateStr,
@@ -605,17 +624,26 @@ export default function AttendancesPage() {
           ];
 
           dayMap.forEach((day, index) => {
-            const actualDate = format(addDays(baseDate, index), "yyyy-MM-dd");
+            const actualDateObj = addDays(baseDate, index);
+            const actualDate = format(actualDateObj, "yyyy-MM-dd");
             const hVal = getVal(row, day.h);
             const h = Number(hVal) || 0;
             const a = row.getCell(day.a).value?.toString();
 
-            if (h === 0 && !a) { ignoredCount++; return; }
+            const hasInput = h > 0 || !!a;
+            if (!hasInput) {
+               const dayNum = actualDateObj.getDay();
+               const isExpectedWorkDay = dayNum !== 0 && dayNum !== 6;
+               if (!isExpectedWorkDay) {
+                 ignoredCount++;
+                 return;
+               }
+            }
 
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
-              status: "valid",
-              messages: [],
+              status: hasInput ? "valid" : "warning",
+              messages: hasInput ? [] : ["Absence à analyser"],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
               date: actualDate,
@@ -645,6 +673,7 @@ export default function AttendancesPage() {
       console.error("[Excel Parsing Error]", err);
       setUploadError(err.message || "Erreur lors de la lecture du fichier.");
     } finally {
+      setLoading(false);
       setIsReading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -1116,8 +1145,8 @@ export default function AttendancesPage() {
                                         <TableCell className="pr-6">
                                           <div className="space-y-1">
                                               {row.messages.map((m, idx) => (<div key={idx} className={cn("text-[10px] font-bold leading-tight", row.status === 'error' ? "text-red-600" : "text-orange-600")}>• {m}</div>))}
-                                              {row.absenceCode && <Badge variant="outline" className="text-[8px] uppercase border-orange-200 text-orange-700 bg-orange-50 font-black">{row.absenceCode}</Badge>}
-                                              {row.isHoliday && <Badge variant="outline" className="text-[8px] uppercase border-blue-200 text-blue-700 bg-blue-50 font-black ml-1">Férié</Badge>}
+                                              {row.absenceCode && <Badge className="text-[8px] uppercase border-orange-200 text-orange-700 bg-orange-50 font-black h-4 px-1.5">{row.absenceCode}</Badge>}
+                                              {row.isHoliday && <Badge className="text-[8px] uppercase border-blue-200 text-blue-700 bg-blue-50 font-black ml-1 h-4 px-1.5">Férié</Badge>}
                                           </div>
                                         </TableCell>
                                       </TableRow>
@@ -1310,6 +1339,11 @@ export default function AttendancesPage() {
                                                                   {a.holidayName || "Férié (Excel)"}
                                                                </Badge>
                                                             )}
+                                                            {!a.absenceCode && a.validatedHours === 0 && a.anomalyFlag && (
+                                                               <Badge variant="destructive" className="text-[8px] font-black uppercase animate-pulse">
+                                                                  Absence à analyser
+                                                               </Badge>
+                                                            )}
                                                             <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
                                                                {STATUS_LABELS[a.status] || a.status}
                                                             </Badge>
@@ -1404,7 +1438,7 @@ export default function AttendancesPage() {
               <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
                 <span className="text-xs font-bold text-orange-800 leading-tight">
-                  Attention : {previewStats.warning} ligne(s) contiennent des alertes. Elles seront importées avec un indicateur d'anomalie.
+                  Attention : {previewStats.warning} ligne(s) contiennent des alertes (dont absences à analyser). Elles seront importées avec un indicateur d'anomalie.
                 </span>
               </div>
             )}
@@ -1451,7 +1485,7 @@ export default function AttendancesPage() {
            {registryStats.anomalies > 0 && (
              <div className="p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 mt-4">
                 <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                <span className="text-xs font-bold text-red-800 leading-tight">Attention : {registryStats.anomalies} ligne(s) contiennent des anomalies. Confirmer tout de même la validation ?</span>
+                <span className="text-xs font-bold text-red-800 leading-tight">Attention : {registryStats.anomalies} ligne(s) contiennent des anomalies (dont absences à analyser). Confirmer tout de même la validation ?</span>
              </div>
            )}
            <AlertDialogFooter className="mt-6">
