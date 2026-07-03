@@ -332,7 +332,6 @@ export default function AttendancesPage() {
       
       // Phase 4D-2A: Enrichment for Holiday logic
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
-      const isWorked = (a.validatedHours || 0) > 0;
 
       if (!groups.has(key)) {
         groups.set(key, {
@@ -362,8 +361,10 @@ export default function AttendancesPage() {
       
       if (a.absenceCode) group.absenceCount++;
       
-      // Phase 4D-2A: If it's a registry holiday, don't count 0h as anomaly
-      if (a.anomalyFlag && !isRegHoliday) {
+      // Phase 4D-2A/B: Anomaly counting logic
+      // Only count anomalies if it's not a registry holiday OR if it's a specific absence to analyze
+      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday;
+      if (a.anomalyFlag && (!isRegHoliday || isCandidateAbsence)) {
         group.anomalyCount++;
       }
       
@@ -406,9 +407,10 @@ export default function AttendancesPage() {
       stats.nightHours += a.nightHours || 0;
       stats.overtimeHours += a.overtimeHours || 0;
       
-      // Phase 4D-2A: Refined anomaly KPI
+      // Phase 4D-2A/B: Refined anomaly KPI
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
-      if (a.anomalyFlag && !isRegHoliday) {
+      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday;
+      if (a.anomalyFlag && (!isRegHoliday || isCandidateAbsence)) {
         stats.anomalies++;
       }
     });
@@ -496,12 +498,18 @@ export default function AttendancesPage() {
               ? [{ type: 'AM' as const, timeIn, timeOut }] 
               : [];
             
-            const hasInput = punches.length > 0 || !!absence;
-            const dayNum = actualDateObj.getDay();
-            const isExpectedWorkDay = dayNum !== 0 && dayNum !== 6;
+            let hasInput = punches.length > 0 || !!absence;
+            
+            // Phase 4D-2B: Identify expected weekday rows
+            const dateObj = parseISO(actualDate);
+            const dayNum = dateObj.getDay();
+            const isWeekday = dayNum !== 0 && dayNum !== 6;
 
             if (!hasInput) {
-              if (!isExpectedWorkDay) {
+              if (isWeekday) {
+                // Keep empty weekday as absence candidate
+                hasInput = true;
+              } else {
                 ignoredCount++;
                 return;
               }
@@ -510,8 +518,8 @@ export default function AttendancesPage() {
             const splits = calculateAttendanceSplits(punches, pause, false);
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
-              status: hasInput ? "valid" : "warning",
-              messages: hasInput ? [] : ["Absence à analyser"],
+              status: punches.length > 0 || !!absence ? "valid" : "warning",
+              messages: punches.length > 0 || !!absence ? [] : ["Absence à analyser"],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
               date: actualDate,
@@ -561,7 +569,7 @@ export default function AttendancesPage() {
 
           const hasManualEntry = !(valHVal === null || valHVal === undefined || valHVal === "");
           const splits = calculateAttendanceSplits(punches, pause, isHoliday);
-          const hasInput = punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes;
+          let hasInput = punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes;
 
           const rawDate = getVal(row, 3);
           let dateStr = "";
@@ -575,10 +583,14 @@ export default function AttendancesPage() {
           }
 
           if (!hasInput) {
+            // Phase 4D-2B: Identify expected weekday rows
             const dateObj = parseISO(dateStr);
             const dayNum = dateObj.getDay();
-            const isExpectedWorkDay = dayNum !== 0 && dayNum !== 6;
-            if (!isExpectedWorkDay) {
+            const isWeekday = dayNum !== 0 && dayNum !== 6;
+
+            if (isWeekday) {
+              hasInput = true;
+            } else {
               ignoredCount++;
               return;
             }
@@ -588,8 +600,8 @@ export default function AttendancesPage() {
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
-            status: hasInput ? "valid" : "warning",
-            messages: hasInput ? [] : ["Absence à analyser"],
+            status: punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes ? "valid" : "warning",
+            messages: punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes ? [] : ["Absence à analyser"],
             employeeCode: code,
             employeeName: row.getCell(2).value?.toString() || "",
             date: dateStr,
@@ -630,11 +642,16 @@ export default function AttendancesPage() {
             const h = Number(hVal) || 0;
             const a = row.getCell(day.a).value?.toString();
 
-            const hasInput = h > 0 || !!a;
+            let hasInput = h > 0 || !!a;
             if (!hasInput) {
-               const dayNum = actualDateObj.getDay();
-               const isExpectedWorkDay = dayNum !== 0 && dayNum !== 6;
-               if (!isExpectedWorkDay) {
+               // Phase 4D-2B: Identify expected weekday rows
+               const dateObj = parseISO(actualDate);
+               const dayNum = dateObj.getDay();
+               const isWeekday = dayNum !== 0 && dayNum !== 6;
+
+               if (isWeekday) {
+                 hasInput = true;
+               } else {
                  ignoredCount++;
                  return;
                }
@@ -642,8 +659,8 @@ export default function AttendancesPage() {
 
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
-              status: hasInput ? "valid" : "warning",
-              messages: hasInput ? [] : ["Absence à analyser"],
+              status: h > 0 || !!a ? "valid" : "warning",
+              messages: h > 0 || !!a ? [] : ["Absence à analyser"],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
               date: actualDate,
@@ -673,7 +690,6 @@ export default function AttendancesPage() {
       console.error("[Excel Parsing Error]", err);
       setUploadError(err.message || "Erreur lors de la lecture du fichier.");
     } finally {
-      setLoading(false);
       setIsReading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -805,7 +821,7 @@ export default function AttendancesPage() {
     setExpandedEmployees(prev => {
       const next = new Set(prev);
       if (next.has(employeeId)) next.delete(employeeId);
-      else next.add(employeeId);
+      else next.add(id);
       return next;
     });
   };
