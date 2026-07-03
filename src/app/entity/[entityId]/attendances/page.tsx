@@ -552,7 +552,16 @@ export default function AttendancesPage() {
               isHoliday: false,
               notes: ""
             };
-            rows.push(validatePreviewRow(previewRow, employeesMapByCode));
+            
+            const validated = validatePreviewRow(previewRow, employeesMapByCode);
+            // Re-apply absence candidate marker if validation reset it
+            if (!punches.length && !absence && isExpected) {
+              validated.status = "warning";
+              if (!validated.messages.includes("Absence à analyser")) {
+                validated.messages.push("Absence à analyser");
+              }
+            }
+            rows.push(validated);
           });
         });
       } else if (mode === 'detailed') {
@@ -597,12 +606,12 @@ export default function AttendancesPage() {
             dateStr = rawDate.toString();
           }
 
+          const dateObj = parseISO(dateStr);
+          const dayNum = dateObj.getDay();
+          const isExpected = expectedWorkingDays.includes(dayNum);
+
           if (!hasInput) {
             // Phase 4D-2B: Identify expected working days
-            const dateObj = parseISO(dateStr);
-            const dayNum = dateObj.getDay();
-            const isExpected = expectedWorkingDays.includes(dayNum);
-
             if (isExpected) {
               hasInput = true;
             } else {
@@ -634,7 +643,17 @@ export default function AttendancesPage() {
             isHoliday,
             notes: notes || ""
           };
-          rows.push(validatePreviewRow(previewRow, employeesMapByCode));
+          
+          const validated = validatePreviewRow(previewRow, employeesMapByCode);
+          // Re-apply absence candidate marker if validation reset it
+          const isActuallyEmpty = punches.length === 0 && !hasManualEntry && !absence && !isHoliday && !notes;
+          if (isActuallyEmpty && isExpected) {
+            validated.status = "warning";
+            if (!validated.messages.includes("Absence à analyser")) {
+              validated.messages.push("Absence à analyser");
+            }
+          }
+          rows.push(validated);
         });
       } else {
         // Compact decimal
@@ -657,13 +676,13 @@ export default function AttendancesPage() {
             const h = Number(hVal) || 0;
             const a = row.getCell(day.a).value?.toString();
 
+            const dateObj = parseISO(actualDate);
+            const dayNum = dateObj.getDay();
+            const isExpected = expectedWorkingDays.includes(dayNum);
+
             let hasInput = h > 0 || !!a;
             if (!hasInput) {
                // Phase 4D-2B: Identify expected working days
-               const dateObj = parseISO(actualDate);
-               const dayNum = dateObj.getDay();
-               const isExpected = expectedWorkingDays.includes(dayNum);
-
                if (isExpected) {
                  hasInput = true;
                } else {
@@ -693,7 +712,16 @@ export default function AttendancesPage() {
               isHoliday: false,
               notes: ""
             };
-            rows.push(validatePreviewRow(previewRow, employeesMapByCode));
+            
+            const validated = validatePreviewRow(previewRow, employeesMapByCode);
+            // Re-apply absence candidate marker if validation reset it
+            if (h === 0 && !a && isExpected) {
+              validated.status = "warning";
+              if (!validated.messages.includes("Absence à analyser")) {
+                validated.messages.push("Absence à analyser");
+              }
+            }
+            rows.push(validated);
           });
         });
       }
@@ -960,7 +988,7 @@ export default function AttendancesPage() {
       const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
       weekDays.forEach(day => {
         const dd = format(day, "dd");
-        rowData[`in_${dd}`] = ""; rowData[`out_${dd}`] = ""; rowData[`pause_${dd}`] = prefillPause; rowData[`abs_${dd}`] = "";
+        rowData[`in_${dd}`] = ""; rowData[`out_${dd}`] = ""; rowData[`pause_${dd}`] = resolvedPause; rowData[`abs_${dd}`] = "";
       });
       const row = sheet.addRow(rowData);
       for (let i = 0; i < 7; i++) {
@@ -1394,14 +1422,15 @@ export default function AttendancesPage() {
                                                                   {a.holidayName || "Férié (Excel)"}
                                                                </Badge>
                                                             )}
-                                                            {!a.absenceCode && a.validatedHours === 0 && a.anomalyFlag && (
+                                                            {!a.absenceCode && !a.holidayFlag && (a.validatedHours || 0) === 0 && a.anomalyFlag && a.status === 'draft_imported' ? (
                                                                <Badge variant="destructive" className="text-[8px] font-black uppercase animate-pulse">
                                                                   Absence à analyser
                                                                </Badge>
+                                                            ) : (
+                                                               <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
+                                                                  {STATUS_LABELS[a.status] || a.status}
+                                                               </Badge>
                                                             )}
-                                                            <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
-                                                               {STATUS_LABELS[a.status] || a.status}
-                                                            </Badge>
                                                             {a.anomalyFlag && !isRegHoliday && <AlertCircle className="w-3 h-3 text-red-500" />}
                                                          </>
                                                       )}
@@ -1697,7 +1726,7 @@ function setupDetailedSheet(sheet: ExcelJS.Worksheet, periodType: string, year: 
         
         const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
         const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
-        const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
+        const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(K${currentRow}-K${currentRow},1)*24,0)`;
         
         row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
         row.getCell('N').numFmt = '0.00';
