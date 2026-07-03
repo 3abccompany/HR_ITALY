@@ -862,6 +862,12 @@ export default function AttendancesPage() {
     });
   };
 
+  const previewStats = useMemo(() => {
+    const stats = { total: previewRows.length, valid: previewRows.filter(r => r.status === 'valid').length, warning: previewRows.filter(r => r.status === 'warning').length, error: previewRows.filter(r => r.status === 'error').length, totalHours: 0, dayHours: 0, nightHours: 0, overtimeHours: 0, absencesCount: previewRows.filter(r => !!r.absenceCode).length };
+    previewRows.forEach(r => { stats.totalHours += r.validatedHours || 0; stats.dayHours += r.dayHours || 0; stats.nightHours += r.nightHours || 0; stats.overtimeHours += r.overtimeHours || 0; });
+    return stats;
+  }, [previewRows]);
+
   const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
     const columns: any[] = [
       { header: "Code employé", key: "employeeCode", width: 15 },
@@ -1037,12 +1043,6 @@ export default function AttendancesPage() {
     sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
     ABSENCE_CODES.forEach(c => sheet.addRow([c]));
   };
-
-  const previewStats = useMemo(() => {
-    const stats = { total: previewRows.length, valid: previewRows.filter(r => r.status === 'valid').length, warning: previewRows.filter(r => r.status === 'warning').length, error: previewRows.filter(r => r.status === 'error').length, totalHours: 0, dayHours: 0, nightHours: 0, overtimeHours: 0, absencesCount: previewRows.filter(r => !!r.absenceCode).length };
-    previewRows.forEach(r => { stats.totalHours += r.validatedHours || 0; stats.dayHours += r.dayHours || 0; stats.nightHours += r.nightHours || 0; stats.overtimeHours += r.overtimeHours || 0; });
-    return stats;
-  }, [previewRows]);
 
   if (membershipLoading) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
   if (!canRead) return null;
@@ -1379,6 +1379,7 @@ export default function AttendancesPage() {
                                              const regHolidayName = holidaysMap.get(a.attendanceDate);
                                              const isRegHoliday = !!regHolidayName;
                                              const isWorked = (a.validatedHours || 0) > 0;
+                                             const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
                                              
                                              return (
                                              <TableRow key={a.id} className="hover:bg-white transition-colors">
@@ -1407,6 +1408,10 @@ export default function AttendancesPage() {
                                                                Jour férié: {regHolidayName}
                                                             </Badge>
                                                          )
+                                                      ) : isAbsenceCandidate ? (
+                                                         <Badge variant="destructive" className="bg-red-600 text-white text-[8px] font-black uppercase border-none animate-pulse">
+                                                            Absence à analyser
+                                                         </Badge>
                                                       ) : (
                                                          <>
                                                             {a.absenceCode && <Badge className="bg-orange-600 text-white text-[8px] font-black uppercase border-none">{a.absenceCode}</Badge>}
@@ -1415,15 +1420,9 @@ export default function AttendancesPage() {
                                                                   {a.holidayName || "Férié (Excel)"}
                                                                </Badge>
                                                             )}
-                                                            {a.anomalyFlag && a.status === 'draft_imported' && a.anomalyMessages?.includes("Absence à analyser") ? (
-                                                               <Badge variant="destructive" className="text-[8px] font-black uppercase animate-pulse">
-                                                                  Absence à analyser
-                                                               </Badge>
-                                                            ) : (
-                                                               <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
-                                                                  {STATUS_LABELS[a.status] || a.status}
-                                                               </Badge>
-                                                            )}
+                                                            <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
+                                                               {STATUS_LABELS[a.status] || a.status}
+                                                            </Badge>
                                                             {a.anomalyFlag && !isRegHoliday && <AlertCircle className="w-3 h-3 text-red-500" />}
                                                          </>
                                                       )}
@@ -1718,7 +1717,7 @@ const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: 
         ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
         
         const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(I${currentRow}-I${currentRow},1)*24,0)`;
         const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
         
         row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
@@ -1811,179 +1810,3 @@ const setupGuideSheet = (sheet: ExcelJS.Worksheet) => {
   sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
   ABSENCE_CODES.forEach(c => sheet.addRow([c]));
 };
-
-function setupDetailedSheet(sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) {
-  const columns: any[] = [
-    { header: "Code employé", key: "employeeCode", width: 15 },
-    { header: "Nom employé", key: "employeeName", width: 25 },
-    { header: "Date", key: "date", width: 15 },
-    { header: "Jour", key: "day", width: 10 },
-    { header: "Département", key: "department", width: 20 },
-    { header: "Site", key: "worksite", width: 20 },
-    { header: "AM Entrée", key: "amIn", width: 10 },
-    { header: "AM Sortie", key: "amOut", width: 10 },
-    { header: "PM Entrée", key: "pmIn", width: 10 },
-    { header: "PM Sortie", key: "pmOut", width: 10 },
-    { header: "HS Entrée", key: "otIn", width: 10 },
-    { header: "HS Sortie", key: "otOut", width: 10 },
-    { header: "Pause minutes", key: "pause", width: 15 },
-    { header: "Heures calculées", key: "calcHours", width: 15 },
-    { header: "Heures validées", key: "validHours", width: 15 },
-    { header: "Code absence", key: "absence", width: 15 },
-    { header: "Férié", key: "holiday", width: 10 },
-    { header: "Notes / Correction", key: "notes", width: 40 },
-  ];
-  sheet.columns = columns;
-
-  const tableHeader = sheet.getRow(1);
-  tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
-
-  let days: Date[] = [];
-  if (periodType === "monthly") {
-    const pStart = startOfMonth(new Date(year, month - 1));
-    days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
-    employees.forEach(emp => {
-      const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode}`]);
-      empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      empHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
-      sheet.mergeCells(empHeaderRow.number, 1, empHeaderRow.number, columns.length);
-      
-      const startRow = (sheet.lastRow?.number || 0) + 1;
-      days.forEach(day => {
-        const row = sheet.addRow({
-          employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
-          day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
-          pause: prefillPause
-        });
-        const currentRow = row.number;
-        row.getCell('C').numFmt = 'yyyy-mm-dd';
-        ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-        
-        const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(I${currentRow}-I${currentRow},1)*24,0)`;
-        const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
-        
-        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
-        row.getCell('N').numFmt = '0.00';
-        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-        row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-        row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
-      });
-      const endRow = sheet.lastRow?.number || startRow;
-      const totalRow = sheet.addRow([]);
-      totalRow.getCell(1).value = "TOTAL MENSUEL";
-      totalRow.getCell(14).value = { formula: `SUM(N${startRow}:N${endRow})` };
-      totalRow.getCell(14).numFmt = '0.00';
-      totalRow.getCell(15).value = { formula: `SUM(O${startRow}:O${endRow})` };
-      totalRow.getCell(15).numFmt = '0.00';
-      totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-    });
-  } else {
-    const pStart = startOfDay(new Date(start));
-    days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-    employees.forEach(emp => {
-      days.forEach(day => {
-        const row = sheet.addRow({
-          employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
-          day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
-          pause: prefillPause
-        });
-        const currentRow = row.number;
-        row.getCell('C').numFmt = 'yyyy-mm-dd';
-        ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-        
-        const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(I${currentRow}-I${currentRow},1)*24,0)`;
-        const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
-        
-        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
-        row.getCell('N').numFmt = '0.00';
-        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-        row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-        row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
-      });
-    });
-  }
-}
-
-function setupCompactTimeEntrySheet(sheet: ExcelJS.Worksheet, start: string, employees: Employee[], prefillPause: number) {
-  const pStart = startOfDay(new Date(start));
-  const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-  const columns: any[] = [
-    { header: "Code employé", key: "employeeCode", width: 15 },
-    { header: "Nom employé", key: "employeeName", width: 25 },
-    { header: "Département", key: "department", width: 20 },
-    { header: "Site", key: "worksite", width: 20 },
-  ];
-  weekDays.forEach(day => {
-    const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
-    columns.push({ header: `${dayLabel} - Entrée`, key: `in_${format(day, "dd")}`, width: 12 });
-    columns.push({ header: `${dayLabel} - Sortie`, key: `out_${format(day, "dd")}`, width: 12 });
-    columns.push({ header: `${dayLabel} - Pause`, key: `pause_${format(day, "dd")}`, width: 10 });
-    columns.push({ header: `${dayLabel} - Absence`, key: `abs_${format(day, "dd")}`, width: 15 });
-  });
-  sheet.columns = columns;
-  const headerRow = sheet.getRow(1);
-  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
-  employees.forEach(emp => {
-    const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
-    weekDays.forEach(day => {
-      const dd = format(day, "dd");
-      rowData[`in_${dd}`] = ""; rowData[`out_${dd}`] = ""; rowData[`pause_${dd}`] = prefillPause; rowData[`abs_${dd}`] = "";
-    });
-    const row = sheet.addRow(rowData);
-    for (let i = 0; i < 7; i++) {
-      const startIdx = 5 + (i * 4);
-      row.getCell(startIdx).numFmt = 'hh:mm';
-      row.getCell(startIdx + 1).numFmt = 'hh:mm';
-      row.getCell(startIdx + 3).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-    }
-  });
-  sheet.views = [{ state: 'frozen', xSplit: 4, ySplit: 1 }];
-}
-
-function setupCompactSheet(sheet: ExcelJS.Worksheet, start: string, employees: Employee[]) {
-  const pStart = startOfDay(new Date(start));
-  const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-  const columns: any[] = [
-    { header: "Code employé", key: "employeeCode", width: 15 },
-    { header: "Nom employé", key: "employeeName", width: 25 },
-    { header: "Département", key: "department", width: 20 },
-    { header: "Site", key: "worksite", width: 20 },
-  ];
-  weekDays.forEach(day => {
-    const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
-    columns.push({ header: `${dayLabel} - Heures`, key: `h_${format(day, "dd")}`, width: 15 });
-    columns.push({ header: `${dayLabel} - Absence`, key: `a_${format(day, "dd")}`, width: 15 });
-  });
-  columns.push({ header: "Total semaine", key: "total", width: 15 });
-  sheet.columns = columns;
-  const headerRow = sheet.getRow(1);
-  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
-  employees.forEach(emp => {
-    const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
-    const row = sheet.addRow(rowData);
-    const currentRow = row.number;
-    const absCols = [6, 8, 10, 12, 14, 16, 18];
-    absCols.forEach(col => {
-      row.getCell(col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-    });
-    row.getCell(19).value = { formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`, result: 0 };
-    row.getCell(19).numFmt = '0.00';
-  });
-}
-
-function setupGuideSheet(sheet: ExcelJS.Worksheet) {
-  sheet.getColumn('A').width = 40;
-  sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
-  sheet.addRow(["1. Mode Détaillé : Saisissez les horaires HH:mm."]);
-  sheet.addRow(["2. Mode Compact Horaires : Une ligne par employé, saisie des horaires jour par jour."]);
-  sheet.addRow(["3. Mode Compact Décimal : Saisissez les totaux décimaux nets (ex: 6.5)."]);
-  sheet.addRow(["4. Pause : Saisir en minutes réelles (ex: 30)."]);
-  sheet.addRow([]);
-  sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
-  ABSENCE_CODES.forEach(c => sheet.addRow([c]));
-}
