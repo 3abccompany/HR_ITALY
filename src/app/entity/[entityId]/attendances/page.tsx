@@ -63,6 +63,7 @@ import {
   AttendanceRecord, 
   AttendanceImportBatch 
 } from "@/types/attendance";
+import { Holiday } from "@/types/holiday";
 import { 
   calculateAttendanceSplits, 
   executeAttendanceImport,
@@ -243,6 +244,7 @@ export default function AttendancesPage() {
   const [isValidationConfirmOpen, setIsValidationConfirmOpen] = useState(false);
 
   const canRead = hasPermission("attendances.read");
+  const canReadHolidays = hasPermission("holidays.read");
   const canCreate = hasPermission("attendances.create") || hasPermission("attendances.write");
   const canValidate = hasPermission("attendances.validate");
 
@@ -259,15 +261,39 @@ export default function AttendancesPage() {
     db && entityId && canRead ? query(collection(db, `entities/${entityId}/attendanceImportBatches`), orderBy("createdAt", "desc")) as Query<AttendanceImportBatch> : null,
   [db, entityId, canRead]);
 
+  // Phase 4D-2A: Holidays Query
+  const holidaysQuery = useMemo(() => {
+    if (!db || !entityId || !canReadHolidays) return null;
+    const start = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`;
+    const end = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-31`;
+    return query(
+      collection(db, `entities/${entityId}/holidays`),
+      where("date", ">=", start),
+      where("date", "<=", end)
+    ) as Query<Holiday>;
+  }, [db, entityId, canReadHolidays, selectedMonth, selectedYear]);
+
   const { data: employees } = useCollection<Employee>(empQuery, "attendances.employees");
   const { data: registryAttendances, loading: loadingRegistry } = useCollection<AttendanceRecord>(attendancesQuery, "attendances.registry");
   const { data: registryBatches, loading: loadingBatches } = useCollection<AttendanceImportBatch>(batchesQuery, "attendances.batches");
+  const { data: holidays } = useCollection<Holiday>(holidaysQuery, "attendances.holidays");
 
   const employeesMapByCode = useMemo(() => {
     const map = new Map<string, Employee>();
     employees?.forEach(e => map.set(e.employeeCode, e));
     return map;
   }, [employees]);
+
+  // Phase 4D-2A: Holiday Lookup Map
+  const holidaysMap = useMemo(() => {
+    const map = new Map<string, string>();
+    holidays?.forEach(h => {
+      if (h.status === 'active') {
+        map.set(h.date, h.name);
+      }
+    });
+    return map;
+  }, [holidays]);
 
   // --- Filtering Registry ---
   const filteredRegistry = useMemo(() => {
@@ -302,6 +328,11 @@ export default function AttendancesPage() {
 
     filteredRegistry.forEach(a => {
       const key = a.employeeId || a.employeeCode;
+      
+      // Phase 4D-2A: Enrichment for Holiday logic
+      const isRegHoliday = holidaysMap.has(a.attendanceDate);
+      const isWorked = (a.validatedHours || 0) > 0;
+
       if (!groups.has(key)) {
         groups.set(key, {
           employeeId: a.employeeId,
@@ -327,8 +358,14 @@ export default function AttendancesPage() {
       group.dayHours += a.dayHours || 0;
       group.nightHours += a.nightHours || 0;
       group.overtimeHours += a.overtimeHours || 0;
+      
       if (a.absenceCode) group.absenceCount++;
-      if (a.anomalyFlag) group.anomalyCount++;
+      
+      // Phase 4D-2A: If it's a registry holiday, don't count 0h as anomaly
+      if (a.anomalyFlag && !isRegHoliday) {
+        group.anomalyCount++;
+      }
+      
       if (a.status === 'draft_imported') group.draftCount++;
       if (a.status === 'validated') group.validatedCount++;
     });
@@ -347,7 +384,7 @@ export default function AttendancesPage() {
     });
 
     return sortedGroups;
-  }, [filteredRegistry, dateSortDirection]);
+  }, [filteredRegistry, dateSortDirection, holidaysMap]);
 
   const registryStats = useMemo(() => {
     const stats = {
@@ -359,16 +396,23 @@ export default function AttendancesPage() {
       nightHours: 0,
       overtimeHours: 0,
       absences: filteredRegistry.filter(a => !!a.absenceCode).length,
-      anomalies: filteredRegistry.filter(a => a.anomalyFlag).length
+      anomalies: 0
     };
+    
     filteredRegistry.forEach(a => {
       stats.totalHours += a.validatedHours || 0;
       stats.dayHours += a.dayHours || 0;
       stats.nightHours += a.nightHours || 0;
       stats.overtimeHours += a.overtimeHours || 0;
+      
+      // Phase 4D-2A: Refined anomaly KPI
+      const isRegHoliday = holidaysMap.has(a.attendanceDate);
+      if (a.anomalyFlag && !isRegHoliday) {
+        stats.anomalies++;
+      }
     });
     return stats;
-  }, [filteredRegistry]);
+  }, [filteredRegistry, holidaysMap]);
 
   const draftIdsToValidate = useMemo(() => 
     filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
@@ -1088,7 +1132,7 @@ export default function AttendancesPage() {
                             </div>
                             {canCreate && (
                               <Button onClick={handleImportClick} disabled={isImporting || previewRows.length === 0 || previewStats.error > 0} className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
-                                {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Lancer l'importation
+                                {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Lancer l'importation
                               </Button>
                             )}
                           </div>
@@ -1225,7 +1269,13 @@ export default function AttendancesPage() {
                                           </TableRow>
                                        </TableHeader>
                                        <TableBody>
-                                          {group.records.map(a => (
+                                          {group.records.map(a => {
+                                             // Phase 4D-2A: Local resolution logic
+                                             const regHolidayName = holidaysMap.get(a.attendanceDate);
+                                             const isRegHoliday = !!regHolidayName;
+                                             const isWorked = (a.validatedHours || 0) > 0;
+                                             
+                                             return (
                                              <TableRow key={a.id} className="hover:bg-white transition-colors">
                                                 <TableCell className="py-3">
                                                    <span className="text-xs font-bold">{format(parseISO(a.attendanceDate), 'dd/MM/yyyy')}</span>
@@ -1241,11 +1291,31 @@ export default function AttendancesPage() {
                                                 <TableCell className="text-center text-xs font-black text-orange-600">{a.overtimeHours > 0 ? `+${a.overtimeHours.toFixed(2)}` : "—"}</TableCell>
                                                 <TableCell>
                                                    <div className="flex items-center gap-2">
-                                                      {a.absenceCode && <Badge className="bg-orange-600 text-white text-[8px] font-black uppercase border-none">{a.absenceCode}</Badge>}
-                                                      <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
-                                                         {STATUS_LABELS[a.status] || a.status}
-                                                      </Badge>
-                                                      {a.anomalyFlag && <AlertCircle className="w-3 h-3 text-red-500" />}
+                                                      {isRegHoliday ? (
+                                                         isWorked ? (
+                                                            <Badge className="bg-green-600 text-white text-[8px] font-black uppercase border-none gap-1">
+                                                               <Sun className="w-2.5 h-2.5" />
+                                                               {regHolidayName} travaillé
+                                                            </Badge>
+                                                         ) : (
+                                                            <Badge className="bg-indigo-600 text-white text-[8px] font-black uppercase border-none">
+                                                               Jour férié: {regHolidayName}
+                                                            </Badge>
+                                                         )
+                                                      ) : (
+                                                         <>
+                                                            {a.absenceCode && <Badge className="bg-orange-600 text-white text-[8px] font-black uppercase border-none">{a.absenceCode}</Badge>}
+                                                            {a.holidayFlag && (
+                                                               <Badge variant="outline" className="text-[8px] font-black uppercase bg-indigo-50 text-indigo-700 border-indigo-200">
+                                                                  {a.holidayName || "Férié (Excel)"}
+                                                               </Badge>
+                                                            )}
+                                                            <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
+                                                               {STATUS_LABELS[a.status] || a.status}
+                                                            </Badge>
+                                                            {a.anomalyFlag && !isRegHoliday && <AlertCircle className="w-3 h-3 text-red-500" />}
+                                                         </>
+                                                      )}
                                                    </div>
                                                 </TableCell>
                                                 <TableCell className="text-right pr-4">
@@ -1256,7 +1326,7 @@ export default function AttendancesPage() {
                                                    )}
                                                 </TableCell>
                                              </TableRow>
-                                          ))}
+                                          )})}
                                        </TableBody>
                                     </Table>
                                  </div>
@@ -1453,4 +1523,180 @@ function parseSafeDate(val: any): Date | null {
   if (typeof val?.toDate === 'function') return val.toDate();
   if (val.seconds !== undefined) return new Date(val.seconds * 1000);
   return new Date(val);
+}
+
+function setupDetailedSheet(sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) {
+  const columns: any[] = [
+    { header: "Code employé", key: "employeeCode", width: 15 },
+    { header: "Nom employé", key: "employeeName", width: 25 },
+    { header: "Date", key: "date", width: 15 },
+    { header: "Jour", key: "day", width: 10 },
+    { header: "Département", key: "department", width: 20 },
+    { header: "Site", key: "worksite", width: 20 },
+    { header: "AM Entrée", key: "amIn", width: 10 },
+    { header: "AM Sortie", key: "amOut", width: 10 },
+    { header: "PM Entrée", key: "pmIn", width: 10 },
+    { header: "PM Sortie", key: "pmOut", width: 10 },
+    { header: "HS Entrée", key: "otIn", width: 10 },
+    { header: "HS Sortie", key: "otOut", width: 10 },
+    { header: "Pause minutes", key: "pause", width: 15 },
+    { header: "Heures calculées", key: "calcHours", width: 15 },
+    { header: "Heures validées", key: "validHours", width: 15 },
+    { header: "Code absence", key: "absence", width: 15 },
+    { header: "Férié", key: "holiday", width: 10 },
+    { header: "Notes / Correction", key: "notes", width: 40 },
+  ];
+  sheet.columns = columns;
+
+  const tableHeader = sheet.getRow(1);
+  tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+
+  let days: Date[] = [];
+  if (periodType === "monthly") {
+    const pStart = startOfMonth(new Date(year, month - 1));
+    days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
+    employees.forEach(emp => {
+      const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode}`]);
+      empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      empHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
+      sheet.mergeCells(empHeaderRow.number, 1, empHeaderRow.number, columns.length);
+      
+      const startRow = (sheet.lastRow?.number || 0) + 1;
+      days.forEach(day => {
+        const row = sheet.addRow({
+          employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
+          day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
+          pause: prefillPause
+        });
+        const currentRow = row.number;
+        row.getCell('C').numFmt = 'yyyy-mm-dd';
+        ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
+        
+        const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+        const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
+        
+        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
+        row.getCell('N').numFmt = '0.00';
+        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+        row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+        row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
+      });
+      const endRow = sheet.lastRow?.number || startRow;
+      const totalRow = sheet.addRow([]);
+      totalRow.getCell(1).value = "TOTAL MENSUEL";
+      totalRow.getCell(14).value = { formula: `SUM(N${startRow}:N${endRow})` };
+      totalRow.getCell(14).numFmt = '0.00';
+      totalRow.getCell(15).value = { formula: `SUM(O${startRow}:O${endRow})` };
+      totalRow.getCell(15).numFmt = '0.00';
+      totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    });
+  } else {
+    const pStart = startOfDay(new Date(start));
+    days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
+    employees.forEach(emp => {
+      days.forEach(day => {
+        const row = sheet.addRow({
+          employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
+          day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
+          pause: prefillPause
+        });
+        const currentRow = row.number;
+        row.getCell('C').numFmt = 'yyyy-mm-dd';
+        ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
+        
+        const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+        const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
+        
+        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
+        row.getCell('N').numFmt = '0.00';
+        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+        row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+        row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
+      });
+    });
+  }
+}
+
+function setupCompactTimeEntrySheet(sheet: ExcelJS.Worksheet, start: string, employees: Employee[], prefillPause: number) {
+  const pStart = startOfDay(new Date(start));
+  const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
+  const columns: any[] = [
+    { header: "Code employé", key: "employeeCode", width: 15 },
+    { header: "Nom employé", key: "employeeName", width: 25 },
+    { header: "Département", key: "department", width: 20 },
+    { header: "Site", key: "worksite", width: 20 },
+  ];
+  weekDays.forEach(day => {
+    const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
+    columns.push({ header: `${dayLabel} - Entrée`, key: `in_${format(day, "dd")}`, width: 12 });
+    columns.push({ header: `${dayLabel} - Sortie`, key: `out_${format(day, "dd")}`, width: 12 });
+    columns.push({ header: `${dayLabel} - Pause`, key: `pause_${format(day, "dd")}`, width: 10 });
+    columns.push({ header: `${dayLabel} - Absence`, key: `abs_${format(day, "dd")}`, width: 15 });
+  });
+  sheet.columns = columns;
+  const headerRow = sheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
+  employees.forEach(emp => {
+    const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
+    weekDays.forEach(day => {
+      const dd = format(day, "dd");
+      rowData[`in_${dd}`] = ""; rowData[`out_${dd}`] = ""; rowData[`pause_${dd}`] = prefillPause; rowData[`abs_${dd}`] = "";
+    });
+    const row = sheet.addRow(rowData);
+    for (let i = 0; i < 7; i++) {
+      const startIdx = 5 + (i * 4);
+      row.getCell(startIdx).numFmt = 'hh:mm';
+      row.getCell(startIdx + 1).numFmt = 'hh:mm';
+      row.getCell(startIdx + 3).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+    }
+  });
+  sheet.views = [{ state: 'frozen', xSplit: 4, ySplit: 1 }];
+}
+
+function setupCompactSheet(sheet: ExcelJS.Worksheet, start: string, employees: Employee[]) {
+  const pStart = startOfDay(new Date(start));
+  const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
+  const columns: any[] = [
+    { header: "Code employé", key: "employeeCode", width: 15 },
+    { header: "Nom employé", key: "employeeName", width: 25 },
+    { header: "Département", key: "department", width: 20 },
+    { header: "Site", key: "worksite", width: 20 },
+  ];
+  weekDays.forEach(day => {
+    const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
+    columns.push({ header: `${dayLabel} - Heures`, key: `h_${format(day, "dd")}`, width: 15 });
+    columns.push({ header: `${dayLabel} - Absence`, key: `a_${format(day, "dd")}`, width: 15 });
+  });
+  columns.push({ header: "Total semaine", key: "total", width: 15 });
+  sheet.columns = columns;
+  const headerRow = sheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
+  employees.forEach(emp => {
+    const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
+    const row = sheet.addRow(rowData);
+    const currentRow = row.number;
+    const absCols = [6, 8, 10, 12, 14, 16, 18];
+    absCols.forEach(col => {
+      row.getCell(col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
+    });
+    row.getCell(19).value = { formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`, result: 0 };
+    row.getCell(19).numFmt = '0.00';
+  });
+}
+
+function setupGuideSheet(sheet: ExcelJS.Worksheet) {
+  sheet.getColumn('A').width = 40;
+  sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
+  sheet.addRow(["1. Mode Détaillé : Saisissez les horaires HH:mm."]);
+  sheet.addRow(["2. Mode Compact Horaires : Une ligne par employé, saisie des horaires jour par jour."]);
+  sheet.addRow(["3. Mode Compact Décimal : Saisissez les totaux décimaux nets (ex: 6.5)."]);
+  sheet.addRow(["4. Pause : Saisir en minutes réelles (ex: 30)."]);
+  sheet.addRow([]);
+  sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
+  ABSENCE_CODES.forEach(c => sheet.addRow([c]));
 }
