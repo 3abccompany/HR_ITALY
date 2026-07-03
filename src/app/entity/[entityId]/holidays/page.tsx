@@ -298,8 +298,8 @@ export default function HolidaysRegistryPage() {
          <div className="space-y-1">
             <p className="text-xs font-black uppercase text-blue-800 tracking-widest">Aide au paramétrage</p>
             <p className="text-[11px] text-blue-700 leading-relaxed font-medium">
-               Ce calendrier est utilisé par le module <strong>Présences</strong> pour justifier automatiquement les absences les jours fériés. 
-               Si un collaborateur travaille un jour férié, le système calculera automatiquement les heures majorées correspondantes.
+               Ce calendrier sera utilisé par le module <strong>Présences</strong> pour identifier automatiquement les jours fériés. 
+               Les jours fériés travaillés seront conservés séparément pour le futur calcul de paie.
             </p>
          </div>
       </div>
@@ -418,39 +418,4 @@ function getTypeColor(type: HolidayType) {
     case 'company_closure': return "bg-orange-50 text-orange-700 border-orange-100";
     default: return "bg-slate-50 text-slate-600";
   }
-}
-
-function formatDate(val: any) {
-  if (!val) return "-";
-  const d = val.toDate ? val.toDate() : new Date(val);
-  return format(d, "dd/MM/yyyy", { locale: fr });
-}
-
-function formatTime(val: any) {
-  if (!val) return "";
-  const d = val.toDate ? val.toDate() : new Date(val);
-  return format(d, "HH:mm", { locale: fr });
-}
-
-function StatCard({ title, value, icon: Icon, color }: any) {
-  const colors: any = {
-    blue: "bg-blue-50 text-blue-600 border-blue-100",
-    orange: "bg-orange-50 text-orange-600 border-orange-100",
-    red: "bg-red-50 text-red-600 border-red-100",
-    green: "bg-green-50 text-green-600 border-green-100",
-    indigo: "bg-indigo-50 text-indigo-600 border-indigo-100"
-  };
-  return (
-    <Card className="border-primary/5 shadow-sm rounded-3xl bg-white group hover:shadow-md transition-all">
-      <CardContent className="p-5 flex items-center gap-4">
-        <div className={cn("p-3 rounded-2xl border transition-colors", colors[color])}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{title}</p>
-          <p className="text-2xl font-black text-primary leading-none mt-1">{value}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
