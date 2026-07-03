@@ -7,7 +7,8 @@ import {
   where, 
   serverTimestamp, 
   writeBatch,
-  setDoc
+  setDoc,
+  updateDoc
 } from "firebase/firestore";
 import { Holiday, HolidayType } from "@/types/holiday";
 import { createAuditLog } from "./audit.service";
@@ -106,8 +107,6 @@ export async function seedItalianNationalHolidays(
     const holidayId = `h_${h.date}`;
     const ref = doc(db, `entities/${entityId}/holidays`, holidayId);
     
-    // Use set with merge to avoid overwriting custom changes if they exist, 
-    // but enforcing standard fields for the seeder.
     batch.set(ref, {
       holidayId,
       entityId,
@@ -119,7 +118,6 @@ export async function seedItalianNationalHolidays(
       status: "active",
       updatedAt: now,
       updatedBy: actorUid,
-      // If we use set without {merge: true}, we should add creation fields
       createdAt: now,
       createdBy: actorUid,
     }, { merge: true });
@@ -137,4 +135,60 @@ export async function seedItalianNationalHolidays(
   });
 
   return { success: true, count: nationalList.length };
+}
+
+/**
+ * Creates a custom holiday record.
+ */
+export async function createHoliday(entityId: string, data: Partial<Holiday>, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const ref = doc(collection(db, `entities/${entityId}/holidays`));
+  const holidayId = ref.id;
+
+  const payload: Holiday = {
+    ...(data as any),
+    holidayId,
+    entityId,
+    country: "IT",
+    status: "active",
+    createdAt: serverTimestamp(),
+    createdBy: actorUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  };
+
+  await setDoc(ref, payload);
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "holiday.created",
+    resourceType: "holiday",
+    resourceId: holidayId,
+    details: { name: payload.name, date: payload.date }
+  });
+
+  return holidayId;
+}
+
+/**
+ * Archives a holiday (status = archived).
+ */
+export async function archiveHoliday(entityId: string, holidayId: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const ref = doc(db, `entities/${entityId}/holidays`, holidayId);
+  
+  await updateDoc(ref, {
+    status: "archived",
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "holiday.archived",
+    resourceType: "holiday",
+    resourceId: holidayId,
+  });
 }

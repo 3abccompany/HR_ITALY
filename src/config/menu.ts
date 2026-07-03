@@ -24,7 +24,8 @@ import {
   LucideIcon,
   Send,
   UserCircle,
-  Bell
+  Bell,
+  CalendarDays
 } from "lucide-react";
 
 export interface MenuItem {
@@ -48,6 +49,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Fiches de postes", href: "job-profiles", permission: "jobProfiles.read", icon: FileBadge },
   { label: "Besoins RH", href: "recruitment-needs", permission: "recruitmentNeeds.read", icon: Briefcase },
   { label: "Formulaires de candidature", href: "application-forms", permission: "applicationForms.read", icon: FileCode },
+  { label: "Jours fériés", href: "holidays", permission: "settings.read", icon: CalendarDays },
   { label: "Référentiel CCNL", href: "ccnls", permission: "settings.read", icon: Library },
   { label: "Employés", href: "employees", permission: "employees.read", icon: UserCheck },
   { label: "Contrats", href: "contracts", permission: "contracts.read", icon: FileText },
