@@ -87,8 +87,8 @@ export default function HolidaysRegistryPage() {
   const [loading, setLoading] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
 
-  const canManage = hasPermission("settings.manage");
-  const canRead = hasPermission("settings.read") || hasPermission("attendances.read");
+  const canManage = hasPermission("holidays.manage");
+  const canRead = hasPermission("holidays.read");
 
   // --- Query ---
   const holidaysQuery = useMemo(() => {
@@ -159,6 +159,18 @@ export default function HolidaysRegistryPage() {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!canRead) {
+    return (
+      <div className="p-8">
+        <Alert variant="destructive" className="max-w-2xl mx-auto rounded-[2rem]">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Accès Refusé</AlertTitle>
+          <AlertDescription>Vous n'avez pas la permission de consulter le calendrier des jours fériés.</AlertDescription>
+        </Alert>
       </div>
     );
   }
@@ -383,7 +395,11 @@ export default function HolidaysRegistryPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
-            <AlertDialogAction onClick={(e) => { e.preventDefault(); executeArchive(); }} disabled={loading} className="bg-destructive hover:bg-destructive/90 rounded-xl font-bold">
+            <AlertDialogAction 
+              onClick={(e) => { e.preventDefault(); executeArchive(); }} 
+              disabled={loading} 
+              className="bg-destructive hover:bg-destructive/90 rounded-xl font-bold"
+            >
                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />} Confirmer l'archivage
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -392,6 +408,28 @@ export default function HolidaysRegistryPage() {
 
     </div>
   );
+}
+
+function getTypeColor(type: HolidayType) {
+  switch (type) {
+    case 'national': return "bg-blue-50 text-blue-700 border-blue-200";
+    case 'regional': return "bg-indigo-50 text-indigo-700 border-indigo-100";
+    case 'local': return "bg-purple-50 text-purple-700 border-purple-100";
+    case 'company_closure': return "bg-orange-50 text-orange-700 border-orange-100";
+    default: return "bg-slate-50 text-slate-600";
+  }
+}
+
+function formatDate(val: any) {
+  if (!val) return "-";
+  const d = val.toDate ? val.toDate() : new Date(val);
+  return format(d, "dd/MM/yyyy", { locale: fr });
+}
+
+function formatTime(val: any) {
+  if (!val) return "";
+  const d = val.toDate ? val.toDate() : new Date(val);
+  return format(d, "HH:mm", { locale: fr });
 }
 
 function StatCard({ title, value, icon: Icon, color }: any) {
@@ -415,14 +453,4 @@ function StatCard({ title, value, icon: Icon, color }: any) {
       </CardContent>
     </Card>
   );
-}
-
-function getTypeColor(type: HolidayType) {
-  switch (type) {
-    case 'national': return "bg-blue-50 text-blue-700 border-blue-200";
-    case 'regional': return "bg-indigo-50 text-indigo-700 border-indigo-100";
-    case 'local': return "bg-purple-50 text-purple-700 border-purple-100";
-    case 'company_closure': return "bg-orange-50 text-orange-700 border-orange-100";
-    default: return "bg-slate-50 text-slate-600";
-  }
 }

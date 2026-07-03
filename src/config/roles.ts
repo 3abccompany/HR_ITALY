@@ -41,7 +41,7 @@ export const MVP_ROLES: RoleDefinition[] = [
         "departments", "jobTitles", "jobProfiles", "jobProfileCatalog",
         "recruitmentNeeds", "applicationForms", "applicationSubmissions", 
         "worksites", "employees", "contracts", "documents", 
-        "attendances", "leaveRequests", "reports",
+        "attendances", "leaveRequests", "reports", "holidays",
         "employmentRequests", "consultants", "emailSettings", "medicalVisits",
         "training", "safety"
       ];
@@ -66,7 +66,8 @@ export const MVP_ROLES: RoleDefinition[] = [
         "documents.upload",
         "documents.download",
         "reports.read",
-        "worksites.read"
+        "worksites.read",
+        "holidays.read"
       ];
       const safetyModules = ["training", "safety", "medicalVisits"];
       return MVP_PERMISSIONS
@@ -91,7 +92,7 @@ export const MVP_ROLES: RoleDefinition[] = [
     scope: "entity",
     getPermissions: () => 
       MVP_PERMISSIONS
-        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "notifications" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions" || p.module === "persons" || p.module === "worksites"))
+        .filter(p => p.scope === "entity" && (p.action === "read" || p.module === "notifications" || p.module === "departments" || p.module === "jobTitles" || p.module === "jobProfiles" || p.module === "jobProfileCatalog" || p.module === "recruitmentNeeds" || p.module === "applicationForms" || p.module === "applicationSubmissions" || p.module === "persons" || p.module === "worksites" || p.module === "holidays"))
         .filter(p => p.action === "read")
         .map(p => p.code)
   },

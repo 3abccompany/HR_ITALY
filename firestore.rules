@@ -73,8 +73,8 @@ service cloud.firestore {
       }
 
       match /holidays/{holidayId} {
-        allow read: if hasPermission(entityId, 'attendances.read') || hasPermission(entityId, 'settings.read') || isPlatformAdmin();
-        allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
+        allow read: if hasPermission(entityId, 'holidays.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'holidays.manage') || isPlatformAdmin();
       }
 
       match /notifications/{notificationId} {
@@ -208,7 +208,7 @@ service cloud.firestore {
         allow read: if hasPermission(entityId, 'documents.read') 
                      || hasPermission(entityId, 'contracts.read') 
                      || isPlatformAdmin()
-                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
+                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(request.auth.uid)).data.userId == request.auth.uid);
         
         allow create: if (hasPermission(entityId, 'documents.upload') 
                       || hasPermission(entityId, 'contracts.create') 
@@ -301,7 +301,7 @@ service cloud.firestore {
       match /timeOffRequests/{requestId} {
         allow read: if hasPermission(entityId, 'leaveRequests.read') 
                      || isPlatformAdmin()
-                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
+                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(request.auth.uid)).data.userId == request.auth.uid);
         
         allow create: if hasPermission(entityId, 'leaveRequests.create') 
                       || isPlatformAdmin();
@@ -316,7 +316,7 @@ service cloud.firestore {
       match /leaveBalances/{balanceId} {
         allow read: if hasPermission(entityId, 'leaveRequests.read') 
                     || isPlatformAdmin()
-                    || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(resource.data.employeeId)).data.userId == request.auth.uid);
+                    || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(request.auth.uid)).data.userId == request.auth.uid);
         
         allow write: if hasPermission(entityId, 'leaveRequests.update') || isPlatformAdmin();
       }

@@ -110,6 +110,10 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "settings.manage", module: "settings", action: "manage", label: "Gérer paramètres", description: "Mise à jour des réglages de l'entité.", scope: "entity" },
   { code: "audit.read", module: "audit", action: "read", label: "Voir audit entité", description: "Historique des actions locales.", scope: "entity" },
 
+  // --- Holidays ---
+  { code: "holidays.read", module: "holidays", action: "read", label: "Voir les jours fériés", description: "Consulter le calendrier des jours fériés et fermetures.", scope: "entity" },
+  { code: "holidays.manage", module: "holidays", action: "manage", label: "Gérer les jours fériés", description: "Ajouter, modifier ou archiver des jours fériés.", scope: "entity" },
+
   // --- Employment Requests (Italy UniLav/CPI) ---
   { code: "employmentRequests.read", module: "employmentRequests", action: "read", label: "Voir les demandes d'embauche CPI", description: "Accès au registre des communications UniLav.", scope: "entity" },
   { code: "employmentRequests.create", module: "employmentRequests", action: "create", label: "Créer une demande d'embauche CPI", description: "Saisie manuelle d'une demande de communication.", scope: "entity" },

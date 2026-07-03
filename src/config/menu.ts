@@ -50,7 +50,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Besoins RH", href: "recruitment-needs", permission: "recruitmentNeeds.read", icon: Briefcase },
   { label: "Formulaires de candidature", href: "application-forms", permission: "applicationForms.read", icon: FileCode },
   { label: "Absences & Congés", href: "absences", permission: "leaveRequests.read", icon: Plane },
-  { label: "Jours fériés", href: "holidays", permission: ["settings.read", "attendances.read"], icon: CalendarDays },
+  { label: "Jours fériés", href: "holidays", permission: "holidays.read", icon: CalendarDays },
   { label: "Présences", href: "attendances", permission: "attendances.read", icon: Clock },
   { label: "Référentiel CCNL", href: "ccnls", permission: "settings.read", icon: Library },
   { label: "Employés", href: "employees", permission: "employees.read", icon: UserCheck },
