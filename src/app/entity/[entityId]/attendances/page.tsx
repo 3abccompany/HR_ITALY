@@ -113,7 +113,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import ExcelJS from "exceljs";
-import { listHolidays } from "@/services/holiday.service";
 
 const ABSENCE_CODES = [
   "paid_leave",
@@ -134,6 +133,16 @@ const STATUS_LABELS: Record<string, string> = {
   locked: "Verrouillée",
   archived: "Archivée"
 };
+
+const DAY_OPTIONS = [
+  { value: 1, label: "Lun" },
+  { value: 2, label: "Mar" },
+  { value: 3, label: "Mer" },
+  { value: 4, label: "Jeu" },
+  { value: 5, label: "Ven" },
+  { value: 6, label: "Sam" },
+  { value: 0, label: "Dim" }
+];
 
 /**
  * Helper to convert various ExcelJS cell values into a standard "HH:mm" format.
@@ -215,6 +224,7 @@ export default function AttendancesPage() {
   const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
   const [defaultPause, setDefaultPause] = useState("0");
   const [customPause, setCustomPause] = useState("");
+  const [expectedWorkingDays, setExpectedWorkingDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [isDownloading, setIsDownloading] = useState(false);
 
   // --- Upload / Preview State ---
@@ -420,6 +430,12 @@ export default function AttendancesPage() {
     filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
   [filteredRegistry]);
 
+  const toggleWorkingDay = (day: number) => {
+    setExpectedWorkingDays(prev => 
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+    );
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -499,14 +515,14 @@ export default function AttendancesPage() {
             
             let hasInput = punches.length > 0 || !!absence;
             
-            // Phase 4D-2B: Identify expected weekday rows
+            // Phase 4D-2B: Identify expected working days
             const dateObj = parseISO(actualDate);
             const dayNum = dateObj.getDay();
-            const isWeekday = dayNum !== 0 && dayNum !== 6;
+            const isExpected = expectedWorkingDays.includes(dayNum);
 
             if (!hasInput) {
-              if (isWeekday) {
-                // Keep empty weekday as absence candidate
+              if (isExpected) {
+                // Keep empty expected day as absence candidate
                 hasInput = true;
               } else {
                 ignoredCount++;
@@ -582,12 +598,12 @@ export default function AttendancesPage() {
           }
 
           if (!hasInput) {
-            // Phase 4D-2B: Identify expected weekday rows
+            // Phase 4D-2B: Identify expected working days
             const dateObj = parseISO(dateStr);
             const dayNum = dateObj.getDay();
-            const isWeekday = dayNum !== 0 && dayNum !== 6;
+            const isExpected = expectedWorkingDays.includes(dayNum);
 
-            if (isWeekday) {
+            if (isExpected) {
               hasInput = true;
             } else {
               ignoredCount++;
@@ -643,12 +659,12 @@ export default function AttendancesPage() {
 
             let hasInput = h > 0 || !!a;
             if (!hasInput) {
-               // Phase 4D-2B: Identify expected weekday rows
+               // Phase 4D-2B: Identify expected working days
                const dateObj = parseISO(actualDate);
                const dayNum = dateObj.getDay();
-               const isWeekday = dayNum !== 0 && dayNum !== 6;
+               const isExpected = expectedWorkingDays.includes(dayNum);
 
-               if (isWeekday) {
+               if (isExpected) {
                  hasInput = true;
                } else {
                  ignoredCount++;
@@ -1068,6 +1084,30 @@ export default function AttendancesPage() {
                               </div>
                             </div>
                         )}
+                        <div className="space-y-2">
+                          <Label className="text-[10px] uppercase font-black">Jours de présence attendus</Label>
+                          <div className="flex flex-wrap gap-1">
+                            {DAY_OPTIONS.map((day) => {
+                              const isSelected = expectedWorkingDays.includes(day.value);
+                              return (
+                                <Button
+                                  key={day.value}
+                                  type="button"
+                                  variant={isSelected ? "default" : "outline"}
+                                  size="sm"
+                                  className={cn(
+                                    "h-8 w-10 p-0 text-[10px] font-black uppercase rounded-lg transition-all",
+                                    isSelected ? "bg-primary text-white" : "text-muted-foreground bg-white"
+                                  )}
+                                  onClick={() => toggleWorkingDay(day.value)}
+                                >
+                                  {day.label}
+                                </Button>
+                              );
+                            })}
+                          </div>
+                          <p className="text-[9px] text-muted-foreground italic">Les jours non sélectionnés seront ignorés si vides à l'import.</p>
+                        </div>
                         <div className="space-y-2">
                             <Label className="text-[10px] uppercase font-black">Type de période</Label>
                             <Select value={periodType} onValueChange={(v: any) => setPeriodType(v)} disabled={inputMode === 'compact_time' || inputMode === 'compact'}>
