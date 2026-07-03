@@ -773,6 +773,7 @@ export default function AttendancesPage() {
     setIsDownloading(true);
     try {
       const workbook = new ExcelJS.Workbook();
+      workbook.calcProperties.fullCalcOnLoad = true;
       const prefillPause = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
 
       const sheet1 = workbook.addWorksheet("Présences");
@@ -1554,10 +1555,10 @@ const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: 
         ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
         
         const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(I${currentRow}-I${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
         const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
         
-        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
+        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)` };
         row.getCell('N').numFmt = '0.00';
         row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
         row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
@@ -1587,10 +1588,10 @@ const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: 
         ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
         
         const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(I${currentRow}-I${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
         const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
         
-        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
+        row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)` };
         row.getCell('N').numFmt = '0.00';
         row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
         row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
@@ -1664,7 +1665,7 @@ const setupCompactSheet = (sheet: ExcelJS.Worksheet, start: string, employees: E
     absCols.forEach(col => {
       row.getCell(col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
     });
-    row.getCell(19).value = { formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`, result: 0 };
+    row.getCell(19).value = { formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})` };
     row.getCell(19).numFmt = '0.00';
   });
 };
@@ -1680,4 +1681,3 @@ const setupGuideSheet = (sheet: ExcelJS.Worksheet) => {
   sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
   ABSENCE_CODES.forEach(c => sheet.addRow([c]));
 };
-
