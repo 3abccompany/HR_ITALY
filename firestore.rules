@@ -68,8 +68,13 @@ service cloud.firestore {
       match /attendanceImportBatches/{batchId} {
         allow read: if hasPermission(entityId, 'attendances.read') || isPlatformAdmin();
         allow create: if (hasPermission(entityId, 'attendances.create') || hasPermission(entityId, 'attendances.write')) && request.resource.data.entityId == entityId;
-        allow update: if (hasPermission(entityId, 'attendances.update') || hasPermission(entityId, 'attendances.write')) && request.resource.data.entityId == entityId;
+        allow update: if (hasPermission(entityId, 'attendance.update') || hasPermission(entityId, 'attendances.write')) && request.resource.data.entityId == entityId;
         allow delete: if false;
+      }
+
+      match /holidays/{holidayId} {
+        allow read: if hasPermission(entityId, 'attendances.read') || hasPermission(entityId, 'settings.read') || isPlatformAdmin();
+        allow write: if hasPermission(entityId, 'settings.manage') || isPlatformAdmin();
       }
 
       match /notifications/{notificationId} {
