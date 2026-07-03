@@ -760,6 +760,10 @@ export default function AttendancesPage() {
     ];
     sheet.columns = columns;
 
+    const tableHeader = sheet.getRow(1);
+    tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+
     let days: Date[] = [];
     if (periodType === "monthly") {
       const pStart = startOfMonth(new Date(year, month - 1));
@@ -769,9 +773,7 @@ export default function AttendancesPage() {
         empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
         empHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
         sheet.mergeCells(empHeaderRow.number, 1, empHeaderRow.number, columns.length);
-        const tableHeader = sheet.addRow(columns.map(c => c.header));
-        tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+        
         const startRow = (sheet.lastRow?.number || 0) + 1;
         days.forEach(day => {
           const row = sheet.addRow({
@@ -805,9 +807,6 @@ export default function AttendancesPage() {
     } else {
       const pStart = startOfDay(new Date(start));
       days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-      const headerRow = sheet.addRow(columns.map(c => c.header));
-      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
       employees.forEach(emp => {
         days.forEach(day => {
           const row = sheet.addRow({
@@ -1203,7 +1202,19 @@ export default function AttendancesPage() {
                                     <Table>
                                        <TableHeader>
                                           <TableRow className="hover:bg-transparent">
-                                             <TableHead className="h-10 text-[9px] font-black uppercase">Date</TableHead>
+                                             <TableHead 
+                                                className="h-10 text-[9px] font-black uppercase cursor-pointer hover:text-primary transition-colors group/sort"
+                                                onClick={() => setDateSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                                              >
+                                                <div className="flex items-center gap-1">
+                                                  Date
+                                                  {dateSortDirection === 'asc' ? (
+                                                    <ArrowUp className="w-3 h-3 text-primary" />
+                                                  ) : (
+                                                    <ArrowDown className="w-3 h-3 text-primary" />
+                                                  )}
+                                                </div>
+                                             </TableHead>
                                              <TableHead className="h-10 text-[9px] font-black uppercase">Lieu</TableHead>
                                              <TableHead className="h-10 text-[9px] font-black uppercase text-center">H. Totales</TableHead>
                                              <TableHead className="h-10 text-[9px] font-black uppercase text-center">Jour</TableHead>
@@ -1261,7 +1272,9 @@ export default function AttendancesPage() {
                <h3 className="text-xs font-black uppercase tracking-widest text-muted-foreground px-2 flex items-center gap-2"><HistoryIcon className="w-4 h-4" /> Historique des imports</h3>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {loadingBatches ? (
-                    <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" />
+                    <div className="col-span-full py-12 flex justify-center">
+                      <Loader2 className="w-8 h-8 animate-spin text-primary/20" />
+                    </div>
                   ) : !registryBatches || registryBatches.length === 0 ? (
                     <p className="text-xs text-muted-foreground italic px-2">Aucun import enregistré.</p>
                   ) : (
