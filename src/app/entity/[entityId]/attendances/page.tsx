@@ -63,6 +63,7 @@ import {
   AttendanceImportBatch 
 } from "@/types/attendance";
 import { Holiday } from "@/types/holiday";
+import { TimeOffRequest, TIME_OFF_TYPE_LABELS } from "@/types/time-off";
 import { 
   calculateAttendanceSplits, 
   executeAttendanceImport,
@@ -194,7 +195,7 @@ interface GroupedEmployeeAttendance {
   employeeDisplayName: string;
   departmentName?: string | null;
   worksiteName?: string | null;
-  records: AttendanceRecord[];
+  records: any[];
   totalHours: number;
   dayHours: number;
   nightHours: number;
@@ -283,10 +284,17 @@ export default function AttendancesPage() {
     ) as Query<Holiday>;
   }, [db, entityId, canReadHolidays, selectedMonth, selectedYear]);
 
+  // Phase 4D-3A: TimeOffRequests Query
+  const timeOffRequestsQuery = useMemo(() => {
+    if (!db || !entityId || !canRead) return null;
+    return query(collection(db, `entities/${entityId}/timeOffRequests`)) as Query<TimeOffRequest>;
+  }, [db, entityId, canRead]);
+
   const { data: employees } = useCollection<Employee>(empQuery, "attendances.employees");
   const { data: registryAttendances, loading: loadingRegistry } = useCollection<AttendanceRecord>(attendancesQuery, "attendances.registry");
   const { data: registryBatches, loading: loadingBatches } = useCollection<AttendanceImportBatch>(batchesQuery, "attendances.batches");
   const { data: holidays } = useCollection<Holiday>(holidaysQuery, "attendances.holidays");
+  const { data: timeOffRequests } = useCollection<TimeOffRequest>(timeOffRequestsQuery, "attendances.timeOffRequests");
 
   const employeesMapByCode = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -342,6 +350,15 @@ export default function AttendancesPage() {
       // Phase 4D-2A: Enrichment for Holiday logic
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
 
+      // Phase 4D-3A: Reconciliation with TimeOffRequests
+      const matchingRequest = timeOffRequests
+        ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+        .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
+        .sort((req1, req2) => {
+          const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
+          return (priority[req1.status] || 99) - (priority[req2.status] || 99);
+        })[0];
+
       if (!groups.has(key)) {
         groups.set(key, {
           employeeId: a.employeeId,
@@ -362,7 +379,11 @@ export default function AttendancesPage() {
       }
 
       const group = groups.get(key)!;
-      group.records.push(a);
+      
+      // Enrich record with matching request for rendering
+      const enrichedRecord = { ...a, matchingRequest };
+      group.records.push(enrichedRecord);
+      
       group.totalHours += a.validatedHours || 0;
       group.dayHours += a.dayHours || 0;
       group.nightHours += a.nightHours || 0;
@@ -372,8 +393,13 @@ export default function AttendancesPage() {
       
       // Phase 4D-2A/B: Anomaly counting logic
       // Only count anomalies if it's not a registry holiday OR if it's a specific absence to analyze
-      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday;
-      if (a.anomalyFlag && (!isRegHoliday || isCandidateAbsence)) {
+      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
+      
+      // Phase 4D-3A: Reconciliation reduces anomaly count if justified
+      const isJustified = matchingRequest && matchingRequest.status === 'approved';
+      const shouldCountAsAnomaly = a.anomalyFlag && (!isRegHoliday || isCandidateAbsence) && !isJustified;
+
+      if (shouldCountAsAnomaly) {
         group.anomalyCount++;
       }
       
@@ -395,7 +421,7 @@ export default function AttendancesPage() {
     });
 
     return sortedGroups;
-  }, [filteredRegistry, dateSortDirection, holidaysMap]);
+  }, [filteredRegistry, dateSortDirection, holidaysMap, timeOffRequests]);
 
   const registryStats = useMemo(() => {
     const stats = {
@@ -418,13 +444,20 @@ export default function AttendancesPage() {
       
       // Phase 4D-2A/B: Refined anomaly KPI
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
-      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday;
-      if (a.anomalyFlag && (!isRegHoliday || isCandidateAbsence)) {
+      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
+      
+      // Phase 4D-3A: Check justification for global stats
+      const matchingRequest = timeOffRequests
+        ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+        .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
+      const isJustified = matchingRequest && matchingRequest.status === 'approved';
+
+      if (a.anomalyFlag && (!isRegHoliday || isCandidateAbsence) && !isJustified) {
         stats.anomalies++;
       }
     });
     return stats;
-  }, [filteredRegistry, holidaysMap]);
+  }, [filteredRegistry, holidaysMap, timeOffRequests]);
 
   const draftIdsToValidate = useMemo(() => 
     filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
@@ -740,13 +773,13 @@ export default function AttendancesPage() {
     setIsDownloading(true);
     try {
       const workbook = new ExcelJS.Workbook();
-      const resolvedPause = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
+      const prefillPause = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
 
       const sheet1 = workbook.addWorksheet("Présences");
       if (inputMode === "detailed") {
-        setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees, resolvedPause);
+        setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees, prefillPause);
       } else if (inputMode === "compact_time") {
-        setupCompactTimeEntrySheet(sheet1, startDate, employees, resolvedPause);
+        setupCompactTimeEntrySheet(sheet1, startDate, employees, prefillPause);
       } else {
         setupCompactSheet(sheet1, startDate, employees);
       }
@@ -867,182 +900,6 @@ export default function AttendancesPage() {
     previewRows.forEach(r => { stats.totalHours += r.validatedHours || 0; stats.dayHours += r.dayHours || 0; stats.nightHours += r.nightHours || 0; stats.overtimeHours += r.overtimeHours || 0; });
     return stats;
   }, [previewRows]);
-
-  const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
-    const columns: any[] = [
-      { header: "Code employé", key: "employeeCode", width: 15 },
-      { header: "Nom employé", key: "employeeName", width: 25 },
-      { header: "Date", key: "date", width: 15 },
-      { header: "Jour", key: "day", width: 10 },
-      { header: "Département", key: "department", width: 20 },
-      { header: "Site", key: "worksite", width: 20 },
-      { header: "AM Entrée", key: "amIn", width: 10 },
-      { header: "AM Sortie", key: "amOut", width: 10 },
-      { header: "PM Entrée", key: "pmIn", width: 10 },
-      { header: "PM Sortie", key: "pmOut", width: 10 },
-      { header: "HS Entrée", key: "otIn", width: 10 },
-      { header: "HS Sortie", key: "otOut", width: 10 },
-      { header: "Pause minutes", key: "pause", width: 15 },
-      { header: "Heures calculées", key: "calcHours", width: 15 },
-      { header: "Heures validées", key: "validHours", width: 15 },
-      { header: "Code absence", key: "absence", width: 15 },
-      { header: "Férié", key: "holiday", width: 10 },
-      { header: "Notes / Correction", key: "notes", width: 40 },
-    ];
-    sheet.columns = columns;
-
-    const tableHeader = sheet.getRow(1);
-    tableHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    tableHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
-
-    let days: Date[] = [];
-    if (periodType === "monthly") {
-      const pStart = startOfMonth(new Date(year, month - 1));
-      days = eachDayOfInterval({ start: pStart, end: endOfMonth(pStart) });
-      employees.forEach(emp => {
-        const empHeaderRow = sheet.addRow([`Employé: ${emp.displayName} — Code: ${emp.employeeCode}`]);
-        empHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        empHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F1F66" } };
-        sheet.mergeCells(empHeaderRow.number, 1, empHeaderRow.number, columns.length);
-        
-        const startRow = (sheet.lastRow?.number || 0) + 1;
-        days.forEach(day => {
-          const row = sheet.addRow({
-            employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
-            day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
-            pause: prefillPause
-          });
-          const currentRow = row.number;
-          row.getCell('C').numFmt = 'yyyy-mm-dd';
-          ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-          
-          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
-          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
-          
-          row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
-          row.getCell('N').numFmt = '0.00';
-          row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-          row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-          row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
-        });
-        const endRow = sheet.lastRow?.number || startRow;
-        const totalRow = sheet.addRow([]);
-        totalRow.getCell(1).value = "TOTAL MENSUEL";
-        totalRow.getCell(14).value = { formula: `SUM(N${startRow}:N${endRow})` };
-        totalRow.getCell(14).numFmt = '0.00';
-        totalRow.getCell(15).value = { formula: `SUM(O${startRow}:O${endRow})` };
-        totalRow.getCell(15).numFmt = '0.00';
-        totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-      });
-    } else {
-      const pStart = startOfDay(new Date(start));
-      days = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-      employees.forEach(emp => {
-        days.forEach(day => {
-          const row = sheet.addRow({
-            employeeCode: emp.employeeCode, employeeName: emp.displayName, date: format(day, "yyyy-MM-dd"),
-            day: format(day, "EEEE", { locale: fr }), department: emp.departmentName || "", worksite: emp.worksiteName || "",
-            pause: prefillPause
-          });
-          const currentRow = row.number;
-          row.getCell('C').numFmt = 'yyyy-mm-dd';
-          ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
-          
-          const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-          const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
-          const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
-          
-          row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
-          row.getCell('N').numFmt = '0.00';
-          row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-          row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-          row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
-        });
-      });
-    }
-  };
-
-  const setupCompactTimeEntrySheet = (sheet: ExcelJS.Worksheet, start: string, employees: Employee[], prefillPause: number) => {
-    const pStart = startOfDay(new Date(start));
-    const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-    const columns: any[] = [
-      { header: "Code employé", key: "employeeCode", width: 15 },
-      { header: "Nom employé", key: "employeeName", width: 25 },
-      { header: "Département", key: "department", width: 20 },
-      { header: "Site", key: "worksite", width: 20 },
-    ];
-    weekDays.forEach(day => {
-      const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
-      columns.push({ header: `${dayLabel} - Entrée`, key: `in_${format(day, "dd")}`, width: 12 });
-      columns.push({ header: `${dayLabel} - Sortie`, key: `out_${format(day, "dd")}`, width: 12 });
-      columns.push({ header: `${dayLabel} - Pause`, key: `pause_${format(day, "dd")}`, width: 10 });
-      columns.push({ header: `${dayLabel} - Absence`, key: `abs_${format(day, "dd")}`, width: 15 });
-    });
-    sheet.columns = columns;
-    const headerRow = sheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
-    employees.forEach(emp => {
-      const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
-      weekDays.forEach(day => {
-        const dd = format(day, "dd");
-        rowData[`in_${dd}`] = ""; rowData[`out_${dd}`] = ""; rowData[`pause_${dd}`] = prefillPause; rowData[`abs_${dd}`] = "";
-      });
-      const row = sheet.addRow(rowData);
-      for (let i = 0; i < 7; i++) {
-        const startIdx = 5 + (i * 4);
-        row.getCell(startIdx).numFmt = 'hh:mm';
-        row.getCell(startIdx + 1).numFmt = 'hh:mm';
-        row.getCell(startIdx + 3).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-      }
-    });
-    sheet.views = [{ state: 'frozen', xSplit: 4, ySplit: 1 }];
-  };
-
-  const setupCompactSheet = (sheet: ExcelJS.Worksheet, start: string, employees: Employee[]) => {
-    const pStart = startOfDay(new Date(start));
-    const weekDays = eachDayOfInterval({ start: pStart, end: addDays(pStart, 6) });
-    const columns: any[] = [
-      { header: "Code employé", key: "employeeCode", width: 15 },
-      { header: "Nom employé", key: "employeeName", width: 25 },
-      { header: "Département", key: "department", width: 20 },
-      { header: "Site", key: "worksite", width: 20 },
-    ];
-    weekDays.forEach(day => {
-      const dayLabel = format(day, "EEEE dd/MM", { locale: fr });
-      columns.push({ header: `${dayLabel} - Heures`, key: `h_${format(day, "dd")}`, width: 15 });
-      columns.push({ header: `${dayLabel} - Absence`, key: `a_${format(day, "dd")}`, width: 15 });
-    });
-    columns.push({ header: "Total semaine", key: "total", width: 15 });
-    sheet.columns = columns;
-    const headerRow = sheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0369A1" } };
-    employees.forEach(emp => {
-      const rowData: any = { employeeCode: emp.employeeCode, employeeName: emp.displayName, department: emp.departmentName || "", worksite: emp.worksiteName || "" };
-      const row = sheet.addRow(rowData);
-      const currentRow = row.number;
-      const absCols = [6, 8, 10, 12, 14, 16, 18];
-      absCols.forEach(col => {
-        row.getCell(col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
-      });
-      row.getCell(19).value = { formula: `SUM(E${currentRow}, G${currentRow}, I${currentRow}, K${currentRow}, M${currentRow}, O${currentRow}, Q${currentRow})`, result: 0 };
-      row.getCell(19).numFmt = '0.00';
-    });
-  };
-
-  const setupGuideSheet = (sheet: ExcelJS.Worksheet) => {
-    sheet.getColumn('A').width = 40;
-    sheet.addRow(["GUIDE DE SAISIE"]).font = { bold: true, size: 14 };
-    sheet.addRow(["1. Mode Détaillé : Saisissez les horaires HH:mm."]);
-    sheet.addRow(["2. Mode Compact Horaires : Une ligne par employé, saisie des horaires jour par jour."]);
-    sheet.addRow(["3. Mode Compact Décimal : Saisissez les totaux décimaux nets (ex: 6.5)."]);
-    sheet.addRow(["4. Pause : Saisir en minutes réelles (ex: 30)."]);
-    sheet.addRow([]);
-    sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
-    ABSENCE_CODES.forEach(c => sheet.addRow([c]));
-  };
 
   if (membershipLoading) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
   if (!canRead) return null;
@@ -1379,6 +1236,10 @@ export default function AttendancesPage() {
                                              const regHolidayName = holidaysMap.get(a.attendanceDate);
                                              const isRegHoliday = !!regHolidayName;
                                              const isWorked = (a.validatedHours || 0) > 0;
+                                             
+                                             // Phase 4D-3A: Reconciliation logic for rendering
+                                             const request = a.matchingRequest as TimeOffRequest | undefined;
+                                             const isJustified = request && request.status === 'approved';
                                              const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
                                              
                                              return (
@@ -1408,6 +1269,15 @@ export default function AttendancesPage() {
                                                                Jour férié: {regHolidayName}
                                                             </Badge>
                                                          )
+                                                      ) : isJustified && !isWorked ? (
+                                                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase gap-1">
+                                                          Absence justifiée · {TIME_OFF_TYPE_LABELS[request.requestType]}
+                                                        </Badge>
+                                                      ) : request && !isWorked ? (
+                                                        <Badge variant="outline" className={cn("text-[8px] font-black uppercase", 
+                                                          request.status === 'submitted' ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-red-50 text-red-700 border-red-200")}>
+                                                          {request.status === 'submitted' ? 'Demande en attente' : 'Demande refusée'} · {TIME_OFF_TYPE_LABELS[request.requestType]}
+                                                        </Badge>
                                                       ) : isAbsenceCandidate ? (
                                                          <Badge variant="destructive" className="bg-red-600 text-white text-[8px] font-black uppercase border-none animate-pulse">
                                                             Absence à analyser
@@ -1423,7 +1293,7 @@ export default function AttendancesPage() {
                                                             <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
                                                                {STATUS_LABELS[a.status] || a.status}
                                                             </Badge>
-                                                            {a.anomalyFlag && !isRegHoliday && <AlertCircle className="w-3 h-3 text-red-500" />}
+                                                            {a.anomalyFlag && !isRegHoliday && !isJustified && <AlertCircle className="w-3 h-3 text-red-500" />}
                                                          </>
                                                       )}
                                                    </div>
@@ -1684,7 +1554,7 @@ const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: 
         ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
         
         const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(I${currentRow}-I${currentRow},1)*24,0)`;
         const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
         
         row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)`, result: 0 };
@@ -1810,3 +1680,4 @@ const setupGuideSheet = (sheet: ExcelJS.Worksheet) => {
   sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
   ABSENCE_CODES.forEach(c => sheet.addRow([c]));
 };
+
