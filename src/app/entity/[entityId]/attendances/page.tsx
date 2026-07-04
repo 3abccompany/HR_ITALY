@@ -837,13 +837,13 @@ export default function AttendancesPage() {
     try {
       const workbook = new ExcelJS.Workbook();
       workbook.calcProperties.fullCalcOnLoad = true;
-      const prefillPause = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
+      const prefillPauseValue = defaultPause === 'custom' ? (parseInt(customPause) || 0) : parseInt(defaultPause);
 
       const sheet1 = workbook.addWorksheet("Présences");
       if (inputMode === "detailed") {
-        setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees, prefillPause);
+        setupDetailedSheet(sheet1, periodType, selectedYear, selectedMonth, startDate, employees, prefillPauseValue);
       } else if (inputMode === "compact_time") {
-        setupCompactTimeEntrySheet(sheet1, startDate, employees, prefillPause);
+        setupCompactTimeEntrySheet(sheet1, startDate, employees, prefillPauseValue);
       } else {
         setupCompactSheet(sheet1, startDate, employees);
       }
@@ -1462,18 +1462,18 @@ export default function AttendancesPage() {
 
       {/* Confirmation Dialog with Conflict Resolution UI */}
       <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
-        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
+        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[550px]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-black text-primary">
                {conflictAnalysis.blocked > 0 ? "Importation bloquée" : "Confirmer l'importation"}
             </AlertDialogTitle>
-            <div className="space-y-4 pt-4">
+            <div className="space-y-4 pt-4 overflow-y-auto max-h-[60vh] pr-2">
               {conflictAnalysis.blocked > 0 && (
                 <Alert variant="destructive" className="rounded-2xl bg-red-50 border-red-100 text-red-800 py-4">
                    <XCircle className="h-5 w-5 text-red-600" />
-                   <div className="ml-2">
+                   <div className="ml-2 flex-1">
                       <AlertTitle className="font-black uppercase text-[10px] tracking-widest">Lignes verrouillées détectées</AlertTitle>
-                      <AlertDescription className="text-xs font-bold mt-1 break-words">
+                      <AlertDescription className="text-xs font-bold mt-1 break-words leading-relaxed">
                         {conflictAnalysis.blocked} ligne(s) correspondent à des présences déjà validées ou verrouillées. L'importation est bloquée.
                       </AlertDescription>
                    </div>
@@ -1483,28 +1483,28 @@ export default function AttendancesPage() {
               {conflictAnalysis.blocked === 0 && conflictAnalysis.replaceable > 0 && (
                 <Alert className="rounded-2xl bg-orange-50 border-orange-100 text-orange-800 py-4">
                    <AlertTriangle className="h-5 w-5 text-orange-600" />
-                   <div className="ml-2">
+                   <div className="ml-2 flex-1">
                       <AlertTitle className="font-black uppercase text-[10px] tracking-widest">Brouillons existants</AlertTitle>
-                      <AlertDescription className="text-xs font-bold mt-1 break-words">
+                      <AlertDescription className="text-xs font-bold mt-1 break-words leading-relaxed">
                         {conflictAnalysis.replaceable} brouillon(s) existent déjà pour ces dates. Voulez-vous les remplacer ?
                       </AlertDescription>
                    </div>
                 </Alert>
               )}
 
-              <div className="p-6 bg-secondary/20 rounded-[2rem] border border-dashed space-y-3">
-                 <div className="flex justify-between text-[10px] font-black uppercase text-muted-foreground tracking-widest">
+              <div className="p-6 bg-secondary/20 rounded-[2rem] border border-dashed space-y-3 w-full">
+                 <div className="flex justify-between items-center text-[10px] font-black uppercase text-muted-foreground tracking-widest">
                     <span>Nouvelles lignes :</span>
                     <span className="text-primary">{conflictAnalysis.new}</span>
                  </div>
                  {conflictAnalysis.replaceable > 0 && (
-                   <div className="flex justify-between text-[10px] font-black uppercase text-orange-600 tracking-widest">
+                   <div className="flex justify-between items-center text-[10px] font-black uppercase text-orange-600 tracking-widest">
                       <span>Brouillons à remplacer :</span>
                       <span>{conflictAnalysis.replaceable}</span>
                    </div>
                  )}
                  <Separator className="bg-primary/5" />
-                 <div className="flex justify-between text-xs font-black uppercase">
+                 <div className="flex justify-between items-center text-xs font-black uppercase">
                     <span className="text-muted-foreground tracking-widest">Heures Totales :</span>
                     <span className="text-primary">{previewStats.totalHours.toFixed(1)} h</span>
                  </div>
@@ -1516,23 +1516,23 @@ export default function AttendancesPage() {
             <AlertDialogCancel disabled={isImporting} className="rounded-xl font-bold">Annuler</AlertDialogCancel>
             
             {conflictAnalysis.blocked > 0 ? (
-              <Button disabled className="rounded-xl font-black px-6 bg-slate-100 text-slate-400 border-none">
+              <Button disabled className="rounded-xl font-black px-6 bg-slate-100 text-slate-400 border-none w-full sm:w-auto">
                 Importation impossible
               </Button>
             ) : conflictAnalysis.replaceable > 0 ? (
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                 <Button 
                   variant="outline"
                   onClick={() => handleExecuteImport("skip")} 
                   disabled={isImporting}
-                  className="rounded-xl font-bold border-primary/20 bg-white"
+                  className="rounded-xl font-bold border-primary/20 bg-white flex-1 sm:flex-none"
                 >
                    Ignorer existants
                 </Button>
                 <Button 
                   onClick={() => handleExecuteImport("overwrite")} 
                   disabled={isImporting}
-                  className="bg-primary text-white font-black rounded-xl px-6 shadow-lg shadow-primary/20 gap-2"
+                  className="bg-primary text-white font-black rounded-xl px-6 shadow-lg shadow-primary/20 gap-2 flex-1 sm:flex-none"
                 >
                   {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                   Remplacer brouillons
@@ -1542,9 +1542,9 @@ export default function AttendancesPage() {
               <Button 
                 onClick={() => handleExecuteImport("fail")} 
                 disabled={isImporting} 
-                className="bg-primary font-black rounded-xl px-8 shadow-lg shadow-primary/20 gap-2"
+                className="bg-primary font-black rounded-xl px-8 shadow-lg shadow-primary/20 gap-2 w-full sm:w-auto"
               >
-                {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 Confirmer l'importation
               </Button>
             )}
@@ -1650,7 +1650,7 @@ function BatchMiniStat({ label, value, color = "slate" }: { label: string, value
 }
 
 function getStatusIcon(status: string) {
-  switch (status) { 
+  switch (status) {
     case 'valid': return <CheckCircle2 className="w-4 h-4 text-green-500" />; 
     case 'warning': return <FileWarning className="w-4 h-4 text-orange-500" />; 
     case 'error': return <XCircle className="w-4 h-4 text-red-500" />; 
