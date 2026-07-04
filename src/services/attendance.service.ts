@@ -194,28 +194,34 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
 
 /**
  * Performs a real draft import of attendance records into Firestore.
+ * Phase 4D-5: Supports conflict resolution strategies (fail, skip, overwrite).
  */
 export async function executeAttendanceImport(params: {
   entityId: string;
   actorUid: string;
   previewRows: AttendancePreviewRow[];
   batchMetadata: Partial<AttendanceImportBatch>;
+  conflictStrategy?: "fail" | "skip" | "overwrite";
 }) {
-  const { entityId, actorUid, previewRows, batchMetadata } = params;
+  const { entityId, actorUid, previewRows, batchMetadata, conflictStrategy = "fail" } = params;
   if (!db) throw new Error("Firestore not initialized");
 
-  // 1. Internal Duplicate Check
+  const REPLACEABLE_STATUSES = ["draft", "draft_imported"];
+
+  // 1. Internal Duplicate Check (Within file)
   const keysInFile = new Set<string>();
   for (const row of previewRows) {
-    const key = `${row.employeeId}_${row.date}`;
+    const key = buildAttendanceId(row.employeeId!, row.date);
     if (keysInFile.has(key)) {
       throw new Error(`DOUBLON_INTERNE: Plusieurs entrées trouvées pour le collaborateur ${row.employeeName} à la date du ${row.date}.`);
     }
     keysInFile.add(key);
   }
 
-  // 2. Database Pre-flight Check
+  // 2. Database Pre-flight Check (Find existing docs and their status)
   const allIds = Array.from(keysInFile);
+  const existingDocsMap = new Map<string, string>(); // id -> status
+  
   for (let i = 0; i < allIds.length; i += 30) {
     const chunk = allIds.slice(i, i + 30);
     const q = query(
@@ -223,14 +229,42 @@ export async function executeAttendanceImport(params: {
       where(documentId(), "in", chunk)
     );
     const snap = await getDocs(q);
-    if (!snap.empty) {
-      const existingId = snap.docs[0].id;
-      const [_, date] = existingId.split('_');
-      throw new Error(`CONFLIT_EXISTANT: Un enregistrement de présence existe déjà pour la date du ${date}.`);
-    }
+    snap.docs.forEach(d => {
+       existingDocsMap.set(d.id, d.data().status);
+    });
   }
 
-  // 3. Prepare Batch
+  // 3. Apply Conflict Strategy logic
+  if (conflictStrategy === "fail" && existingDocsMap.size > 0) {
+     const firstId = Array.from(existingDocsMap.keys())[0];
+     const [_, date] = firstId.split('_');
+     throw new Error(`CONFLICT_EXISTANT: Un enregistrement de présence existe déjà pour la date du ${date}.`);
+  }
+
+  if (conflictStrategy === "overwrite") {
+     const blockedIds = Array.from(existingDocsMap.entries())
+       .filter(([_, status]) => !REPLACEABLE_STATUSES.includes(status))
+       .map(([id]) => id);
+
+     if (blockedIds.length > 0) {
+        throw new Error("CONFLICT_BLOCKED_VALIDATED: Certaines présences sont déjà validées ou verrouillées.");
+     }
+  }
+
+  // Filter rows based on strategy
+  const finalRowsToImport = previewRows.filter(row => {
+     const id = buildAttendanceId(row.employeeId!, row.date);
+     if (existingDocsMap.has(id)) {
+        if (conflictStrategy === "skip") return false;
+        if (conflictStrategy === "overwrite") return true;
+        return false; // Should not be reached if fail check passed
+     }
+     return true;
+  });
+
+  if (finalRowsToImport.length === 0) return { batchId: "no_op", count: 0 };
+
+  // 4. Prepare Batch
   const batchId = doc(collection(db, "temp")).id;
   const batchRef = doc(db, `entities/${entityId}/attendanceImportBatches`, batchId);
   const now = serverTimestamp();
@@ -244,6 +278,7 @@ export async function executeAttendanceImport(params: {
     entityId,
     status: "draft_imported",
     validatedRowsCount: 0,
+    importedRowsCount: finalRowsToImport.length,
     createdAt: now,
     createdBy: actorUid,
     updatedAt: now,
@@ -251,11 +286,13 @@ export async function executeAttendanceImport(params: {
   };
   mainBatch.set(batchRef, finalBatchData);
 
-  // 4. Chunked Writes
+  // 5. Chunked Writes
   const chunks: AttendancePreviewRow[][] = [];
-  for (let i = 0; i < previewRows.length; i += 450) {
-    chunks.push(previewRows.slice(i, i + 450));
+  for (let i = 0; i < finalRowsToImport.length; i += 450) {
+    chunks.push(finalRowsToImport.slice(i, i + 450));
   }
+
+  let replacedCount = 0;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunkBatch = i === 0 ? mainBatch : writeBatch(db);
@@ -264,6 +301,10 @@ export async function executeAttendanceImport(params: {
     currentRows.forEach(row => {
       const attendanceId = buildAttendanceId(row.employeeId!, row.date);
       const recordRef = doc(db!, `entities/${entityId}/attendances`, attendanceId);
+
+      if (existingDocsMap.has(attendanceId)) {
+         replacedCount++;
+      }
 
       const record: Partial<AttendanceRecord> = {
         id: attendanceId,
@@ -311,9 +352,10 @@ export async function executeAttendanceImport(params: {
     action: "attendance.batch_imported",
     resourceType: "attendanceImportBatch",
     resourceId: batchId,
+    details: { conflictStrategy, replacedCount, newCount: finalRowsToImport.length - replacedCount }
   });
 
-  return { batchId, count: previewRows.length };
+  return { batchId, count: finalRowsToImport.length };
 }
 
 /**

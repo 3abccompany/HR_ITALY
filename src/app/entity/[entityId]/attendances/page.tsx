@@ -68,7 +68,8 @@ import {
   calculateAttendanceSplits, 
   executeAttendanceImport,
   validatePreviewRow,
-  validateAttendanceRecords
+  validateAttendanceRecords,
+  buildAttendanceId
 } from "@/services/attendance.service";
 import { 
   format, 
@@ -83,10 +84,7 @@ import {
 import { fr } from "date-fns/locale";
 import { 
   Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+  SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -206,6 +204,66 @@ interface GroupedEmployeeAttendance {
   validatedCount: number;
 }
 
+const getValidationBlockReason = (a: AttendanceRecord, holidaysMap: Map<string, string>, timeOffRequests: TimeOffRequest[] | undefined) => {
+  const isWorked = (a.validatedHours || 0) > 0;
+  const regHolidayName = holidaysMap.get(a.attendanceDate);
+  const isRegHoliday = !!regHolidayName;
+  
+  const matchingRequest = timeOffRequests
+    ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+    .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
+
+  const isJustified = matchingRequest && matchingRequest.status === 'approved';
+
+  // 1. Official Holidays are always validable
+  if (isRegHoliday) return null;
+
+  // 2. Justified absences (Approved leave) are validable
+  if (!isWorked && isJustified) return null;
+
+  // 3. Worked days with no anomalies are validable
+  if (isWorked && !a.anomalyFlag) return null;
+
+  // --- BLOCKED REASONS ---
+
+  // 4. Leave Requests state (Submitted/Rejected)
+  if (matchingRequest && !isWorked) {
+    if (matchingRequest.status === 'submitted') return "Demande en attente";
+    if (matchingRequest.status === 'rejected') return "Demande refusée";
+  }
+
+  // 5. Excel Absence Code confirmation rule
+  if (a.absenceCode && !isJustified && !isWorked) {
+    const code = a.absenceCode.toLowerCase();
+    if (code.includes('sick') || code.includes('malad') || code.includes('infort')) {
+      return "Maladie Excel non confirmée";
+    }
+    if (code.includes('leave') || code.includes('cong') || code.includes('ferie') || code.includes('vac')) {
+      return "Congé Excel non confirmé";
+    }
+    return "Absence Excel non confirmée";
+  }
+
+  // 6. Absence Candidate (Expected day, no request, no code)
+  const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
+  if (isAbsenceCandidate) return "Absence à analyser";
+
+  // 7. Manual Excel Holiday not in registry
+  if (a.holidayFlag && !isRegHoliday) return "Férié Excel non confirmé";
+
+  // 8. Unresolved anomalies
+  if (a.anomalyFlag && !isJustified) {
+    if (a.anomalyMessages?.some(m => m.toLowerCase().includes('pointage') || m.toLowerCase().includes('entrée') || m.toLowerCase().includes('sortie'))) return "Anomalie de pointage";
+    if (a.anomalyMessages?.some(m => m.toLowerCase().includes('heures'))) return "Heures invalides";
+    return "Anomalie non résolue";
+  }
+
+  // 9. Generic 0h draft with no explanation
+  if (!isWorked && !a.absenceCode) return "Absence à analyser";
+
+  return null;
+};
+
 export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -317,66 +375,32 @@ export default function AttendancesPage() {
     return map;
   }, [holidays]);
 
-  // --- Helper: Validation Guard Logic ---
-  const getValidationBlockReason = (a: AttendanceRecord) => {
-    const isWorked = (a.validatedHours || 0) > 0;
-    const regHolidayName = holidaysMap.get(a.attendanceDate);
-    const isRegHoliday = !!regHolidayName;
+  // Conflict Analysis Memo
+  const conflictAnalysis = useMemo(() => {
+    if (previewRows.length === 0 || !registryAttendances) return { new: 0, replaceable: 0, blocked: 0 };
     
-    const matchingRequest = timeOffRequests
-      ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-      .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
+    let n = 0;
+    let r = 0;
+    let b = 0;
 
-    const isJustified = matchingRequest && matchingRequest.status === 'approved';
+    const REPLACEABLE_STATUSES = ["draft", "draft_imported"];
 
-    // 1. Official Holidays are always validable
-    if (isRegHoliday) return null;
-
-    // 2. Justified absences (Approved leave) are validable
-    if (!isWorked && isJustified) return null;
-
-    // 3. Worked days with no anomalies are validable
-    if (isWorked && !a.anomalyFlag) return null;
-
-    // --- BLOCKED REASONS ---
-
-    // 4. Leave Requests state (Submitted/Rejected)
-    if (matchingRequest && !isWorked) {
-      if (matchingRequest.status === 'submitted') return "Demande en attente";
-      if (matchingRequest.status === 'rejected') return "Demande refusée";
-    }
-
-    // 5. Excel Absence Code without approved matching timeOffRequest (Guard reinforcement)
-    if (a.absenceCode && !isJustified && !isWorked) {
-      const code = a.absenceCode.toLowerCase();
-      if (code.includes('sick') || code.includes('malad') || code.includes('infort')) {
-        return "Maladie Excel non confirmée";
+    previewRows.forEach(row => {
+      if (!row.employeeId) return;
+      const id = buildAttendanceId(row.employeeId, row.date);
+      const existing = registryAttendances.find(a => a.id === id);
+      
+      if (!existing) {
+        n++;
+      } else if (REPLACEABLE_STATUSES.includes(existing.status)) {
+        r++;
+      } else {
+        b++;
       }
-      if (code.includes('leave') || code.includes('cong') || code.includes('ferie') || code.includes('vac')) {
-        return "Congé Excel non confirmé";
-      }
-      return "Absence Excel non confirmée";
-    }
+    });
 
-    // 6. Absence Candidate (Expected day, no request, no code)
-    const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
-    if (isAbsenceCandidate) return "Absence à analyser";
-
-    // 7. Manual Excel Holiday not in registry
-    if (a.holidayFlag && !isRegHoliday) return "Férié Excel non confirmé";
-
-    // 8. Unresolved anomalies
-    if (a.anomalyFlag && !isJustified) {
-      if (a.anomalyMessages?.some(m => m.toLowerCase().includes('pointage') || m.toLowerCase().includes('entrée') || m.toLowerCase().includes('sortie'))) return "Anomalie de pointage";
-      if (a.anomalyMessages?.some(m => m.toLowerCase().includes('heures'))) return "Heures invalides";
-      return "Anomalie non résolue";
-    }
-
-    // 9. Generic 0h draft with no explanation
-    if (!isWorked && !a.absenceCode) return "Absence à analyser";
-
-    return null;
-  };
+    return { new: n, replaceable: r, blocked: b };
+  }, [previewRows, registryAttendances]);
 
   // --- Filtering Registry ---
   const filteredRegistry = useMemo(() => {
@@ -861,7 +885,7 @@ export default function AttendancesPage() {
     setIsImportConfirmOpen(true);
   };
 
-  const handleExecuteImport = async () => {
+  const handleExecuteImport = async (strategy: "fail" | "skip" | "overwrite" = "fail") => {
     if (!user || !entityId || !previewRows.length) return;
     setIsImporting(true);
     try {
@@ -869,6 +893,7 @@ export default function AttendancesPage() {
         entityId,
         actorUid: user.uid,
         previewRows,
+        conflictStrategy: strategy,
         batchMetadata: {
           sourceFileName,
           templateMode: inputMode,
@@ -888,8 +913,8 @@ export default function AttendancesPage() {
       });
 
       toast({ 
-        title: "Importation terminée", 
-        description: `${previewRows.length} enregistrements ont été importés en brouillon.` 
+        title: strategy === 'overwrite' ? "Brouillons remplacés" : "Importation terminée", 
+        description: `${previewRows.length} enregistrements ont été importés.` 
       });
       
       setPreviewRows([]);
@@ -907,7 +932,7 @@ export default function AttendancesPage() {
     if (!user || !entityId || !canValidate) return;
     
     // HR Validation Guard
-    const blockReason = getValidationBlockReason(attendance);
+    const blockReason = getValidationBlockReason(attendance, holidaysMap, timeOffRequests);
     if (blockReason) {
       toast({
         variant: "destructive",
@@ -938,7 +963,7 @@ export default function AttendancesPage() {
     // HR Validation Guard: Analyze all selected records before bulk action
     const blockedRecords = filteredRegistry
       .filter(a => a.status === 'draft_imported')
-      .map(a => ({ id: a.id, reason: getValidationBlockReason(a) }))
+      .map(a => ({ id: a.id, reason: getValidationBlockReason(a, holidaysMap, timeOffRequests) }))
       .filter(item => item.reason !== null);
 
     if (blockedRecords.length > 0) {
@@ -1452,51 +1477,105 @@ export default function AttendancesPage() {
 
       {/* Confirmation Dialogs */}
       <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
-        <AlertDialogContent className="rounded-[2.5rem]">
+        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirmer l'importation</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-               <span className="text-muted-foreground text-sm">
-                 Vous êtes sur le point d'importer les présences en brouillon.
-               </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-black text-primary">
+               {conflictAnalysis.blocked > 0 ? "Importation bloquée" : "Confirmer l'importation"}
+            </AlertDialogTitle>
+            <div className="space-y-4 pt-4">
+              {/* 1. Critical Blocks */}
+              {conflictAnalysis.blocked > 0 && (
+                <Alert variant="destructive" className="rounded-2xl bg-red-50 border-red-100 text-red-800 py-4">
+                   <XCircle className="h-5 w-5 text-red-600" />
+                   <div className="ml-2">
+                      <AlertTitle className="font-black uppercase text-[10px] tracking-widest">Lignes verrouillées détectées</AlertTitle>
+                      <AlertDescription className="text-xs font-bold mt-1">
+                        {conflictAnalysis.blocked} ligne(s) correspondent à des présences déjà validées ou verrouillées. L'importation est bloquée pour préserver l'intégrité de la paie.
+                      </AlertDescription>
+                   </div>
+                </Alert>
+              )}
 
-          <div className="space-y-4 pt-4 text-slate-600">
-            {previewStats.warning > 0 && (
-              <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
-                <span className="text-xs font-bold text-orange-800 leading-tight">
-                  Attention : {previewStats.warning} ligne(s) contiennent des alertes (dont absences à analyser). Elles seront importées avec un indicateur d'anomalie.
-                </span>
-              </div>
-            )}
-            <div className="p-4 bg-secondary/20 rounded-xl border border-dashed flex flex-col gap-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground uppercase font-bold">Total Heures :</span>
-                <span className="font-black text-primary">{previewStats.totalHours.toFixed(1)} h</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground uppercase font-bold">Dont Nuit :</span>
-                <span className="font-black text-indigo-600">{previewStats.nightHours.toFixed(1)} h</span>
+              {/* 2. Replacement Warning */}
+              {conflictAnalysis.blocked === 0 && conflictAnalysis.replaceable > 0 && (
+                <Alert className="rounded-2xl bg-orange-50 border-orange-100 text-orange-800 py-4">
+                   <AlertTriangle className="h-5 w-5 text-orange-600" />
+                   <div className="ml-2">
+                      <AlertTitle className="font-black uppercase text-[10px] tracking-widest">Brouillons existants</AlertTitle>
+                      <AlertDescription className="text-xs font-bold mt-1">
+                        {conflictAnalysis.replaceable} brouillon(s) existent déjà pour ces dates. Voulez-vous les remplacer ?
+                      </AlertDescription>
+                   </div>
+                </Alert>
+              )}
+
+              {/* 3. General Warnings (Anomalies) */}
+              {conflictAnalysis.blocked === 0 && previewStats.warning > 0 && (
+                <div className="p-4 bg-orange-50/50 border border-orange-100 rounded-xl flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                  <span className="text-xs font-bold text-orange-800 leading-tight">
+                    Attention : {previewStats.warning} ligne(s) contiennent des alertes (absences à analyser, etc.).
+                  </span>
+                </div>
+              )}
+
+              {/* 4. Stats Summary */}
+              <div className="p-6 bg-secondary/20 rounded-[2rem] border border-dashed space-y-3">
+                 <div className="flex justify-between text-[10px] font-black uppercase text-muted-foreground tracking-widest">
+                    <span>Nouvelles lignes :</span>
+                    <span className="text-primary">{conflictAnalysis.new}</span>
+                 </div>
+                 {conflictAnalysis.replaceable > 0 && (
+                   <div className="flex justify-between text-[10px] font-black uppercase text-orange-600 tracking-widest">
+                      <span>Brouillons à remplacer :</span>
+                      <span>{conflictAnalysis.replaceable}</span>
+                   </div>
+                 )}
+                 <Separator className="bg-primary/5" />
+                 <div className="flex justify-between text-xs font-black uppercase">
+                    <span className="text-muted-foreground tracking-widest">Heures Totales :</span>
+                    <span className="text-primary">{previewStats.totalHours.toFixed(1)} h</span>
+                 </div>
               </div>
             </div>
-          </div>
+          </AlertDialogHeader>
 
-          <AlertDialogFooter className="mt-6">
-            <AlertDialogCancel disabled={isImporting}>Annuler</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={(e) => { e.preventDefault(); handleExecuteImport(); }} 
-              disabled={isImporting} 
-              className="bg-primary font-black rounded-xl px-6 shadow-lg shadow-primary/10"
-            >
-              {isImporting ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 mr-2" />
-              )}
-              Confirmer l'importation
-            </AlertDialogAction>
+          <AlertDialogFooter className="mt-6 gap-3">
+            <AlertDialogCancel disabled={isImporting} className="rounded-xl font-bold">Annuler</AlertDialogCancel>
+            
+            {conflictAnalysis.blocked > 0 ? (
+              <Button disabled className="rounded-xl font-black px-6 bg-slate-100 text-slate-400 border-none">
+                Importation impossible
+              </Button>
+            ) : conflictAnalysis.replaceable > 0 ? (
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button 
+                  variant="outline"
+                  onClick={() => handleExecuteImport("skip")} 
+                  disabled={isImporting}
+                  className="rounded-xl font-bold border-primary/20 bg-white"
+                >
+                   Ignorer existants
+                </Button>
+                <Button 
+                  onClick={() => handleExecuteImport("overwrite")} 
+                  disabled={isImporting}
+                  className="bg-primary text-white font-black rounded-xl px-6 shadow-lg shadow-primary/20 gap-2"
+                >
+                  {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Remplacer brouillons
+                </Button>
+              </div>
+            ) : (
+              <Button 
+                onClick={() => handleExecuteImport("fail")} 
+                disabled={isImporting} 
+                className="bg-primary font-black rounded-xl px-8 shadow-lg shadow-primary/20 gap-2"
+              >
+                {isImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                Confirmer l'importation
+              </Button>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
