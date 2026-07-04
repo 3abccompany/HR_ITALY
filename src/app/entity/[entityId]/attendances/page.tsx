@@ -54,7 +54,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { useCollection, useFirebase, useUser } from "@/firebase";
-import { collection, query, where, Query, orderBy } from "firebase/firestore";
+import { collection, query, where, Query, orderBy, doc, getDoc, updateDoc } from "firebase/firestore";
 import { Employee } from "@/types/employee";
 import { 
   AttendancePreviewRow, 
@@ -253,6 +253,10 @@ export default function AttendancesPage() {
   // --- Validation State ---
   const [isValidating, setIsValidating] = useState(false);
   const [isValidationConfirmOpen, setIsValidationConfirmOpen] = useState(false);
+  const [validationBlockSummary, setValidationBlockSummary] = useState<{
+    total: number;
+    reasons: Record<string, number>;
+  } | null>(null);
 
   const canRead = hasPermission("attendances.read");
   const canReadHolidays = hasPermission("holidays.read");
@@ -272,7 +276,7 @@ export default function AttendancesPage() {
     db && entityId && canRead ? query(collection(db, `entities/${entityId}/attendanceImportBatches`), orderBy("createdAt", "desc")) as Query<AttendanceImportBatch> : null,
   [db, entityId, canRead]);
 
-  // Phase 4D-2A: Holidays Query
+  // Holidays Query
   const holidaysQuery = useMemo(() => {
     if (!db || !entityId || !canReadHolidays) return null;
     const start = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`;
@@ -284,7 +288,7 @@ export default function AttendancesPage() {
     ) as Query<Holiday>;
   }, [db, entityId, canReadHolidays, selectedMonth, selectedYear]);
 
-  // Phase 4D-3A: TimeOffRequests Query
+  // TimeOffRequests Query (Phase 4D-3A)
   const timeOffRequestsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
     return query(collection(db, `entities/${entityId}/timeOffRequests`)) as Query<TimeOffRequest>;
@@ -302,7 +306,7 @@ export default function AttendancesPage() {
     return map;
   }, [employees]);
 
-  // Phase 4D-2A: Holiday Lookup Map
+  // Holiday Lookup Map
   const holidaysMap = useMemo(() => {
     const map = new Map<string, string>();
     holidays?.forEach(h => {
@@ -313,26 +317,69 @@ export default function AttendancesPage() {
     return map;
   }, [holidays]);
 
+  // --- Helper: Validation Guard Logic (Phase 4D-4) ---
+  const getValidationBlockReason = (a: AttendanceRecord) => {
+    const isWorked = (a.validatedHours || 0) > 0;
+    const regHolidayName = holidaysMap.get(a.attendanceDate);
+    const isRegHoliday = !!regHolidayName;
+    
+    const matchingRequest = timeOffRequests
+      ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+      .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
+
+    const isJustified = matchingRequest && matchingRequest.status === 'approved';
+    const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
+
+    // 1. Official Holidays are always validable
+    if (isRegHoliday) return null;
+
+    // 2. Worked days with no anomalies are validable
+    if (isWorked && !a.anomalyFlag) return null;
+
+    // 3. Justified absences (Approved leave) are validable
+    if (!isWorked && isJustified) return null;
+
+    // --- BLOCKED REASONS ---
+
+    // 4. Absence to analyze (0h expected day, no request)
+    if (isAbsenceCandidate) return "Absence à analyser";
+
+    // 5. Leave Requests state
+    if (matchingRequest && matchingRequest.status === 'submitted' && !isWorked) return "Demande en attente";
+    if (matchingRequest && matchingRequest.status === 'rejected' && !isWorked) return "Demande refusée";
+
+    // 6. Manual Excel Holiday not in registry
+    if (a.holidayFlag && !isRegHoliday) return "Férié Excel non confirmé";
+
+    // 7. Unresolved anomalies
+    if (a.anomalyFlag && !isJustified) {
+      if (a.anomalyMessages?.some(m => m.toLowerCase().includes('pointage') || m.toLowerCase().includes('entrée') || m.toLowerCase().includes('sortie'))) return "Anomalie de pointage";
+      if (a.anomalyMessages?.some(m => m.toLowerCase().includes('heures'))) return "Heures invalides";
+      return "Anomalie non résolue";
+    }
+
+    // 8. 0h draft with no explanation
+    if (!isWorked && !a.absenceCode) return "Absence non qualifiée";
+
+    return null;
+  };
+
   // --- Filtering Registry ---
   const filteredRegistry = useMemo(() => {
     if (!registryAttendances) return [];
     
     return registryAttendances.filter(a => {
-      // 1. Month/Year filter
       const date = parseISO(a.attendanceDate);
       if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
 
-      // 2. Status
       if (registryFilters.status !== "all" && a.status !== registryFilters.status) return false;
 
-      // 3. Search
       if (registryFilters.search) {
         const term = registryFilters.search.toLowerCase();
         const match = a.employeeDisplayName?.toLowerCase().includes(term) || a.employeeCode.toLowerCase().includes(term);
         if (!match) return false;
       }
 
-      // 4. Flags
       if (registryFilters.absenceOnly && !a.absenceCode) return false;
       if (registryFilters.anomalyOnly && !a.anomalyFlag) return false;
 
@@ -346,11 +393,9 @@ export default function AttendancesPage() {
 
     filteredRegistry.forEach(a => {
       const key = a.employeeId || a.employeeCode;
-      
-      // Phase 4D-2A: Enrichment for Holiday logic
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
 
-      // Phase 4D-3A: Reconciliation with TimeOffRequests
+      // Reconciliation with TimeOffRequests
       const matchingRequest = timeOffRequests
         ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
         .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
@@ -379,8 +424,6 @@ export default function AttendancesPage() {
       }
 
       const group = groups.get(key)!;
-      
-      // Enrich record with matching request for rendering
       const enrichedRecord = { ...a, matchingRequest };
       group.records.push(enrichedRecord);
       
@@ -391,13 +434,11 @@ export default function AttendancesPage() {
       
       if (a.absenceCode) group.absenceCount++;
       
-      // Phase 4D-2A/B: Anomaly counting logic
-      // Only count anomalies if it's not a registry holiday OR if it's a specific absence to analyze
-      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
-      
-      // Phase 4D-3A: Reconciliation reduces anomaly count if justified
+      // Reconciliation reduces anomaly count if justified
       const isJustified = matchingRequest && matchingRequest.status === 'approved';
-      const shouldCountAsAnomaly = a.anomalyFlag && (!isRegHoliday || isCandidateAbsence) && !isJustified;
+      const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
+      
+      const shouldCountAsAnomaly = a.anomalyFlag && (!isRegHoliday || isAbsenceCandidate) && !isJustified;
 
       if (shouldCountAsAnomaly) {
         group.anomalyCount++;
@@ -407,12 +448,10 @@ export default function AttendancesPage() {
       if (a.status === 'validated') group.validatedCount++;
     });
 
-    // Sort groups by employee name
     const sortedGroups = Array.from(groups.values()).sort((a, b) => 
       a.employeeDisplayName.localeCompare(b.employeeDisplayName)
     );
 
-    // Sort records within each group
     sortedGroups.forEach(g => {
       g.records.sort((r1, r2) => {
         const comparison = r1.attendanceDate.localeCompare(r2.attendanceDate);
@@ -442,17 +481,14 @@ export default function AttendancesPage() {
       stats.nightHours += a.nightHours || 0;
       stats.overtimeHours += a.overtimeHours || 0;
       
-      // Phase 4D-2A/B: Refined anomaly KPI
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
-      const isCandidateAbsence = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
-      
-      // Phase 4D-3A: Check justification for global stats
+      const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
       const matchingRequest = timeOffRequests
         ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
         .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
       const isJustified = matchingRequest && matchingRequest.status === 'approved';
 
-      if (a.anomalyFlag && (!isRegHoliday || isCandidateAbsence) && !isJustified) {
+      if (a.anomalyFlag && (!isRegHoliday || isAbsenceCandidate) && !isJustified) {
         stats.anomalies++;
       }
     });
@@ -562,8 +598,8 @@ export default function AttendancesPage() {
             const splits = calculateAttendanceSplits(punches, pause, false);
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
-              status: punches.length > 0 || !!absence ? "valid" : "warning",
-              messages: punches.length > 0 || !!absence ? [] : ["Absence à analyser"],
+              status: "valid",
+              messages: [],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
               date: actualDate,
@@ -583,12 +619,13 @@ export default function AttendancesPage() {
             };
             
             const validated = validatePreviewRow(previewRow, employeesMapByCode);
-            // Re-apply absence candidate marker if validation reset it
-            if (punches.length === 0 && !absence && isExpected) {
-              validated.status = "warning";
-              if (!validated.messages.includes("Absence à analyser")) {
-                validated.messages.push("Absence à analyser");
-              }
+            // Re-apply absence candidate marker after validation service to ensure persistence
+            const isActuallyEmpty = punches.length === 0 && !absence;
+            if (isActuallyEmpty && isExpected) {
+               validated.status = "warning";
+               if (!validated.messages.includes("Absence à analyser")) {
+                  validated.messages.push("Absence à analyser");
+               }
             }
             rows.push(validated);
           });
@@ -652,8 +689,8 @@ export default function AttendancesPage() {
 
           const previewRow: AttendancePreviewRow = {
             rowId: `${rowNumber}`,
-            status: punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes ? "valid" : "warning",
-            messages: punches.length > 0 || hasManualEntry || !!absence || isHoliday || !!notes ? [] : ["Absence à analyser"],
+            status: "valid",
+            messages: [],
             employeeCode: code,
             employeeName: row.getCell(2).value?.toString() || "",
             date: dateStr,
@@ -673,7 +710,6 @@ export default function AttendancesPage() {
           };
           
           const validated = validatePreviewRow(previewRow, employeesMapByCode);
-          // Re-apply absence candidate marker if validation reset it
           const isActuallyEmpty = punches.length === 0 && !hasManualEntry && !absence && !isHoliday && !notes;
           if (isActuallyEmpty && isExpected) {
              validated.status = "warning";
@@ -719,8 +755,8 @@ export default function AttendancesPage() {
 
             const previewRow: AttendancePreviewRow = {
               rowId: `${rowNumber}_${index}`,
-              status: h > 0 || !!a ? "valid" : "warning",
-              messages: h > 0 || !!a ? [] : ["Absence à analyser"],
+              status: "valid",
+              messages: [],
               employeeCode: code,
               employeeName: row.getCell(2).value?.toString() || "",
               date: actualDate,
@@ -740,7 +776,6 @@ export default function AttendancesPage() {
             };
             
             const validated = validatePreviewRow(previewRow, employeesMapByCode);
-            // Re-apply absence candidate marker if validation reset it
             if (h === 0 && !a && isExpected) {
                validated.status = "warning";
                if (!validated.messages.includes("Absence à analyser")) {
@@ -854,6 +889,18 @@ export default function AttendancesPage() {
 
   const handleValidateSingle = async (attendance: AttendanceRecord) => {
     if (!user || !entityId || !canValidate) return;
+    
+    // HR Validation Guard (Phase 4D-4)
+    const blockReason = getValidationBlockReason(attendance);
+    if (blockReason) {
+      toast({
+        variant: "destructive",
+        title: "Validation impossible",
+        description: `Cette ligne contient une erreur (${blockReason}). Veuillez la résoudre avant de valider.`,
+      });
+      return;
+    }
+
     setIsValidating(true);
     try {
       await validateAttendanceRecords({
@@ -867,6 +914,27 @@ export default function AttendancesPage() {
     } finally {
       setIsValidating(false);
     }
+  };
+
+  const handleAttemptBulkValidation = () => {
+    if (!user || !entityId || !canValidate || draftIdsToValidate.length === 0) return;
+
+    // Phase 4D-4: Analyze eligibility for bulk action
+    const blockedRecords = filteredRegistry
+      .filter(a => a.status === 'draft_imported')
+      .map(a => ({ id: a.id, reason: getValidationBlockReason(a) }))
+      .filter(item => item.reason !== null);
+
+    if (blockedRecords.length > 0) {
+      const counts: Record<string, number> = {};
+      blockedRecords.forEach(item => {
+        counts[item.reason!] = (counts[item.reason!] || 0) + 1;
+      });
+      setValidationBlockSummary({ total: blockedRecords.length, reasons: counts });
+      return;
+    }
+
+    setIsValidationConfirmOpen(true);
   };
 
   const handleValidateBulk = async () => {
@@ -902,15 +970,14 @@ export default function AttendancesPage() {
     return stats;
   }, [previewRows]);
 
-  if (membershipLoading) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
-  if (!canRead) return null;
+  if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 pb-24">
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="bg-primary p-2 rounded-xl text-white shadow-lg shadow-primary/20"><Clock className="w-6 h-6" /></div>
-          <div><h1 className="text-3xl font-black text-primary tracking-tight">Présences</h1><p className="text-muted-foreground text-sm font-medium">{entity?.nomEntreprise}</p></div>
+    <div className="p-8 max-w-7xl mx-auto pb-24">
+      <header className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-black text-primary tracking-tight">Présences</h1>
+          <p className="text-muted-foreground text-sm font-medium">{entity?.nomEntreprise}</p>
         </div>
       </header>
 
@@ -1124,7 +1191,7 @@ export default function AttendancesPage() {
                   <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => setRegistryFilters(p => ({...p, absenceOnly: e.target.checked}))} className="rounded" /><Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label></div>
                   <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => setRegistryFilters(p => ({...p, anomalyOnly: e.target.checked}))} className="rounded" /><Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label></div>
                   {canValidate && draftIdsToValidate.length > 0 && (
-                    <Button onClick={() => setIsValidationConfirmOpen(true)} className="h-11 rounded-xl font-bold bg-green-600 hover:bg-green-700 text-white gap-2 shadow-lg"><CheckSquare className="w-4 h-4" /> Valider les brouillons filtrés</Button>
+                    <Button onClick={handleAttemptBulkValidation} className="h-11 rounded-xl font-bold bg-green-600 hover:bg-green-700 text-white gap-2 shadow-lg"><CheckSquare className="w-4 h-4" /> Valider les brouillons filtrés</Button>
                   )}
                </div>
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4">
@@ -1233,12 +1300,11 @@ export default function AttendancesPage() {
                                        </TableHeader>
                                        <TableBody>
                                           {group.records.map(a => {
-                                             // Phase 4D-2A: Local resolution logic
                                              const regHolidayName = holidaysMap.get(a.attendanceDate);
                                              const isRegHoliday = !!regHolidayName;
                                              const isWorked = (a.validatedHours || 0) > 0;
                                              
-                                             // Phase 4D-3A: Reconciliation logic for rendering
+                                             // Reconciliation logic for rendering
                                              const request = a.matchingRequest as TimeOffRequest | undefined;
                                              const isJustified = request && request.status === 'approved';
                                              const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
@@ -1443,6 +1509,46 @@ export default function AttendancesPage() {
            </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Validation Block Summary Dialog (Phase 4D-4) */}
+      <AlertDialog open={!!validationBlockSummary} onOpenChange={(o) => !o && setValidationBlockSummary(null)}>
+        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[450px]">
+           <AlertDialogHeader>
+              <AlertDialogTitle className="text-xl font-black text-red-600 flex items-center gap-2">
+                 <XCircle className="w-6 h-6" /> Validation Impossible
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                 Certaines lignes contiennent des erreurs ou des éléments en attente de décision. Veuillez les traiter avant de valider.
+              </AlertDialogDescription>
+           </AlertDialogHeader>
+           
+           <div className="py-4 space-y-4">
+              <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
+                 <p className="text-xs font-bold text-red-800 mb-3 uppercase tracking-widest">Récapitulatif des blocages ({validationBlockSummary?.total})</p>
+                 <div className="space-y-2">
+                    {validationBlockSummary && Object.entries(validationBlockSummary.reasons).map(([reason, count]) => (
+                      <div key={reason} className="flex items-center justify-between text-xs">
+                         <span className="font-medium text-slate-700">{reason}</span>
+                         <Badge variant="destructive" className="font-black h-5 min-w-[1.5rem] justify-center">{count}</Badge>
+                      </div>
+                    ))}
+                 </div>
+              </div>
+              
+              <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-xl text-blue-800">
+                 <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                 <p className="text-[10px] leading-relaxed font-medium">
+                    Astuce : Filtrez la liste par statut "En attente" ou "Anomalies" pour identifier et corriger rapidement les lignes concernées.
+                 </p>
+              </div>
+           </div>
+
+           <AlertDialogFooter>
+              <AlertDialogAction onClick={() => setValidationBlockSummary(null)} className="rounded-xl font-black w-full">Compris</AlertDialogAction>
+           </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </div>
   );
 }
