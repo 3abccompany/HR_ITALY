@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
@@ -145,6 +144,59 @@ const DAY_OPTIONS = [
   { value: 0, label: "Dim" }
 ];
 
+const getValidationBlockReason = (a: AttendanceRecord, holidaysMap: Map<string, string>, timeOffRequests: TimeOffRequest[] | undefined) => {
+  const isWorked = (a.validatedHours || 0) > 0;
+  const regHolidayName = holidaysMap.get(a.attendanceDate);
+  const isRegHoliday = !!regHolidayName;
+  
+  const matchingRequest = timeOffRequests
+    ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+    .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
+
+  const isJustified = matchingRequest && matchingRequest.status === 'approved';
+
+  if (isRegHoliday) return null;
+  if (!isWorked && isJustified) return null;
+
+  if (isWorked) {
+    if (a.anomalyFlag) {
+       if (a.anomalyMessages?.some(m => m.toLowerCase().includes('pointage') || m.toLowerCase().includes('entrée') || m.toLowerCase().includes('sortie'))) return "Anomalie de pointage";
+       if (a.anomalyMessages?.some(m => m.toLowerCase().includes('heures'))) return "Heures invalides";
+       return "Anomalie non résolue";
+    }
+    return null;
+  }
+
+  if (matchingRequest && !isWorked) {
+    if (matchingRequest.status === 'submitted') return "Demande en attente";
+    if (matchingRequest.status === 'rejected') return "Demande refusée";
+  }
+
+  if (a.absenceCode && !isJustified && !isWorked) {
+    const code = a.absenceCode.toLowerCase();
+    if (code.includes('sick') || code.includes('malad') || code.includes('infort')) {
+      return "Maladie Excel non confirmée";
+    }
+    if (code.includes('leave') || code.includes('cong') || code.includes('ferie') || code.includes('vac')) {
+      return "Congé Excel non confirmé";
+    }
+    return "Absence Excel non confirmée";
+  }
+
+  const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
+  if (isAbsenceCandidate) return "Absence à analyser";
+
+  if (a.holidayFlag && !isRegHoliday) return "Férié Excel non confirmé";
+
+  if (a.anomalyFlag && !isJustified) {
+    return "Anomalie non résolue";
+  }
+
+  if (!isWorked && !a.absenceCode) return "Absence à analyser";
+
+  return null;
+};
+
 /**
  * Helper to convert various ExcelJS cell values into a standard "HH:mm" format.
  */
@@ -205,66 +257,6 @@ interface GroupedEmployeeAttendance {
   draftCount: number;
   validatedCount: number;
 }
-
-const getValidationBlockReason = (a: AttendanceRecord, holidaysMap: Map<string, string>, timeOffRequests: TimeOffRequest[] | undefined) => {
-  const isWorked = (a.validatedHours || 0) > 0;
-  const regHolidayName = holidaysMap.get(a.attendanceDate);
-  const isRegHoliday = !!regHolidayName;
-  
-  const matchingRequest = timeOffRequests
-    ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-    .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
-
-  const isJustified = matchingRequest && matchingRequest.status === 'approved';
-
-  // 1. Official Holidays are always validable
-  if (isRegHoliday) return null;
-
-  // 2. Justified absences (Approved leave) are validable
-  if (!isWorked && isJustified) return null;
-
-  // 3. Worked days with no anomalies are validable
-  if (isWorked && !a.anomalyFlag) return null;
-
-  // --- BLOCKED REASONS ---
-
-  // 4. Leave Requests state (Submitted/Rejected)
-  if (matchingRequest && !isWorked) {
-    if (matchingRequest.status === 'submitted') return "Demande en attente";
-    if (matchingRequest.status === 'rejected') return "Demande refusée";
-  }
-
-  // 5. Excel Absence Code confirmation rule
-  if (a.absenceCode && !isJustified && !isWorked) {
-    const code = a.absenceCode.toLowerCase();
-    if (code.includes('sick') || code.includes('malad') || code.includes('infort')) {
-      return "Maladie Excel non confirmée";
-    }
-    if (code.includes('leave') || code.includes('cong') || code.includes('ferie') || code.includes('vac')) {
-      return "Congé Excel non confirmé";
-    }
-    return "Absence Excel non confirmée";
-  }
-
-  // 6. Absence Candidate (Expected day, no request, no code)
-  const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
-  if (isAbsenceCandidate) return "Absence à analyser";
-
-  // 7. Manual Excel Holiday not in registry
-  if (a.holidayFlag && !isRegHoliday) return "Férié Excel non confirmé";
-
-  // 8. Unresolved anomalies
-  if (a.anomalyFlag && !isJustified) {
-    if (a.anomalyMessages?.some(m => m.toLowerCase().includes('pointage') || m.toLowerCase().includes('entrée') || m.toLowerCase().includes('sortie'))) return "Anomalie de pointage";
-    if (a.anomalyMessages?.some(m => m.toLowerCase().includes('heures'))) return "Heures invalides";
-    return "Anomalie non résolue";
-  }
-
-  // 9. Generic 0h draft with no explanation
-  if (!isWorked && !a.absenceCode) return "Absence à analyser";
-
-  return null;
-};
 
 export default function AttendancesPage() {
   const params = useParams();
@@ -412,7 +404,7 @@ export default function AttendancesPage() {
       const date = parseISO(a.attendanceDate);
       if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
 
-      if (registryFilters.status !== "all" && a.status !== filters.status) return false;
+      if (registryFilters.status !== "all" && a.status !== registryFilters.status) return false;
 
       if (registryFilters.search) {
         const term = registryFilters.search.toLowerCase();
@@ -435,7 +427,6 @@ export default function AttendancesPage() {
       const key = a.employeeId || a.employeeCode;
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
 
-      // Reconciliation with TimeOffRequests
       const matchingRequest = timeOffRequests
         ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
         .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
@@ -474,7 +465,6 @@ export default function AttendancesPage() {
       
       if (a.absenceCode) group.absenceCount++;
       
-      // Reconciliation reduces anomaly count if justified
       const isJustified = matchingRequest && matchingRequest.status === 'approved';
       const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
       
@@ -659,7 +649,6 @@ export default function AttendancesPage() {
             };
             
             const validated = validatePreviewRow(previewRow, employeesMapByCode);
-            // Re-apply absence candidate marker after validation service to ensure persistence
             const isActuallyEmpty = punches.length === 0 && !absence;
             if (isActuallyEmpty && isExpected) {
                validated.status = "warning";
@@ -750,7 +739,6 @@ export default function AttendancesPage() {
           };
           
           const validated = validatePreviewRow(previewRow, employeesMapByCode);
-          // Re-apply absence candidate marker after validation service
           const isActuallyEmpty = punches.length === 0 && !hasManualEntry && !absence && !isHoliday && !notes;
           if (isActuallyEmpty && isExpected) {
              validated.status = "warning";
@@ -761,7 +749,6 @@ export default function AttendancesPage() {
           rows.push(validated);
         });
       } else {
-        // Compact decimal
         const baseDate = parseISO(startDate);
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
@@ -817,7 +804,6 @@ export default function AttendancesPage() {
             };
             
             const validated = validatePreviewRow(previewRow, employeesMapByCode);
-            // Re-apply absence candidate marker after validation service
             if (h === 0 && !a && isExpected) {
                validated.status = "warning";
                if (!validated.messages.includes("Absence à analyser")) {
@@ -933,7 +919,6 @@ export default function AttendancesPage() {
   const handleValidateSingle = async (attendance: AttendanceRecord) => {
     if (!user || !entityId || !canValidate) return;
     
-    // HR Validation Guard
     const blockReason = getValidationBlockReason(attendance, holidaysMap, timeOffRequests);
     if (blockReason) {
       toast({
@@ -962,7 +947,6 @@ export default function AttendancesPage() {
   const handleAttemptBulkValidation = () => {
     if (!user || !entityId || !canValidate || draftIdsToValidate.length === 0) return;
 
-    // HR Validation Guard: Analyze all selected records before bulk action
     const blockedRecords = filteredRegistry
       .filter(a => a.status === 'draft_imported')
       .map(a => ({ id: a.id, reason: getValidationBlockReason(a, holidaysMap, timeOffRequests) }))
@@ -1347,7 +1331,6 @@ export default function AttendancesPage() {
                                              const isRegHoliday = !!regHolidayName;
                                              const isWorked = (a.validatedHours || 0) > 0;
                                              
-                                             // Reconciliation logic for rendering
                                              const request = a.matchingRequest as TimeOffRequest | undefined;
                                              const isJustified = request && request.status === 'approved';
                                              const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
@@ -1477,7 +1460,7 @@ export default function AttendancesPage() {
          </TabsContent>
       </Tabs>
 
-      {/* Confirmation Dialogs */}
+      {/* Confirmation Dialog with Conflict Resolution UI */}
       <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
         <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <AlertDialogHeader>
@@ -1485,43 +1468,30 @@ export default function AttendancesPage() {
                {conflictAnalysis.blocked > 0 ? "Importation bloquée" : "Confirmer l'importation"}
             </AlertDialogTitle>
             <div className="space-y-4 pt-4">
-              {/* 1. Critical Blocks */}
               {conflictAnalysis.blocked > 0 && (
                 <Alert variant="destructive" className="rounded-2xl bg-red-50 border-red-100 text-red-800 py-4">
                    <XCircle className="h-5 w-5 text-red-600" />
                    <div className="ml-2">
                       <AlertTitle className="font-black uppercase text-[10px] tracking-widest">Lignes verrouillées détectées</AlertTitle>
-                      <AlertDescription className="text-xs font-bold mt-1">
-                        {conflictAnalysis.blocked} ligne(s) correspondent à des présences déjà validées ou verrouillées. L'importation est bloquée pour préserver l'intégrité de la paie.
+                      <AlertDescription className="text-xs font-bold mt-1 break-words">
+                        {conflictAnalysis.blocked} ligne(s) correspondent à des présences déjà validées ou verrouillées. L'importation est bloquée.
                       </AlertDescription>
                    </div>
                 </Alert>
               )}
 
-              {/* 2. Replacement Warning */}
               {conflictAnalysis.blocked === 0 && conflictAnalysis.replaceable > 0 && (
                 <Alert className="rounded-2xl bg-orange-50 border-orange-100 text-orange-800 py-4">
                    <AlertTriangle className="h-5 w-5 text-orange-600" />
                    <div className="ml-2">
                       <AlertTitle className="font-black uppercase text-[10px] tracking-widest">Brouillons existants</AlertTitle>
-                      <AlertDescription className="text-xs font-bold mt-1">
+                      <AlertDescription className="text-xs font-bold mt-1 break-words">
                         {conflictAnalysis.replaceable} brouillon(s) existent déjà pour ces dates. Voulez-vous les remplacer ?
                       </AlertDescription>
                    </div>
                 </Alert>
               )}
 
-              {/* 3. General Warnings (Anomalies) */}
-              {conflictAnalysis.blocked === 0 && previewStats.warning > 0 && (
-                <div className="p-4 bg-orange-50/50 border border-orange-100 rounded-xl flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
-                  <span className="text-xs font-bold text-orange-800 leading-tight">
-                    Attention : {previewStats.warning} ligne(s) contiennent des alertes (absences à analyser, etc.).
-                  </span>
-                </div>
-              )}
-
-              {/* 4. Stats Summary */}
               <div className="p-6 bg-secondary/20 rounded-[2rem] border border-dashed space-y-3">
                  <div className="flex justify-between text-[10px] font-black uppercase text-muted-foreground tracking-widest">
                     <span>Nouvelles lignes :</span>
@@ -1542,7 +1512,7 @@ export default function AttendancesPage() {
             </div>
           </AlertDialogHeader>
 
-          <AlertDialogFooter className="mt-6 gap-3">
+          <AlertDialogFooter className="mt-6 flex-col sm:flex-row gap-3">
             <AlertDialogCancel disabled={isImporting} className="rounded-xl font-bold">Annuler</AlertDialogCancel>
             
             {conflictAnalysis.blocked > 0 ? (
@@ -1588,20 +1558,14 @@ export default function AttendancesPage() {
               <AlertDialogTitle className="text-xl font-black text-primary">Valider les brouillons filtrés ?</AlertDialogTitle>
               <AlertDialogDescription asChild>
                  <span className="text-muted-foreground text-sm">
-                   Vous allez valider <strong>{draftIdsToValidate.length}</strong> enregistrements. Cette action rendra ces données définitives pour la paie.
+                   Vous allez valider <strong>{draftIdsToValidate.length}</strong> enregistrements.
                  </span>
               </AlertDialogDescription>
            </AlertDialogHeader>
-           {registryStats.anomalies > 0 && (
-             <div className="p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 mt-4">
-                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                <span className="text-xs font-bold text-red-800 leading-tight">Attention : {registryStats.anomalies} ligne(s) contiennent des anomalies (dont absences à analyser). Confirmer tout de même la validation ?</span>
-             </div>
-           )}
            <AlertDialogFooter className="mt-6">
               <AlertDialogCancel disabled={isValidating}>Annuler</AlertDialogCancel>
               <AlertDialogAction onClick={(e) => { e.preventDefault(); handleValidateBulk(); }} disabled={isValidating} className="bg-green-600 hover:bg-green-700 font-black rounded-xl px-6 shadow-lg">
-                 {isValidating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />} Confirmer la validation
+                 {isValidating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />} Confirmer
               </AlertDialogAction>
            </AlertDialogFooter>
         </AlertDialogContent>
@@ -1615,13 +1579,13 @@ export default function AttendancesPage() {
                  <XCircle className="w-6 h-6" /> Validation Impossible
               </AlertDialogTitle>
               <AlertDialogDescription>
-                 Certaines lignes contiennent des erreurs ou des éléments en attente de décision. Veuillez les traiter avant de valider.
+                 Certaines lignes nécessitent une revue avant validation.
               </AlertDialogDescription>
            </AlertDialogHeader>
            
            <div className="py-4 space-y-4">
               <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
-                 <p className="text-xs font-bold text-red-800 mb-3 uppercase tracking-widest">Récapitulatif des blocages ({validationBlockSummary?.total})</p>
+                 <p className="text-xs font-bold text-red-800 mb-3 uppercase tracking-widest">Récapitulatif ({validationBlockSummary?.total})</p>
                  <div className="space-y-2">
                     {validationBlockSummary && Object.entries(validationBlockSummary.reasons).map(([reason, count]) => (
                       <div key={reason} className="flex items-center justify-between text-xs">
@@ -1630,13 +1594,6 @@ export default function AttendancesPage() {
                       </div>
                     ))}
                  </div>
-              </div>
-              
-              <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-xl text-blue-800">
-                 <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                 <p className="text-[10px] leading-relaxed font-medium">
-                    Astuce : Filtrez la liste par statut "En attente" ou "Anomalies" pour identifier et corriger rapidement les lignes concernées.
-                 </p>
               </div>
            </div>
 
@@ -1758,12 +1715,11 @@ const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: 
         ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
         
         const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<Sync""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
         const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
         
         row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)` };
         row.getCell('N').numFmt = '0.00';
-        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
         row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
         row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
       });
@@ -1796,7 +1752,6 @@ const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: 
         
         row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)` };
         row.getCell('N').numFmt = '0.00';
-        row.getCell('N').fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
         row.getCell('P').dataValidation = { type: 'list', allowBlank: true, formulae: [`"${ABSENCE_CODES.join(',')}"`] };
         row.getCell('Q').dataValidation = { type: 'list', allowBlank: true, formulae: ['"Oui,Non"'] };
       });

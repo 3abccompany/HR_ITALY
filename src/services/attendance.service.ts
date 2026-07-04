@@ -194,7 +194,7 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
 
 /**
  * Performs a real draft import of attendance records into Firestore.
- * Phase 4D-5: Supports conflict resolution strategies (fail, skip, overwrite).
+ * Supports conflict resolution strategies (fail, skip, overwrite).
  */
 export async function executeAttendanceImport(params: {
   entityId: string;
@@ -257,7 +257,7 @@ export async function executeAttendanceImport(params: {
      if (existingDocsMap.has(id)) {
         if (conflictStrategy === "skip") return false;
         if (conflictStrategy === "overwrite") return true;
-        return false; // Should not be reached if fail check passed
+        return false; 
      }
      return true;
   });
