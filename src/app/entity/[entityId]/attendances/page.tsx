@@ -79,7 +79,9 @@ import {
   parseISO,
   startOfMonth,
   endOfMonth,
-  eachDayOfInterval
+  eachDayOfInterval,
+  isBefore,
+  differenceInCalendarDays
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { 
@@ -144,7 +146,30 @@ const DAY_OPTIONS = [
   { value: 0, label: "Dim" }
 ];
 
-const getValidationBlockReason = (a: AttendanceRecord, holidaysMap: Map<string, string>, timeOffRequests: TimeOffRequest[] | undefined) => {
+/**
+ * Robust date parser for mixed formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+const getValidationBlockReason = (
+  a: AttendanceRecord, 
+  holidaysMap: Map<string, string>, 
+  timeOffRequests: TimeOffRequest[] | undefined
+) => {
   const isWorked = (a.validatedHours || 0) > 0;
   const regHolidayName = holidaysMap.get(a.attendanceDate);
   const isRegHoliday = !!regHolidayName;
@@ -197,9 +222,6 @@ const getValidationBlockReason = (a: AttendanceRecord, holidaysMap: Map<string, 
   return null;
 };
 
-/**
- * Helper to convert various ExcelJS cell values into a standard "HH:mm" format.
- */
 function formatExcelTimeValue(value: any): string {
   if (value === null || value === undefined || value === "") return "";
   
@@ -258,11 +280,19 @@ interface GroupedEmployeeAttendance {
   validatedCount: number;
 }
 
+const initialFilters = {
+  status: "all",
+  search: "",
+  absenceOnly: false,
+  anomalyOnly: false
+};
+
 export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
+  const { auth } = useFirebase();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
 
@@ -293,12 +323,7 @@ export default function AttendancesPage() {
   const [isImporting, setIsImporting] = useState(false);
 
   // --- Registry State ---
-  const [registryFilters, setRegistryFilters] = useState({
-    status: "all",
-    search: "",
-    absenceOnly: false,
-    anomalyOnly: false
-  });
+  const [registryFilters, setRegistryFilters] = useState(initialFilters);
   const [dateSortDirection, setDateSortDirection] = useState<"asc" | "desc">("desc");
   const [expandedEmployees, setExpandedEmployees] = useState<Set<string>>(new Set());
 
@@ -328,7 +353,6 @@ export default function AttendancesPage() {
     db && entityId && canRead ? query(collection(db, `entities/${entityId}/attendanceImportBatches`), orderBy("createdAt", "desc")) as Query<AttendanceImportBatch> : null,
   [db, entityId, canRead]);
 
-  // Holidays Query
   const holidaysQuery = useMemo(() => {
     if (!db || !entityId || !canReadHolidays) return null;
     const start = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`;
@@ -340,7 +364,6 @@ export default function AttendancesPage() {
     ) as Query<Holiday>;
   }, [db, entityId, canReadHolidays, selectedMonth, selectedYear]);
 
-  // TimeOffRequests Query
   const timeOffRequestsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
     return query(collection(db, `entities/${entityId}/timeOffRequests`)) as Query<TimeOffRequest>;
@@ -358,7 +381,6 @@ export default function AttendancesPage() {
     return map;
   }, [employees]);
 
-  // Holiday Lookup Map
   const holidaysMap = useMemo(() => {
     const map = new Map<string, string>();
     holidays?.forEach(h => {
@@ -369,7 +391,7 @@ export default function AttendancesPage() {
     return map;
   }, [holidays]);
 
-  // Conflict Analysis Memo
+  // --- Conflict Analysis for Import ---
   const conflictAnalysis = useMemo(() => {
     if (previewRows.length === 0 || !registryAttendances) return { new: 0, replaceable: 0, blocked: 0 };
     
@@ -396,7 +418,6 @@ export default function AttendancesPage() {
     return { new: n, replaceable: r, blocked: b };
   }, [previewRows, registryAttendances]);
 
-  // --- Filtering Registry ---
   const filteredRegistry = useMemo(() => {
     if (!registryAttendances) return [];
     
@@ -419,7 +440,6 @@ export default function AttendancesPage() {
     });
   }, [registryAttendances, selectedMonth, selectedYear, registryFilters]);
 
-  // --- Grouping Registry by Employee ---
   const groupedEmployeeData = useMemo(() => {
     const groups = new Map<string, GroupedEmployeeAttendance>();
 
@@ -528,6 +548,12 @@ export default function AttendancesPage() {
   const draftIdsToValidate = useMemo(() => 
     filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
   [filteredRegistry]);
+
+  const handleUpdateFilter = (key: keyof typeof initialFilters, value: any) => {
+    setRegistryFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleResetFilters = () => setRegistryFilters(initialFilters);
 
   const toggleWorkingDay = (day: number) => {
     setExpectedWorkingDays(prev => 
@@ -1213,10 +1239,10 @@ export default function AttendancesPage() {
                     <span className="px-4 text-xs font-black uppercase tracking-widest text-primary min-w-[140px] text-center">{format(new Date(selectedYear, selectedMonth - 1), 'MMMM yyyy', { locale: fr })}</span>
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedMonth(prev => prev === 12 ? 1 : prev + 1)}><ChevronRight className="w-4 h-4" /></Button>
                   </div>
-                  <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Filtrer par employé ou matricule..." value={registryFilters.search} onChange={(e) => setRegistryFilters(p => ({...p, search: e.target.value}))} className="h-11 rounded-xl pl-10 bg-white border-primary/10" /></div>
-                  <Select value={registryFilters.status} onValueChange={(v) => setRegistryFilters(p => ({...p, status: v}))}><SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10"><SelectValue placeholder="Tous statuts" /></SelectTrigger><SelectContent><SelectItem value="all">Tous les statuts</SelectItem>{Object.entries(STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}</SelectContent></Select>
-                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => setRegistryFilters(p => ({...p, absenceOnly: e.target.checked}))} className="rounded" /><Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label></div>
-                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => setRegistryFilters(p => ({...p, anomalyOnly: e.target.checked}))} className="rounded" /><Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label></div>
+                  <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Filtrer par employé ou matricule..." value={registryFilters.search} onChange={(e) => handleUpdateFilter('search', e.target.value)} className="h-11 rounded-xl pl-10 bg-white border-primary/10" /></div>
+                  <Select value={registryFilters.status} onValueChange={(v) => handleUpdateFilter('status', v)}><SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10"><SelectValue placeholder="Tous statuts" /></SelectTrigger><SelectContent><SelectItem value="all">Tous les statuts</SelectItem>{Object.entries(STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}</SelectContent></Select>
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => handleUpdateFilter('absenceOnly', e.target.checked)} className="rounded" /><Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label></div>
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => handleUpdateFilter('anomalyOnly', e.target.checked)} className="rounded" /><Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label></div>
                   {canValidate && draftIdsToValidate.length > 0 && (
                     <Button onClick={handleAttemptBulkValidation} className="h-11 rounded-xl font-bold bg-green-600 hover:bg-green-700 text-white gap-2 shadow-lg"><CheckSquare className="w-4 h-4" /> Valider les brouillons filtrés</Button>
                   )}
@@ -1462,7 +1488,7 @@ export default function AttendancesPage() {
 
       {/* Confirmation Dialog with Conflict Resolution UI */}
       <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
-        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[550px]">
+        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-black text-primary">
                {conflictAnalysis.blocked > 0 ? "Importation bloquée" : "Confirmer l'importation"}
@@ -1656,14 +1682,6 @@ function getStatusIcon(status: string) {
     case 'error': return <XCircle className="w-4 h-4 text-red-500" />; 
     default: return null; 
   }
-}
-
-function parseSafeDate(val: any): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return val;
-  if (typeof val?.toDate === 'function') return val.toDate();
-  if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-  return new Date(val);
 }
 
 const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: number, month: number, start: string, employees: Employee[], prefillPause: number) => {
