@@ -1567,66 +1567,6 @@ export default function AttendancesPage() {
 
     </div>
   );
-
-  function getValidationBlockReason(a: AttendanceRecord) {
-    const isWorked = (a.validatedHours || 0) > 0;
-    const regHolidayName = holidaysMap.get(a.attendanceDate);
-    const isRegHoliday = !!regHolidayName;
-    
-    const matchingRequest = timeOffRequests
-      ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-      .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
-
-    const isJustified = matchingRequest && matchingRequest.status === 'approved';
-
-    // 1. Official Holidays are always validable
-    if (isRegHoliday) return null;
-
-    // 2. Justified absences (Approved leave) are validable
-    if (!isWorked && isJustified) return null;
-
-    // 3. Worked days with no anomalies are validable
-    if (isWorked && !a.anomalyFlag) return null;
-
-    // --- BLOCKED REASONS ---
-
-    // 4. Leave Request State (Pending/Rejected)
-    if (matchingRequest && !isWorked) {
-      if (matchingRequest.status === 'submitted') return "Demande en attente";
-      if (matchingRequest.status === 'rejected') return "Demande refusée";
-    }
-
-    // 5. Excel Absence Code without system approval (Guard reinforcement)
-    if (a.absenceCode && !isJustified && !isWorked) {
-      const code = a.absenceCode.toLowerCase();
-      if (code.includes('sick') || code.includes('malad') || code.includes('infort')) {
-        return "Maladie Excel non confirmée";
-      }
-      if (code.includes('leave') || code.includes('cong') || code.includes('ferie') || code.includes('vac')) {
-        return "Congé Excel non confirmé";
-      }
-      return "Absence Excel non confirmée";
-    }
-
-    // 6. Absence Candidate (Expected day, no request, no code)
-    const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
-    if (isAbsenceCandidate) return "Absence à analyser";
-
-    // 7. Manual Excel Holiday not in registry
-    if (a.holidayFlag && !isRegHoliday) return "Férié Excel non confirmé";
-
-    // 8. Unresolved anomalies
-    if (a.anomalyFlag && !isJustified) {
-      if (a.anomalyMessages?.some(m => m.toLowerCase().includes('pointage') || m.toLowerCase().includes('entrée') || m.toLowerCase().includes('sortie'))) return "Anomalie de pointage";
-      if (a.anomalyMessages?.some(m => m.toLowerCase().includes('heures'))) return "Heures invalides";
-      return "Anomalie non résolue";
-    }
-
-    // 9. Generic 0h draft with no explanation
-    if (!isWorked && !a.absenceCode) return "Absence à analyser";
-
-    return null;
-  }
 }
 
 function SummaryStat({ label, value, color }: { label: string, value: number | string, color: string }) {
