@@ -146,25 +146,6 @@ const DAY_OPTIONS = [
   { value: 0, label: "Dim" }
 ];
 
-/**
- * Robust date parser for mixed formats.
- */
-function parseSafeDate(val: any): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
-  if (typeof val === 'object') {
-    if (typeof val.toDate === 'function') return val.toDate();
-    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
-    return null;
-  }
-  if (typeof val === 'string' || typeof val === 'number') {
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  return null;
-}
-
 const getValidationBlockReason = (
   a: AttendanceRecord, 
   holidaysMap: Map<string, string>, 
@@ -221,6 +202,25 @@ const getValidationBlockReason = (
 
   return null;
 };
+
+/**
+ * Robust date parser for mixed formats.
+ */
+function parseSafeDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') return val.toDate();
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000);
+    return null;
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
 
 function formatExcelTimeValue(value: any): string {
   if (value === null || value === undefined || value === "") return "";
@@ -280,7 +280,7 @@ interface GroupedEmployeeAttendance {
   validatedCount: number;
 }
 
-const initialFilters = {
+const initialRegistryFilters = {
   status: "all",
   search: "",
   absenceOnly: false,
@@ -323,7 +323,7 @@ export default function AttendancesPage() {
   const [isImporting, setIsImporting] = useState(false);
 
   // --- Registry State ---
-  const [registryFilters, setRegistryFilters] = useState(initialFilters);
+  const [registryFilters, setRegistryFilters] = useState(initialRegistryFilters);
   const [dateSortDirection, setDateSortDirection] = useState<"asc" | "desc">("desc");
   const [expandedEmployees, setExpandedEmployees] = useState<Set<string>>(new Set());
 
@@ -549,11 +549,11 @@ export default function AttendancesPage() {
     filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
   [filteredRegistry]);
 
-  const handleUpdateFilter = (key: keyof typeof initialFilters, value: any) => {
+  const handleUpdateRegistryFilter = (key: keyof typeof initialRegistryFilters, value: any) => {
     setRegistryFilters(prev => ({ ...prev, [key]: value }));
   };
 
-  const handleResetFilters = () => setRegistryFilters(initialFilters);
+  const handleResetRegistryFilters = () => setRegistryFilters(initialRegistryFilters);
 
   const toggleWorkingDay = (day: number) => {
     setExpectedWorkingDays(prev => 
@@ -1239,10 +1239,10 @@ export default function AttendancesPage() {
                     <span className="px-4 text-xs font-black uppercase tracking-widest text-primary min-w-[140px] text-center">{format(new Date(selectedYear, selectedMonth - 1), 'MMMM yyyy', { locale: fr })}</span>
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedMonth(prev => prev === 12 ? 1 : prev + 1)}><ChevronRight className="w-4 h-4" /></Button>
                   </div>
-                  <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Filtrer par employé ou matricule..." value={registryFilters.search} onChange={(e) => handleUpdateFilter('search', e.target.value)} className="h-11 rounded-xl pl-10 bg-white border-primary/10" /></div>
-                  <Select value={registryFilters.status} onValueChange={(v) => handleUpdateFilter('status', v)}><SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10"><SelectValue placeholder="Tous statuts" /></SelectTrigger><SelectContent><SelectItem value="all">Tous les statuts</SelectItem>{Object.entries(STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}</SelectContent></Select>
-                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => handleUpdateFilter('absenceOnly', e.target.checked)} className="rounded" /><Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label></div>
-                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => handleUpdateFilter('anomalyOnly', e.target.checked)} className="rounded" /><Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label></div>
+                  <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Filtrer par employé ou matricule..." value={registryFilters.search} onChange={(e) => handleUpdateRegistryFilter('search', e.target.value)} className="h-11 rounded-xl pl-10 bg-white border-primary/10" /></div>
+                  <Select value={registryFilters.status} onValueChange={(v) => handleUpdateRegistryFilter('status', v)}><SelectTrigger className="w-[180px] h-11 rounded-xl bg-white border-primary/10"><SelectValue placeholder="Tous statuts" /></SelectTrigger><SelectContent><SelectItem value="all">Tous les statuts</SelectItem>{Object.entries(STATUS_LABELS).map(([val, label]) => <SelectItem key={val} value={val}>{label}</SelectItem>)}</SelectContent></Select>
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="abs-only" checked={registryFilters.absenceOnly} onChange={(e) => handleUpdateRegistryFilter('absenceOnly', e.target.checked)} className="rounded" /><Label htmlFor="abs-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Absences</Label></div>
+                  <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border h-11"><input type="checkbox" id="ano-only" checked={registryFilters.anomalyOnly} onChange={(e) => handleUpdateRegistryFilter('anomalyOnly', e.target.checked)} className="rounded" /><Label htmlFor="ano-only" className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">Anomalies</Label></div>
                   {canValidate && draftIdsToValidate.length > 0 && (
                     <Button onClick={handleAttemptBulkValidation} className="h-11 rounded-xl font-bold bg-green-600 hover:bg-green-700 text-white gap-2 shadow-lg"><CheckSquare className="w-4 h-4" /> Valider les brouillons filtrés</Button>
                   )}
@@ -1359,8 +1359,9 @@ export default function AttendancesPage() {
                                              
                                              const request = a.matchingRequest as TimeOffRequest | undefined;
                                              const isJustified = request && request.status === 'approved';
-                                             const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
                                              
+                                             const blockReason = getValidationBlockReason(a, holidaysMap, timeOffRequests);
+
                                              return (
                                              <TableRow key={a.id} className="hover:bg-white transition-colors">
                                                 <TableCell className="py-3">
@@ -1397,29 +1398,21 @@ export default function AttendancesPage() {
                                                           request.status === 'submitted' ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-red-50 text-red-700 border-red-200")}>
                                                           {request.status === 'submitted' ? 'Demande en attente' : 'Demande refusée'} · {TIME_OFF_TYPE_LABELS[request.requestType]}
                                                         </Badge>
-                                                      ) : isAbsenceCandidate ? (
-                                                         <Badge variant="destructive" className="bg-red-600 text-white text-[8px] font-black uppercase border-none animate-pulse">
-                                                            Absence à analyser
-                                                         </Badge>
+                                                      ) : blockReason ? (
+                                                        <Badge variant="destructive" className={cn("text-[8px] font-black uppercase border-none h-4 px-1.5", (blockReason === "Demande en attente" || blockReason === "Absence à analyser") ? "bg-orange-500 animate-pulse" : "bg-red-600")}>
+                                                           {blockReason}
+                                                        </Badge>
                                                       ) : (
-                                                         <>
-                                                            {a.absenceCode && <Badge className="bg-orange-600 text-white text-[8px] font-black uppercase border-none">{a.absenceCode}</Badge>}
-                                                            {a.holidayFlag && (
-                                                               <Badge variant="outline" className="text-[8px] font-black uppercase bg-indigo-50 text-indigo-700 border-indigo-200">
-                                                                  {a.holidayName || "Férié (Excel)"}
-                                                               </Badge>
-                                                            )}
-                                                            <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
-                                                               {STATUS_LABELS[a.status] || a.status}
-                                                            </Badge>
-                                                            {a.anomalyFlag && !isRegHoliday && !isJustified && <AlertCircle className="w-3 h-3 text-red-500" />}
-                                                         </>
+                                                         <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
+                                                            {STATUS_LABELS[a.status] || a.status}
+                                                         </Badge>
                                                       )}
+                                                      {!isRegHoliday && !isJustified && !blockReason && a.anomalyFlag && <AlertCircle className="w-3 h-3 text-red-500" />}
                                                    </div>
                                                 </TableCell>
                                                 <TableCell className="text-right pr-4">
                                                    {canValidate && a.status === 'draft_imported' && (
-                                                      <Button variant="ghost" size="icon" onClick={() => handleValidateSingle(a)} disabled={isValidating} className="h-7 w-7 text-green-600">
+                                                      <Button variant="ghost" size="icon" onClick={() => handleValidateSingle(a)} disabled={isValidating || !!blockReason} className="h-7 w-7 text-green-600 disabled:opacity-20">
                                                          <CheckCircle2 className="w-3.5 h-3.5" />
                                                       </Button>
                                                    )}
@@ -1488,12 +1481,15 @@ export default function AttendancesPage() {
 
       {/* Confirmation Dialog with Conflict Resolution UI */}
       <AlertDialog open={isImportConfirmOpen} onOpenChange={setIsImportConfirmOpen}>
-        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
-          <AlertDialogHeader>
+        <AlertDialogContent className="rounded-[2.5rem] sm:max-w-[500px] overflow-hidden flex flex-col max-h-[90vh]">
+          <AlertDialogHeader className="shrink-0 p-6 pb-2">
             <AlertDialogTitle className="text-xl font-black text-primary">
                {conflictAnalysis.blocked > 0 ? "Importation bloquée" : "Confirmer l'importation"}
             </AlertDialogTitle>
-            <div className="space-y-4 pt-4 overflow-y-auto max-h-[60vh] pr-2">
+          </AlertDialogHeader>
+
+          <ScrollArea className="flex-1 px-6 py-2">
+            <div className="space-y-4 pr-2">
               {conflictAnalysis.blocked > 0 && (
                 <Alert variant="destructive" className="rounded-2xl bg-red-50 border-red-100 text-red-800 py-4">
                    <XCircle className="h-5 w-5 text-red-600" />
@@ -1518,7 +1514,7 @@ export default function AttendancesPage() {
                 </Alert>
               )}
 
-              <div className="p-6 bg-secondary/20 rounded-[2rem] border border-dashed space-y-3 w-full">
+              <div className="p-6 bg-secondary/20 rounded-[2rem] border border-dashed border-primary/10 space-y-3">
                  <div className="flex justify-between items-center text-[10px] font-black uppercase text-muted-foreground tracking-widest">
                     <span>Nouvelles lignes :</span>
                     <span className="text-primary">{conflictAnalysis.new}</span>
@@ -1529,17 +1525,17 @@ export default function AttendancesPage() {
                       <span>{conflictAnalysis.replaceable}</span>
                    </div>
                  )}
-                 <Separator className="bg-primary/5" />
+                 <Separator className="bg-primary/5 my-2" />
                  <div className="flex justify-between items-center text-xs font-black uppercase">
                     <span className="text-muted-foreground tracking-widest">Heures Totales :</span>
                     <span className="text-primary">{previewStats.totalHours.toFixed(1)} h</span>
                  </div>
               </div>
             </div>
-          </AlertDialogHeader>
+          </ScrollArea>
 
-          <AlertDialogFooter className="mt-6 flex-col sm:flex-row gap-3">
-            <AlertDialogCancel disabled={isImporting} className="rounded-xl font-bold">Annuler</AlertDialogCancel>
+          <AlertDialogFooter className="shrink-0 p-6 pt-2 flex-col sm:flex-row gap-3">
+            <AlertDialogCancel disabled={isImporting} className="rounded-xl font-bold w-full sm:w-auto">Annuler</AlertDialogCancel>
             
             {conflictAnalysis.blocked > 0 ? (
               <Button disabled className="rounded-xl font-black px-6 bg-slate-100 text-slate-400 border-none w-full sm:w-auto">
