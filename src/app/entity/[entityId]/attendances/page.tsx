@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
@@ -411,7 +412,7 @@ export default function AttendancesPage() {
       const date = parseISO(a.attendanceDate);
       if (date.getFullYear() !== selectedYear || (date.getMonth() + 1) !== selectedMonth) return false;
 
-      if (registryFilters.status !== "all" && a.status !== registryFilters.status) return false;
+      if (registryFilters.status !== "all" && a.status !== filters.status) return false;
 
       if (registryFilters.search) {
         const term = registryFilters.search.toLowerCase();
@@ -1757,7 +1758,7 @@ const setupDetailedSheet = (sheet: ExcelJS.Worksheet, periodType: string, year: 
         ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => row.getCell(col).numFmt = 'hh:mm');
         
         const fAM = `IF(AND(G${currentRow}<>"",H${currentRow}<>""),MOD(H${currentRow}-G${currentRow},1)*24,0)`;
-        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<>""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
+        const fPM = `IF(AND(I${currentRow}<>"",J${currentRow}<Sync""),MOD(J${currentRow}-I${currentRow},1)*24,0)`;
         const fHS = `IF(AND(K${currentRow}<>"",L${currentRow}<>""),MOD(L${currentRow}-K${currentRow},1)*24,0)`;
         
         row.getCell('N').value = { formula: `IFERROR(MAX(0, (${fAM} + ${fPM} + ${fHS}) - M${currentRow}/60), 0)` };
