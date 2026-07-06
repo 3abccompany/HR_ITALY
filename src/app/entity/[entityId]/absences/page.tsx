@@ -97,7 +97,7 @@ const initialForm = {
   startTime: "09:00",
   endTime: "10:00",
   dayPart: "full_day" as any,
-  durationHours: "",
+  durationHours: "" as any,
   reason: "",
   requiresJustification: false,
   justificationNote: ""
@@ -345,9 +345,9 @@ export default function TimeOffManagementPage() {
 
   // Initial load from URL
   useEffect(() => {
-    const status = searchParams.get("status");
+    const urlStatus = searchParams.get("status");
     const urlType = searchParams.get("type");
-    if (status) setFilters(p => ({ ...p, status }));
+    if (urlStatus) setFilters(p => ({ ...p, status: urlStatus }));
     if (urlType) setFilters(p => ({ ...p, requestType: urlType }));
   }, [searchParams]);
 
@@ -1389,7 +1389,7 @@ export default function TimeOffManagementPage() {
                         </div>
                         <div className="space-y-1">
                            <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
-                           <Input type="number" value={balanceForm.paid_leave.accrued} onChange={(e) => setFormData(p => ({...p, paid_leave: {...p.paid_leave, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                           <Input type="number" value={balanceForm.paid_leave.accrued} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
                         </div>
                      </div>
                   </div>
