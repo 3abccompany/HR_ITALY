@@ -143,6 +143,7 @@ export async function convertOfferToEmployeeAction(params: {
           jobTitle: offer.jobTitleName, 
           worksiteName: offer.worksiteName || "", 
           status: "active",
+          weeklyHours: offer.weeklyHours || 40,
           pendingContractId: contractId,
           createdAt: FieldValue.serverTimestamp(), 
           updatedAt: FieldValue.serverTimestamp()

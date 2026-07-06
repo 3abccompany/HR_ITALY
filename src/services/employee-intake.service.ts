@@ -131,6 +131,7 @@ export async function executeEmployeeIntake(entityId: string, payload: any, acto
       worksiteName: payload.worksiteName || "",
       operationalWorksiteIds: [payload.worksiteId].filter(Boolean),
       status: "active",
+      weeklyHours: payload.weeklyHours || 40,
       source: payload.intakeSource || "direct_hr_creation",
       activeContractId: contractId,
       createdAt: now,

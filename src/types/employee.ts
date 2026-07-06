@@ -31,6 +31,9 @@ export interface Employee {
   activeContractId?: string;
   pendingContractId?: string;
   status: EmployeeStatus;
+
+  /** Contractual weekly hours for duration calculations */
+  weeklyHours?: number;
   
   /** 
    * Origin of the employee record 
