@@ -47,7 +47,8 @@ import {
   MoreVertical,
   CheckSquare,
   ChevronUp,
-  Circle
+  Circle,
+  Separator
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -114,7 +115,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Separator } from "@/components/ui/separator";
 import ExcelJS from "exceljs";
 
 const getValidationBlockReason = (
@@ -1012,8 +1012,8 @@ export default function AttendancesPage() {
   const toggleEmployeeExpansion = (employeeId: string) => {
     setExpandedEmployees(prev => {
       const next = new Set(prev);
-      if (next.has(employeeId)) next.delete(employeeId);
-      else next.add(employeeId);
+      if (next.has(employeeId)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -1392,7 +1392,9 @@ export default function AttendancesPage() {
                                                          )
                                                       ) : isJustified && !isWorked ? (
                                                         <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase gap-1">
-                                                          Absence justifiée · {TIME_OFF_TYPE_LABELS[request.requestType]}
+                                                          {request.requestType === 'unjustified_absence' 
+                                                            ? 'Absence injustifiée confirmée' 
+                                                            : `Absence justifiée · ${TIME_OFF_TYPE_LABELS[request.requestType]}`}
                                                         </Badge>
                                                       ) : request && !isWorked ? (
                                                         <Badge variant="outline" className={cn("text-[8px] font-black uppercase", 
@@ -1854,3 +1856,4 @@ const setupGuideSheet = (sheet: ExcelJS.Worksheet) => {
   sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
   ABSENCE_CODES.forEach(c => sheet.addRow([c]));
 };
+
