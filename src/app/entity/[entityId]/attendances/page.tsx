@@ -47,9 +47,9 @@ import {
   MoreVertical,
   CheckSquare,
   ChevronUp,
-  Circle,
-  Separator
+  Circle
 } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useActiveMembership } from "@/hooks/use-active-membership";
@@ -1012,8 +1012,8 @@ export default function AttendancesPage() {
   const toggleEmployeeExpansion = (employeeId: string) => {
     setExpandedEmployees(prev => {
       const next = new Set(prev);
-      if (next.has(employeeId)) next.delete(id);
-      else next.add(id);
+      if (next.has(employeeId)) next.delete(employeeId);
+      else next.add(employeeId);
       return next;
     });
   };
@@ -1398,7 +1398,7 @@ export default function AttendancesPage() {
                                                         </Badge>
                                                       ) : request && !isWorked ? (
                                                         <Badge variant="outline" className={cn("text-[8px] font-black uppercase", 
-                                                          request.status === 'submitted' ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-red-50 text-red-700 border-red-200")}>
+                                                          request.status === 'submitted' ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-red-50 text-red-700 border-red-100")}>
                                                           {request.status === 'submitted' ? 'Demande en attente' : 'Demande refusée'} · {TIME_OFF_TYPE_LABELS[request.requestType]}
                                                         </Badge>
                                                       ) : blockReason ? (
@@ -1856,4 +1856,3 @@ const setupGuideSheet = (sheet: ExcelJS.Worksheet) => {
   sheet.addRow(["CODES ABSENCE VALIDES"]).font = { bold: true };
   ABSENCE_CODES.forEach(c => sheet.addRow([c]));
 };
-
