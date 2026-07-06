@@ -141,7 +141,7 @@ export interface MonthlyAccrual {
   } | null;
 
   usefulDaysCount: number;
-  usefulDaysSource: "manual" | "time_off_estimate";
+  usefulDaysSource: "manual" | "time_off_estimate" | "attendance_validated";
   blockingReasonFound: boolean;
   blockingReasonTypes: string[];
   isAccrualQualified: boolean;

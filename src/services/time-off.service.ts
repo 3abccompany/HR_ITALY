@@ -31,12 +31,13 @@ import {
   MonthlyAccrualStatus,
   TIME_OFF_TYPE_LABELS
 } from "@/types/time-off";
-import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth, eachMonthOfInterval } from "date-fns";
+import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth, eachMonthOfInterval, eachDayOfInterval, format } from "date-fns";
 import { createAuditLog } from "./audit.service";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.service";
 import { createNotification } from "./notification.service";
 import { Employee } from "@/types/employee";
+import { AttendanceRecord } from "@/types/attendance";
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -762,15 +763,15 @@ export async function addJustificationDocumentToRequest(
 }
 
 /**
- * Phase 2H: Calculates a draft monthly accrual for an employee.
- * Updated Phase 4E-1A: Added traceability for sources and blocking reasons.
+ * Phase 2H: Calculates a monthly accrual for an employee.
+ * Supports: time_off_estimate (Default) and attendance_validated.
  */
 export async function runMonthlyAccrualCalculation(params: {
   entityId: string;
   year: number;
   month: number;
   employeeId?: string;
-  usefulDaysMode: "time_off_estimate" | "manual";
+  usefulDaysMode: "time_off_estimate" | "manual" | "attendance_validated";
   manualUsefulDays?: number;
   actorUid: string;
 }) {
@@ -793,6 +794,8 @@ export async function runMonthlyAccrualCalculation(params: {
   const periodStart = startOfMonth(new Date(year, month - 1));
   const periodEnd = endOfMonth(periodStart);
   const periodKey = `${year}-${month.toString().padStart(2, '0')}`;
+  const startStr = periodStart.toISOString().split('T')[0];
+  const endStr = periodEnd.toISOString().split('T')[0];
 
   for (const empId of targets) {
     try {
@@ -805,13 +808,11 @@ export async function runMonthlyAccrualCalculation(params: {
         const accrualId = `${empId}_${year}_${month.toString().padStart(2, '0')}`;
         const accrualRef = doc(db!, `entities/${entityId}/monthlyAccruals`, accrualId);
         const existingSnap = await transaction.get(accrualRef);
+        
         if (existingSnap.exists()) {
            const existing = existingSnap.data();
-           if (existing.status === "confirmed") {
-             throw new Error(`La maturation mensuelle est déjà confirmée pour ${employee.displayName} (${periodKey}).`);
-           }
-           if (existing.status === "posted") {
-             throw new Error(`La maturation mensuelle est déjà postée pour ${employee.displayName} (${periodKey}).`);
+           if (existing.status === "confirmed" || existing.status === "posted") {
+             return; // Skip confirmed/posted rows to preserve manual work
            }
         }
 
@@ -834,6 +835,7 @@ export async function runMonthlyAccrualCalculation(params: {
           }
         }
 
+        // 1. Load relevant TimeOffRequests
         const requestsQ = query(
           collection(db!, `entities/${entityId}/timeOffRequests`),
           where("employeeId", "==", empId),
@@ -842,45 +844,102 @@ export async function runMonthlyAccrualCalculation(params: {
         const requestsSnap = await getDocs(requestsQ);
         const monthRequests = requestsSnap.docs.filter(d => {
           const r = d.data();
-          return (r.startDate <= periodEnd.toISOString().split('T')[0] && r.endDate >= periodStart.toISOString().split('T')[0]);
-        }).map(d => d.data() as TimeOffRequest);
+          return (r.startDate <= endStr && r.endDate >= startStr);
+        }).map(d => ({ ...d.data(), id: d.id } as TimeOffRequest));
 
-        let usefulDaysCount = 22; 
+        // 2. Useful Days Calculation
+        const uniqueUsefulDates = new Set<string>();
+        const sourceAttendanceIds: string[] = [];
+        const sourceRequestIds: string[] = [];
+        const blockingReasons: MonthlyAccrual["blockingReasons"] = [];
+        const calculationWarnings: string[] = [];
+        
         let blockingFound = false;
         let blockingTypes: string[] = [];
-        let blockingReasons: MonthlyAccrual["blockingReasons"] = [];
-        let notes = "";
 
-        if (usefulDaysMode === "manual" && manualUsefulDays !== undefined) {
-          usefulDaysCount = manualUsefulDays;
-        } else {
-          monthRequests.forEach(r => {
-            if (rules.blockingAbsenceTypes?.includes(r.requestType)) {
-              blockingFound = true;
-              blockingTypes.push(r.requestType);
-              blockingReasons!.push({
-                requestId: r.requestId,
-                type: r.requestType,
-                label: TIME_OFF_TYPE_LABELS[r.requestType] || r.requestType,
-                startDate: r.startDate,
-                endDate: r.endDate
+        // Evaluate Requests (Source of Truth for absences and blocking reasons)
+        const assimilatedTypes = ["paid_leave", "sickness", "work_accident", "permission"];
+        
+        monthRequests.forEach(r => {
+           const isBlocking = rules.blockingAbsenceTypes?.includes(r.requestType);
+           const isAssimilated = assimilatedTypes.includes(r.requestType);
+
+           if (isBlocking) {
+             blockingFound = true;
+             blockingTypes.push(r.requestType);
+             blockingReasons.push({
+               requestId: r.requestId,
+               type: r.requestType,
+               label: TIME_OFF_TYPE_LABELS[r.requestType] || r.requestType,
+               startDate: r.startDate,
+               endDate: r.endDate
+             });
+             sourceRequestIds.push(r.requestId);
+           }
+
+           if (isAssimilated) {
+              sourceRequestIds.push(r.requestId);
+              // Count every overlapping day in the month
+              const start = parseISO(r.startDate > startStr ? r.startDate : startStr);
+              const end = parseISO(r.endDate < endStr ? r.endDate : endStr);
+              eachDayOfInterval({ start, end }).forEach(d => {
+                uniqueUsefulDates.add(format(d, "yyyy-MM-dd"));
               });
-            }
-            if (["unpaid_leave", "unjustified_absence"].includes(r.requestType)) {
-               usefulDaysCount -= r.durationDays;
-            }
-          });
+           }
+        });
+
+        let usefulDaysCount = 0;
+
+        if (usefulDaysMode === "manual") {
+           usefulDaysCount = manualUsefulDays || 0;
+        } else if (usefulDaysMode === "attendance_validated") {
+           // Fetch validated attendances
+           // Index suggested: attendances (employeeId ASC, attendanceDate ASC)
+           const attendanceQ = query(
+             collection(db!, `entities/${entityId}/attendances`),
+             where("employeeId", "==", empId),
+             where("attendanceDate", ">=", startStr),
+             where("attendanceDate", "<=", endStr)
+           ) as Query<AttendanceRecord>;
+           
+           const attSnap = await getDocs(attendanceQ);
+           const reliableStatuses = ["validated", "corrected", "locked"];
+           
+           attSnap.docs.forEach(d => {
+              const att = d.data();
+              if (reliableStatuses.includes(att.status) && (att.validatedHours || 0) > 0) {
+                 uniqueUsefulDates.add(att.attendanceDate);
+                 sourceAttendanceIds.push(d.id);
+              }
+           });
+           
+           usefulDaysCount = uniqueUsefulDates.size;
+           
+           if (attSnap.size < 20) {
+              calculationWarnings.push("Données de présence possiblement incomplètes pour ce mois.");
+           }
+        } else {
+           // Default: time_off_estimate (legacy branch)
+           let estCount = 22;
+           monthRequests.forEach(r => {
+              if (["unpaid_leave", "unjustified_absence"].includes(r.requestType)) {
+                 estCount -= r.durationDays;
+              }
+           });
+           usefulDaysCount = estCount;
+           calculationWarnings.push("Calcul basé sur une estimation (standard 22j).");
         }
 
         const isQualified = usefulDaysCount >= (rules.usefulDaysThreshold || 14) && !blockingFound;
 
         let prorationFactor = 1.0;
+        let notes = "";
         if (employee.hireDate && rules.prorationMethod === "hired_before_15_full_month") {
           const hireDate = new Date(employee.hireDate);
           if (hireDate.getFullYear() === year && (hireDate.getMonth() + 1) === month) {
             if (hireDate.getDate() > 15) {
               prorationFactor = 0;
-              notes += "Prorata : Embauche après le 15 du mois (Accrual = 0). ";
+              notes += "Prorata : Embauche après le 15 du mois. ";
             }
           }
         }
@@ -894,6 +953,12 @@ export async function runMonthlyAccrualCalculation(params: {
           rol: isQualified && rules.accrualRolEnabled ? (annualRol / 12) * prorationFactor : 0,
           ex_holidays: isQualified && rules.accrualExHolidaysEnabled ? (annualExHolidays / 12) * prorationFactor : 0
         };
+
+        if (blockingFound) {
+           notes += `Bloqué par motif d'absence. `;
+        } else if (usefulDaysCount < (rules.usefulDaysThreshold || 14)) {
+           notes += `Jours utiles insuffisants: ${usefulDaysCount}/${rules.usefulDaysThreshold || 14}. `;
+        }
 
         const payload: MonthlyAccrual = {
           id: accrualId,
@@ -923,14 +988,11 @@ export async function runMonthlyAccrualCalculation(params: {
           accrued,
           status: "draft",
           calculationNotes: notes.trim() || null,
-
-          // Traceability (Phase 4E-1A)
-          calculationMode: usefulDaysMode === "manual" ? "attendance_validated" : "time_off_estimate",
-          sourceAttendanceIds: [],
-          sourceRequestIds: monthRequests.map(r => r.requestId),
-          blockingReasons: blockingReasons,
-          calculationWarnings: usefulDaysMode === "time_off_estimate" ? ["Calcul basé sur une estimation des absences (22j standard)."] : [],
-
+          calculationMode: usefulDaysMode,
+          sourceAttendanceIds,
+          sourceRequestIds,
+          blockingReasons,
+          calculationWarnings,
           needsReview: false,
           hasDiscrepancy: false,
           impactedByRequestIds: [],
@@ -956,7 +1018,7 @@ export async function runMonthlyAccrualCalculation(params: {
     action: "monthlyAccrual.calculated",
     resourceType: "monthlyAccrual",
     resourceId: periodKey,
-    details: { targetsCount: targets.length, month, year }
+    details: { targetsCount: targets.length, month, year, mode: usefulDaysMode }
   });
 
   return results;

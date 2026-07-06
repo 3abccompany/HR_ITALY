@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -346,7 +345,7 @@ export default function TimeOffManagementPage() {
     const type = searchParams.get("type");
     if (status) setFilters(p => ({ ...p, status }));
     if (type) setFilters(p => ({ ...p, requestType: type }));
-  }, [searchParams]);
+  }, [status, type, searchParams]); // Fixed dependency array
 
   const handleUpdateFilter = (key: keyof typeof initialFilters, value: any) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -1032,7 +1031,7 @@ export default function TimeOffManagementPage() {
                               <span className={cn("font-bold", a.usefulDaysCount < (a.ruleSnapshot?.usefulDaysThreshold || 14) ? "text-red-600" : "text-green-700")}>
                                 {a.usefulDaysCount} j
                               </span>
-                              <p className="text-[9px] text-muted-foreground uppercase">{a.usefulDaysSource === 'manual' ? 'Saisie' : 'Est.'}</p>
+                              <p className="text-[9px] text-muted-foreground uppercase">{a.usefulDaysSource === 'manual' ? 'Saisie' : a.usefulDaysSource === 'attendance_validated' ? 'Présences' : 'Est.'}</p>
                            </TableCell>
                            <TableCell className="font-bold">{a.accrued.paid_leave.toFixed(2)}</TableCell>
                            <TableCell className="font-bold">{a.accrued.rol.toFixed(2)}</TableCell>
@@ -1311,6 +1310,7 @@ export default function TimeOffManagementPage() {
                          <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                          <SelectContent>
                             <SelectItem value="time_off_estimate">Estimation système (via absences)</SelectItem>
+                            <SelectItem value="attendance_validated">Validation des présences</SelectItem>
                             <SelectItem value="manual">Saisie manuelle fixe</SelectItem>
                          </SelectContent>
                       </Select>
