@@ -126,9 +126,14 @@ const getValidationBlockReason = (
   const regHolidayName = holidaysMap.get(a.attendanceDate);
   const isRegHoliday = !!regHolidayName;
   
-  const matchingRequest = timeOffRequests
-    ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-    .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
+  // Prioritized matching: approved > submitted > rejected
+  const matchingRequest = (timeOffRequests || [])
+    .filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+    .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
+    .sort((req1, req2) => {
+      const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
+      return (priority[req1.status] || 99) - (priority[req2.status] || 99);
+    })[0];
 
   const isJustified = matchingRequest && matchingRequest.status === 'approved';
 
@@ -293,7 +298,6 @@ export default function AttendancesPage() {
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
-  const { auth } = useFirebase();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
 
@@ -448,7 +452,7 @@ export default function AttendancesPage() {
       const key = a.employeeId || a.employeeCode;
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
 
-      const matchingRequest = timeOffRequests
+      const matchingRequest = (timeOffRequests || [])
         ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
         .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
         .sort((req1, req2) => {
@@ -534,9 +538,15 @@ export default function AttendancesPage() {
       
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
       const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
-      const matchingRequest = timeOffRequests
+      
+      const matchingRequest = (timeOffRequests || [])
         ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-        .find(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate);
+        .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
+        .sort((req1, req2) => {
+          const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
+          return (priority[req1.status] || 99) - (priority[req2.status] || 99);
+        })[0];
+        
       const isJustified = matchingRequest && matchingRequest.status === 'approved';
 
       if (a.anomalyFlag && (!isRegHoliday || isAbsenceCandidate) && !isJustified) {
@@ -1567,7 +1577,7 @@ export default function AttendancesPage() {
               <Button 
                 onClick={() => handleExecuteImport("fail")} 
                 disabled={isImporting} 
-                className="bg-primary font-black rounded-xl px-8 shadow-lg shadow-primary/20 gap-2 w-full sm:w-auto"
+                className="bg-primary font-black rounded-xl px-8 shadow-lg shadow-primary/10 gap-2 w-full sm:w-auto"
               >
                 {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 Confirmer l'importation
