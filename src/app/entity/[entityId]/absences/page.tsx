@@ -11,7 +11,7 @@ import {
   Download, Eye, Euro, Settings2, Calculator, Save,
   BarChart, Trash2, ShieldCheck, RefreshCw, CheckCircle,
   Check, ListRestart, Info as InfoIcon, Plane, Search,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +86,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import React from "react";
 
 const initialForm = {
@@ -166,9 +167,10 @@ function safeToIso(val: any): string {
   // Serialized POJO
   if (
     typeof val === 'object' &&
-    typeof val.seconds === 'number'
+    (typeof val.seconds === 'number' || typeof val._seconds === 'number')
   ) {
-    return new Date(val.seconds * 1000).toISOString();
+    const s = val.seconds ?? val._seconds;
+    return new Date(s * 1000).toISOString();
   }
   return String(val);
 }
@@ -240,10 +242,10 @@ export default function TimeOffManagementPage() {
     return query(collection(db, `entities/${entityId}/monthlyAccruals`), orderBy("periodKey", "desc")) as Query<MonthlyAccrual>;
   }, [db, entityId, canRead]);
 
-  const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery);
-  const { data: employees } = useCollection<Employee>(employeesQuery);
-  const { data: rawBalances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery);
-  const { data: accruals, loading: loadingAccruals } = useCollection<MonthlyAccrual>(accrualsQuery);
+  const { data: requests, loading: loadingRequests } = useCollection<TimeOffRequest>(requestsQuery, "absences.requests");
+  const { data: employees } = useCollection<Employee>(employeesQuery, "absences.employees");
+  const { data: rawBalances, loading: loadingBalances } = useCollection<LeaveBalance>(balancesQuery, "absences.balances");
+  const { data: accruals, loading: loadingAccruals } = useCollection<MonthlyAccrual>(accrualsQuery, "absences.accruals");
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -1003,7 +1005,7 @@ export default function TimeOffManagementPage() {
                        <TableHead className="pl-6">Employé</TableHead>
                        <TableHead>Période</TableHead>
                        <TableHead>Qualification</TableHead>
-                       <TableHead>Jours utiles</TableHead>
+                       <TableHead>Jours utiles (Seuil)</TableHead>
                        <TableHead>Congés (j)</TableHead>
                        <TableHead>ROL (h)</TableHead>
                        <TableHead>Ex Fest. (h)</TableHead>
@@ -1017,25 +1019,84 @@ export default function TimeOffManagementPage() {
                     ) : accruals?.length === 0 ? (
                       <TableRow><TableCell colSpan={9} className="text-center py-20 text-muted-foreground italic">Aucune maturation calculée.</TableCell></TableRow>
                     ) : (
-                      accruals?.map(a => (
+                      accruals?.map(a => {
+                        const modeLabel = getAccrualModeLabel(a.calculationMode, a.usefulDaysSource);
+                        const threshold = a.ruleSnapshot?.usefulDaysThreshold || 14;
+                        const hasWarnings = a.calculationWarnings && a.calculationWarnings.length > 0;
+                        
+                        return (
                         <TableRow key={a.id} className="hover:bg-muted/50">
                            <TableCell className="pl-6 py-4 font-bold text-slate-900">{a.employeeName}</TableCell>
                            <TableCell className="text-xs font-medium uppercase">{a.periodKey}</TableCell>
                            <TableCell>
-                              {a.isAccrualQualified ? (
-                                <Badge className="bg-green-600 text-white border-none text-[8px]">QUALIFIÉ</Badge>
-                              ) : (
-                                <div className="flex flex-col gap-0.5">
-                                   <Badge variant="destructive" className="text-[8px]">NON QUALIFIÉ</Badge>
-                                   {a.blockingReasonFound && <p className="text-[8px] text-red-600 font-bold">Bloquant trouvé</p>}
-                                </div>
-                              )}
+                              <div className="flex flex-col gap-1">
+                                 <div className="flex items-center gap-2">
+                                    {a.isAccrualQualified ? (
+                                      <Badge className="bg-green-600 text-white border-none text-[8px]">QUALIFIÉ</Badge>
+                                    ) : (
+                                      <Badge variant="destructive" className="text-[8px]">NON QUALIFIÉ</Badge>
+                                    )}
+                                    {hasWarnings && (
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <button className="text-orange-500 hover:text-orange-600 transition-colors">
+                                            <AlertTriangle className="w-3.5 h-3.5" />
+                                          </button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-80 p-4 rounded-2xl shadow-xl border-primary/5">
+                                          <div className="space-y-3">
+                                            <p className="text-[10px] font-black uppercase text-orange-600 flex items-center gap-2 tracking-widest">
+                                               <AlertTriangle className="w-3 h-3" /> Alertes de calcul
+                                            </p>
+                                            <ul className="text-xs space-y-2">
+                                               {a.calculationWarnings?.map((w, i) => (
+                                                 <li key={i} className="flex gap-2 text-slate-600 leading-relaxed">
+                                                    <span className="text-orange-400 mt-1">•</span> {w}
+                                                 </li>
+                                               ))}
+                                            </ul>
+                                          </div>
+                                        </PopoverContent>
+                                      </Popover>
+                                    )}
+                                 </div>
+                                 
+                                 {!a.isAccrualQualified && (
+                                   <div className="space-y-1 mt-1">
+                                     {a.blockingReasons && a.blockingReasons.length > 0 ? (
+                                        a.blockingReasons.map((br, idx) => (
+                                          <div key={idx} className="space-y-0.5">
+                                             <p className="text-[8px] text-red-600 font-black leading-tight uppercase tracking-tighter">
+                                                Motif bloquant détecté: {br.label}
+                                             </p>
+                                             <p className="text-[7px] text-muted-foreground font-bold italic">
+                                                du {formatDate(br.startDate)} au {formatDate(br.endDate)}
+                                             </p>
+                                          </div>
+                                        ))
+                                     ) : a.usefulDaysCount < threshold ? (
+                                        <p className="text-[8px] text-red-600 font-black uppercase tracking-tighter">Jours utiles insuffisants: {a.usefulDaysCount}/{threshold}</p>
+                                     ) : a.calculationNotes ? (
+                                        <p className="text-[8px] text-red-600 font-bold leading-tight italic line-clamp-2" title={a.calculationNotes}>{a.calculationNotes}</p>
+                                     ) : (
+                                        <p className="text-[8px] text-red-600 font-bold">Critères non remplis</p>
+                                     )}
+                                   </div>
+                                 )}
+                              </div>
                            </TableCell>
                            <TableCell className="text-xs">
-                              <span className={cn("font-bold", a.usefulDaysCount < (a.ruleSnapshot?.usefulDaysThreshold || 14) ? "text-red-600" : "text-green-700")}>
-                                {a.usefulDaysCount} j
-                              </span>
-                              <p className="text-[9px] text-muted-foreground uppercase">{a.usefulDaysSource === 'manual' ? 'Saisie' : a.usefulDaysSource === 'attendance_validated' ? 'Présences' : 'Est.'}</p>
+                              <div className="flex flex-col gap-0.5">
+                                 <span className={cn("font-bold text-sm", a.usefulDaysCount < threshold ? "text-red-600" : "text-green-700")}>
+                                   {a.usefulDaysCount} <span className="text-[10px] font-medium text-muted-foreground opacity-50">/ {threshold} j</span>
+                                 </span>
+                                 <div className="flex flex-col">
+                                    <p className="text-[9px] text-muted-foreground font-black uppercase tracking-tighter">{modeLabel}</p>
+                                    <p className="text-[7px] text-muted-foreground opacity-60 font-bold uppercase tracking-tighter italic">
+                                      {a.sourceAttendanceIds?.length || 0} présences, {a.sourceRequestIds?.length || 0} demandes
+                                    </p>
+                                 </div>
+                              </div>
                            </TableCell>
                            <TableCell className="font-bold">{a.accrued.paid_leave.toFixed(2)}</TableCell>
                            <TableCell className="font-bold">{a.accrued.rol.toFixed(2)}</TableCell>
@@ -1066,7 +1127,7 @@ export default function TimeOffManagementPage() {
                               )}
                            </TableCell>
                         </TableRow>
-                      ))
+                      )})
                     )}
                  </TableBody>
               </Table>
@@ -1779,7 +1840,7 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
           source: "maturation",
           label: `Maturation ${format(new Date(a.year, a.month - 1), 'MMMM', { locale: fr })} ${a.year}`,
           movement: val,
-          runningBalance: 0,
+          runningBalance: 0, // calculated later
           status: "Posté",
           actor: a.postedByUid === 'server' ? 'Système' : 'RH',
           unit
@@ -1812,7 +1873,7 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
           source: "request",
           label: `${TIME_OFF_TYPE_LABELS[r.requestType] || 'Demande'} du ${formatDate(r.startDate)} au ${formatDate(r.endDate)}`,
           movement: -val,
-          runningBalance: 0,
+          runningBalance: 0, // calculated later
           status: "Approuvé",
           actor: r.approvedByRole === 'companyHR' ? 'RH' : 'Manager',
           unit
@@ -1971,6 +2032,16 @@ function getStatusBadge(status: string) {
     case 'rejected': return <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">Refusé</Badge>;
     case 'cancelled': return <Badge variant="outline" className="bg-slate-50 text-slate-400">Annulé</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+function getAccrualModeLabel(mode?: string, source?: string) {
+  const m = mode || source;
+  switch (m) {
+    case 'time_off_estimate': return "Estimation";
+    case 'attendance_validated': return "Validation des présences";
+    case 'manual': return "Saisie manuelle";
+    default: return "Est."; 
   }
 }
 
