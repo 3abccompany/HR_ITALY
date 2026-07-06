@@ -156,15 +156,15 @@ export interface MonthlyAccrual {
   calculationNotes?: string | null;
 
   // Traceability & Audit (Phase 4E-1A)
-  calculationMode?: "time_off_estimate" | "attendance_validated";
+  calculationMode?: "time_off_estimate" | "attendance_validated" | "manual";
   sourceAttendanceIds?: string[];
   sourceRequestIds?: string[];
   blockingReasons?: {
-    requestId?: string;
-    type: string;
-    label: string;
-    startDate: string;
-    endDate: string;
+    requestId?: string
+    type: string
+    label: string
+    startDate: string
+    endDate: string
   }[];
   calculationWarnings?: string[];
 

@@ -359,7 +359,7 @@ export async function markMonthlyAccrualImpactedByRequest(entityId: string, requ
 }
 
 /**
- * Creates a time-off request (RH/Admin or Employee source).
+ * RH Action: Manually initialize or edit a balance.
  * Updated Phase 4E-0A: Ensures ROL and Ex-Fest always have durationHours populated.
  */
 export async function createTimeOffRequestForEmployee(
@@ -803,14 +803,14 @@ export async function runMonthlyAccrualCalculation(params: {
         const empRef = doc(db!, `entities/${entityId}/employees`, empId);
         const empSnap = await transaction.get(empRef);
         if (!empSnap.exists()) return;
-        const employee = empSnap.data();
+        const employee = empSnap.data() as Employee;
 
         const accrualId = `${empId}_${year}_${month.toString().padStart(2, '0')}`;
         const accrualRef = doc(db!, `entities/${entityId}/monthlyAccruals`, accrualId);
         const existingSnap = await transaction.get(accrualRef);
         
         if (existingSnap.exists()) {
-           const existing = existingSnap.data();
+           const existing = existingSnap.data() as MonthlyAccrual;
            if (existing.status === "confirmed" || existing.status === "posted") {
              return; // Skip confirmed/posted rows to preserve manual work
            }
@@ -843,9 +843,9 @@ export async function runMonthlyAccrualCalculation(params: {
         );
         const requestsSnap = await getDocs(requestsQ);
         const monthRequests = requestsSnap.docs.filter(d => {
-          const r = d.data();
+          const r = d.data() as any;
           return (r.startDate <= endStr && r.endDate >= startStr);
-        }).map(d => ({ ...d.data(), id: d.id } as TimeOffRequest));
+        }).map(d => ({ ...d.data(), id: d.id } as any as TimeOffRequest));
 
         // 2. Useful Days Calculation
         const uniqueUsefulDates = new Set<string>();

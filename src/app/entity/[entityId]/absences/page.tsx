@@ -164,8 +164,12 @@ function safeToIso(val: any): string {
   // Firestore Client SDK
   if (typeof val.toDate === 'function') return val.toDate().toISOString();
   // Serialized POJO
-  if (val.seconds !== undefined) return new Date(val.seconds * 1000).toISOString();
-  if (val._seconds !== undefined) return new Date(val._seconds * 1000).toISOString();
+  if (
+    typeof val === 'object' &&
+    typeof val.seconds === 'number'
+  ) {
+    return new Date(val.seconds * 1000).toISOString();
+  }
   return String(val);
 }
 
@@ -342,10 +346,10 @@ export default function TimeOffManagementPage() {
   // Initial load from URL
   useEffect(() => {
     const status = searchParams.get("status");
-    const type = searchParams.get("type");
+    const urlType = searchParams.get("type");
     if (status) setFilters(p => ({ ...p, status }));
-    if (type) setFilters(p => ({ ...p, requestType: type }));
-  }, [status, type, searchParams]); // Fixed dependency array
+    if (urlType) setFilters(p => ({ ...p, requestType: urlType }));
+  }, [searchParams]);
 
   const handleUpdateFilter = (key: keyof typeof initialFilters, value: any) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -613,7 +617,7 @@ export default function TimeOffManagementPage() {
         const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
         window.open(url, "_blank");
       } else {
-        throw new Error("Document introuvable dans le registre.");
+        throw new Error("Document introuvable dans le registre GED.");
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -1088,7 +1092,7 @@ export default function TimeOffManagementPage() {
                    {loadingBalances ? (
                      <TableRow><TableCell colSpan={8} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
                    ) : balances?.length === 0 ? (
-                     <TableRow><TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">Aucun solde initialisé.</TableCell></TableRow>
+                     <TableRow><TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic text-xs">Aucun solde initialisé.</TableCell></TableRow>
                    ) : (
                      balances?.map(b => {
                         const empName = activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId;
@@ -1385,7 +1389,7 @@ export default function TimeOffManagementPage() {
                         </div>
                         <div className="space-y-1">
                            <Label className="text-[9px] uppercase font-bold text-muted-foreground">Acquis manuel</Label>
-                           <Input type="number" value={balanceForm.paid_leave.accrued} onChange={(e) => setBalanceForm(p => ({...p, paid_leave: {...p.paid_leave, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
+                           <Input type="number" value={balanceForm.paid_leave.accrued} onChange={(e) => setFormData(p => ({...p, paid_leave: {...p.paid_leave, accrued: parseFloat(e.target.value)}}))} className="rounded-lg h-9" />
                         </div>
                      </div>
                   </div>
@@ -1507,21 +1511,21 @@ export default function TimeOffManagementPage() {
                {isHourlyType(formData.requestType) ? (
                   <>
                     <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Date</Label>
+                      <Label className="text-[10px] uppercase font-black">Date</Label>
                       <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value, endDate: e.target.value}))} required className="rounded-xl h-11" />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure début</Label>
+                        <Label className="text-[10px] uppercase font-black">Heure début</Label>
                         <Input type="time" value={formData.startTime} onChange={(e) => setFormData(p => ({...p, startTime: e.target.value}))} required className="rounded-xl h-11" />
                       </div>
                       <div className="space-y-2">
-                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Heure fin</Label>
+                        <Label className="text-[10px] uppercase font-black">Heure fin</Label>
                         <Input type="time" value={formData.endTime} onChange={(e) => setFormData(p => ({...p, endTime: e.target.value}))} required className="rounded-xl h-11" />
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Durée estimée (Heures)</Label>
+                      <Label className="text-[10px] uppercase font-black">Durée estimée (Heures)</Label>
                       <div className="h-11 px-3 bg-secondary/20 border rounded-xl flex items-center text-sm font-bold text-primary">
                          {calculateDecimalHours(formData.startTime, formData.endTime)} h
                       </div>
@@ -1532,11 +1536,11 @@ export default function TimeOffManagementPage() {
                   <>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de début</Label>
+                        <Label className="text-[10px] uppercase font-black">Date de début</Label>
                         <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
                       </div>
                       <div className="space-y-2">
-                        <Label className="text-[10px] font-black uppercase text-muted-foreground">Date de fin (incluse)</Label>
+                        <Label className="text-[10px] uppercase font-black">Date de fin (incluse)</Label>
                         <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
                       </div>
                     </div>
@@ -1547,9 +1551,9 @@ export default function TimeOffManagementPage() {
                             <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
                               <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="full_day">Journée entière</SelectItem>
-                                <SelectItem value="morning">Matinée</SelectItem>
-                                <SelectItem value="afternoon">Après-midi</SelectItem>
+                                 <SelectItem value="full_day">Journée entière</SelectItem>
+                                 <SelectItem value="morning">Matinée</SelectItem>
+                                 <SelectItem value="afternoon">Après-midi</SelectItem>
                               </SelectContent>
                             </Select>
                          </div>
@@ -1586,7 +1590,7 @@ export default function TimeOffManagementPage() {
 
           <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
              <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
-             <Button form="request-form" type="submit" disabled={loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/20">
+             <Button form="request-form" type="submit" disabled={loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                 Enregistrer la demande
              </Button>
@@ -1625,7 +1629,7 @@ export default function TimeOffManagementPage() {
                       ) : (
                         <p className="text-xs font-bold text-slate-500">Cliquer pour choisir un fichier (PDF, Image)</p>
                       )}
-                      <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">Max 10 Mo</p>
+                      <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter">Max 10 Mo</p>
                    </div>
                 </div>
 
