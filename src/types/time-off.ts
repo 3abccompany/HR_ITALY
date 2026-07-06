@@ -40,6 +40,9 @@ export interface TimeOffRequest {
   balanceCounterType?: BalanceCounterType | null;
   reason?: string;
   
+  /** Contractual daily duration captured at request time (e.g. 8.0) */
+  expectedDailyHoursSnapshot?: number;
+
   // Justification Metadata
   requiresJustification: boolean;
   justificationStatus: JustificationStatus;

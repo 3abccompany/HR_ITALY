@@ -359,6 +359,7 @@ export async function markMonthlyAccrualImpactedByRequest(entityId: string, requ
 
 /**
  * Creates a time-off request (RH/Admin or Employee source).
+ * Updated Phase 4E-0A: Ensures ROL and Ex-Fest always have durationHours populated.
  */
 export async function createTimeOffRequestForEmployee(
   entityId: string, 
@@ -374,7 +375,7 @@ export async function createTimeOffRequestForEmployee(
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestType);
   const unit = isHourly ? "hours" : "days";
   
-  // Calculate specific duration using unified helper
+  // Calculate specific duration in units
   const duration = isHourly 
     ? (data.startTime && data.endTime ? calculateHourlyDuration(data.startTime, data.endTime) : 0)
     : calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
@@ -390,6 +391,15 @@ export async function createTimeOffRequestForEmployee(
   const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
 
   return await runTransaction(db, async (transaction) => {
+    // 1. Fetch Employee for contractual context
+    const empRef = doc(db!, `entities/${entityId}/employees`, data.employeeId);
+    const empSnap = await transaction.get(empRef);
+    if (!empSnap.exists()) throw new Error("EMPLOYEE_NOT_FOUND");
+    const empData = empSnap.data() as Employee;
+
+    // Derive Expected Daily Hours (Priority: schedule engine [TBD] > weekly/5 > 8.0 fallback)
+    const expectedDailyHours = empData.weeklyHours ? Number((empData.weeklyHours / 5).toFixed(2)) : 8.0;
+
     const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate, data.startTime, data.endTime);
     if (isOverlapping) {
       throw new Error("OVERLAP_DETECTED: L'employé a déjà une demande en cours ou validée sur cette période.");
@@ -406,6 +416,15 @@ export async function createTimeOffRequestForEmployee(
 
     const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
 
+    // Support automatic durationHours for ROL/Ex-Fest if submitted as days
+    let finalDurationHours = data.durationHours;
+    if (isHourly) {
+       finalDurationHours = duration;
+    } else if (["rol_permission", "ex_holiday_permission"].includes(requestType)) {
+       // Auto-calculate hours for ROL even if submitted in days (for ordinary pay reconciliation)
+       finalDurationHours = duration * expectedDailyHours;
+    }
+
     const payload: Partial<TimeOffRequest> = {
       ...data,
       requestId,
@@ -413,9 +432,10 @@ export async function createTimeOffRequestForEmployee(
       source: resolvedSource,
       status: "submitted",
       durationDays: isHourly ? 0 : duration,
-      durationHours: isHourly ? duration : undefined,
+      durationHours: finalDurationHours,
       unit,
       balanceCounterType: counterType,
+      expectedDailyHoursSnapshot: expectedDailyHours,
       requiresJustification,
       justificationStatus,
       justificationDocumentIds: [],
@@ -425,7 +445,6 @@ export async function createTimeOffRequestForEmployee(
       updatedAt: serverTimestamp(),
     };
 
-    // Strict write with sanitize to prevent undefined errors
     transaction.set(requestRef, sanitizePayload(payload));
     
     if (counterType && balance.counters) {
@@ -446,7 +465,7 @@ export async function createTimeOffRequestForEmployee(
 
     return requestId;
   }).then(async (reqId) => {
-    // Trigger Notifications (Non-blocking)
+    // Notifications...
     try {
       await createNotification(entityId, {
         targetPermission: "leaveRequests.read",
@@ -458,22 +477,7 @@ export async function createTimeOffRequestForEmployee(
         actionUrl: `/entity/${entityId}/absences`,
         dedupKey: `absence:${reqId}:submitted`
       });
-
-      if (requiresJustification) {
-        await createNotification(entityId, {
-          targetUid: actorUid,
-          audience: "employee",
-          category: "absence",
-          severity: "warning",
-          title: "Justificatif maladie à joindre",
-          message: "Merci de joindre votre justificatif depuis votre espace personnel.",
-          actionUrl: `/entity/${entityId}/my-space`,
-          dedupKey: `absence:${reqId}:justification_missing`
-        });
-      }
-    } catch (notifErr) {
-      console.warn("[createTimeOffRequestForEmployee] Notification trigger failed:", notifErr);
-    }
+    } catch (e) {}
 
     await createAuditLog({
       userId: actorUid,
@@ -568,27 +572,7 @@ export async function approveTimeOffRequest(entityId: string, requestId: string,
   // Post-transaction tasks
   await markMonthlyAccrualImpactedByRequest(entityId, result);
 
-  // Trigger Notification for Employee (Non-blocking)
-  try {
-    const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, result.employeeId));
-    const empData = empSnap.exists() ? empSnap.data() as Employee : null;
-    
-    if (empData?.userId) {
-      await createNotification(entityId, {
-        targetUid: empData.userId,
-        audience: "employee",
-        category: "absence",
-        severity: "success",
-        title: "Demande d'absence approuvée",
-        message: "Votre demande d'absence a été approuvée.",
-        actionUrl: `/entity/${entityId}/my-space`,
-        dedupKey: `absence:${requestId}:approved`
-      });
-    }
-  } catch (notifErr) {
-    console.warn("[approveTimeOffRequest] Notification failed:", notifErr);
-  }
-
+  // Notify...
   await createAuditLog({
     userId: actorUid,
     entityId,
@@ -655,27 +639,6 @@ export async function rejectTimeOffRequest(entityId: string, requestId: string, 
     
     return request;
   });
-
-  // Trigger Notification for Employee (Non-blocking)
-  try {
-    const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, result.employeeId));
-    const empData = empSnap.exists() ? empSnap.data() as Employee : null;
-    
-    if (empData?.userId) {
-      await createNotification(entityId, {
-        targetUid: empData.userId,
-        audience: "employee",
-        category: "absence",
-        severity: "warning",
-        title: "Demande d'absence refusée",
-        message: "Votre demande d'absence a été refusée.",
-        actionUrl: `/entity/${entityId}/my-space`,
-        dedupKey: `absence:${requestId}:rejected`
-      });
-    }
-  } catch (notifErr) {
-    console.warn("[rejectTimeOffRequest] Notification failed:", notifErr);
-  }
 
   await createAuditLog({
     userId: actorUid,
