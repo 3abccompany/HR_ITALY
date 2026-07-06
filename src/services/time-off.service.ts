@@ -763,6 +763,7 @@ export async function addJustificationDocumentToRequest(
 
 /**
  * Phase 2H: Calculates a draft monthly accrual for an employee.
+ * Updated Phase 4E-1A: Added traceability for sources and blocking reasons.
  */
 export async function runMonthlyAccrualCalculation(params: {
   entityId: string;
@@ -847,6 +848,7 @@ export async function runMonthlyAccrualCalculation(params: {
         let usefulDaysCount = 22; 
         let blockingFound = false;
         let blockingTypes: string[] = [];
+        let blockingReasons: MonthlyAccrual["blockingReasons"] = [];
         let notes = "";
 
         if (usefulDaysMode === "manual" && manualUsefulDays !== undefined) {
@@ -856,6 +858,13 @@ export async function runMonthlyAccrualCalculation(params: {
             if (rules.blockingAbsenceTypes?.includes(r.requestType)) {
               blockingFound = true;
               blockingTypes.push(r.requestType);
+              blockingReasons!.push({
+                requestId: r.requestId,
+                type: r.requestType,
+                label: TIME_OFF_TYPE_LABELS[r.requestType] || r.requestType,
+                startDate: r.startDate,
+                endDate: r.endDate
+              });
             }
             if (["unpaid_leave", "unjustified_absence"].includes(r.requestType)) {
                usefulDaysCount -= r.durationDays;
@@ -914,6 +923,14 @@ export async function runMonthlyAccrualCalculation(params: {
           accrued,
           status: "draft",
           calculationNotes: notes.trim() || null,
+
+          // Traceability (Phase 4E-1A)
+          calculationMode: usefulDaysMode === "manual" ? "attendance_validated" : "time_off_estimate",
+          sourceAttendanceIds: [],
+          sourceRequestIds: monthRequests.map(r => r.requestId),
+          blockingReasons: blockingReasons,
+          calculationWarnings: usefulDaysMode === "time_off_estimate" ? ["Calcul basé sur une estimation des absences (22j standard)."] : [],
+
           needsReview: false,
           hasDiscrepancy: false,
           impactedByRequestIds: [],

@@ -155,6 +155,19 @@ export interface MonthlyAccrual {
   status: MonthlyAccrualStatus;
   calculationNotes?: string | null;
 
+  // Traceability & Audit (Phase 4E-1A)
+  calculationMode?: "time_off_estimate" | "attendance_validated";
+  sourceAttendanceIds?: string[];
+  sourceRequestIds?: string[];
+  blockingReasons?: {
+    requestId?: string;
+    type: string;
+    label: string;
+    startDate: string;
+    endDate: string;
+  }[];
+  calculationWarnings?: string[];
+
   // Impact & Safety Flags (Phase 2J-A)
   needsReview?: boolean;
   hasDiscrepancy?: boolean;
