@@ -46,7 +46,8 @@ import {
   ChevronsUpDown,
   MoreVertical,
   CheckSquare,
-  ChevronUp
+  ChevronUp,
+  Circle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -116,36 +117,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import ExcelJS from "exceljs";
 
-const ABSENCE_CODES = [
-  "paid_leave",
-  "paid_permission",
-  "unpaid_permission",
-  "sickness",
-  "justified_absence",
-  "expectation",
-  "other"
-];
-
-const STATUS_LABELS: Record<string, string> = {
-  draft_imported: "Brouillon importé",
-  draft: "Brouillon",
-  validated: "Validée",
-  corrected: "Corrigée",
-  cancelled: "Annulée",
-  locked: "Verrouillée",
-  archived: "Archivée"
-};
-
-const DAY_OPTIONS = [
-  { value: 1, label: "Lun" },
-  { value: 2, label: "Mar" },
-  { value: 3, label: "Mer" },
-  { value: 4, label: "Jeu" },
-  { value: 5, label: "Ven" },
-  { value: 6, label: "Sam" },
-  { value: 0, label: "Dim" }
-];
-
 const getValidationBlockReason = (
   a: AttendanceRecord, 
   holidaysMap: Map<string, string>, 
@@ -202,6 +173,36 @@ const getValidationBlockReason = (
 
   return null;
 };
+
+const ABSENCE_CODES = [
+  "paid_leave",
+  "paid_permission",
+  "unpaid_permission",
+  "sickness",
+  "justified_absence",
+  "expectation",
+  "other"
+];
+
+const STATUS_LABELS: Record<string, string> = {
+  draft_imported: "Brouillon importé",
+  draft: "Brouillon",
+  validated: "Validée",
+  corrected: "Corrigée",
+  cancelled: "Annulée",
+  locked: "Verrouillée",
+  archived: "Archivée"
+};
+
+const DAY_OPTIONS = [
+  { value: 1, label: "Lun" },
+  { value: 2, label: "Mar" },
+  { value: 3, label: "Mer" },
+  { value: 4, label: "Jeu" },
+  { value: 5, label: "Ven" },
+  { value: 6, label: "Sam" },
+  { value: 0, label: "Dim" }
+];
 
 /**
  * Robust date parser for mixed formats.
