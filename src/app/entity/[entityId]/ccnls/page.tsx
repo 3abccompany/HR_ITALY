@@ -20,7 +20,7 @@ import { useFirebase, useCollection, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { createCcnl, updateCcnl, archiveCcnl, getDefaultAccrualRules, normalizeAccrualRules } from "@/services/ccnl.service";
-import { CCNL, CCNLStatus, CCNLAccrualRules } from "@/types/ccnl";
+import { CCNL, CCNLStatus, CCNLAccrualRules, WeeklySchedule } from "@/types/ccnl";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
@@ -46,6 +46,16 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
+const initialSchedule: WeeklySchedule = {
+  monday: 8,
+  tuesday: 8,
+  wednesday: 8,
+  thursday: 8,
+  friday: 8,
+  saturday: 0,
+  sunday: 0
+};
+
 const initialForm = {
   name: "",
   sector: "",
@@ -58,7 +68,8 @@ const initialForm = {
   annualExHolidayHours: 0,
   effectiveFrom: new Date().toISOString().split('T')[0],
   notes: "",
-  accrualRules: getDefaultAccrualRules()
+  accrualRules: getDefaultAccrualRules(),
+  weeklySchedule: undefined as WeeklySchedule | undefined
 };
 
 export default function CcnlRegistryPage() {
@@ -101,6 +112,18 @@ export default function CcnlRegistryPage() {
     }) || [];
   }, [ccnls, search, statusFilter]);
 
+  const scheduleSum = useMemo(() => {
+    if (!formData.weeklySchedule) return 0;
+    const s = formData.weeklySchedule;
+    return (s.monday || 0) + (s.tuesday || 0) + (s.wednesday || 0) + (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0) + (s.sunday || 0);
+  }, [formData.weeklySchedule]);
+
+  const isScheduleInvalid = useMemo(() => {
+    if (!formData.weeklySchedule) return false;
+    // Allow slight floating point tolerance
+    return Math.abs(scheduleSum - formData.standardWeeklyHours) > 0.01;
+  }, [formData.weeklySchedule, scheduleSum, formData.standardWeeklyHours]);
+
   const handleReset = () => {
     setFormData(initialForm);
     setEditingId(null);
@@ -120,15 +143,43 @@ export default function CcnlRegistryPage() {
       annualExHolidayHours: c.annualExHolidayHours || 0,
       effectiveFrom: c.effectiveFrom,
       notes: c.notes || "",
-      accrualRules: normalizeAccrualRules(c.accrualRules)
+      accrualRules: normalizeAccrualRules(c.accrualRules),
+      weeklySchedule: c.weeklySchedule
     });
     setEditingId(c.ccnlId);
     setIsFormOpen(true);
   };
 
+  const handleApplyTemplate = (type: '40h' | '39h' | '44h') => {
+    if (type === '40h') {
+      setFormData(p => ({ ...p, standardWeeklyHours: 40, weeklySchedule: { monday: 8, tuesday: 8, wednesday: 8, thursday: 8, friday: 8, saturday: 0, sunday: 0 } }));
+    } else if (type === '39h') {
+      setFormData(p => ({ ...p, standardWeeklyHours: 39, weeklySchedule: { monday: 8, tuesday: 8, wednesday: 8, thursday: 8, friday: 7, saturday: 0, sunday: 0 } }));
+    } else if (type === '44h') {
+      setFormData(p => ({ ...p, standardWeeklyHours: 44, weeklySchedule: { monday: 8, tuesday: 8, wednesday: 8, thursday: 8, friday: 8, saturday: 4, sunday: 0 } }));
+    }
+  };
+
+  const updateDayHour = (day: keyof WeeklySchedule, val: string) => {
+    const num = parseFloat(val) || 0;
+    setFormData(p => ({
+      ...p,
+      weeklySchedule: {
+        ...(p.weeklySchedule || initialSchedule),
+        [day]: num
+      }
+    }));
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    if (isScheduleInvalid) {
+      toast({ variant: "destructive", title: "Répartition invalide", description: `La somme des heures quotidiennes (${scheduleSum}h) doit correspondre au total hebdomadaire (${formData.standardWeeklyHours}h).` });
+      return;
+    }
+
     setLoading(true);
     try {
       if (editingId) {
@@ -162,11 +213,11 @@ export default function CcnlRegistryPage() {
     try {
       await archiveCcnl(entityId, archivingId, user.uid);
       toast({ title: "CCNL archivé" });
+      setArchivingId(null);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
-      setArchivingId(null);
     }
   };
 
@@ -306,7 +357,7 @@ export default function CcnlRegistryPage() {
           </DialogHeader>
           
           <div className="flex-1 overflow-y-auto px-8 py-4 min-h-0">
-            <form id="ccnl-form" onSubmit={handleSave} className="space-y-8 pb-8">
+            <div className="space-y-8 pb-8">
               <div className="space-y-6">
                 <h3 className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
                    <Library className="w-4 h-4" /> Identité & Paramètres Paie
@@ -339,6 +390,49 @@ export default function CcnlRegistryPage() {
                     <Label htmlFor="hourlyDivisor">Diviseur Horaire</Label>
                     <Input id="hourlyDivisor" type="number" value={formData.hourlyDivisor} onChange={(e) => setFormData(p => ({...p, hourlyDivisor: parseInt(e.target.value)}))} required />
                   </div>
+                </div>
+
+                {/* Phase 4E-0A: Weekly Schedule Distribution */}
+                <div className="space-y-4 pt-4 border-t">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black uppercase text-primary tracking-widest flex items-center gap-2">
+                       <Clock className="w-4 h-4" /> Répartition hebdomadaire
+                    </h3>
+                    <div className="flex gap-2">
+                       <Button type="button" variant="outline" size="sm" onClick={() => handleApplyTemplate('39h')} className="h-7 text-[9px] font-black uppercase">Template 39h</Button>
+                       <Button type="button" variant="outline" size="sm" onClick={() => handleApplyTemplate('40h')} className="h-7 text-[9px] font-black uppercase">Template 40h</Button>
+                       <Button type="button" variant="outline" size="sm" onClick={() => handleApplyTemplate('44h')} className="h-7 text-[9px] font-black uppercase">Template 44h</Button>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-4 sm:grid-cols-7 gap-3">
+                     {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => (
+                        <div key={day} className="space-y-1.5">
+                           <Label className="text-[9px] uppercase font-black text-center block text-muted-foreground">{day.slice(0, 3)}</Label>
+                           <Input 
+                             type="number" 
+                             step="0.5" 
+                             className="h-9 px-1 text-center font-bold" 
+                             value={(formData.weeklySchedule as any)?.[day] ?? ""} 
+                             onChange={(e) => updateDayHour(day as any, e.target.value)}
+                           />
+                        </div>
+                     ))}
+                  </div>
+
+                  {formData.weeklySchedule && (
+                     <div className={cn("p-3 rounded-xl border flex items-center justify-between transition-colors", isScheduleInvalid ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200")}>
+                        <div className="flex items-center gap-2">
+                           {isScheduleInvalid ? <AlertCircle className="w-4 h-4 text-red-600" /> : <CheckCircle2 className="w-4 h-4 text-green-600" />}
+                           <span className={cn("text-xs font-bold", isScheduleInvalid ? "text-red-700" : "text-green-700")}>
+                              Somme : {scheduleSum}h
+                           </span>
+                        </div>
+                        {isScheduleInvalid && (
+                           <span className="text-[10px] font-bold text-red-600">Doit égaler {formData.standardWeeklyHours}h</span>
+                        )}
+                     </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-3 gap-4 border-t pt-4">
@@ -431,12 +525,16 @@ export default function CcnlRegistryPage() {
                 <Label htmlFor="notes">Notes</Label>
                 <Textarea id="notes" value={formData.notes} onChange={(e) => setFormData(p => ({...p, notes: e.target.value}))} placeholder="Observations..." />
               </div>
-            </form>
+            </div>
           </div>
 
           <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
             <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
-            <Button form="ccnl-form" type="submit" disabled={loading} className="px-8 shadow-lg shadow-primary/20">
+            <Button 
+              onClick={handleSave} 
+              disabled={loading || isScheduleInvalid} 
+              className="px-8 shadow-lg shadow-primary/20 font-black"
+            >
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
               {editingId ? "Enregistrer" : "Créer CCNL"}
             </Button>
@@ -469,25 +567,5 @@ function BooleanRule({ label, checked, onChange }: { label: string, checked?: bo
       <span className="text-xs font-bold text-slate-700">{label}</span>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
-  );
-}
-
-function FilterDropdown({ label, value, onValueChange, options, icon: Icon }: { label: string, value: string, onValueChange: (v: string) => void, options: { label: string, value: string }[], icon?: any }) {
-  return (
-    <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger className={cn("h-10 w-auto min-w-[150px] text-xs font-medium bg-background border-primary/10", value !== 'all' && "border-primary ring-1 ring-primary/10")}>
-        <div className="flex items-center gap-2">
-          {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" />}
-          <span className="text-muted-foreground">{label}:</span>
-          <SelectValue placeholder="Tous" />
-        </div>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="all">Tous ({label})</SelectItem>
-        {options.map(opt => (
-          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }

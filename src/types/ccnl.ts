@@ -6,6 +6,16 @@ export type BalanceCounterType = "paid_leave" | "rol" | "ex_holidays";
 export type BalanceUnit = "days" | "hours";
 export type CcnlProrationMethod = "none" | "pro_rata_temporis" | "hired_before_15_full_month";
 
+export interface WeeklySchedule {
+  monday: number;
+  tuesday: number;
+  wednesday: number;
+  thursday: number;
+  friday: number;
+  saturday: number;
+  sunday: number;
+}
+
 export interface CCNLAccrualRules {
   /** Threshold of days worked in a month to accrue entitlements (Default 14) */
   usefulDaysThreshold?: number;
@@ -48,6 +58,9 @@ export interface CCNL {
   annualExHolidayHours?: number;
   accrualRules?: CCNLAccrualRules;
 
+  // Working Schedule (Phase 4E-0A)
+  weeklySchedule?: WeeklySchedule;
+
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
@@ -74,6 +87,7 @@ export interface CCNLLevel {
   annualRolHours?: number;
   annualExHolidayHours?: number;
   accrualRules?: CCNLAccrualRules;
+  weeklySchedule?: WeeklySchedule;
 
   createdAt: Date | FieldValue;
   createdBy: string;
