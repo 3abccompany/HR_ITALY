@@ -62,11 +62,11 @@ export interface CCNL {
   weeklySchedule?: WeeklySchedule;
 
   // Payroll MVP Premium Fields (Legacy - Moving to Level)
-  nightPremiumPercent?: number;
-  overtimePremiumPercent?: number;
-  overtimeNightPremiumPercent?: number;
-  holidayPremiumPercent?: number;
-  sundayPremiumPercent?: number;
+  nightPremiumPercent?: number | null;
+  overtimePremiumPercent?: number | null;
+  overtimeNightPremiumPercent?: number | null;
+  holidayPremiumPercent?: number | null;
+  sundayPremiumPercent?: number | null;
 
   createdAt: Date | FieldValue;
   createdBy: string;
@@ -97,11 +97,11 @@ export interface CCNLLevel {
   weeklySchedule?: WeeklySchedule;
 
   // Payroll MVP Premium Overrides
-  nightPremiumPercent?: number;
-  overtimePremiumPercent?: number;
-  overtimeNightPremiumPercent?: number;
-  holidayPremiumPercent?: number;
-  sundayPremiumPercent?: number;
+  nightPremiumPercent?: number | null;
+  overtimePremiumPercent?: number | null;
+  overtimeNightPremiumPercent?: number | null;
+  holidayPremiumPercent?: number | null;
+  sundayPremiumPercent?: number | null;
 
   createdAt: Date | FieldValue;
   createdBy: string;
