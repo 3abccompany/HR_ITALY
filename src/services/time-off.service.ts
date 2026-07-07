@@ -389,7 +389,7 @@ export async function createTimeOffRequestForEmployee(
   const resolvedSource = data.source || (actorRole === 'employee' ? "employee_created" : "hr_created");
   const requiresJustification = ["sickness", "work_accident"].includes(requestType) ? true : (data.requiresJustification ?? false);
 
-  return await runTransaction(db, async (transaction) => {
+  const result = await runTransaction(db, async (transaction) => {
     // 1. Fetch Employee for contractual context
     const empRef = doc(db!, `entities/${entityId}/employees`, data.employeeId);
     const empSnap = await transaction.get(empRef);
@@ -489,32 +489,35 @@ export async function createTimeOffRequestForEmployee(
       transaction.update(bRef, balanceUpdate);
     }
 
-    return requestId;
-  }).then(async (reqId) => {
-    // Notifications...
-    try {
-      await createNotification(entityId, {
-        targetPermission: "leaveRequests.read",
-        audience: "hr",
-        category: "absence",
-        severity: "info",
-        title: "Nouvelle demande d'absence",
-        message: `Une nouvelle demande d'absence (${TIME_OFF_TYPE_LABELS[requestType]}) nécessite un traitement.`,
-        actionUrl: `/entity/${entityId}/absences`,
-        dedupKey: `absence:${reqId}:submitted`
-      });
-    } catch (e) {}
-
-    await createAuditLog({
-      userId: actorUid,
-      entityId,
-      action: resolvedSource === 'employee_created' ? "timeOff.created_by_employee" : "timeOff.created_by_hr",
-      resourceType: "timeOffRequest",
-      resourceId: reqId,
-      details: { employeeId: data.employeeId, duration, unit, requestType, mode: data.durationMode }
-    });
-    return reqId;
+    return { requestId, duration };
   });
+
+  const { requestId: reqId, duration } = result;
+
+  // Notifications...
+  try {
+    await createNotification(entityId, {
+      targetPermission: "leaveRequests.read",
+      audience: "hr",
+      category: "absence",
+      severity: "info",
+      title: "Nouvelle demande d'absence",
+      message: `Une nouvelle demande d'absence (${TIME_OFF_TYPE_LABELS[requestType]}) nécessite un traitement.`,
+      actionUrl: `/entity/${entityId}/absences`,
+      dedupKey: `absence:${reqId}:submitted`
+    });
+  } catch (e) {}
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: resolvedSource === 'employee_created' ? "timeOff.created_by_employee" : "timeOff.created_by_hr",
+    resourceType: "timeOffRequest",
+    resourceId: reqId,
+    details: { employeeId: data.employeeId, duration, unit, requestType, mode: data.durationMode }
+  });
+  
+  return reqId;
 }
 
 /**

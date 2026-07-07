@@ -166,16 +166,16 @@ function safeToIso(val: any): string {
   if (!val) return "";
   if (typeof val === 'string') return val;
   if (val instanceof Date) return val.toISOString();
+  
   // Firestore Client SDK
   if (typeof val.toDate === 'function') return val.toDate().toISOString();
-  // Serialized POJO
-  if (
-    typeof val === 'object' &&
-    (typeof val.seconds === 'number' || typeof val._seconds === 'number')
-  ) {
-    const s = val.seconds ?? val._seconds;
-    return new Date(s * 1000).toISOString();
+  
+  // Serialization protection
+  if (typeof val === 'object') {
+    if (val.seconds !== undefined) return new Date(val.seconds * 1000).toISOString();
+    if (val._seconds !== undefined) return new Date(val._seconds * 1000).toISOString();
   }
+  
   return String(val);
 }
 
@@ -371,8 +371,10 @@ export default function TimeOffManagementPage() {
   useEffect(() => {
     const urlStatus = searchParams.get("status");
     const urlType = searchParams.get("type");
-    if (urlStatus) setFilters(p => ({ ...p, status: urlStatus }));
-    if (urlType) setFilters(p => ({ ...p, requestType: urlType }));
+    const updatedFilters = { ...initialFilters };
+    if (urlStatus) updatedFilters.status = urlStatus;
+    if (urlType) updatedFilters.requestType = urlType;
+    setFilters(prev => ({ ...prev, ...updatedFilters }));
   }, [searchParams]);
 
   const handleUpdateFilter = (key: keyof typeof initialFilters, value: any) => {
@@ -645,6 +647,17 @@ export default function TimeOffManagementPage() {
     }
   };
 
+  const isFormValid = () => {
+    if (!formData.employeeId) return false;
+    const isHourlyPicker = formData.durationMode === "hourly";
+    if (isHourlyPicker) {
+      const duration = Number(calculateDecimalHours(formData.startTime, formData.endTime));
+      return duration > 0;
+    }
+    if (!formData.startDate) return false;
+    return true;
+  };
+
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return (
@@ -892,7 +905,6 @@ export default function TimeOffManagementPage() {
                   </TableRow>
                 ) : (
                   filteredRequests.map((r) => {
-                    const isHourly = isHourlyType(r.requestType);
                     const emp = employeesMap.get(r.employeeId);
                     return (
                     <TableRow key={r.requestId} className="hover:bg-muted/50 transition-colors">
@@ -2082,7 +2094,7 @@ function JournalTabTable({ balance, counterType, accruals, requests, unit }: { b
           </div>
           <div className="space-y-1">
              <p className="text-xs font-black uppercase text-primary tracking-widest">Informations sur le solde</p>
-             <p className="text-[11px] text-slate-600 leading-relaxed">
+             <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
                 Ce journal affiche l'historique chronologique des transactions affectant le solde. 
                 Les mouvements de maturation sont ajoutés lors du posting mensuel, tandis que les demandes approuvées sont déduites immédiatement lors de leur validation.
              </p>
