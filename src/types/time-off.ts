@@ -19,6 +19,8 @@ export type JustificationStatus = "not_required" | "missing" | "provided";
 
 export type DayPart = "full_day" | "morning" | "afternoon";
 
+export type TimeOffDurationMode = "full_day" | "half_day" | "hourly";
+
 export interface TimeOffRequest {
   requestId: string;
   entityId: string;
@@ -42,6 +44,8 @@ export interface TimeOffRequest {
   
   /** Contractual daily duration captured at request time (e.g. 8.0) */
   expectedDailyHoursSnapshot?: number;
+  expectedDailyHoursSource?: string;
+  durationMode?: TimeOffDurationMode;
 
   // Justification Metadata
   requiresJustification: boolean;
@@ -68,6 +72,8 @@ export interface TimeOffRequest {
   cancelledByUid?: string;
   cancelledByRole?: string;
   cancelReason?: string;
+
+  scheduleWarning?: string;
 }
 
 export type BalanceCounterType = "paid_leave" | "rol" | "ex_holidays";
@@ -156,7 +162,7 @@ export interface MonthlyAccrual {
   calculationNotes?: string | null;
 
   // Traceability & Audit (Phase 4E-1A)
-  calculationMode?: "time_off_estimate" | "attendance_validated" | "manual";
+  calculationMode?: "manual" | "time_off_estimate" | "attendance_validated";
   sourceAttendanceIds?: string[];
   sourceRequestIds?: string[];
   blockingReasons?: {

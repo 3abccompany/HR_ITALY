@@ -29,7 +29,8 @@ import {
   getCounterTypeForRequestType,
   MonthlyAccrual,
   MonthlyAccrualStatus,
-  TIME_OFF_TYPE_LABELS
+  TIME_OFF_TYPE_LABELS,
+  TimeOffDurationMode
 } from "@/types/time-off";
 import { differenceInCalendarDays, parseISO, startOfMonth, endOfMonth, eachMonthOfInterval, eachDayOfInterval, format } from "date-fns";
 import { createAuditLog } from "./audit.service";
@@ -38,6 +39,7 @@ import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.
 import { createNotification } from "./notification.service";
 import { Employee } from "@/types/employee";
 import { AttendanceRecord } from "@/types/attendance";
+import { resolveWorkSchedule } from "./work-schedule.service";
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -360,7 +362,7 @@ export async function markMonthlyAccrualImpactedByRequest(entityId: string, requ
 
 /**
  * RH Action: Manually initialize or edit a balance.
- * Updated Phase 4E-0A: Ensures ROL and Ex-Fest always have durationHours populated.
+ * Updated Phase 4E-2C: Integrates contractual work schedule for ROL/Ex-Fest duration calculation.
  */
 export async function createTimeOffRequestForEmployee(
   entityId: string, 
@@ -372,15 +374,11 @@ export async function createTimeOffRequestForEmployee(
 
   const requestType = (data.requestType as TimeOffRequestType) || 'other';
   const counterType = getCounterTypeForRequestType(requestType);
+  const isRolOrExFest = requestType === "rol_permission" || requestType === "ex_holiday_permission";
   
-  const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestType);
-  const unit = isHourly ? "hours" : "days";
+  const isHourlyMode = data.durationMode === "hourly" || (!data.durationMode && ["rol_permission", "ex_holiday_permission"].includes(requestType));
+  const unit = isRolOrExFest ? "hours" : "days";
   
-  // Calculate specific duration in units
-  const duration = isHourly 
-    ? (data.startTime && data.endTime ? calculateHourlyDuration(data.startTime, data.endTime) : 0)
-    : calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
-
   const year = parseInt(data.startDate.split('-')[0]);
   const requestRef = doc(collection(db!, `entities/${entityId}/timeOffRequests`));
   const requestId = requestRef.id;
@@ -398,8 +396,42 @@ export async function createTimeOffRequestForEmployee(
     if (!empSnap.exists()) throw new Error("EMPLOYEE_NOT_FOUND");
     const empData = empSnap.data() as Employee;
 
-    // Derive Expected Daily Hours (Priority: schedule engine [TBD] > weekly/5 > 8.0 fallback)
-    const expectedDailyHours = empData.weeklyHours ? Number((empData.weeklyHours / 5).toFixed(2)) : 8.0;
+    // 2. Resolve Work Schedule for ROL/Ex-Fest if in full/half day mode
+    let duration = 0;
+    let resolvedExpectedHours: number | null = null;
+    let scheduleSource: string | null = null;
+    let scheduleWarning: string | null = null;
+
+    if (isRolOrExFest) {
+      const schedule = await resolveWorkSchedule(db!, entityId, data.employeeId, data.startDate);
+      resolvedExpectedHours = schedule.expectedDailyHours;
+      scheduleSource = schedule.source;
+
+      if (data.durationMode === "full_day" || data.durationMode === "half_day") {
+        if (!schedule.isReliable || resolvedExpectedHours === null) {
+          throw new Error("HORAIRE_INVALIDE: Horaire contractuel introuvable pour cette date. Veuillez configurer le planning ou utiliser le mode horaire.");
+        }
+        if (resolvedExpectedHours === 0) {
+          throw new Error("JOUR_NON_TRAVAILLE: Impossible de poser une journée complète ou demi-journée sur un jour non travaillé (0h).");
+        }
+        
+        duration = data.durationMode === "full_day" ? resolvedExpectedHours : (resolvedExpectedHours / 2);
+      } else {
+        // Hourly mode: use explicit times
+        if (!data.startTime || !data.endTime) throw new Error("HEURES_REQUISES: Veuillez renseigner l'heure de début et de fin.");
+        duration = calculateHourlyDuration(data.startTime, data.endTime);
+        if (!schedule.isReliable) {
+          scheduleWarning = "Horaire contractuel non détecté pour vérification contextuelle.";
+        }
+      }
+    } else {
+      // Day-based calculation (Paid leave, sickness, etc.)
+      duration = calculateDuration(data.startDate, data.endDate, data.dayPart || "full_day");
+    }
+
+    if (duration <= 0) {
+      throw new Error("DUREE_INVALIDE: La durée calculée est de 0.");
+    }
 
     const isOverlapping = await checkTimeOffOverlap(entityId, data.employeeId, data.startDate, data.endDate, data.startTime, data.endTime);
     if (isOverlapping) {
@@ -411,20 +443,11 @@ export async function createTimeOffRequestForEmployee(
     if (counterType && balance.counters) {
       const remaining = balance.counters[counterType].remaining;
       if (duration > remaining) {
-        throw new Error(`Solde ${counterType === 'paid_leave' ? 'de congé' : counterType.toUpperCase()} insuffisant.`);
+        throw new Error(`Solde ${counterType === 'paid_leave' ? 'de congé' : counterType.toUpperCase()} insuffisant (${duration.toFixed(2)} ${unit} demandés, ${remaining.toFixed(2)} restants).`);
       }
     }
 
     const justificationStatus: JustificationStatus = requiresJustification ? "missing" : "not_required";
-
-    // Support automatic durationHours for ROL/Ex-Fest if submitted as days
-    let finalDurationHours = data.durationHours;
-    if (isHourly) {
-       finalDurationHours = duration;
-    } else if (["rol_permission", "ex_holiday_permission"].includes(requestType)) {
-       // Auto-calculate hours for ROL even if submitted in days (for ordinary pay reconciliation)
-       finalDurationHours = duration * expectedDailyHours;
-    }
 
     const payload: Partial<TimeOffRequest> = {
       ...data,
@@ -432,11 +455,13 @@ export async function createTimeOffRequestForEmployee(
       entityId,
       source: resolvedSource,
       status: "submitted",
-      durationDays: isHourly ? 0 : duration,
-      durationHours: finalDurationHours,
+      durationDays: isRolOrExFest ? 0 : duration,
+      durationHours: isRolOrExFest ? duration : undefined,
       unit,
       balanceCounterType: counterType,
-      expectedDailyHoursSnapshot: expectedDailyHours,
+      expectedDailyHoursSnapshot: resolvedExpectedHours || undefined,
+      expectedDailyHoursSource: scheduleSource || undefined,
+      scheduleWarning: scheduleWarning || undefined,
       requiresJustification,
       justificationStatus,
       justificationDocumentIds: [],
@@ -486,7 +511,7 @@ export async function createTimeOffRequestForEmployee(
       action: resolvedSource === 'employee_created' ? "timeOff.created_by_employee" : "timeOff.created_by_hr",
       resourceType: "timeOffRequest",
       resourceId: reqId,
-      details: { employeeId: data.employeeId, duration, unit, requestType }
+      details: { employeeId: data.employeeId, duration, unit, requestType, mode: data.durationMode }
     });
     return reqId;
   });
@@ -1130,5 +1155,5 @@ export async function listTimeOffRequests(entityId: string) {
   ) as Query<TimeOffRequest>;
   
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ ...d.data(), id: d.id }));
+  return snap.docs.map(d => ({ ...d.data(), id: d.id } as any as TimeOffRequest));
 }

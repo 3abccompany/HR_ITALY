@@ -32,7 +32,8 @@ import {
   LeaveBalance, 
   normalizeBalance, 
   MonthlyAccrual,
-  BalanceCounterType 
+  BalanceCounterType,
+  TimeOffDurationMode
 } from "@/types/time-off";
 import { HRDocumentType } from "@/types/hr-document";
 import { 
@@ -88,11 +89,14 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import React from "react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { resolveWorkSchedule } from "@/services/work-schedule.service";
 
 const initialForm = {
   employeeId: "",
   requestKind: "leave" as TimeOffRequestKind,
   requestType: "paid_leave" as TimeOffRequestType,
+  durationMode: "full_day" as TimeOffDurationMode,
   startDate: new Date().toISOString().split('T')[0],
   endDate: new Date().toISOString().split('T')[0],
   startTime: "09:00",
@@ -196,6 +200,10 @@ export default function TimeOffManagementPage() {
   const [balanceForm, setBalanceForm] = useState(initialBalanceForm);
   const [accrualForm, setAccrualForm] = useState(initialAccrualForm);
   
+  // Schedule Resolution Feedback
+  const [resolvedSchedule, setResolvedSchedule] = useState<any>(null);
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
+
   // --- Filter State ---
   const [filters, setFilters] = useState(initialFilters);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
@@ -262,6 +270,20 @@ export default function TimeOffManagementPage() {
   }, [employees]);
 
   const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
+
+  // Real-time Schedule Resolution for UI Feedback
+  useEffect(() => {
+    const isRolOrExFest = formData.requestType === "rol_permission" || formData.requestType === "ex_holiday_permission";
+    if (isFormOpen && isRolOrExFest && formData.employeeId && formData.startDate && db) {
+       setLoadingSchedule(true);
+       resolveWorkSchedule(db, entityId, formData.employeeId, formData.startDate)
+         .then(setResolvedSchedule)
+         .catch(err => console.error("Schedule error:", err))
+         .finally(() => setLoadingSchedule(false));
+    } else {
+       setResolvedSchedule(null);
+    }
+  }, [formData.employeeId, formData.startDate, formData.requestType, isFormOpen, db, entityId]);
 
   // Derived filter options with type safety
   const uniqueDepartments = useMemo(() => 
@@ -369,7 +391,8 @@ export default function TimeOffManagementPage() {
       ...p, 
       requestType: type, 
       requiresJustification: requires,
-      requestKind: isHourlyType(type) ? "leave" : p.requestKind
+      requestKind: isHourlyType(type) ? "leave" : p.requestKind,
+      durationMode: isHourlyType(type) ? "full_day" : "full_day"
     }));
   };
 
@@ -382,16 +405,14 @@ export default function TimeOffManagementPage() {
       return;
     }
 
-    const isHourly = isHourlyType(formData.requestType);
-    let finalDurationHours = undefined;
+    const isHourlyPicker = formData.durationMode === "hourly";
 
-    if (isHourly) {
+    if (isHourlyPicker) {
       const duration = Number(calculateDecimalHours(formData.startTime, formData.endTime));
       if (duration <= 0) {
         toast({ variant: "destructive", title: "Heures invalides", description: "L'heure de fin doit être supérieure à l'heure de début." });
         return;
       }
-      finalDurationHours = duration;
     } else {
       if (formData.endDate < formData.startDate) {
         toast({ variant: "destructive", title: "Erreur", description: "La date de fin ne peut pas être antérieure à la date de début." });
@@ -403,18 +424,14 @@ export default function TimeOffManagementPage() {
     try {
       const emp = activeEmployees.find(e => e.employeeId === formData.employeeId);
       
-      // Clean payload: Omit hourly fields for day-based and vice versa
       const payload: any = {
         ...formData,
         employeeName: emp?.displayName || "Employé inconnu",
         personId: emp?.personId || ""
       };
 
-      if (isHourly) {
-        payload.durationHours = finalDurationHours;
-        payload.endDate = formData.startDate; // Hourly is always same day
-        delete payload.dayPart;
-      } else {
+      // Clean payload: Omit hourly fields if not in hourly mode
+      if (!isHourlyPicker) {
         delete payload.startTime;
         delete payload.endTime;
         delete payload.durationHours;
@@ -922,13 +939,13 @@ export default function TimeOffManagementPage() {
                          <div className="flex flex-col gap-0.5 font-black text-primary">
                             <div className="flex items-center gap-1.5">
                               <Clock className="w-3.5 h-3.5 opacity-30" />
-                              {isHourly ? (
+                              {r.unit === 'hours' ? (
                                 `${r.durationHours ?? 0} h`
                               ) : (
                                 `${r.durationDays ?? 0} j`
                               )}
                             </div>
-                            {isHourly && r.startTime && r.endTime && (
+                            {r.unit === 'hours' && r.startTime && r.endTime && (
                               <div className="text-[9px] text-muted-foreground pl-5 uppercase font-bold tracking-tighter">
                                 {r.startTime} - {r.endTime}
                               </div>
@@ -1507,7 +1524,7 @@ export default function TimeOffManagementPage() {
 
       {/* Creation Modal */}
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-        <DialogContent className="sm:max-w-[550px] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden p-0 rounded-[2rem]">
+        <DialogContent className="sm:max-w-[550px] flex flex-col h-[100dvh] max-h-[100dvh] md:h-auto md:max-h-[85vh] overflow-hidden p-0 rounded-[2rem]">
           <DialogHeader className="p-8 pb-4 shrink-0">
             <DialogTitle className="text-xl font-black text-primary">Nouvelle demande (RH)</DialogTitle>
             <DialogDescription>Créez manuellement une absence ou un congé pour un collaborateur.</DialogDescription>
@@ -1568,8 +1585,54 @@ export default function TimeOffManagementPage() {
                   </div>
                </div>
 
-               {/* Conditional Fields based on Request Type */}
-               {isHourlyType(formData.requestType) ? (
+               {/* Duration Mode Selector for ROL/Ex-Fest */}
+               {isHourlyType(formData.requestType) && (
+                 <div className="space-y-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 animate-in fade-in zoom-in-95">
+                    <Label className="text-[10px] uppercase font-black text-primary tracking-widest">Format de la demande</Label>
+                    <RadioGroup 
+                      value={formData.durationMode} 
+                      onValueChange={(v: any) => setFormData(p => ({...p, durationMode: v}))}
+                      className="grid grid-cols-3 gap-3"
+                    >
+                       <div className="flex flex-col items-center">
+                          <RadioGroupItem value="full_day" id="mode-full" className="sr-only peer" />
+                          <Label 
+                            htmlFor="mode-full" 
+                            className={cn("w-full py-2 px-1 text-[10px] font-bold text-center border-2 rounded-xl transition-all cursor-pointer hover:bg-white", 
+                              formData.durationMode === 'full_day' ? "bg-white border-primary text-primary shadow-sm" : "bg-transparent border-transparent text-muted-foreground")
+                            }
+                          >
+                            Journée
+                          </Label>
+                       </div>
+                       <div className="flex flex-col items-center">
+                          <RadioGroupItem value="half_day" id="mode-half" className="sr-only peer" />
+                          <Label 
+                            htmlFor="mode-half" 
+                            className={cn("w-full py-2 px-1 text-[10px] font-bold text-center border-2 rounded-xl transition-all cursor-pointer hover:bg-white", 
+                              formData.durationMode === 'half_day' ? "bg-white border-primary text-primary shadow-sm" : "bg-transparent border-transparent text-muted-foreground")
+                            }
+                          >
+                            Demi-jour
+                          </Label>
+                       </div>
+                       <div className="flex flex-col items-center">
+                          <RadioGroupItem value="hourly" id="mode-hour" className="sr-only peer" />
+                          <Label 
+                            htmlFor="mode-hour" 
+                            className={cn("w-full py-2 px-1 text-[10px] font-bold text-center border-2 rounded-xl transition-all cursor-pointer hover:bg-white", 
+                              formData.durationMode === 'hourly' ? "bg-white border-primary text-primary shadow-sm" : "bg-transparent border-transparent text-muted-foreground")
+                            }
+                          >
+                            Horaire
+                          </Label>
+                       </div>
+                    </RadioGroup>
+                 </div>
+               )}
+
+               {/* Conditional Inputs based on Duration Mode */}
+               {isHourlyType(formData.requestType) && formData.durationMode === "hourly" ? (
                   <>
                     <div className="space-y-2">
                       <Label className="text-[10px] uppercase font-black">Date</Label>
@@ -1590,36 +1653,64 @@ export default function TimeOffManagementPage() {
                       <div className="h-11 px-3 bg-secondary/20 border rounded-xl flex items-center text-sm font-bold text-primary">
                          {calculateDecimalHours(formData.startTime, formData.endTime)} h
                       </div>
-                      <p className="text-[9px] text-muted-foreground italic">Exemple : 09:00 → 11:30 = 2.5 h</p>
                     </div>
                   </>
                ) : (
                   <>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label className="text-[10px] uppercase font-black">Date de début</Label>
-                        <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value}))} required className="rounded-xl h-11" />
+                        <Label className="text-[10px] uppercase font-black">{isHourlyType(formData.requestType) ? 'Date' : 'Date de début'}</Label>
+                        <Input type="date" value={formData.startDate} onChange={(e) => setFormData(p => ({...p, startDate: e.target.value, endDate: isHourlyType(formData.requestType) ? e.target.value : p.endDate}))} required className="rounded-xl h-11" />
                       </div>
-                      <div className="space-y-2">
-                        <Label className="text-[10px] uppercase font-black">Date de fin (incluse)</Label>
-                        <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      {formData.requestType === "paid_leave" ? (
-                         <div className="space-y-1">
-                            <Label className="text-[10px] font-black uppercase text-muted-foreground">Partie de la journée</Label>
-                            <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
-                              <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                 <SelectItem value="full_day">Journée entière</SelectItem>
-                                 <SelectItem value="morning">Matinée</SelectItem>
-                                 <SelectItem value="afternoon">Après-midi</SelectItem>
-                              </SelectContent>
-                            </Select>
+                      {!isHourlyType(formData.requestType) && (
+                         <div className="space-y-2">
+                            <Label className="text-[10px] uppercase font-black">Date de fin (incluse)</Label>
+                            <Input type="date" value={formData.endDate} onChange={(e) => setFormData(p => ({...p, endDate: e.target.value}))} required className="rounded-xl h-11" />
                          </div>
-                      ) : null}
+                      )}
                     </div>
+                    
+                    {/* Schedule Feedback for Full/Half day ROL/Ex-Fest */}
+                    {isHourlyType(formData.requestType) && (formData.durationMode === "full_day" || formData.durationMode === "half_day") && (
+                       <div className="p-4 bg-primary/5 rounded-2xl border border-primary/10 animate-in fade-in">
+                          <div className="flex items-center gap-3">
+                             <div className={cn("p-2 rounded-xl shadow-sm", loadingSchedule ? "bg-slate-100" : resolvedSchedule?.isReliable ? "bg-green-100 text-green-600" : "bg-red-50 text-red-600")}>
+                                {loadingSchedule ? <Loader2 className="w-4 h-4 animate-spin" /> : resolvedSchedule?.isReliable ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                             </div>
+                             <div className="flex-1">
+                                <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Durée contractuelle prévue</p>
+                                {loadingSchedule ? (
+                                   <p className="text-xs text-muted-foreground animate-pulse">Vérification de l'horaire...</p>
+                                ) : resolvedSchedule?.isReliable ? (
+                                   <div className="flex items-center justify-between mt-0.5">
+                                      <p className="text-sm font-black text-primary">
+                                        {formData.durationMode === 'full_day' ? resolvedSchedule.expectedDailyHours : (resolvedSchedule.expectedDailyHours / 2)} h
+                                      </p>
+                                      <Badge variant="outline" className="text-[8px] h-4 uppercase bg-white">{resolvedSchedule.source === 'level_schedule' ? 'Niveau' : 'CCNL'}</Badge>
+                                   </div>
+                                ) : (
+                                   <p className="text-[10px] font-bold text-red-600 mt-0.5">
+                                      {resolvedSchedule?.source === 'invalid_date' ? 'Veuillez saisir une date.' : 'Horaire non configuré pour cet employé.'}
+                                   </p>
+                                )}
+                             </div>
+                          </div>
+                       </div>
+                    )}
+
+                    {!isHourlyType(formData.requestType) && formData.requestType === "paid_leave" && (
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-black uppercase text-muted-foreground">Partie de la journée</Label>
+                          <Select value={formData.dayPart} onValueChange={(v: any) => setFormData(p => ({...p, dayPart: v}))}>
+                            <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="full_day">Journée entière</SelectItem>
+                                <SelectItem value="morning">Matinée</SelectItem>
+                                <SelectItem value="afternoon">Après-midi</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                    )}
                   </>
                )}
 
@@ -1651,7 +1742,7 @@ export default function TimeOffManagementPage() {
 
           <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
              <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
-             <Button form="request-form" type="submit" disabled={loading} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
+             <Button form="request-form" type="submit" disabled={loading || !isFormValid()} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                 Enregistrer la demande
              </Button>
