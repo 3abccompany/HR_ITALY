@@ -99,7 +99,7 @@ export interface CCNLLevel {
   // Payroll MVP Premium Overrides
   nightPremiumPercent?: number;
   overtimePremiumPercent?: number;
-  overtimeNightPremiumPercent?: number;
+  overtimeNightPremiumPremiumPercent?: number;
   holidayPremiumPercent?: number;
   sundayPremiumPercent?: number;
 
