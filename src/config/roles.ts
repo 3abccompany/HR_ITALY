@@ -43,7 +43,7 @@ export const MVP_ROLES: RoleDefinition[] = [
         "worksites", "employees", "contracts", "documents", 
         "attendances", "leaveRequests", "reports", "holidays",
         "employmentRequests", "consultants", "emailSettings", "medicalVisits",
-        "training", "safety"
+        "training", "safety", "payroll"
       ];
       return MVP_PERMISSIONS
         .filter(p => p.scope === "entity" && hrModules.includes(p.module))
