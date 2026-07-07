@@ -7,7 +7,8 @@ import {
   User, AlertTriangle, CheckCircle2, 
   Info, Clock, RefreshCw, ChevronRight, 
   Filter, X, Search, FileText, Ban,
-  ShieldCheck, AlertCircle, TrendingUp
+  ShieldCheck, AlertCircle, TrendingUp,
+  XCircle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,11 +37,12 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 
-const STATUS_LABELS: Record<PayrollCalculationStatus, string> = {
+const STATUS_LABELS: Record<string, string> = {
   draft: "Brouillon / Incomplet",
   calculated: "Calculé",
   approved: "Approuvé",
@@ -266,7 +268,7 @@ export default function PayrollSynthesisPage() {
                         </TableCell>
                         <TableCell>
                            <Badge variant="outline" className={cn("text-[9px] font-black uppercase px-2 h-5", STATUS_STYLES[c.status])}>
-                             {STATUS_LABELS[c.status]}
+                             {STATUS_LABELS[c.status as PayrollCalculationStatus] || c.status}
                            </Badge>
                         </TableCell>
                         <TableCell className="text-center">
@@ -363,8 +365,8 @@ function SummaryBox({ label, value, color }: { label: string, value: number, col
   const colors: Record<string, string> = {
     slate: "bg-slate-50 text-slate-700 border-slate-200",
     green: "bg-green-50 text-green-700 border-green-200",
-    blue: "bg-blue-50 text-blue-700 border-blue-200",
-    orange: "bg-orange-50 text-orange-700 border-orange-200"
+    blue: "bg-blue-50 text-blue-700 border-blue-100",
+    orange: "bg-orange-50 text-orange-700 border-orange-100"
   };
   return (
     <div className={cn("p-4 rounded-2xl border text-center", colors[color])}>
