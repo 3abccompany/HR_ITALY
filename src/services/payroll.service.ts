@@ -30,6 +30,7 @@ import { AttendanceRecord } from "@/types/attendance";
 import { TimeOffRequest } from "@/types/time-off";
 import { resolveWorkSchedule } from "./work-schedule.service";
 import { format, parseISO, startOfMonth, endOfMonth, addMonths, eachDayOfInterval } from "date-fns";
+import { fr } from "date-fns/locale";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
@@ -54,7 +55,7 @@ export function getPayrollMonthRange(year: number, month: number) {
 /**
  * Helper to convert percentage to multiplier (e.g. 25 -> 1.25)
  */
-function percentageToMultiplier(percent?: number | null): number {
+export function percentageToMultiplier(percent?: number | null): number {
   if (percent === undefined || percent === null || isNaN(percent) || percent < 0) return 1;
   if (percent === 0) return 1;
   return 1 + (percent / 100);
@@ -121,7 +122,7 @@ export async function aggregateMonthlyAttendance(
     if (vh > 0 && !hasSplits) {
       agg.ordinaryDayHours += vh;
       agg.hasLegacyFallback = true;
-      agg.legacyFallbackReason = "Répartition jour/nuit manquante; total traité comme heures de jour ordinaires.";
+      agg.legacyFallbackReason = "Granular day/night split missing; validatedHours treated as ordinary day hours for MVP.";
     } else {
       agg.ordinaryDayHours += data.dayHours || 0;
       agg.ordinaryNightHours += data.nightHours || 0;
@@ -182,7 +183,7 @@ export async function buildPrePayrollReconciliation(
         if (r.unit === 'hours') {
           coveredHours += r.durationHours || 0;
         } else if (schedule.expectedDailyHours !== null) {
-          const factor = r.dayPart === 'half_day' ? 0.5 : 1;
+          const factor = r.dayPart !== 'full_day' ? 0.5 : 1;
           coveredHours += (schedule.expectedDailyHours * factor);
         }
       });
