@@ -308,7 +308,10 @@ export async function prepareMonthlyPayrollDraft(
       bonusValue: 0,
       grossEconomicTotal: 0,
       sourceAttendanceIds: agg.sourceAttendanceIds,
-      createdAt: new Date()
+      createdAt: new Date(),
+      createdBy: "system",
+      updatedAt: new Date(),
+      updatedBy: "system"
     };
   });
 
