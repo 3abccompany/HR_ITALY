@@ -1,6 +1,6 @@
 /**
  * @fileOverview Payroll service layer for Monthly Economic Calculation.
- * Handles attendance aggregation, pre-payroll reconciliation, and draft preparation.
+ * Handles attendance aggregation, pre-payroll reconciliation, and economic calculation.
  */
 
 import { 
@@ -11,18 +11,28 @@ import {
   getDocs, 
   orderBy,
   doc,
-  getDoc
+  getDoc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  limit,
+  Timestamp
 } from "firebase/firestore";
 import { 
   PayrollAttendanceAggregation, 
   PayrollReconciliationWarning, 
   PayrollCalculation,
-  PayrollRateSnapshot
+  PayrollRateSnapshot,
+  PayrollParameter,
+  PayrollCalculationStatus
 } from "@/types/payroll";
 import { AttendanceRecord } from "@/types/attendance";
 import { TimeOffRequest } from "@/types/time-off";
 import { resolveWorkSchedule } from "./work-schedule.service";
-import { format, parseISO, startOfMonth, endOfMonth, addMonths, eachDayOfInterval, isWithinInterval } from "date-fns";
+import { format, parseISO, startOfMonth, endOfMonth, addMonths, eachDayOfInterval } from "date-fns";
+import { CCNL, CCNLLevel } from "@/types/ccnl";
+import { Employee } from "@/types/employee";
+import { Contract } from "@/types/contract";
 
 /**
  * Calculates the date range for a payroll month.
@@ -39,6 +49,22 @@ export function getPayrollMonthRange(year: number, month: number) {
     endDateIso: format(endDate, "yyyy-MM-dd"),
     nextMonthStartDateIso: format(nextMonthStart, "yyyy-MM-dd")
   };
+}
+
+/**
+ * Helper to convert percentage to multiplier (e.g. 25 -> 1.25)
+ */
+function percentageToMultiplier(percent?: number | null): number {
+  if (percent === undefined || percent === null || isNaN(percent) || percent < 0) return 1;
+  if (percent === 0) return 1;
+  return 1 + (percent / 100);
+}
+
+/**
+ * Round monetary value to 2 decimal places.
+ */
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 /**
@@ -122,18 +148,15 @@ export async function buildPrePayrollReconciliation(
   const { startDateIso, endDateIso } = getPayrollMonthRange(year, month);
   const warnings: PayrollReconciliationWarning[] = [];
 
-  // 1. Load Approved Time Off for coverage check
   const timeOffRef = collection(db, `entities/${entityId}/timeOffRequests`);
   const toSnap = await getDocs(query(timeOffRef, where("status", "==", "approved")));
   const approvedRequests = toSnap.docs
     .map(d => d.data() as TimeOffRequest)
     .filter(r => r.startDate <= endDateIso && r.endDate >= startDateIso);
 
-  // 2. Iterate through each employee with activity
   for (const empId of Object.keys(aggregations)) {
     const agg = aggregations[empId];
     
-    // Get all attendance records for this employee/month for day-by-day check
     const attSnap = await getDocs(query(
       collection(db, `entities/${entityId}/attendances`),
       where("employeeId", "==", empId),
@@ -142,7 +165,6 @@ export async function buildPrePayrollReconciliation(
     ));
     const attMap = new Map(attSnap.docs.map(d => [d.data().attendanceDate, d.data() as AttendanceRecord]));
 
-    // Check every day of the month
     const days = eachDayOfInterval({ start: parseISO(startDateIso), end: parseISO(endDateIso) });
     
     for (const day of days) {
@@ -151,7 +173,6 @@ export async function buildPrePayrollReconciliation(
       const att = attMap.get(dateIso);
       const validatedHours = att?.validatedHours || 0;
 
-      // Find overlapping approved time off for this day
       const dailyRequests = approvedRequests.filter(r => 
         empId === r.employeeId && dateIso >= r.startDate && dateIso <= r.endDate
       );
@@ -161,13 +182,11 @@ export async function buildPrePayrollReconciliation(
         if (r.unit === 'hours') {
           coveredHours += r.durationHours || 0;
         } else if (schedule.expectedDailyHours !== null) {
-          // Day-based request covers the expected duration
-          const factor = r.dayPart === 'full_day' ? 1 : 0.5;
+          const factor = r.dayPart === 'half_day' ? 0.5 : 1;
           coveredHours += (schedule.expectedDailyHours * factor);
         }
       });
 
-      // A) Missing Schedule
       if (!schedule.isReliable) {
         warnings.push({
           code: "missing_schedule",
@@ -181,7 +200,6 @@ export async function buildPrePayrollReconciliation(
 
       const expected = schedule.expectedDailyHours || 0;
 
-      // B) Over-expected hours (Potential overtime)
       if (schedule.isReliable && expected > 0 && validatedHours > expected) {
         warnings.push({
           code: "over_expected_hours",
@@ -195,7 +213,6 @@ export async function buildPrePayrollReconciliation(
         });
       }
 
-      // C) Missing hours (Under-scheduled or unexcused absence)
       if (schedule.isReliable && expected > 0 && (validatedHours + coveredHours) < expected) {
         warnings.push({
           code: "missing_hours",
@@ -210,7 +227,6 @@ export async function buildPrePayrollReconciliation(
         });
       }
 
-      // D) Non-working day work
       if (schedule.isReliable && expected === 0 && validatedHours > 0) {
         warnings.push({
           code: "non_working_day_work",
@@ -223,7 +239,6 @@ export async function buildPrePayrollReconciliation(
         });
       }
 
-      // E) Holiday Work
       if (att?.holidayFlag && (att.holidayWorkedHours || 0) > 0) {
         warnings.push({
           code: "holiday_work",
@@ -236,7 +251,6 @@ export async function buildPrePayrollReconciliation(
       }
     }
 
-    // F) Legacy aggregation warning
     if (agg.hasLegacyFallback) {
       warnings.push({
         code: "legacy_attendance_split_missing",
@@ -252,7 +266,6 @@ export async function buildPrePayrollReconciliation(
 
 /**
  * Resolves the rate snapshot for a specific employee and period.
- * Skeleton for Phase 4E-3C.
  */
 export async function resolvePayrollRateSnapshot(
   db: Firestore,
@@ -261,10 +274,248 @@ export async function resolvePayrollRateSnapshot(
   year: number,
   month: number
 ): Promise<PayrollRateSnapshot> {
-  // Placeholder: In next phase, this will check payrollParameters, then contracts, then CCNL.
+  const { startDateIso } = getPayrollMonthRange(year, month);
+
+  // 1. Check Payroll Parameters (Most specific)
+  const paramsRef = collection(db, `entities/${entityId}/payrollParameters`);
+  const paramsQuery = query(
+    paramsRef, 
+    where("employeeId", "==", employeeId),
+    where("status", "==", "active"),
+    where("effectiveFrom", "<=", startDateIso),
+    orderBy("effectiveFrom", "desc"),
+    limit(1)
+  );
+  const paramsSnap = await getDocs(paramsQuery);
+  
+  if (!paramsSnap.empty) {
+    const p = paramsSnap.docs[0].data() as PayrollParameter;
+    return {
+      source: "payroll_parameter",
+      ordinaryHourlyRate: p.ordinaryHourlyRate,
+      nightPremiumPercent: p.nightPremiumPercent,
+      overtimePremiumPercent: p.overtimePremiumPercent,
+      holidayPremiumPercent: p.holidayPremiumPercent,
+      payrollParameterId: paramsSnap.docs[0].id
+    };
+  }
+
+  // 2. Check Contract & CCNL (Default hierarchy)
+  const empRef = doc(db, `entities/${entityId}/employees`, employeeId);
+  const empSnap = await getDoc(empRef);
+  if (!empSnap.exists()) return { source: "missing", ordinaryHourlyRate: 0 };
+  
+  const emp = empSnap.data() as Employee;
+  if (!emp.activeContractId) return { source: "missing", ordinaryHourlyRate: 0 };
+
+  const contractRef = doc(db, `entities/${entityId}/contracts`, emp.activeContractId);
+  const contractSnap = await getDoc(contractRef);
+  if (!contractSnap.exists()) return { source: "missing", ordinaryHourlyRate: 0 };
+  
+  const contract = contractSnap.data() as Contract;
+  const { ccnlId, levelId } = contract;
+
+  if (ccnlId) {
+    const ccnlRef = doc(db, `entities/${entityId}/ccnls`, ccnlId);
+    const ccnlSnap = await getDoc(ccnlRef);
+    const ccnl = ccnlSnap.exists() ? ccnlSnap.data() as CCNL : null;
+
+    if (levelId) {
+      const levelRef = doc(db, `entities/${entityId}/ccnls/${ccnlId}/levels`, levelId);
+      const levelSnap = await getDoc(levelRef);
+      if (levelSnap.exists()) {
+        const level = levelSnap.data() as CCNLLevel;
+        return {
+          source: "ccnl_level",
+          ordinaryHourlyRate: level.minimumGrossHourly,
+          nightPremiumPercent: level.nightPremiumPercent ?? ccnl?.nightPremiumPercent,
+          overtimePremiumPercent: level.overtimePremiumPercent ?? ccnl?.overtimePremiumPercent,
+          holidayPremiumPercent: level.holidayPremiumPercent ?? ccnl?.holidayPremiumPercent,
+          ccnlId,
+          ccnlLevelId: levelId,
+          contractId: emp.activeContractId
+        };
+      }
+    }
+
+    if (ccnl) {
+      return {
+        source: "ccnl_root",
+        ordinaryHourlyRate: 0, // Root usually doesn't have a single rate
+        nightPremiumPercent: ccnl.nightPremiumPercent,
+        overtimePremiumPercent: ccnl.overtimePremiumPercent,
+        holidayPremiumPercent: ccnl.holidayPremiumPercent,
+        ccnlId,
+        contractId: emp.activeContractId
+      };
+    }
+  }
+
+  return { source: "missing", ordinaryHourlyRate: 0 };
+}
+
+/**
+ * Calculates financial values for a calculation object.
+ */
+export function calculatePayrollEconomicValues(
+  agg: PayrollAttendanceAggregation,
+  rate: PayrollRateSnapshot,
+  extras: { mealTickets?: number; mileage?: number; bonus?: number } = {}
+) {
+  const rateValue = rate.ordinaryHourlyRate || 0;
+  
+  const nightMult = percentageToMultiplier(rate.nightPremiumPercent);
+  const otMult = percentageToMultiplier(rate.overtimePremiumPercent);
+  const holMult = percentageToMultiplier(rate.holidayPremiumPercent);
+
+  const ordinaryValue = roundMoney(agg.ordinaryDayHours * rateValue);
+  const nightValue = roundMoney(agg.ordinaryNightHours * rateValue * nightMult);
+  const overtimeValue = roundMoney(agg.overtimeHours * rateValue * otMult);
+  const holidayWorkedValue = roundMoney(agg.holidayWorkedHours * rateValue * holMult);
+
+  const mealTicketsValue = roundMoney(extras.mealTickets || 0);
+  const mileageValue = roundMoney(extras.mileage || 0);
+  const bonusValue = roundMoney(extras.bonus || 0);
+
+  const grossEconomicTotal = roundMoney(
+    ordinaryValue + nightValue + overtimeValue + holidayWorkedValue +
+    mealTicketsValue + mileageValue + bonusValue
+  );
+
   return {
-    source: "missing",
-    ordinaryHourlyRate: 0
+    ordinaryValue,
+    nightValue,
+    overtimeValue,
+    overtimeNightValue: 0,
+    holidayWorkedValue,
+    mealTicketsValue,
+    mileageValue,
+    bonusValue,
+    grossEconomicTotal
+  };
+}
+
+/**
+ * Persists payroll calculations to Firestore.
+ * Prevents overwriting approved/locked records.
+ */
+export async function saveMonthlyPayrollCalculations(
+  db: Firestore,
+  entityId: string,
+  calculations: PayrollCalculation[],
+  actorUid: string
+) {
+  const results = { created: 0, updated: 0, skipped: 0, skippedReasons: [] as string[] };
+
+  for (const calc of calculations) {
+    const calcRef = doc(db, `entities/${entityId}/payrollCalculations`, calc.id);
+    const existingSnap = await getDoc(calcRef);
+
+    if (existingSnap.exists()) {
+      const existing = existingSnap.data() as PayrollCalculation;
+      const terminalStatuses = ["approved", "exported", "locked"];
+      
+      if (terminalStatuses.includes(existing.status)) {
+        results.skipped++;
+        results.skippedReasons.push(`${calc.employeeId}: Statut ${existing.status} (verrouillé).`);
+        continue;
+      }
+
+      await updateDoc(calcRef, {
+        ...calc,
+        createdAt: existing.createdAt, // Preserve
+        createdBy: existing.createdBy,
+        calculatedAt: serverTimestamp(),
+        calculatedBy: actorUid,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid
+      });
+      results.updated++;
+    } else {
+      await setDoc(calcRef, {
+        ...calc,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+        calculatedAt: serverTimestamp(),
+        calculatedBy: actorUid,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid
+      });
+      results.created++;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Main service entry point: Aggregates, reconciles, calculates and persists.
+ */
+export async function calculateAndSaveMonthlyPayroll(
+  db: Firestore,
+  entityId: string,
+  year: number,
+  month: number,
+  actorUid: string
+) {
+  // 1. Inputs
+  const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month);
+  const allWarnings = await buildPrePayrollReconciliation(db, entityId, year, month, aggregations);
+  
+  const finalCalculations: PayrollCalculation[] = [];
+  let blockingCount = 0;
+  let warningCount = 0;
+
+  // 2. Process each aggregated employee
+  for (const empId of Object.keys(aggregations)) {
+    const agg = aggregations[empId];
+    const rate = await resolvePayrollRateSnapshot(db, entityId, empId, year, month);
+    const empWarnings = allWarnings.filter(w => w.employeeId === empId);
+
+    // Dynamic checks
+    if (!rate.ordinaryHourlyRate || rate.ordinaryHourlyRate === 0) {
+      empWarnings.push({
+        code: "missing_payroll_rate",
+        severity: "blocking",
+        employeeId: empId,
+        message: "Taux horaire ordinaire introuvable."
+      });
+    }
+
+    const econ = calculatePayrollEconomicValues(agg, rate);
+    const isBlocked = empWarnings.some(w => w.severity === 'blocking');
+
+    if (isBlocked) blockingCount++;
+    warningCount += empWarnings.filter(w => w.severity === 'warning').length;
+
+    finalCalculations.push({
+      id: `${empId}_${year}_${month}`,
+      entityId,
+      employeeId: empId,
+      year,
+      month,
+      status: isBlocked ? "draft" : "calculated",
+      attendanceAggregation: agg,
+      rateSnapshot: rate,
+      reconciliationWarnings: empWarnings,
+      ...econ,
+      sourceAttendanceIds: agg.sourceAttendanceIds,
+      createdAt: new Date(),
+      createdBy: actorUid,
+      updatedAt: new Date(),
+      updatedBy: actorUid
+    });
+  }
+
+  // 3. Persist
+  const saveResults = await saveMonthlyPayrollCalculations(db, entityId, finalCalculations, actorUid);
+
+  return {
+    totalEmployees: Object.keys(aggregations).length,
+    ...saveResults,
+    blockingWarningsCount: blockingCount,
+    warningCount,
+    calculationIds: finalCalculations.map(c => c.id)
   };
 }
 
@@ -277,13 +528,9 @@ export async function prepareMonthlyPayrollDraft(
   year: number,
   month: number
 ): Promise<PayrollCalculation[]> {
-  // 1. Aggregate Attendance
   const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month);
-  
-  // 2. Build Reconciliation
   const allWarnings = await buildPrePayrollReconciliation(db, entityId, year, month, aggregations);
 
-  // 3. Map to Calculation Objects
   const drafts: PayrollCalculation[] = Object.values(aggregations).map(agg => {
     const empId = agg.employeeId;
     const empWarnings = allWarnings.filter(w => w.employeeId === empId);
