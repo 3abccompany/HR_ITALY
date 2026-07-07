@@ -16,7 +16,8 @@ import {
   updateDoc,
   serverTimestamp,
   limit,
-  Timestamp
+  Timestamp,
+  FieldValue
 } from "firebase/firestore";
 import { 
   PayrollAttendanceAggregation, 
@@ -34,6 +35,39 @@ import { fr } from "date-fns/locale";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
+
+/**
+ * Normalizes an object by removing undefined properties to satisfy Firestore.
+ * Preserves FieldValue and Timestamp identities.
+ */
+function sanitizeForFirestore(obj: any): any {
+  if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+  
+  if (
+    obj.constructor?.name === 'FieldValue' || 
+    obj.constructor?.name === 'Timestamp' || 
+    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj._methodName === 'serverTimestamp' ||
+    typeof obj.toDate === 'function'
+  ) {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeForFirestore);
+  }
+
+  const newObj: any = {};
+  for (const key in obj) {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = sanitizeForFirestore(val);
+    } else {
+      newObj[key] = null;
+    }
+  }
+  return newObj;
+}
 
 /**
  * Calculates the date range for a payroll month.
@@ -422,7 +456,7 @@ export async function saveMonthlyPayrollCalculations(
         continue;
       }
 
-      await updateDoc(calcRef, {
+      await updateDoc(calcRef, sanitizeForFirestore({
         ...calc,
         createdAt: existing.createdAt, // Preserve
         createdBy: existing.createdBy,
@@ -430,10 +464,10 @@ export async function saveMonthlyPayrollCalculations(
         calculatedBy: actorUid,
         updatedAt: serverTimestamp(),
         updatedBy: actorUid
-      });
+      }));
       results.updated++;
     } else {
-      await setDoc(calcRef, {
+      await setDoc(calcRef, sanitizeForFirestore({
         ...calc,
         createdAt: serverTimestamp(),
         createdBy: actorUid,
@@ -441,7 +475,7 @@ export async function saveMonthlyPayrollCalculations(
         calculatedBy: actorUid,
         updatedAt: serverTimestamp(),
         updatedBy: actorUid
-      });
+      }));
       results.created++;
     }
   }
