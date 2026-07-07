@@ -68,7 +68,7 @@ service cloud.firestore {
       match /attendanceImportBatches/{batchId} {
         allow read: if hasPermission(entityId, 'attendances.read') || isPlatformAdmin();
         allow create: if (hasPermission(entityId, 'attendances.create') || hasPermission(entityId, 'attendances.write')) && request.resource.data.entityId == entityId;
-        allow update: if (hasPermission(entityId, 'attendance.update') || hasPermission(entityId, 'attendances.write')) && request.resource.data.entityId == entityId;
+        allow update: if (hasPermission(entityId, 'attendances.update') || hasPermission(entityId, 'attendances.write') || hasPermission(entityId, 'attendances.validate')) && request.resource.data.entityId == entityId;
         allow delete: if false;
       }
 
