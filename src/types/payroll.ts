@@ -11,11 +11,11 @@ export type PayrollCalculationStatus =
 export interface PayrollRateSnapshot {
   source: "ccnl_level" | "ccnl_root" | "contract" | "payroll_parameter" | "manual" | "missing";
   ordinaryHourlyRate?: number;
-  nightPremiumPercent?: number;
-  overtimePremiumPercent?: number;
-  overtimeNightPremiumPercent?: number;
-  holidayPremiumPercent?: number;
-  sundayPremiumPercent?: number;
+  nightPremiumPercent?: number | null;
+  overtimePremiumPercent?: number | null;
+  overtimeNightPremiumPercent?: number | null;
+  holidayPremiumPercent?: number | null;
+  sundayPremiumPercent?: number | null;
   ccnlId?: string;
   ccnlLevelId?: string;
   contractId?: string;
@@ -110,11 +110,11 @@ export interface PayrollParameter {
   
   // Overrides
   ordinaryHourlyRate?: number;
-  nightPremiumPercent?: number;
-  overtimePremiumPercent?: number;
-  overtimeNightPremiumPercent?: number;
-  holidayPremiumPercent?: number;
-  sundayPremiumPercent?: number;
+  nightPremiumPercent?: number | null;
+  overtimePremiumPercent?: number | null;
+  overtimeNightPremiumPercent?: number | null;
+  holidayPremiumPercent?: number | null;
+  sundayPremiumPercent?: number | null;
   
   // Misc
   mealTicketActive?: boolean;
