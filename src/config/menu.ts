@@ -25,7 +25,8 @@ import {
   Send,
   UserCircle,
   Bell,
-  CalendarDays
+  CalendarDays,
+  Euro
 } from "lucide-react";
 
 export interface MenuItem {
@@ -55,6 +56,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Référentiel CCNL", href: "ccnls", permission: "settings.read", icon: Library },
   { label: "Employés", href: "employees", permission: "employees.read", icon: UserCheck },
   { label: "Contrats", href: "contracts", permission: "contracts.read", icon: FileText },
+  { label: "Synthèse économique", href: "payroll", permission: "payroll.read", icon: Euro },
   { label: "Documents", href: "documents", permission: "documents.read", icon: FolderOpen },
   { label: "Visites médicales", href: "medical-visits", permission: "medicalVisits.read", icon: Stethoscope },
   { label: "Formation", href: "training", permission: "training.read", icon: GraduationCap },
