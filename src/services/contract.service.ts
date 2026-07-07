@@ -25,7 +25,7 @@ import { createNotification } from "./notification.service";
  * Preserves FieldValue and Timestamp identities.
  */
 function sanitizePayload(obj: any): any {
-  if (obj === null || typeof obj !== 'object') return obj;
+  if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
   
   if (
     obj.constructor?.name === 'FieldValue' || 
@@ -41,6 +41,8 @@ function sanitizePayload(obj: any): any {
     const val = obj[key];
     if (val !== undefined) {
       newObj[key] = typeof val === 'object' ? sanitizePayload(val) : val;
+    } else {
+      newObj[key] = null;
     }
   }
   return newObj;
@@ -48,9 +50,6 @@ function sanitizePayload(obj: any): any {
 
 /**
  * Updates contract data.
- * STRICT RULE: Only allowed if contract.status === "draft".
- * Implementation: Only bumps contentUpdatedAt if relevant content fields have changed.
- * Phase 6B: Propagates taxCode changes to Person and Employee.
  */
 export async function updateContract(entityId: string, contractId: string, data: Partial<Contract>, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
@@ -67,7 +66,6 @@ export async function updateContract(entityId: string, contractId: string, data:
       throw new Error("Ce contrat n'est plus modifiable (statut: " + contract.status + ")");
     }
 
-    // Metadata fields to exclude from content change detection
     const metadataFields = [
       'status', 'updatedAt', 'updatedBy', 'createdBy', 'createdAt', 'notes',
       'contentUpdatedAt', 'contentVersion', 'contentHash',
@@ -88,8 +86,6 @@ export async function updateContract(entityId: string, contractId: string, data:
       if (metadataFields.includes(key)) continue;
 
       const oldValue = (contract as any)[key];
-      
-      // Robust comparison helper: treat undefined, null, and "" as equivalent for content comparison
       const normalize = (v: any) => (v === undefined || v === null || v === "") ? null : v;
       const nNew = normalize(value);
       const nOld = normalize(oldValue);
@@ -111,23 +107,18 @@ export async function updateContract(entityId: string, contractId: string, data:
       updatedBy: actorUid,
     };
 
-    // Only bump content threshold if a business-relevant field changed
     if (hasContentChanges) {
       updatePayload.contentUpdatedAt = serverTimestamp();
     }
 
-    // --- PHASE 6B: Propagation logic for Identity Identifier ---
     if (cleanData.taxCode && typeof cleanData.taxCode === 'string') {
       const trimmedTaxCode = cleanData.taxCode.trim().toUpperCase();
       if (trimmedTaxCode) {
         updatePayload.taxCode = trimmedTaxCode;
-
-        // Propagate to Person
         if (contract.personId) {
           const pRef = doc(db, `entities/${entityId}/persons`, contract.personId);
           transaction.update(pRef, { codiceFiscale: trimmedTaxCode, updatedAt: serverTimestamp() });
         }
-        // Propagate to Employee
         if (contract.employeeId) {
           const eRef = doc(db, `entities/${entityId}/employees`, contract.employeeId);
           transaction.update(eRef, { taxCode: trimmedTaxCode, updatedAt: serverTimestamp() });
@@ -147,9 +138,6 @@ export async function updateContract(entityId: string, contractId: string, data:
   });
 }
 
-/**
- * Moves a contract from draft to pending_signature.
- */
 export async function sendContractToSignature(entityId: string, contractId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
@@ -178,38 +166,8 @@ export async function sendContractToSignature(entityId: string, contractId: stri
     resourceType: "contract",
     resourceId: contractId,
   });
-
-  // Notify Employee (Non-blocking)
-  void (async () => {
-    try {
-      const contractSnap = await getDoc(contractRef);
-      const contractData = contractSnap.data();
-      if (contractData?.employeeId) {
-        const empSnap = await getDoc(doc(db!, `entities/${entityId}/employees`, contractData.employeeId));
-        const empData = empSnap.data();
-        if (empData?.userId) {
-          await createNotification(entityId, {
-            targetUid: empData.userId,
-            audience: "employee",
-            category: "contract",
-            severity: "info",
-            title: "Contrat disponible",
-            message: "Un contrat est disponible dans votre espace.",
-            actionUrl: `/entity/${entityId}/my-space`,
-            dedupKey: `contract_available:${contractId}`
-          });
-        }
-      }
-    } catch (notifErr) {
-      console.warn("[Notification] Contract signature notification failed (silent):", notifErr);
-    }
-  })();
 }
 
-/**
- * Records or replaces a reference to the signed contract document.
- * Allowed in pending_signature only.
- */
 export async function recordSignedDocumentReference(
   entityId: string, 
   contractId: string, 
@@ -285,7 +243,6 @@ export async function recordSignedDocumentReference(
     }));
   });
 
-  // Mirror to Centralized Documents Registry (Phase 2A)
   if (contractData) {
     const c = contractData as Contract;
     registerSignedContractDocument({
@@ -301,7 +258,6 @@ export async function recordSignedDocumentReference(
       signedDocumentFileName: data.fileName,
       signedDocumentUploadedAt: new Date(),
       signedDocumentUploadedBy: actorUid,
-      // Pass expiry info for CDD mirroring
       contractType: c.contractType,
       contractStartDate: c.startDate,
       contractEndDate: c.endDate
@@ -321,11 +277,6 @@ export async function recordSignedDocumentReference(
   });
 }
 
-/**
- * Activates a contract and updates the linked employee.
- * STRICT GATE: Requires a signed document proof.
- * Updated: Now date-aware. Future contracts go to pending_activation.
- */
 export async function activateContractAction(entityId: string, contractId: string, employeeId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   if (!employeeId) throw new Error("ID Employé manquant.");
@@ -334,11 +285,9 @@ export async function activateContractAction(entityId: string, contractId: strin
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
 
   const result = await runTransaction(db, async (transaction) => {
-    // 1. ALL READS FIRST
     const snap = await transaction.get(contractRef);
     const empSnap = await transaction.get(employeeRef);
 
-    // 2. VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
@@ -361,30 +310,27 @@ export async function activateContractAction(entityId: string, contractId: strin
     if (!empSnap.exists()) throw new Error("L'employé rattaché n'existe pas.");
     const empData = empSnap.data();
 
-    // 3. DATE ANALYSIS
     const todayStr = new Date().toISOString().split('T')[0];
-    const isFuture = contract.startDate > todayStr;
+    const startDateStr = (contract.startDate || "").toString();
+    const isFuture = startDateStr > todayStr;
 
     const now = serverTimestamp();
 
-    // --- CASE A: FUTURE DATED (Schedule activation) ---
     if (isFuture) {
       transaction.update(contractRef, sanitizePayload({
         status: "pending_activation",
         readyForActivationAt: now,
         readyForActivationBy: actorUid,
-        signedAt: now, // Signature is confirmed now
+        signedAt: now,
         updatedAt: now,
         updatedBy: actorUid,
       }));
 
-      // In case of renewal, ensure we don't clear pointers yet, just link for history
       transaction.update(employeeRef, {
         pendingContractId: contractId,
         updatedAt: now
       });
 
-      // Timeline Event
       if (contract.personId) {
         const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
         transaction.set(timelineRef, sanitizePayload({
@@ -406,18 +352,13 @@ export async function activateContractAction(entityId: string, contractId: strin
       return { success: true, status: 'pending_activation' };
     }
 
-    // --- CASE B: IMMEDIATE ACTIVATION (Starts today or past) ---
-
-    // Conflict Guard: Only block if another DIFFERENT active contract exists
     if (empData.activeContractId && empData.activeContractId !== contractId) {
-      // Check if it's a legitimate renewal of the current active contract
       const isActuallyRenewalOfCurrent = contract.isRenewal && empData.activeContractId === contract.previousContractId;
       
       if (!isActuallyRenewalOfCurrent) {
         throw new Error("ALREADY_HAS_ACTIVE_CONTRACT");
       }
       
-      // If it IS a renewal starting today, we must retire the old one
       const oldRef = doc(db, `entities/${entityId}/contracts`, contract.previousContractId!);
       transaction.update(oldRef, {
         status: "renewed",
@@ -427,7 +368,6 @@ export async function activateContractAction(entityId: string, contractId: strin
       });
     }
 
-    // ALL WRITES AFTER
     transaction.update(contractRef, sanitizePayload({
       status: "active",
       activatedAt: now,
@@ -442,7 +382,6 @@ export async function activateContractAction(entityId: string, contractId: strin
       updatedAt: now,
     });
 
-    // Timeline Event
     if (contract.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
@@ -476,9 +415,6 @@ export async function activateContractAction(entityId: string, contractId: strin
   }
 }
 
-/**
- * Moves a contract back to draft.
- */
 export async function rollbackToDraft(entityId: string, contractId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
@@ -498,10 +434,6 @@ export async function rollbackToDraft(entityId: string, contractId: string, acto
   });
 }
 
-/**
- * Terminates an active contract.
- * Updates the contract, the linked employee status, read models, and timeline.
- */
 export async function terminateContractAction(
   entityId: string, 
   contractId: string, 
@@ -521,7 +453,6 @@ export async function terminateContractAction(
   const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
   const employeeViewRef = doc(db, `entities/${entityId}/employeeViews`, employeeId);
 
-  // 1. Fetch other active contracts BEFORE transaction (reads must happen before writes)
   const q = query(
     collection(db, `entities/${entityId}/contracts`),
     where("employeeId", "==", employeeId),
@@ -532,7 +463,6 @@ export async function terminateContractAction(
     .map(d => ({ ...d.data(), contractId: d.id } as Contract))
     .filter(c => c.contractId !== contractId);
 
-  // 1b. Fetch termination document metadata if provided
   let terminationDocMetadata: any = null;
   if (terminationDocumentId) {
      const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, terminationDocumentId));
@@ -542,11 +472,9 @@ export async function terminateContractAction(
   }
 
   return await runTransaction(db, async (transaction): Promise<{ employeeId: string }> => {
-    // 2. READ SNAPSHOTS
     const snap = await transaction.get(contractRef);
     const empSnap = await transaction.get(employeeRef);
 
-    // 3. VALIDATIONS
     if (!snap.exists()) throw new Error("Contrat introuvable.");
     const contract = snap.data() as Contract;
 
@@ -562,15 +490,6 @@ export async function terminateContractAction(
       throw new Error("Document de clôture introuvable dans le registre.");
     }
 
-    if (terminationDocMetadata) {
-       if (terminationDocMetadata.entityId !== entityId || terminationDocMetadata.contractId !== contractId) {
-         throw new Error("Incohérence sur le document de clôture (entité/contract).");
-       }
-    }
-
-    // 4. WRITES
-    
-    // A. Terminate Contract
     transaction.update(contractRef, sanitizePayload({
       status: "terminated",
       actualEndDate: terminationData.actualEndDate,
@@ -583,27 +502,23 @@ export async function terminateContractAction(
       updatedBy: actorUid,
     }));
 
-    // B. Synchronize Employee
     if (empSnap.exists()) {
       const empData = empSnap.data() as Employee;
       const isCurrentlyActiveContract = empData.activeContractId === contractId;
 
       if (isCurrentlyActiveContract) {
         if (otherActiveContracts.length > 0) {
-          // Promote next available active contract
           const nextContract = otherActiveContracts[0];
           transaction.update(employeeRef, {
             activeContractId: nextContract.contractId,
             updatedAt: serverTimestamp(),
           });
           
-          // Sync View Model
           transaction.set(employeeViewRef, sanitizePayload({
             activeContractId: nextContract.contractId,
             updatedAt: serverTimestamp(),
           }), { merge: true });
         } else {
-          // No more active contracts: Mark employee as terminated
           transaction.update(employeeRef, sanitizePayload({
             activeContractId: null,
             status: "terminated",
@@ -612,14 +527,12 @@ export async function terminateContractAction(
             updatedAt: serverTimestamp(),
           }));
 
-          // Sync View Model
           transaction.set(employeeViewRef, sanitizePayload({
             activeContractId: null,
             status: "terminated",
             updatedAt: serverTimestamp(),
           }), { merge: true });
 
-          // Update Person Lifecycle Status
           if (contract.personId) {
              const personRef = doc(db, `entities/${entityId}/persons`, contract.personId);
              transaction.update(personRef, sanitizePayload({
@@ -632,7 +545,6 @@ export async function terminateContractAction(
       }
     }
 
-    // C. Record Timeline Event
     if (contract.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
@@ -656,7 +568,6 @@ export async function terminateContractAction(
 
     return { employeeId };
   }).then(async (res) => {
-    // 5. Audit Logging (Outside transaction for better performance)
     await createAuditLog({
       userId: actorUid,
       entityId,
@@ -672,9 +583,6 @@ export async function terminateContractAction(
   });
 }
 
-/**
- * Archives a contract.
- */
 export async function archiveContractAction(entityId: string, contractId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
@@ -695,12 +603,6 @@ export async function archiveContractAction(entityId: string, contractId: string
   });
 }
 
-/**
- * Phase 1: Prepares a renewal draft for a fixed-term contract (CDD).
- * Creates a new contract linked to the old one.
- * Phase 6B: Inherits identity identifier from canonical sources.
- * Integrated: Automatically initiates a UniLav Proroga request.
- */
 export async function prepareContractRenewalAction(
   entityId: string, 
   oldContractId: string, 
@@ -723,11 +625,9 @@ export async function prepareContractRenewalAction(
     if (!snap.exists()) throw new Error("Contrat d'origine introuvable.");
     const old = snap.data() as Contract;
 
-    // 1. Validations
     if (old.entityId !== entityId) throw new Error("Incohérence d'entité.");
     if (!old.employeeId) throw new Error("ID Employé manquant sur le contrat d'origine.");
 
-    // Detect CDD / Fixed term
     const cddLabels = ["fixed_term", "Tempo determinato", "CDD"];
     const isCDD = cddLabels.some(l => old.contractType?.toLowerCase().includes(l.toLowerCase()));
     if (!isCDD) throw new Error("Seul un contrat à durée déterminée (CDD) peut être renouvelé.");
@@ -741,7 +641,6 @@ export async function prepareContractRenewalAction(
       throw new Error("La date de fin doit être postérieure à la date de début.");
     }
 
-    // --- PHASE 6B: Identity Inheritance Logic ---
     const personRef = old.personId ? doc(db, `entities/${entityId}/persons`, old.personId) : null;
     const employeeRef = old.employeeId ? doc(db, `entities/${entityId}/employees`, old.employeeId) : null;
     
@@ -756,7 +655,6 @@ export async function prepareContractRenewalAction(
       old.taxCode || 
       null;
 
-    // 2. Prepare New Contract (Cloning core snapshots)
     const newContractData: any = {
       contractId: newContractId,
       entityId,
@@ -766,7 +664,6 @@ export async function prepareContractRenewalAction(
       employeeDisplayName: old.employeeDisplayName,
       employeeCode: old.employeeCode,
       
-      // Legal Employer Snapshot
       entityName: old.entityName,
       entityLegalName: old.entityLegalName,
       entityVatNumber: old.entityVatNumber,
@@ -774,36 +671,30 @@ export async function prepareContractRenewalAction(
       legalRepresentativeName: old.legalRepresentativeName,
       legalRepresentativeTitle: old.legalRepresentativeTitle,
       
-      // Legal Employee Snapshot
       taxCode: resolvedTaxCode,
       employeeAddressSnapshot: old.employeeAddressSnapshot,
       dateOfBirth: old.dateOfBirth,
       placeOfBirth: old.placeOfBirth,
       
-      // Job & Workplace
       jobTitleName: old.jobTitleName,
       departmentName: old.departmentName,
       worksiteName: old.worksiteName,
       missionsSnapshot: old.missionsSnapshot || [],
       
-      // Contractual Parameters
       contractType: old.contractType,
       weeklyHours: old.weeklyHours,
       isPartTime: old.isPartTime ?? null,
       workingScheduleNotes: old.workingScheduleNotes || null,
       
-      // Classification
       ccnlName: old.ccnlName,
       levelCode: old.levelCode,
       levelLabel: old.levelLabel,
       qualificationCategory: old.qualificationCategory,
       
-      // Remuneration
       grossMonthly: old.grossMonthly,
       grossAnnual: old.grossAnnual,
       monthlyPayments: old.monthlyPayments,
 
-      // Renewal specific
       status: "draft",
       previousContractId: oldContractId,
       isRenewal: true,
@@ -811,14 +702,12 @@ export async function prepareContractRenewalAction(
       startDate: newStartDate,
       endDate: newEndDate,
       
-      // Audit
       createdAt: serverTimestamp(),
       createdBy: actorUid,
       updatedAt: serverTimestamp(),
       updatedBy: actorUid,
     };
 
-    // 3. Perform Writes
     transaction.set(newContractRef, sanitizePayload(newContractData));
     
     transaction.update(oldContractRef, {
@@ -829,7 +718,6 @@ export async function prepareContractRenewalAction(
       updatedBy: actorUid,
     });
 
-    // 4. Initiate UniLav Proroga Request (Compliance Automation)
     const requestId = `proroga_${newContractId}`;
     const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
     
@@ -857,7 +745,6 @@ export async function prepareContractRenewalAction(
       updatedBy: actorUid,
     }));
 
-    // 4b. Create Mandatory Communication document for Proroga
     const commRef = doc(collection(db, `entities/${entityId}/mandatoryCommunications`));
     const prorogaSubject = `Richiesta Proroga UniLav — ${old.employeeDisplayName} — ${newStartDate}`;
     const prorogaBody = `Buongiorno,
@@ -880,7 +767,7 @@ Cordiali saluti,`;
     transaction.set(commRef, sanitizePayload({
       communicationId: commRef.id,
       entityId,
-      employmentOfferId: requestId, // Link using requestId for renewals to isolate this communication
+      employmentOfferId: requestId,
       employmentRequestId: requestId,
       contractId: newContractId,
       type: "UNILAV_PROROGA",
@@ -893,7 +780,6 @@ Cordiali saluti,`;
       updatedBy: actorUid,
     }));
 
-    // 5. Timeline Event
     if (old.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
@@ -920,7 +806,6 @@ Cordiali saluti,`;
     };
   });
 
-  // 6. Post-transaction Audit Log
   await createAuditLog({
     userId: actorUid,
     entityId,
@@ -933,13 +818,9 @@ Cordiali saluti,`;
   return result;
 }
 
-/**
- * Validates a signed renewal contract and marks it as pending_activation.
- */
 export async function markContractAsReadyForActivationAction(entityId: string, contractId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
 
-  // Pre-check for existing pending activations for this employee
   const tempRef = doc(db, `entities/${entityId}/contracts`, contractId);
   const tempSnap = await getDoc(tempRef);
   if (!tempSnap.exists()) throw new Error("Contrat introuvable.");
@@ -1065,10 +946,6 @@ export async function markContractAsReadyForActivationAction(entityId: string, c
   });
 }
 
-/**
- * Atomic transition from old active CDD to new active renewal contract.
- * Reusable by cron or manual trigger.
- */
 export async function executeContractTransitionTransaction(entityId: string, newContractId: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
 
@@ -1084,11 +961,16 @@ export async function executeContractTransitionTransaction(entityId: string, new
     }
 
     const today = new Date().toISOString().split('T')[0];
-    if (newContract.startDate > today) {
-      throw new Error("Activation anticipée non autorisée (Date prévue: " + newContract.startDate + ")");
+    const startStr = (newContract.startDate || "").toString();
+    if (startStr > today) {
+      throw new Error("Activation anticipée non autorisée (Date prévue: " + startStr + ")");
     }
 
-    const oldContractRef = doc(db, `entities/${entityId}/contracts`, newContract.previousContractId!);
+    if (!newContract.previousContractId) {
+      throw new Error("Identifiant du contrat précédent manquant.");
+    }
+
+    const oldContractRef = doc(db, `entities/${entityId}/contracts`, newContract.previousContractId);
     const oldSnap = await transaction.get(oldContractRef);
     if (!oldSnap.exists()) throw new Error("Contrat d'origine introuvable.");
     const oldContract = oldSnap.data() as Contract;
@@ -1108,7 +990,6 @@ export async function executeContractTransitionTransaction(entityId: string, new
 
     const now = serverTimestamp();
 
-    // A. Terminate Old (Status Renewed)
     transaction.update(oldContractRef, {
       status: "renewed",
       renewedByContractId: newContractId,
@@ -1116,7 +997,6 @@ export async function executeContractTransitionTransaction(entityId: string, new
       updatedBy: actorUid
     });
 
-    // B. Activate New
     transaction.update(newContractRef, {
       status: "active",
       activatedAt: now,
@@ -1125,13 +1005,11 @@ export async function executeContractTransitionTransaction(entityId: string, new
       updatedBy: actorUid
     });
 
-    // C. Update Employee Pointer
     transaction.update(employeeRef, {
       activeContractId: newContractId,
       updatedAt: now
     });
 
-    // D. Timeline Event
     if (newContract.personId) {
       const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
@@ -1164,9 +1042,6 @@ export async function executeContractTransitionTransaction(entityId: string, new
   });
 }
 
-/**
- * Records that a contract has been sent to the employee.
- */
 export async function recordContractSentToEmployee(entityId: string, contractId: string, email: string, actorUid: string) {
   if (!db) throw new Error("Firestore not initialized");
   const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
