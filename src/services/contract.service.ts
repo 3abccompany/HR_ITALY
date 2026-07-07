@@ -18,7 +18,6 @@ import { registerSignedContractDocument } from "./document.service";
 import { Employee } from "@/types/employee";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
-import { createNotification } from "./notification.service";
 
 /**
  * Normalizes an object by removing undefined properties to satisfy Firestore.
@@ -308,7 +307,7 @@ export async function activateContractAction(entityId: string, contractId: strin
     }
 
     if (!empSnap.exists()) throw new Error("L'employé rattaché n'existe pas.");
-    const empData = empSnap.data();
+    const empData = empSnap.data() as Employee;
 
     const todayStr = new Date().toISOString().split('T')[0];
     const startDateStr = (contract.startDate || "").toString();
@@ -332,7 +331,7 @@ export async function activateContractAction(entityId: string, contractId: strin
       });
 
       if (contract.personId) {
-        const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+        const timelineRef = doc(collection(db!, `entities/${entityId}/personTimeline`));
         transaction.set(timelineRef, sanitizePayload({
           eventId: timelineRef.id,
           entityId,
@@ -359,7 +358,7 @@ export async function activateContractAction(entityId: string, contractId: strin
         throw new Error("ALREADY_HAS_ACTIVE_CONTRACT");
       }
       
-      const oldRef = doc(db, `entities/${entityId}/contracts`, contract.previousContractId!);
+      const oldRef = doc(db!, `entities/${entityId}/contracts`, contract.previousContractId!);
       transaction.update(oldRef, {
         status: "renewed",
         renewedByContractId: contractId,
@@ -383,7 +382,7 @@ export async function activateContractAction(entityId: string, contractId: strin
     });
 
     if (contract.personId) {
-      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      const timelineRef = doc(collection(db!, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
@@ -534,7 +533,7 @@ export async function terminateContractAction(
           }), { merge: true });
 
           if (contract.personId) {
-             const personRef = doc(db, `entities/${entityId}/persons`, contract.personId);
+             const personRef = doc(db!, `entities/${entityId}/persons`, contract.personId);
              transaction.update(personRef, sanitizePayload({
                currentLifecycleStatus: "former_employee",
                updatedAt: serverTimestamp(),
@@ -546,7 +545,7 @@ export async function terminateContractAction(
     }
 
     if (contract.personId) {
-      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      const timelineRef = doc(collection(db!, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
@@ -641,8 +640,8 @@ export async function prepareContractRenewalAction(
       throw new Error("La date de fin doit être postérieure à la date de début.");
     }
 
-    const personRef = old.personId ? doc(db, `entities/${entityId}/persons`, old.personId) : null;
-    const employeeRef = old.employeeId ? doc(db, `entities/${entityId}/employees`, old.employeeId) : null;
+    const personRef = old.personId ? doc(db!, `entities/${entityId}/persons`, old.personId) : null;
+    const employeeRef = old.employeeId ? doc(db!, `entities/${entityId}/employees`, old.employeeId) : null;
     
     let personSnap = null;
     let employeeSnap = null;
@@ -719,7 +718,7 @@ export async function prepareContractRenewalAction(
     });
 
     const requestId = `proroga_${newContractId}`;
-    const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+    const requestRef = doc(db!, `entities/${entityId}/employmentRequests`, requestId);
     
     transaction.set(requestRef, sanitizePayload({
       id: requestId,
@@ -745,7 +744,7 @@ export async function prepareContractRenewalAction(
       updatedBy: actorUid,
     }));
 
-    const commRef = doc(collection(db, `entities/${entityId}/mandatoryCommunications`));
+    const commRef = doc(collection(db!, `entities/${entityId}/mandatoryCommunications`));
     const prorogaSubject = `Richiesta Proroga UniLav — ${old.employeeDisplayName} — ${newStartDate}`;
     const prorogaBody = `Buongiorno,
 
@@ -781,7 +780,7 @@ Cordiali saluti,`;
     }));
 
     if (old.personId) {
-      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      const timelineRef = doc(collection(db!, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
@@ -878,7 +877,7 @@ export async function markContractAsReadyForActivationAction(entityId: string, c
     if (contract.grossMonthly !== undefined && contract.grossMonthly < 0) throw new Error("Salaire brut mensuel invalide.");
     if (contract.grossAnnual !== undefined && contract.grossAnnual < 0) throw new Error("Salaire brut annuel invalide.");
 
-    const oldContractRef = doc(db, `entities/${entityId}/contracts`, contract.previousContractId);
+    const oldContractRef = doc(db!, `entities/${entityId}/contracts`, contract.previousContractId);
     const oldSnap = await transaction.get(oldContractRef);
     if (!oldSnap.exists()) throw new Error("Contrat d'origine introuvable.");
     const old = oldSnap.data() as Contract;
@@ -891,10 +890,10 @@ export async function markContractAsReadyForActivationAction(entityId: string, c
       throw new Error("Incohérence de lien de renouvellement.");
     }
 
-    const employeeRef = doc(db, `entities/${entityId}/employees`, contract.employeeId);
+    const employeeRef = doc(db!, `entities/${entityId}/employees`, contract.employeeId);
     const empSnap = await transaction.get(employeeRef);
     if (!empSnap.exists()) throw new Error("Employé introuvable.");
-    const emp = empSnap.data();
+    const emp = empSnap.data() as Employee;
 
     if (emp.activeContractId !== contract.previousContractId) {
       throw new Error("L'employé possède un autre contrat actif qui bloque le renouvellement.");
@@ -910,7 +909,7 @@ export async function markContractAsReadyForActivationAction(entityId: string, c
     }));
 
     if (contract.personId) {
-      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      const timelineRef = doc(collection(db!, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
@@ -966,36 +965,32 @@ export async function executeContractTransitionTransaction(entityId: string, new
       throw new Error("Activation anticipée non autorisée (Date prévue: " + startStr + ")");
     }
 
-    if (!newContract.previousContractId) {
-      throw new Error("Identifiant du contrat précédent manquant.");
-    }
-
-    const oldContractRef = doc(db, `entities/${entityId}/contracts`, newContract.previousContractId);
-    const oldSnap = await transaction.get(oldContractRef);
-    if (!oldSnap.exists()) throw new Error("Contrat d'origine introuvable.");
-    const oldContract = oldSnap.data() as Contract;
-
-    const employeeRef = doc(db, `entities/${entityId}/employees`, newContract.employeeId);
+    const employeeRef = doc(db!, `entities/${entityId}/employees`, newContract.employeeId);
     const empSnap = await transaction.get(employeeRef);
     if (!empSnap.exists()) throw new Error("Employé introuvable.");
-    const empData = empSnap.data();
+    const empData = empSnap.data() as Employee;
 
-    if (oldContract.status !== "active") {
-      throw new Error("L'ancien contrat n'est pas 'Actif' (Statut: " + oldContract.status + ")");
-    }
-
-    if (empData.activeContractId !== newContract.previousContractId) {
-      throw new Error("Désynchronisation de la chaîne : l'employé n'est pas sur le contrat attendu.");
-    }
+    const activeContractId = empData.activeContractId;
+    const previousContractId = newContract.previousContractId;
 
     const now = serverTimestamp();
 
-    transaction.update(oldContractRef, {
-      status: "renewed",
-      renewedByContractId: newContractId,
-      updatedAt: now,
-      updatedBy: actorUid
-    });
+    // Distinguish between renewal transition and initial activation
+    if (activeContractId && activeContractId !== newContractId) {
+      if (previousContractId && activeContractId === previousContractId) {
+        // This is a verified renewal of the current active contract
+        const oldContractRef = doc(db!, `entities/${entityId}/contracts`, previousContractId);
+        transaction.update(oldContractRef, {
+          status: "renewed",
+          renewedByContractId: newContractId,
+          updatedAt: now,
+          updatedBy: actorUid
+        });
+      } else {
+        // Conflict: The employee already has a different active contract
+        throw new Error("ALREADY_HAS_ACTIVE_CONTRACT");
+      }
+    }
 
     transaction.update(newContractRef, {
       status: "active",
@@ -1007,11 +1002,12 @@ export async function executeContractTransitionTransaction(entityId: string, new
 
     transaction.update(employeeRef, {
       activeContractId: newContractId,
+      pendingContractId: null,
       updatedAt: now
     });
 
     if (newContract.personId) {
-      const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+      const timelineRef = doc(collection(db!, `entities/${entityId}/personTimeline`));
       transaction.set(timelineRef, sanitizePayload({
         eventId: timelineRef.id,
         entityId,
@@ -1019,8 +1015,8 @@ export async function executeContractTransitionTransaction(entityId: string, new
         employeeId: newContract.employeeId,
         contractId: newContractId,
         type: "contract.auto_activated",
-        label: "Contrat de renouvellement activé",
-        description: `Le renouvellement ${newContract.employeeCode || newContractId} est désormais actif.`,
+        label: "Contrat activé",
+        description: `Le contrat ${newContract.employeeCode || newContractId} est désormais actif.`,
         sourceCollection: "contracts",
         sourceId: newContractId,
         createdAt: now,
