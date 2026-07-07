@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { useFirebase, useCollection, useUser } from "@/firebase";
+import { useFirebase, useCollection, useDoc, useUser } from "@/firebase";
 import { collection, query, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { createCcnl, updateCcnl, archiveCcnl, getDefaultAccrualRules, normalizeAccrualRules } from "@/services/ccnl.service";

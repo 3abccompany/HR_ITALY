@@ -4,9 +4,9 @@ import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Plus, Edit, PowerOff, Loader2, ArrowLeft,
-  LayoutDashboard, ListTodo, ShieldCheck, 
+  ListTodo, ShieldCheck, 
   Trash2, Info, Euro, Briefcase, Calendar, Clock,
-  CheckCircle2, Save
+  CheckCircle2, Save, Percent
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,7 +59,13 @@ const initialLevelForm = {
   annualExHolidayHours: "0",
   effectiveFrom: new Date().toISOString().split('T')[0],
   notes: "",
-  weeklySchedule: undefined as WeeklySchedule | undefined
+  weeklySchedule: undefined as WeeklySchedule | undefined,
+  // Premium Overrides
+  nightPremiumPercent: "",
+  overtimePremiumPercent: "",
+  overtimeNightPremiumPercent: "",
+  holidayPremiumPercent: "",
+  sundayPremiumPercent: "",
 };
 
 export default function CcnlLevelsPage() {
@@ -118,7 +124,12 @@ export default function CcnlLevelsPage() {
       annualExHolidayHours: (l.annualExHolidayHours || 0).toString(),
       effectiveFrom: l.effectiveFrom,
       notes: l.notes || "",
-      weeklySchedule: l.weeklySchedule
+      weeklySchedule: l.weeklySchedule,
+      nightPremiumPercent: (l.nightPremiumPercent ?? "").toString(),
+      overtimePremiumPercent: (l.overtimePremiumPercent ?? "").toString(),
+      overtimeNightPremiumPercent: (l.overtimeNightPremiumPercent ?? "").toString(),
+      holidayPremiumPercent: (l.holidayPremiumPercent ?? "").toString(),
+      sundayPremiumPercent: (l.sundayPremiumPercent ?? "").toString(),
     });
     setEditingId(l.levelId);
     setIsLevelFormOpen(true);
@@ -172,7 +183,12 @@ export default function CcnlLevelsPage() {
         minimumGrossHourly: hourlyNum,
         annualPaidLeaveDays: parseFloat(formData.annualPaidLeaveDays.toString()) || 0,
         annualRolHours: parseFloat(formData.annualRolHours.toString()) || 0,
-        annualExHolidayHours: parseFloat(formData.annualExHolidayHours.toString()) || 0
+        annualExHolidayHours: parseFloat(formData.annualExHolidayHours.toString()) || 0,
+        nightPremiumPercent: formData.nightPremiumPercent === "" ? null : parseFloat(formData.nightPremiumPercent.toString()),
+        overtimePremiumPercent: formData.overtimePremiumPercent === "" ? null : parseFloat(formData.overtimePremiumPercent.toString()),
+        overtimeNightPremiumPercent: formData.overtimeNightPremiumPercent === "" ? null : parseFloat(formData.overtimeNightPremiumPercent.toString()),
+        holidayPremiumPercent: formData.holidayPremiumPercent === "" ? null : parseFloat(formData.holidayPremiumPercent.toString()),
+        sundayPremiumPercent: formData.sundayPremiumPercent === "" ? null : parseFloat(formData.sundayPremiumPercent.toString()),
       };
 
       if (editingLevelId) {
@@ -416,6 +432,63 @@ export default function CcnlLevelsPage() {
                    onChange={(e) => setFormData(p => ({...p, annualExHolidayHours: e.target.value}))} 
                  />
                </div>
+            </div>
+
+            {/* Phase 4E-3E-1: Premium Configuration Section */}
+            <div className="space-y-4 pt-2 border-t">
+               <h3 className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
+                  <Percent className="w-3 h-3" /> Majorations — Synthèse économique
+               </h3>
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                     <Label className="text-[10px] uppercase font-bold">Majoration nuit (%)</Label>
+                     <Input 
+                       type="number" 
+                       value={formData.nightPremiumPercent} 
+                       onChange={(e) => setFormData(p => ({...p, nightPremiumPercent: e.target.value}))} 
+                       placeholder="Ex: 25"
+                     />
+                  </div>
+                  <div className="space-y-2">
+                     <Label className="text-[10px] uppercase font-bold">Majoration heures sup. (%)</Label>
+                     <Input 
+                       type="number" 
+                       value={formData.overtimePremiumPercent} 
+                       onChange={(e) => setFormData(p => ({...p, overtimePremiumPercent: e.target.value}))} 
+                       placeholder="Ex: 30"
+                     />
+                  </div>
+                  <div className="space-y-2">
+                     <Label className="text-[10px] uppercase font-bold">Majoration sup. nuit (%)</Label>
+                     <Input 
+                       type="number" 
+                       value={formData.overtimeNightPremiumPercent} 
+                       onChange={(e) => setFormData(p => ({...p, overtimeNightPremiumPercent: e.target.value}))} 
+                       placeholder="Ex: 50"
+                     />
+                  </div>
+                  <div className="space-y-2">
+                     <Label className="text-[10px] uppercase font-bold">Majoration férié (%)</Label>
+                     <Input 
+                       type="number" 
+                       value={formData.holidayPremiumPercent} 
+                       onChange={(e) => setFormData(p => ({...p, holidayPremiumPercent: e.target.value}))} 
+                       placeholder="Ex: 50"
+                     />
+                  </div>
+                  <div className="space-y-2">
+                     <Label className="text-[10px] uppercase font-bold">Majoration dimanche (%)</Label>
+                     <Input 
+                       type="number" 
+                       value={formData.sundayPremiumPercent} 
+                       onChange={(e) => setFormData(p => ({...p, sundayPremiumPercent: e.target.value}))} 
+                       placeholder="Ex: 35"
+                     />
+                  </div>
+               </div>
+               <p className="text-[9px] text-muted-foreground italic leading-tight">
+                 Note: Saisissez la majoration en pourcentage (ex: 25 pour +25%). Utilisé uniquement pour la synthèse économique.
+               </p>
             </div>
 
             <div className="space-y-2">

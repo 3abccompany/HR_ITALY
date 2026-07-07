@@ -61,7 +61,7 @@ export interface CCNL {
   // Working Schedule (Phase 4E-0A)
   weeklySchedule?: WeeklySchedule;
 
-  // Payroll MVP Premium Fields
+  // Payroll MVP Premium Fields (Legacy - Moving to Level)
   nightPremiumPercent?: number;
   overtimePremiumPercent?: number;
   overtimeNightPremiumPercent?: number;
@@ -99,7 +99,7 @@ export interface CCNLLevel {
   // Payroll MVP Premium Overrides
   nightPremiumPercent?: number;
   overtimePremiumPercent?: number;
-  overtimeNightPremiumPremiumPercent?: number;
+  overtimeNightPremiumPercent?: number;
   holidayPremiumPercent?: number;
   sundayPremiumPercent?: number;
 
