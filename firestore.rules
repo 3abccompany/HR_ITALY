@@ -347,6 +347,21 @@ service cloud.firestore {
         allow update: if hasPermission(entityId, 'safety.update') || isPlatformAdmin();
         allow delete: if false;
       }
+
+      // --- Payroll MVP Rules ---
+
+      match /payrollParameters/{parameterId} {
+        allow read: if hasPermission(entityId, 'payroll.read') || hasPermission(entityId, 'payroll.write') || hasPermission(entityId, 'payroll.calculate') || isPlatformAdmin();
+        allow create, update: if (hasPermission(entityId, 'payroll.write') || isPlatformAdmin()) && request.resource.data.entityId == entityId;
+        allow delete: if isPlatformAdmin();
+      }
+
+      match /payrollCalculations/{calculationId} {
+        allow read: if hasPermission(entityId, 'payroll.read') || isPlatformAdmin();
+        allow create: if (hasPermission(entityId, 'payroll.calculate') || hasPermission(entityId, 'payroll.write') || isPlatformAdmin()) && request.resource.data.entityId == entityId;
+        allow update: if (hasPermission(entityId, 'payroll.recalculate') || hasPermission(entityId, 'payroll.calculate') || hasPermission(entityId, 'payroll.write') || hasPermission(entityId, 'payroll.approve') || hasPermission(entityId, 'payroll.lock') || isPlatformAdmin()) && request.resource.data.entityId == entityId;
+        allow delete: if isPlatformAdmin();
+      }
     }
 
     // --- Global Reference Data ---

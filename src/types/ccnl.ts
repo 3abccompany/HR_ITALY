@@ -61,6 +61,13 @@ export interface CCNL {
   // Working Schedule (Phase 4E-0A)
   weeklySchedule?: WeeklySchedule;
 
+  // Payroll MVP Premium Fields
+  nightPremiumPercent?: number;
+  overtimePremiumPercent?: number;
+  overtimeNightPremiumPercent?: number;
+  holidayPremiumPercent?: number;
+  sundayPremiumPercent?: number;
+
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
@@ -88,6 +95,13 @@ export interface CCNLLevel {
   annualExHolidayHours?: number;
   accrualRules?: CCNLAccrualRules;
   weeklySchedule?: WeeklySchedule;
+
+  // Payroll MVP Premium Overrides
+  nightPremiumPercent?: number;
+  overtimePremiumPercent?: number;
+  overtimeNightPremiumPercent?: number;
+  holidayPremiumPercent?: number;
+  sundayPremiumPercent?: number;
 
   createdAt: Date | FieldValue;
   createdBy: string;

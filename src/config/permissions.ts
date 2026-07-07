@@ -130,6 +130,15 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   // --- Email Settings ---
   { code: "emailSettings.manage", module: "emailSettings", action: "manage", label: "Gérer les paramètres email", description: "Mise à jour de l'identité d'envoi et du SMTP.", scope: "entity" },
 
+  // --- Payroll MVP (Monthly Economic Calculation) ---
+  { code: "payroll.read", module: "payroll", action: "read", label: "Voir la rémunération", description: "Consultation des synthèses économiques.", scope: "entity" },
+  { code: "payroll.calculate", module: "payroll", action: "calculate", label: "Calculer la synthèse économique mensuelle", description: "Lancer le calcul des montants basés sur les présences.", scope: "entity" },
+  { code: "payroll.recalculate", module: "payroll", action: "recalculate", label: "Recalculer la synthèse économique mensuelle", description: "Mettre à jour un calcul existant non verrouillé.", scope: "entity" },
+  { code: "payroll.write", module: "payroll", action: "write", label: "Modifier la rémunération", description: "Ajustement manuel des paramètres ou montants.", scope: "entity" },
+  { code: "payroll.approve", module: "payroll", action: "approve", label: "Approuver une synthèse économique", description: "Validation finale du calcul mensuel.", scope: "entity" },
+  { code: "payroll.export", module: "payroll", action: "export", label: "Exporter une synthèse économique", description: "Générer un fichier pour le cabinet de paie.", scope: "entity" },
+  { code: "payroll.lock", module: "payroll", action: "lock", label: "Verrouiller une période de rémunération", description: "Empêcher toute modification sur un mois clôturé.", scope: "entity" },
+
   // --- Employee Self-Service (Phase 1A) ---
   { code: "self.profile.read", module: "self-service", action: "read", label: "Voir mon profil", description: "Accès personnel à ses propres données RH.", scope: "entity" },
   { code: "self.leaves.read", module: "self-service", action: "read", label: "Voir mes absences", description: "Consultation de ses propres demandes de congés.", scope: "entity" },
