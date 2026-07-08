@@ -25,6 +25,31 @@ export interface PayrollRateSnapshot {
   payrollParameterId?: string;
 }
 
+/**
+ * Breakdown of hours and overtime for a specific week.
+ * Phase 4E-3F-1
+ */
+export interface PayrollWeeklyBreakdown {
+  weekKey: string; // e.g. "2024-W12"
+  weekStart: string; // YYYY-MM-DD
+  weekEnd: string; // YYYY-MM-DD
+  expectedWeeklyHours: number | null;
+  workedHoursInWeek: number;
+  paidJustifiedHoursInWeek?: number;
+  rawImportedOvertimeHours?: number;
+  weeklyOvertimeHours: number;
+  payableOvertimeHoursInPayrollMonth?: number;
+  
+  // Exclusive Classification buckets
+  overtimeDayHours: number;
+  overtimeNightHours: number;
+  overtimeSundayHours: number;
+  overtimeHolidayHours: number;
+  
+  classificationStatus: "not_classified" | "classified" | "limited";
+  classificationReason?: string | null;
+}
+
 export interface PayrollAttendanceAggregation {
   employeeId: string;
   year: number;
@@ -38,6 +63,16 @@ export interface PayrollAttendanceAggregation {
   sourceAttendanceIds: string[];
   hasLegacyFallback?: boolean;
   legacyFallbackReason?: string;
+  
+  // Weekly Reconciliation Fields (Phase 4E-3F-1)
+  weeklyBreakdown?: PayrollWeeklyBreakdown[];
+  overtimeDayHours?: number;
+  overtimeNightHours?: number;
+  overtimeSundayHours?: number;
+  overtimeHolidayHours?: number;
+  rawImportedOvertimeHours?: number;
+  weeklyReconciledOvertimeHours?: number;
+  overtimeClassificationSource?: "not_available" | "imported_daily" | "weekly_reconciled" | "manual_approved";
 }
 
 export interface PayrollReconciliationWarning {
@@ -50,7 +85,13 @@ export interface PayrollReconciliationWarning {
     | "legacy_attendance_split_missing" 
     | "missing_payroll_rate" 
     | "missing_monthly_gross"
-    | "missing_premium_rule";
+    | "missing_premium_rule"
+    | "raw_overtime_not_weekly_reconciled"
+    | "missing_time_segments_for_overtime_classification"
+    | "missing_weekly_schedule"
+    | "missing_night_window"
+    | "missing_overtime_night_premium"
+    | "overtime_classification_limited";
   severity: "info" | "warning" | "blocking";
   employeeId: string;
   date?: string;
@@ -85,6 +126,19 @@ export interface PayrollCalculation {
   mileageValue: number;
   bonusValue: number;
   
+  // Advanced Overtime Values (Phase 4E-3F-1)
+  overtimeDayHours?: number;
+  overtimeNightHours?: number;
+  overtimeSundayHours?: number;
+  overtimeHolidayHours?: number;
+  overtimeDayValue?: number;
+  overtimeNightValue?: number;
+  overtimeSundayValue?: number;
+  overtimeHolidayValue?: number;
+  rawImportedOvertimeHours?: number;
+  weeklyReconciledOvertimeHours?: number;
+  weeklyBreakdown?: PayrollWeeklyBreakdown[];
+
   /** Total gross sum before taxes and contributions */
   grossEconomicTotal: number;
   
