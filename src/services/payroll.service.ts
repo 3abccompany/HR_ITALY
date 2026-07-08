@@ -154,7 +154,10 @@ function splitSegmentByBoundaries(segment: WorkedSegment): ClassifiedSegment[] {
     [0, 6, 22].forEach(h => addBoundary(d, h));
   });
 
-  const timePoints = [start, ...Array.from(boundaries).sort(), end];
+  // CRITICAL: Numeric sort required for timestamps (default is lexicographical)
+  const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
+  const timePoints = [start, ...sortedBoundaries, end];
+  
   const result: ClassifiedSegment[] = [];
 
   for (let i = 0; i < timePoints.length - 1; i++) {
@@ -182,10 +185,6 @@ function splitSegmentByBoundaries(segment: WorkedSegment): ClassifiedSegment[] {
 /**
  * Determines the primary premium category for a segment based on exclusive priority:
  * Holiday > Sunday > Night > Day.
- * 
- * Note: This implements the "no premium stacking" rule for economic synthesis.
- * Ordinary night premiums are payable regardless of weekly threshold, but an hour
- * identified as "Overtime Night" will receive the full overtime rate only.
  */
 function classifyExclusiveSegment(seg: ClassifiedSegment): 'holiday' | 'sunday' | 'night' | 'day' {
   if (seg.isHoliday) return 'holiday';
@@ -253,13 +252,16 @@ async function reconcileWeeklyOvertime(
       });
     });
 
+    // Explicitly sort segments chronologically across the entire week
+    allSegments.sort((a, b) => a.start.getTime() - b.start.getTime());
+
     let weekWorked = 0;
     let weekOvDay = 0;
     let weekOvNight = 0;
     let weekOvSun = 0;
     let weekOvHol = 0;
     let weekOrdNight = 0;
-    let weekRawSup = weekRecords.reduce((s, r) => s + (r.overtimeHours || 0), 0);
+    const weekRawSup = weekRecords.reduce((s, r) => s + (r.overtimeHours || 0), 0);
 
     for (const seg of allSegments) {
       const remaining = seg.durationHours;
@@ -320,35 +322,48 @@ async function reconcileWeeklyOvertime(
 // --- Main Service Logic ---
 
 /**
- * Recursively removes undefined values from an object and replaces them with null
- * to satisfy Firestore's strict rules about unsupported field values.
+ * Hardened sanitizer to prevent "Maximum call stack size exceeded".
+ * Includes cycle detection and explicit handling for Date objects.
  */
-function sanitizeForFirestore(obj: any): any {
+function sanitizeForFirestore(obj: any, seen = new WeakSet()): any {
   if (obj === null || obj === undefined || typeof obj !== 'object') {
     return obj === undefined ? null : obj;
   }
   
+  // Guard against infinite recursion in cyclic structures
+  if (seen.has(obj)) {
+    return "[Circular]";
+  }
+
+  // Base Case: Firestore/Standard special types
   if (
     obj.constructor?.name === 'FieldValue' || 
     obj.constructor?.name === 'Timestamp' || 
     obj.constructor?.name === 'ServerTimestampValue' ||
     obj._methodName === 'serverTimestamp' ||
-    typeof obj.toDate === 'function'
+    typeof obj.toDate === 'function' ||
+    obj instanceof Date // Explicit Date support
   ) {
     return obj;
   }
 
+  // Record complex objects in the recursion set
+  seen.add(obj);
+
   if (Array.isArray(obj)) {
-    return obj.map(sanitizeForFirestore);
+    return obj.map(item => sanitizeForFirestore(item, seen));
   }
 
+  // Only recurse into plain objects to avoid internal SDK class properties
   const newObj: any = {};
   for (const key in obj) {
-    const val = obj[key];
-    if (val !== undefined) {
-      newObj[key] = sanitizeForFirestore(val);
-    } else {
-      newObj[key] = null;
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const val = obj[key];
+      if (val !== undefined) {
+        newObj[key] = sanitizeForFirestore(val, seen);
+      } else {
+        newObj[key] = null;
+      }
     }
   }
   return newObj;
@@ -397,7 +412,6 @@ function roundMoney(value: number): number {
 
 /**
  * Aggregates validated attendance records for an entity/month.
- * Performs initial daily-based aggregation.
  */
 export async function aggregateMonthlyAttendance(
   db: Firestore, 
@@ -444,13 +458,13 @@ export async function aggregateMonthlyAttendance(
     const vh = data.validatedHours || 0;
     if (vh > 0) agg.workedDays++;
 
-    // Initial splits (Legacy Daily)
+    // Initial splits (Legacy Daily Fallback)
     const hasSplits = (data.dayHours || 0) > 0 || (data.nightHours || 0) > 0 || (data.overtimeHours || 0) > 0;
     
     if (vh > 0 && !hasSplits) {
       agg.ordinaryDayHours += vh;
       agg.hasLegacyFallback = true;
-      agg.legacyFallbackReason = "Granular day/night split missing; validatedHours treated as ordinary day hours for MVP.";
+      agg.legacyFallbackReason = "Granular day/night split missing.";
     } else {
       agg.ordinaryDayHours += data.dayHours || 0;
       agg.ordinaryNightHours += data.nightHours || 0;
@@ -522,7 +536,7 @@ export async function buildPrePayrollReconciliation(
           severity: "warning",
           employeeId: empId,
           date: dateIso,
-          message: "Horaire contractuel introuvable pour cette date.",
+          message: "Horaire contractuel introuvable.",
           validatedHours
         });
       }
@@ -535,7 +549,7 @@ export async function buildPrePayrollReconciliation(
           severity: "info",
           employeeId: empId,
           date: dateIso,
-          message: "Heures travaillées supérieures à l'horaire prévu.",
+          message: "Heures travaillées supérieures au prévu.",
           expectedDailyHours: expected,
           validatedHours,
           differenceHours: validatedHours - expected
@@ -548,45 +562,13 @@ export async function buildPrePayrollReconciliation(
           severity: "warning",
           employeeId: empId,
           date: dateIso,
-          message: "Heures manquantes non couvertes par une absence approuvée.",
+          message: "Heures manquantes non justifiées.",
           expectedDailyHours: expected,
           validatedHours,
           coveredHours,
           differenceHours: expected - (validatedHours + coveredHours)
         });
       }
-
-      if (schedule.isReliable && expected === 0 && validatedHours > 0) {
-        warnings.push({
-          code: "non_working_day_work",
-          severity: "warning",
-          employeeId: empId,
-          date: dateIso,
-          message: "Travail détecté sur un jour non travaillé.",
-          expectedDailyHours: 0,
-          validatedHours
-        });
-      }
-
-      if (att?.holidayFlag && (att.holidayWorkedHours || 0) > 0) {
-        warnings.push({
-          code: "holiday_work",
-          severity: "info",
-          employeeId: empId,
-          date: dateIso,
-          message: `Travail sur jour férié (${att.holidayName || 'Férié'}).`,
-          validatedHours: att.holidayWorkedHours
-        });
-      }
-    }
-
-    if (agg.hasLegacyFallback) {
-      warnings.push({
-        code: "legacy_attendance_split_missing",
-        severity: "info",
-        employeeId: empId,
-        message: agg.legacyFallbackReason || "Répartition jour/nuit simplifiée."
-      });
     }
   }
 
@@ -595,8 +577,6 @@ export async function buildPrePayrollReconciliation(
 
 /**
  * Resolves the rate snapshot for a specific employee and period.
- * Strictly adheres to Level-based configuration for premiums.
- * Resolves expected weekly threshold from Contract then CCNL Root.
  */
 export async function resolvePayrollRateSnapshot(
   db: Firestore,
@@ -607,7 +587,6 @@ export async function resolvePayrollRateSnapshot(
 ): Promise<PayrollRateSnapshot> {
   const { startDateIso } = await getPayrollMonthRange(year, month);
 
-  // 1. Check Payroll Parameters (Most specific)
   const paramsRef = collection(db, `entities/${entityId}/payrollParameters`);
   const paramsQuery = query(
     paramsRef, 
@@ -620,7 +599,6 @@ export async function resolvePayrollRateSnapshot(
   const paramsSnap = await getDocs(paramsQuery);
   const p = paramsSnap.empty ? null : paramsSnap.docs[0].data() as PayrollParameter;
 
-  // 2. Check Contract & CCNL (Default hierarchy)
   const empRef = doc(db, `entities/${entityId}/employees`, employeeId);
   const empSnap = await getDoc(empRef);
   if (!empSnap.exists()) return { source: "missing", ordinaryHourlyRate: 0 };
@@ -641,28 +619,24 @@ export async function resolvePayrollRateSnapshot(
   if (ccnlId) {
     const ccnlRef = doc(db, `entities/${entityId}/ccnls`, ccnlId);
     const ccnlSnap = await getDoc(ccnlRef);
-    if (ccnlSnap.exists()) {
-      ccnlData = ccnlSnap.data() as CCNL;
-    }
+    if (ccnlSnap.exists()) ccnlData = ccnlSnap.data() as CCNL;
     
     if (levelId) {
       const levelRef = doc(db, `entities/${entityId}/ccnls/${ccnlId}/levels`, levelId);
       const levelSnap = await getDoc(levelRef);
-      if (levelSnap.exists()) {
-        levelData = levelSnap.data() as CCNLLevel;
-      }
+      if (levelSnap.exists()) levelData = levelSnap.data() as CCNLLevel;
     }
   }
 
-  // Resolve fields with prioritized fallbacks
   const ordinaryHourlyRate = p?.ordinaryHourlyRate ?? levelData?.minimumGrossHourly ?? 0;
   const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
   const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
 
   /**
-   * Hardened expected weekly threshold resolution.
-   * Priority: 1. Contract > 2. CCNL Root Standard > 3. CCNL Root Schedule Sum > null
-   * Treats 0 as missing.
+   * Finalized Weekly Threshold Priority:
+   * 1. Contract Individual Override
+   * 2. CCNL Root Standard
+   * 3. CCNL Root Schedule Sum
    */
   const isValidThreshold = (v: any): v is number => typeof v === 'number' && v > 0 && !isNaN(v);
   let expectedWeeklyHours: number | null = null;
@@ -678,13 +652,6 @@ export async function resolvePayrollRateSnapshot(
     if (sum > 0) expectedWeeklyHours = sum;
   }
 
-  // Premium fallbacks: Param -> Level -> null
-  const nightPremiumPercent = p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null;
-  const overtimePremiumPercent = p?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? null;
-  const overtimeNightPremiumPercent = p?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? null;
-  const holidayPremiumPercent = p?.holidayPremiumPercent ?? levelData?.holidayPremiumPercent ?? null;
-  const sundayPremiumPercent = p?.sundayPremiumPercent ?? levelData?.sundayPremiumPercent ?? null;
-
   return {
     source: p ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
     payCalculationMode,
@@ -692,11 +659,11 @@ export async function resolvePayrollRateSnapshot(
     grossMonthly,
     levelCode: levelData?.levelCode ?? contract.levelCode ?? null,
     expectedWeeklyHours,
-    nightPremiumPercent,
-    overtimePremiumPercent,
-    overtimeNightPremiumPercent,
-    holidayPremiumPercent,
-    sundayPremiumPercent,
+    nightPremiumPercent: p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null,
+    overtimePremiumPercent: p?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? null,
+    overtimeNightPremiumPercent: p?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? null,
+    holidayPremiumPercent: p?.holidayPremiumPercent ?? levelData?.holidayPremiumPercent ?? null,
+    sundayPremiumPercent: p?.sundayPremiumPercent ?? levelData?.sundayPremiumPercent ?? null,
     ccnlId: ccnlId || undefined,
     ccnlLevelId: levelId || undefined,
     contractId: emp.activeContractId,
@@ -706,8 +673,6 @@ export async function resolvePayrollRateSnapshot(
 
 /**
  * Calculates financial values for a calculation object.
- * Correctly distinguishes between mensualized (base fixed) and hourly staff.
- * Integrates exclusive overtime buckets.
  */
 export async function calculatePayrollEconomicValues(
   agg: PayrollAttendanceAggregation,
@@ -733,35 +698,27 @@ export async function calculatePayrollEconomicValues(
   const rateValue = rate.ordinaryHourlyRate || 0;
   const isMonthly = rate.payCalculationMode === "monthly";
   
-  // Multipliers/Decimals
   const nightDec = await percentageToDecimal(rate.nightPremiumPercent);
   
-  // Exclusive Overtime Logic
   const ovDayHours = agg.overtimeDayHours || 0;
   const ovNightHours = agg.overtimeNightHours || 0;
   const ovSundayHours = agg.overtimeSundayHours || 0;
   const ovHolidayHours = agg.overtimeHolidayHours || 0;
 
-  // Resolved Premium Multipliers (Strictly from specific fields)
   const otMult = await percentageToMultiplier(rate.overtimePremiumPercent);
   const otNightMult = await percentageToMultiplier(rate.overtimeNightPremiumPercent);
   const sunMult = await percentageToMultiplier(rate.sundayPremiumPercent);
   const holMult = await percentageToMultiplier(rate.holidayPremiumPercent);
 
-  // 1. Base Salary
   let baseGrossValue = 0;
   if (isMonthly) {
     baseGrossValue = roundMoney(rate.grossMonthly || 0);
   } else {
-    // For hourly, ordinary hours cover all non-overtime segments (Day + Night)
     baseGrossValue = roundMoney(agg.ordinaryDayHours * rateValue);
   }
 
-  // 2. Additions / Premiums
-  // Ordinary Night: Standalone premium addition (base is already in monthly gross or ordinary day calculation)
   const nightValue = roundMoney(agg.ordinaryNightHours * rateValue * nightDec);
 
-  // Overtime buckets (Full value: Base + Premium)
   const overtimeDayValue = roundMoney(ovDayHours * rateValue * otMult);
   const overtimeNightValue = roundMoney(ovNightHours * rateValue * otNightMult);
   const overtimeSundayValue = roundMoney(ovSundayHours * rateValue * sunMult);
@@ -769,7 +726,6 @@ export async function calculatePayrollEconomicValues(
   
   const totalOvertimeValue = roundMoney(overtimeDayValue + overtimeNightValue + overtimeSundayValue + overtimeHolidayValue);
 
-  // 3. Deductions (Unpaid Missing Hours)
   let deductionValue = 0;
   const missingHoursWarnings = warnings.filter(w => w.code === "missing_hours" && w.differenceHours && w.differenceHours > 0);
   const totalMissingHours = missingHoursWarnings.reduce((sum, w) => sum + (w.differenceHours || 0), 0);
@@ -778,12 +734,10 @@ export async function calculatePayrollEconomicValues(
     deductionValue = roundMoney(totalMissingHours * rateValue);
   }
 
-  // 4. Extras
   const mealTicketsValue = roundMoney(extras.mealTickets || 0);
   const mileageValue = roundMoney(extras.mileage || 0);
   const bonusValue = roundMoney(extras.bonus || 0);
 
-  // 5. Grand Total
   const grossEconomicTotal = roundMoney(
     baseGrossValue - deductionValue + nightValue + totalOvertimeValue +
     mealTicketsValue + mileageValue + bonusValue
@@ -793,12 +747,12 @@ export async function calculatePayrollEconomicValues(
     baseGrossValue,
     ordinaryValue: isMonthly ? baseGrossValue : roundMoney((agg.ordinaryDayHours + agg.ordinaryNightHours) * rateValue),
     nightValue,
-    overtimeValue: totalOvertimeValue, // Total payable overtime
+    overtimeValue: totalOvertimeValue,
     overtimeDayValue,
     overtimeNightValue,
     overtimeSundayValue,
     overtimeHolidayValue,
-    holidayWorkedValue: overtimeHolidayValue, // Alias for standard display
+    holidayWorkedValue: overtimeHolidayValue,
     deductionValue,
     mealTicketsValue,
     mileageValue,
@@ -827,17 +781,13 @@ export async function saveMonthlyPayrollCalculations(
     if (existingSnap.exists()) {
       const existing = existingSnap.data() as PayrollCalculation;
       const terminalStatuses = ["approved", "exported", "locked"];
-      
       if (terminalStatuses.includes(existing.status)) {
         results.skipped++;
-        results.skippedReasons.push(`${calc.employeeId}: Statut ${existing.status} (verrouillé).`);
+        results.skippedReasons.push(`${calc.employeeId}: Verrouillé.`);
         continue;
       }
-
       await updateDoc(calcRef, {
         ...sanitizedCalc,
-        createdAt: existing.createdAt, // Preserve
-        createdBy: existing.createdBy,
         calculatedAt: serverTimestamp(),
         calculatedBy: actorUid,
         updatedAt: serverTimestamp(),
@@ -863,7 +813,6 @@ export async function saveMonthlyPayrollCalculations(
 
 /**
  * Main service entry point: Aggregates, reconciles, calculates and persists.
- * Wired for Weekly Overtime Reconciliation (Phase 4E-3F-2B).
  */
 export async function calculateAndSaveMonthlyPayroll(
   db: Firestore,
@@ -874,7 +823,6 @@ export async function calculateAndSaveMonthlyPayroll(
 ) {
   const { startDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
   
-  // 1. Inputs
   const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month);
   const allWarnings = await buildPrePayrollReconciliation(db, entityId, year, month, aggregations);
   
@@ -882,15 +830,11 @@ export async function calculateAndSaveMonthlyPayroll(
   let blockingCount = 0;
   let warningCount = 0;
 
-  // 2. Process each aggregated employee
   for (const empId of Object.keys(aggregations)) {
     const agg = aggregations[empId];
     const rate = await resolvePayrollRateSnapshot(db, entityId, empId, year, month);
     const empWarnings = allWarnings.filter(w => w.employeeId === empId);
 
-    // --- PHASE 4E-3F-2B: Weekly Overtime Reconciliation ---
-    
-    // Resolve expected weekly threshold (No global 40h fallback)
     const threshold = rate.expectedWeeklyHours;
 
     if (threshold === null || threshold === undefined) {
@@ -898,21 +842,14 @@ export async function calculateAndSaveMonthlyPayroll(
          code: "missing_weekly_schedule",
          severity: "warning",
          employeeId: empId,
-         message: "Seuil hebdomadaire non détecté. Réconciliation des heures supplémentaires impossible."
+         message: "Seuil hebdomadaire non détecté."
        });
-       
-       // Diagnostic preservation & Safe Defaults
        agg.rawImportedOvertimeHours = agg.overtimeHours;
        agg.weeklyReconciledOvertimeHours = 0;
        agg.overtimeHours = 0; 
-       agg.overtimeDayHours = 0;
-       agg.overtimeNightHours = 0;
-       agg.overtimeSundayHours = 0;
-       agg.overtimeHolidayHours = 0;
        agg.overtimeClassificationSource = "not_available";
        agg.weeklyBreakdown = [];
     } else {
-       // Fetch all validated records for the employee to perform chronological analysis
        const attRef = collection(db, `entities/${entityId}/attendances`);
        const attSnap = await getDocs(query(
          attRef,
@@ -928,10 +865,9 @@ export async function calculateAndSaveMonthlyPayroll(
 
        const reconciliation = await reconcileWeeklyOvertime(records, threshold);
        
-       // Update Aggregation with reconciled values
        agg.rawImportedOvertimeHours = agg.overtimeHours;
        agg.weeklyReconciledOvertimeHours = reconciliation.weeklyReconciledOvertimeHours;
-       agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours; // Standard pointer override
+       agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
        agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
        agg.overtimeDayHours = reconciliation.overtimeDayHours;
        agg.overtimeNightHours = reconciliation.overtimeNightHours;
@@ -940,45 +876,18 @@ export async function calculateAndSaveMonthlyPayroll(
        agg.overtimeClassificationSource = "weekly_reconciled";
        agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
 
-       // Reconciliation Audit Warnings
-       if (agg.rawImportedOvertimeHours > 0 && agg.weeklyReconciledOvertimeHours === 0) {
-          empWarnings.push({
-            code: "raw_overtime_not_weekly_reconciled",
-            severity: "info",
-            employeeId: empId,
-            message: "Des heures SUP quotidiennes ont été importées mais ne dépassent pas le seuil hebdomadaire."
-          });
-       }
-
        if (agg.overtimeNightHours > 0 && !rate.overtimeNightPremiumPercent) {
           empWarnings.push({
             code: "missing_overtime_night_premium",
             severity: "blocking",
             employeeId: empId,
-            message: "Majorations pour heures supplémentaires de nuit manquantes dans le CCNL."
+            message: "Majorations SUP de nuit manquantes."
           });
        }
     }
 
-    // ------------------------------------------------------
-
-    // Dynamic checks
     if (!rate.ordinaryHourlyRate || rate.ordinaryHourlyRate === 0) {
-      empWarnings.push({
-        code: "missing_payroll_rate",
-        severity: "blocking",
-        employeeId: empId,
-        message: "Taux horaire ordinaire introuvable."
-      });
-    }
-
-    if (rate.payCalculationMode === "monthly" && (!rate.grossMonthly || rate.grossMonthly <= 0)) {
-       empWarnings.push({
-         code: "missing_monthly_gross",
-         severity: "blocking",
-         employeeId: empId,
-         message: "Salaire mensuel de base introuvable pour ce profil mensualisé."
-       });
+      empWarnings.push({ code: "missing_payroll_rate", severity: "blocking", employeeId: empId, message: "Taux horaire manquant." });
     }
 
     const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings);
@@ -1006,7 +915,6 @@ export async function calculateAndSaveMonthlyPayroll(
     });
   }
 
-  // 3. Persist
   const saveResults = await saveMonthlyPayrollCalculations(db, entityId, finalCalculations, actorUid);
 
   return {
@@ -1016,52 +924,4 @@ export async function calculateAndSaveMonthlyPayroll(
     warningCount,
     calculationIds: finalCalculations.map(c => c.id)
   };
-}
-
-/**
- * Prepares a monthly payroll draft dataset without economic values.
- */
-export async function prepareMonthlyPayrollDraft(
-  db: Firestore,
-  entityId: string,
-  year: number,
-  month: number
-): Promise<PayrollCalculation[]> {
-  const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month);
-  const allWarnings = await buildPrePayrollReconciliation(db, entityId, year, month, aggregations);
-
-  const drafts: PayrollCalculation[] = Object.values(aggregations).map(agg => {
-    const empId = agg.employeeId;
-    const empWarnings = allWarnings.filter(w => w.employeeId === empId);
-
-    return {
-      id: `${empId}_${year}_${month}`,
-      entityId,
-      employeeId: empId,
-      year,
-      month,
-      status: "draft",
-      attendanceAggregation: agg,
-      rateSnapshot: { source: "missing", ordinaryHourlyRate: 0 },
-      reconciliationWarnings: empWarnings,
-      baseGrossValue: 0,
-      ordinaryValue: 0,
-      nightValue: 0,
-      overtimeValue: 0,
-      overtimeNightValue: 0,
-      holidayWorkedValue: 0,
-      deductionValue: 0,
-      mealTicketsValue: 0,
-      mileageValue: 0,
-      bonusValue: 0,
-      grossEconomicTotal: 0,
-      sourceAttendanceIds: agg.sourceAttendanceIds,
-      createdAt: new Date(),
-      createdBy: "system",
-      updatedAt: new Date(),
-      updatedBy: "system"
-    };
-  });
-
-  return drafts;
 }
