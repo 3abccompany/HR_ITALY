@@ -323,7 +323,8 @@ async function reconcileWeeklyOvertime(
 
 /**
  * Restrictive sanitizer for Firestore persistence.
- * Only recurses into plain objects and arrays to prevent stack overflows on SDK internal objects.
+ * Prevents stack overflows by strictly limiting recursion to plain objects and arrays.
+ * Handles cycle detection with WeakSet.
  */
 function sanitizeForFirestore(obj: any, seen = new WeakSet()): any {
   if (obj === null || obj === undefined || typeof obj !== 'object') {
@@ -333,7 +334,7 @@ function sanitizeForFirestore(obj: any, seen = new WeakSet()): any {
   // Guard against infinite recursion
   if (seen.has(obj)) return "[Circular]";
 
-  // Base Cases: Types Firestore natively understands or project standard types
+  // Base Cases: Types Firestore natively understands
   if (
     obj instanceof Date || 
     obj.constructor?.name === 'Timestamp' || 
@@ -344,18 +345,19 @@ function sanitizeForFirestore(obj: any, seen = new WeakSet()): any {
     return obj;
   }
 
-  seen.add(obj);
-
-  if (Array.isArray(obj)) {
-    return obj.map(item => sanitizeForFirestore(item, seen));
+  // STRICT: Only recurse if it's a plain object literal or Array.
+  // Prevents traversing complex class instances (e.g. Error, internal SDK states).
+  const isArray = Array.isArray(obj);
+  const isPlainObject = Object.prototype.toString.call(obj) === '[object Object]';
+  
+  if (!isArray && !isPlainObject) {
+    return typeof obj.toString === 'function' ? obj.toString() : "[Opaque Object]";
   }
 
-  // STRICT: Only recurse if it's a plain object literal.
-  // Prevents traversing complex class instances, Error objects, or internal SDK states.
-  const isPlainObject = Object.prototype.toString.call(obj) === '[object Object]';
-  if (!isPlainObject) {
-    // Return safe string representation or null for opaque objects
-    return typeof obj.toString === 'function' ? obj.toString() : "[Opaque Object]";
+  seen.add(obj);
+
+  if (isArray) {
+    return obj.map(item => sanitizeForFirestore(item, seen));
   }
 
   const newObj: any = {};
@@ -630,7 +632,8 @@ export async function resolvePayrollRateSnapshot(
   const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
   const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
 
-  // Logic priority for expected weekly hours: 1. Contract > 2. CCNL Root Standard > 3. CCNL Root Schedule Sum
+  // Logic priority for expected weekly hours: 
+  // 1. Contract > 2. CCNL Root Standard > 3. CCNL Root Schedule Sum
   const isValid = (v: any): v is number => typeof v === 'number' && v > 0;
   let expectedWeeklyHours: number | null = null;
 
@@ -925,3 +928,4 @@ export async function calculateAndSaveMonthlyPayroll(
     calculationIds: finalCalculations.map(c => c.id)
   };
 }
+

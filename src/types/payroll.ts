@@ -131,14 +131,7 @@ export interface PayrollCalculation {
   mileageValue: number;
   bonusValue: number;
   
-  // Advanced Overtime Values (Phase 4E-3F-1)
-  overtimeDayHours?: number;
-  overtimeNightHours?: number;
-  overtimeSundayHours?: number;
-  overtimeHolidayHours?: number;
-  overtimeDayValue?: number;
-  overtimeSundayValue?: number;
-  overtimeHolidayValue?: number;
+  // Advanced Overtime Metadata (Phase 4E-3F-1)
   rawImportedOvertimeHours?: number;
   weeklyReconciledOvertimeHours?: number;
   weeklyBreakdown?: PayrollWeeklyBreakdown[];
