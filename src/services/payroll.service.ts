@@ -596,6 +596,7 @@ export async function buildPrePayrollReconciliation(
 /**
  * Resolves the rate snapshot for a specific employee and period.
  * Strictly adheres to Level-based configuration for premiums.
+ * Resolves expected weekly threshold from Contract then CCNL Root.
  */
 export async function resolvePayrollRateSnapshot(
   db: Firestore,
@@ -658,10 +659,24 @@ export async function resolvePayrollRateSnapshot(
   const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
   const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
 
-  // Priority for threshold:
-  // 1. Contract weekly hours (specific to employee)
-  // 2. CCNL standard weekly hours (general fallback)
-  const expectedWeeklyHours = contract.weeklyHours ?? ccnlData?.standardWeeklyHours ?? null;
+  /**
+   * Hardened expected weekly threshold resolution.
+   * Priority: 1. Contract > 2. CCNL Root Standard > 3. CCNL Root Schedule Sum > null
+   * Treats 0 as missing.
+   */
+  const isValidThreshold = (v: any): v is number => typeof v === 'number' && v > 0 && !isNaN(v);
+  let expectedWeeklyHours: number | null = null;
+
+  if (isValidThreshold(contract.weeklyHours)) {
+    expectedWeeklyHours = contract.weeklyHours;
+  } else if (ccnlData && isValidThreshold(ccnlData.standardWeeklyHours)) {
+    expectedWeeklyHours = ccnlData.standardWeeklyHours;
+  } else if (ccnlData && ccnlData.weeklySchedule) {
+    const s = ccnlData.weeklySchedule;
+    const sum = (s.monday || 0) + (s.tuesday || 0) + (s.wednesday || 0) + 
+                (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0) + (s.sunday || 0);
+    if (sum > 0) expectedWeeklyHours = sum;
+  }
 
   // Premium fallbacks: Param -> Level -> null
   const nightPremiumPercent = p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null;
