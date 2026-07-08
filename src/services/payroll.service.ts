@@ -30,15 +30,158 @@ import {
 import { AttendanceRecord } from "@/types/attendance";
 import { TimeOffRequest } from "@/types/time-off";
 import { resolveWorkSchedule } from "./work-schedule.service";
-import { format, parseISO, startOfMonth, endOfMonth, addMonths, eachDayOfInterval } from "date-fns";
+import { format, parseISO, startOfMonth, endOfMonth, addMonths, eachDayOfInterval, startOfWeek, endOfWeek, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
 
 /**
- * Normalizes an object by removing undefined properties to satisfy Firestore.
- * Preserves FieldValue and Timestamp identities.
+ * 4E-3F-2A Internal Overtime Reconciliation Helpers
+ */
+
+/**
+ * Identifies the ISO week context for a given date.
+ * Thresholds for overtime are calculated on a Monday-Sunday basis.
+ */
+function getWeekContext(dateIso: string) {
+  const date = parseISO(dateIso);
+  const start = startOfWeek(date, { weekStartsOn: 1 }); // Monday
+  const end = endOfWeek(date, { weekStartsOn: 1 });   // Sunday
+  
+  return {
+    weekKey: `${format(start, 'yyyy')}-W${format(start, 'II')}`,
+    weekStart: format(start, 'yyyy-MM-dd'),
+    weekEnd: format(end, 'yyyy-MM-dd')
+  };
+}
+
+/**
+ * Continuous period of work extracted from a single punch.
+ */
+interface WorkedSegment {
+  start: Date;
+  end: Date;
+  isHoliday: boolean;
+}
+
+/**
+ * Granular piece of work resulting from splitting at regulatory boundaries.
+ */
+interface ClassifiedSegment {
+  start: Date;
+  end: Date;
+  durationHours: number;
+  isNight: boolean;
+  isSunday: boolean;
+  isHoliday: boolean;
+}
+
+/**
+ * Transforms AttendanceRecord punches into absolute datetime segments.
+ * Correctly handles overnight shifts where timeOut is logically the next day.
+ */
+function getWorkedSegmentsFromRecord(record: AttendanceRecord): WorkedSegment[] {
+  const baseDate = parseISO(record.attendanceDate);
+  const segments: WorkedSegment[] = [];
+
+  record.punches?.forEach(p => {
+    if (!p.timeIn || !p.timeOut || p.timeIn === 'INVALID' || p.timeOut === 'INVALID') return;
+
+    const [hIn, mIn] = p.timeIn.split(':').map(Number);
+    const [hOut, mOut] = p.timeOut.split(':').map(Number);
+
+    if (isNaN(hIn) || isNaN(mIn) || isNaN(hOut) || isNaN(mOut)) return;
+
+    const start = new Date(baseDate);
+    start.setHours(hIn, mIn, 0, 0);
+
+    let end = new Date(baseDate);
+    end.setHours(hOut, mOut, 0, 0);
+
+    // Overnight shift detection (e.g. 22:00 -> 04:00)
+    if (end < start) {
+      end = addDays(end, 1);
+    }
+
+    segments.push({
+      start,
+      end,
+      isHoliday: record.holidayFlag || false
+    });
+  });
+
+  return segments;
+}
+
+/**
+ * Slices a worked segment into smaller chunks at specific transition points:
+ * - Midnight (00:00)
+ * - Night Start (22:00)
+ * - Night End (06:00)
+ * 
+ * This ensuring that each slice can be classified exclusively.
+ */
+function splitSegmentByBoundaries(segment: WorkedSegment): ClassifiedSegment[] {
+  const start = segment.start.getTime();
+  const end = segment.end.getTime();
+  const boundaries = new Set<number>();
+
+  const addBoundary = (date: Date, hours: number) => {
+    const b = new Date(date);
+    b.setHours(hours, 0, 0, 0);
+    const t = b.getTime();
+    if (t > start && t < end) boundaries.add(t);
+  };
+
+  // Check boundaries for day of punch and potential following day
+  [segment.start, addDays(segment.start, 1)].forEach(d => {
+    [0, 6, 22].forEach(h => addBoundary(d, h));
+  });
+
+  const timePoints = [start, ...Array.from(boundaries).sort(), end];
+  const result: ClassifiedSegment[] = [];
+
+  for (let i = 0; i < timePoints.length - 1; i++) {
+    const s = new Date(timePoints[i]);
+    const e = new Date(timePoints[i+1]);
+    const duration = (e.getTime() - s.getTime()) / (1000 * 60 * 60);
+    
+    // Evaluate properties at segment midpoint to avoid boundary precision issues
+    const mid = new Date(s.getTime() + (e.getTime() - s.getTime()) / 2);
+    const h = mid.getHours();
+    
+    result.push({
+      start: s,
+      end: e,
+      durationHours: Number(duration.toFixed(4)),
+      isNight: h >= 22 || h < 6,
+      isSunday: mid.getDay() === 0,
+      isHoliday: segment.isHoliday
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Determines the primary premium category for a segment based on exclusive priority:
+ * Holiday > Sunday > Night > Day.
+ * 
+ * Note: This implements the "no premium stacking" rule for economic synthesis.
+ * Ordinary night premiums are payable regardless of weekly threshold, but an hour
+ * identified as "Overtime Night" will receive the full overtime rate only.
+ */
+function classifyExclusiveSegment(seg: ClassifiedSegment): 'holiday' | 'sunday' | 'night' | 'day' {
+  if (seg.isHoliday) return 'holiday';
+  if (seg.isSunday) return 'sunday';
+  if (seg.isNight) return 'night';
+  return 'day';
+}
+
+/**
+ * Recursively removes undefined values from an object and replaces them with null
+ * to satisfy Firestore's strict rules about unsupported field values.
  */
 function sanitizeForFirestore(obj: any): any {
   if (obj === null || obj === undefined || typeof obj !== 'object') {
