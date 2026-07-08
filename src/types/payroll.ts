@@ -132,7 +132,6 @@ export interface PayrollCalculation {
   overtimeSundayHours?: number;
   overtimeHolidayHours?: number;
   overtimeDayValue?: number;
-  overtimeNightValue?: number;
   overtimeSundayValue?: number;
   overtimeHolidayValue?: number;
   rawImportedOvertimeHours?: number;
