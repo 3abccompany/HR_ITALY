@@ -125,6 +125,7 @@ function splitSegmentByBoundaries(segment: WorkedSegment): ClassifiedSegment[] {
     [0, 6, 22].forEach(h => addBoundary(d, h));
   });
 
+  // Numeric sort to ensure chronological segments
   const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
   const timePoints = [start, ...sortedBoundaries, end];
   
@@ -411,7 +412,12 @@ export async function aggregateMonthlyAttendance(
     }
 
     agg.totalValidatedHours += vh;
-    agg.holidayWorkedHours += data.holidayWorkedHours || 0;
+    
+    // Improved Holiday Worked Hours aggregation
+    // If the record is flagged as holiday but holidayWorkedHours is empty, 
+    // we use the validated hours as the base.
+    const hw = data.holidayWorkedHours || (data.holidayFlag ? vh : 0);
+    agg.holidayWorkedHours += hw;
   });
 
   return aggregations;
@@ -522,7 +528,7 @@ export async function resolvePayrollRateSnapshot(
     if (sum > 0) expectedWeeklyHours = sum;
   }
 
-  // Premium Priority: PayrollParameter > Level value > null (no Root fallback)
+  // Premium Priority: PayrollParameter > Level value > null
   return {
     source: activeParam ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
     payCalculationMode: monthly ? "monthly" : "hourly",
@@ -570,7 +576,10 @@ export async function calculatePayrollEconomicValues(
   const overtimeHolidayValue = roundMoney((agg.overtimeHolidayHours || 0) * rateValue * (1 + pOvHol));
 
   const overtimeValue = roundMoney(overtimeDayValue + overtimeNightValue + overtimeSundayValue + overtimeHolidayValue);
-  const holidayWorkedValue = roundMoney((agg.holidayWorkedHours || 0) * rateValue * pOvHol);
+
+  // Calculate ordinary holiday value (total holiday hours minus those already paid as overtime)
+  const ordinaryHolidayHours = Math.max(0, (agg.holidayWorkedHours || 0) - (agg.overtimeHolidayHours || 0));
+  const holidayWorkedValue = roundMoney(ordinaryHolidayHours * rateValue * (1 + pOvHol));
 
   const grossEconomicTotal = roundMoney(baseGrossValue + nightValue + overtimeValue + holidayWorkedValue);
 
