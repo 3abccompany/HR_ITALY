@@ -92,7 +92,8 @@ export interface PayrollReconciliationWarning {
     | "missing_weekly_schedule"
     | "missing_night_window"
     | "missing_overtime_night_premium"
-    | "overtime_classification_limited";
+    | "overtime_classification_limited"
+    | "calculation_failed";
   severity: "info" | "warning" | "blocking";
   employeeId: string;
   date?: string;
@@ -120,7 +121,10 @@ export interface PayrollCalculation {
   ordinaryValue: number;
   nightValue: number;
   overtimeValue: number;
+  overtimeDayValue: number;
   overtimeNightValue: number;
+  overtimeSundayValue: number;
+  overtimeHolidayValue: number;
   holidayWorkedValue: number;
   deductionValue: number;
   mealTicketsValue: number;

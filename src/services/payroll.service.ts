@@ -154,7 +154,7 @@ function splitSegmentByBoundaries(segment: WorkedSegment): ClassifiedSegment[] {
     [0, 6, 22].forEach(h => addBoundary(d, h));
   });
 
-  // CRITICAL: Numeric sort required for timestamps (default is lexicographical)
+  // Numeric sort to ensure chronological processing
   const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
   const timePoints = [start, ...sortedBoundaries, end];
   
@@ -165,7 +165,7 @@ function splitSegmentByBoundaries(segment: WorkedSegment): ClassifiedSegment[] {
     const e = new Date(timePoints[i+1]);
     const duration = (e.getTime() - s.getTime()) / (1000 * 60 * 60);
     
-    // Evaluate properties at segment midpoint to avoid boundary precision issues
+    // Evaluate properties at segment midpoint
     const mid = new Date(s.getTime() + (e.getTime() - s.getTime()) / 2);
     const h = mid.getHours();
     
@@ -252,7 +252,7 @@ async function reconcileWeeklyOvertime(
       });
     });
 
-    // Explicitly sort segments chronologically across the entire week
+    // Chronological sort across the entire week
     allSegments.sort((a, b) => a.start.getTime() - b.start.getTime());
 
     let weekWorked = 0;
@@ -322,48 +322,46 @@ async function reconcileWeeklyOvertime(
 // --- Main Service Logic ---
 
 /**
- * Hardened sanitizer to prevent "Maximum call stack size exceeded".
- * Includes cycle detection and explicit handling for Date objects.
+ * Restrictive sanitizer for Firestore persistence.
+ * Only recurses into plain objects and arrays to prevent stack overflows on SDK internal objects.
  */
 function sanitizeForFirestore(obj: any, seen = new WeakSet()): any {
   if (obj === null || obj === undefined || typeof obj !== 'object') {
     return obj === undefined ? null : obj;
   }
   
-  // Guard against infinite recursion in cyclic structures
-  if (seen.has(obj)) {
-    return "[Circular]";
-  }
+  // Guard against infinite recursion
+  if (seen.has(obj)) return "[Circular]";
 
-  // Base Case: Firestore/Standard special types
+  // Base Cases: Types Firestore natively understands or project standard types
   if (
-    obj.constructor?.name === 'FieldValue' || 
+    obj instanceof Date || 
     obj.constructor?.name === 'Timestamp' || 
-    obj.constructor?.name === 'ServerTimestampValue' ||
+    obj.constructor?.name === 'FieldValue' || 
     obj._methodName === 'serverTimestamp' ||
-    typeof obj.toDate === 'function' ||
-    obj instanceof Date // Explicit Date support
+    typeof (obj as any).toDate === 'function'
   ) {
     return obj;
   }
 
-  // Record complex objects in the recursion set
   seen.add(obj);
 
   if (Array.isArray(obj)) {
     return obj.map(item => sanitizeForFirestore(item, seen));
   }
 
-  // Only recurse into plain objects to avoid internal SDK class properties
+  // STRICT: Only recurse if it's a plain object literal.
+  // Prevents traversing complex class instances, Error objects, or internal SDK states.
+  const isPlainObject = Object.prototype.toString.call(obj) === '[object Object]';
+  if (!isPlainObject) {
+    // Return safe string representation or null for opaque objects
+    return typeof obj.toString === 'function' ? obj.toString() : "[Opaque Object]";
+  }
+
   const newObj: any = {};
   for (const key in obj) {
     if (Object.prototype.hasOwnProperty.call(obj, key)) {
-      const val = obj[key];
-      if (val !== undefined) {
-        newObj[key] = sanitizeForFirestore(val, seen);
-      } else {
-        newObj[key] = null;
-      }
+      newObj[key] = sanitizeForFirestore(obj[key], seen);
     }
   }
   return newObj;
@@ -632,23 +630,17 @@ export async function resolvePayrollRateSnapshot(
   const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
   const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
 
-  /**
-   * Finalized Weekly Threshold Priority:
-   * 1. Contract Individual Override
-   * 2. CCNL Root Standard
-   * 3. CCNL Root Schedule Sum
-   */
-  const isValidThreshold = (v: any): v is number => typeof v === 'number' && v > 0 && !isNaN(v);
+  // Logic priority for expected weekly hours: 1. Contract > 2. CCNL Root Standard > 3. CCNL Root Schedule Sum
+  const isValid = (v: any): v is number => typeof v === 'number' && v > 0;
   let expectedWeeklyHours: number | null = null;
 
-  if (isValidThreshold(contract.weeklyHours)) {
+  if (isValid(contract.weeklyHours)) {
     expectedWeeklyHours = contract.weeklyHours;
-  } else if (ccnlData && isValidThreshold(ccnlData.standardWeeklyHours)) {
+  } else if (ccnlData && isValid(ccnlData.standardWeeklyHours)) {
     expectedWeeklyHours = ccnlData.standardWeeklyHours;
   } else if (ccnlData && ccnlData.weeklySchedule) {
     const s = ccnlData.weeklySchedule;
-    const sum = (s.monday || 0) + (s.tuesday || 0) + (s.wednesday || 0) + 
-                (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0) + (s.sunday || 0);
+    const sum = (s.monday || 0) + (s.tuesday || 0) + (s.wednesday || 0) + (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0) + (s.sunday || 0);
     if (sum > 0) expectedWeeklyHours = sum;
   }
 
@@ -813,6 +805,7 @@ export async function saveMonthlyPayrollCalculations(
 
 /**
  * Main service entry point: Aggregates, reconciles, calculates and persists.
+ * Isolated per-employee calculation to ensure batch stability.
  */
 export async function calculateAndSaveMonthlyPayroll(
   db: Firestore,
@@ -829,90 +822,96 @@ export async function calculateAndSaveMonthlyPayroll(
   const finalCalculations: PayrollCalculation[] = [];
   let blockingCount = 0;
   let warningCount = 0;
+  let failedCount = 0;
 
   for (const empId of Object.keys(aggregations)) {
-    const agg = aggregations[empId];
-    const rate = await resolvePayrollRateSnapshot(db, entityId, empId, year, month);
-    const empWarnings = allWarnings.filter(w => w.employeeId === empId);
+    try {
+      const agg = aggregations[empId];
+      const rate = await resolvePayrollRateSnapshot(db, entityId, empId, year, month);
+      const empWarnings = allWarnings.filter(w => w.employeeId === empId);
 
-    const threshold = rate.expectedWeeklyHours;
+      const threshold = rate.expectedWeeklyHours;
 
-    if (threshold === null || threshold === undefined) {
-       empWarnings.push({
-         code: "missing_weekly_schedule",
-         severity: "warning",
-         employeeId: empId,
-         message: "Seuil hebdomadaire non détecté."
-       });
-       agg.rawImportedOvertimeHours = agg.overtimeHours;
-       agg.weeklyReconciledOvertimeHours = 0;
-       agg.overtimeHours = 0; 
-       agg.overtimeClassificationSource = "not_available";
-       agg.weeklyBreakdown = [];
-    } else {
-       const attRef = collection(db, `entities/${entityId}/attendances`);
-       const attSnap = await getDocs(query(
-         attRef,
-         where("employeeId", "==", empId),
-         where("attendanceDate", ">=", startDateIso),
-         where("attendanceDate", "<", nextMonthStartDateIso)
-       ));
-       
-       const reliableStatuses = ["validated", "corrected", "locked"];
-       const records = attSnap.docs
-         .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
-         .filter(r => reliableStatuses.includes(r.status));
+      if (threshold === null || threshold === undefined) {
+         empWarnings.push({
+           code: "missing_weekly_schedule",
+           severity: "warning",
+           employeeId: empId,
+           message: "Seuil hebdomadaire non détecté. Réconciliation SUP bloquée."
+         });
+         agg.rawImportedOvertimeHours = agg.overtimeHours;
+         agg.weeklyReconciledOvertimeHours = 0;
+         agg.overtimeHours = 0; 
+         agg.overtimeClassificationSource = "not_available";
+         agg.weeklyBreakdown = [];
+      } else {
+         const attRef = collection(db, `entities/${entityId}/attendances`);
+         const attSnap = await getDocs(query(
+           attRef,
+           where("employeeId", "==", empId),
+           where("attendanceDate", ">=", startDateIso),
+           where("attendanceDate", "<", nextMonthStartDateIso)
+         ));
+         
+         const reliableStatuses = ["validated", "corrected", "locked"];
+         const records = attSnap.docs
+           .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
+           .filter(r => reliableStatuses.includes(r.status));
 
-       const reconciliation = await reconcileWeeklyOvertime(records, threshold);
-       
-       agg.rawImportedOvertimeHours = agg.overtimeHours;
-       agg.weeklyReconciledOvertimeHours = reconciliation.weeklyReconciledOvertimeHours;
-       agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
-       agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
-       agg.overtimeDayHours = reconciliation.overtimeDayHours;
-       agg.overtimeNightHours = reconciliation.overtimeNightHours;
-       agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
-       agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
-       agg.overtimeClassificationSource = "weekly_reconciled";
-       agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
+         const reconciliation = await reconcileWeeklyOvertime(records, threshold);
+         
+         agg.rawImportedOvertimeHours = agg.overtimeHours;
+         agg.weeklyReconciledOvertimeHours = reconciliation.weeklyReconciledOvertimeHours;
+         agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
+         agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
+         agg.overtimeDayHours = reconciliation.overtimeDayHours;
+         agg.overtimeNightHours = reconciliation.overtimeNightHours;
+         agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
+         agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
+         agg.overtimeClassificationSource = "weekly_reconciled";
+         agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
 
-       if (agg.overtimeNightHours > 0 && !rate.overtimeNightPremiumPercent) {
-          empWarnings.push({
-            code: "missing_overtime_night_premium",
-            severity: "blocking",
-            employeeId: empId,
-            message: "Majorations SUP de nuit manquantes."
-          });
-       }
+         if (agg.overtimeNightHours > 0 && !rate.overtimeNightPremiumPercent) {
+            empWarnings.push({
+              code: "missing_overtime_night_premium",
+              severity: "blocking",
+              employeeId: empId,
+              message: "Majorations SUP de nuit manquantes."
+            });
+         }
+      }
+
+      if (!rate.ordinaryHourlyRate || rate.ordinaryHourlyRate === 0) {
+        empWarnings.push({ code: "missing_payroll_rate", severity: "blocking", employeeId: empId, message: "Taux horaire manquant." });
+      }
+
+      const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings);
+      const isBlocked = empWarnings.some(w => w.severity === 'blocking');
+
+      if (isBlocked) blockingCount++;
+      warningCount += empWarnings.filter(w => w.severity === 'warning').length;
+
+      finalCalculations.push({
+        id: `${empId}_${year}_${month}`,
+        entityId,
+        employeeId: empId,
+        year,
+        month,
+        status: isBlocked ? "draft" : "calculated",
+        attendanceAggregation: agg,
+        rateSnapshot: rate,
+        reconciliationWarnings: empWarnings,
+        ...econ,
+        sourceAttendanceIds: agg.sourceAttendanceIds,
+        createdAt: new Date(),
+        createdBy: actorUid,
+        updatedAt: new Date(),
+        updatedBy: actorUid
+      });
+    } catch (err: any) {
+      failedCount++;
+      console.error(`[Payroll:Isolation] Calculation failed for employee ${empId}:`, err.message);
     }
-
-    if (!rate.ordinaryHourlyRate || rate.ordinaryHourlyRate === 0) {
-      empWarnings.push({ code: "missing_payroll_rate", severity: "blocking", employeeId: empId, message: "Taux horaire manquant." });
-    }
-
-    const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings);
-    const isBlocked = empWarnings.some(w => w.severity === 'blocking');
-
-    if (isBlocked) blockingCount++;
-    warningCount += empWarnings.filter(w => w.severity === 'warning').length;
-
-    finalCalculations.push({
-      id: `${empId}_${year}_${month}`,
-      entityId,
-      employeeId: empId,
-      year,
-      month,
-      status: isBlocked ? "draft" : "calculated",
-      attendanceAggregation: agg,
-      rateSnapshot: rate,
-      reconciliationWarnings: empWarnings,
-      ...econ,
-      sourceAttendanceIds: agg.sourceAttendanceIds,
-      createdAt: new Date(),
-      createdBy: actorUid,
-      updatedAt: new Date(),
-      updatedBy: actorUid
-    });
   }
 
   const saveResults = await saveMonthlyPayrollCalculations(db, entityId, finalCalculations, actorUid);
@@ -920,6 +919,7 @@ export async function calculateAndSaveMonthlyPayroll(
   return {
     totalEmployees: Object.keys(aggregations).length,
     ...saveResults,
+    failedCount,
     blockingWarningsCount: blockingCount,
     warningCount,
     calculationIds: finalCalculations.map(c => c.id)
