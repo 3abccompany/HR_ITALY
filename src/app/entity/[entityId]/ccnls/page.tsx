@@ -7,7 +7,7 @@ import {
   Library, FileText, Calendar, ShieldCheck,
   Filter, X, ListFilter, MoreVertical, Eye,
   AlertCircle, Settings2, Clock, CheckCircle2, Save,
-  Euro
+  Euro, Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const initialSchedule: WeeklySchedule = {
   monday: 8,
@@ -377,18 +378,25 @@ export default function CcnlRegistryPage() {
                   </div>
                 </div>
 
+                <Alert className="bg-blue-50 border-blue-100 text-blue-800 rounded-xl">
+                  <Info className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-xs">
+                    Ces paramètres définissent le standard du CCNL. Les exceptions individuelles doivent être définies dans le contrat de l’employé.
+                  </AlertDescription>
+                </Alert>
+
                 <div className="grid grid-cols-3 gap-4 border-t pt-4">
                   <div className="space-y-2">
-                    <Label htmlFor="standardWeeklyHours">Heures Hebdo.</Label>
-                    <Input id="standardWeeklyHours" type="number" step="0.5" value={formData.standardWeeklyHours} onChange={(e) => setFormData(p => ({...p, standardWeeklyHours: parseFloat(e.target.value)}))} required />
+                    <Label htmlFor="standardWeeklyHours">Heures hebdomadaires standard CCNL</Label>
+                    <Input id="standardWeeklyHours" type="number" step="0.5" value={formData.standardWeeklyHours} onChange={(e) => setFormData(p => ({...p, standardWeeklyHours: parseFloat(e.target.value) || 0}))} required />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="monthlyPayments">Mensualités</Label>
-                    <Input id="monthlyPayments" type="number" value={formData.monthlyPayments} onChange={(e) => setFormData(p => ({...p, monthlyPayments: parseInt(e.target.value)}))} required />
+                    <Label htmlFor="monthlyPayments">Nombre de mensualités</Label>
+                    <Input id="monthlyPayments" type="number" value={formData.monthlyPayments} onChange={(e) => setFormData(p => ({...p, monthlyPayments: parseInt(e.target.value) || 13}))} required />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="hourlyDivisor">Diviseur Horaire</Label>
-                    <Input id="hourlyDivisor" type="number" value={formData.hourlyDivisor} onChange={(e) => setFormData(p => ({...p, hourlyDivisor: parseInt(e.target.value)}))} required />
+                    <Label htmlFor="hourlyDivisor">Diviseur horaire CCNL</Label>
+                    <Input id="hourlyDivisor" type="number" value={formData.hourlyDivisor} onChange={(e) => setFormData(p => ({...p, hourlyDivisor: parseInt(e.target.value) || 0}))} required />
                   </div>
                 </div>
 
@@ -396,7 +404,7 @@ export default function CcnlRegistryPage() {
                 <div className="space-y-4 pt-4 border-t">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-black uppercase text-primary tracking-widest flex items-center gap-2">
-                       <Clock className="w-4 h-4" /> Répartition hebdomadaire
+                       <Clock className="w-4 h-4" /> Répartition hebdomadaire standard CCNL
                     </h3>
                     <div className="flex gap-2">
                        <Button type="button" variant="outline" size="sm" onClick={() => handleApplyTemplate('39h')} className="h-7 text-[9px] font-black uppercase">Template 39h</Button>
@@ -438,15 +446,15 @@ export default function CcnlRegistryPage() {
                 <div className="grid grid-cols-3 gap-4 border-t pt-4">
                   <div className="space-y-2">
                     <Label htmlFor="annualPaidLeaveDays">Congés (j/an)</Label>
-                    <Input id="annualPaidLeaveDays" type="number" value={formData.annualPaidLeaveDays} onChange={(e) => setFormData(p => ({...p, annualPaidLeaveDays: parseFloat(e.target.value)}))} placeholder="Ex: 26" />
+                    <Input id="annualPaidLeaveDays" type="number" step="0.5" value={formData.annualPaidLeaveDays} onChange={(e) => setFormData(p => ({...p, annualPaidLeaveDays: parseFloat(e.target.value) || 0}))} placeholder="Ex: 26" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="annualRolHours">ROL (h/an)</Label>
-                    <Input id="annualRolHours" type="number" value={formData.annualRolHours} onChange={(e) => setFormData(p => ({...p, annualRolHours: parseFloat(e.target.value)}))} placeholder="Ex: 40" />
+                    <Input id="annualRolHours" type="number" step="0.5" value={formData.annualRolHours} onChange={(e) => setFormData(p => ({...p, annualRolHours: parseFloat(e.target.value) || 0}))} placeholder="Ex: 40" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="annualExHolidayHours">Ex Fest. (h/an)</Label>
-                    <Input id="annualExHolidayHours" type="number" value={formData.annualExHolidayHours} onChange={(e) => setFormData(p => ({...p, annualExHolidayHours: parseFloat(e.target.value)}))} placeholder="Ex: 32" />
+                    <Input id="annualExHolidayHours" type="number" step="0.5" value={formData.annualExHolidayHours} onChange={(e) => setFormData(p => ({...p, annualExHolidayHours: parseFloat(e.target.value) || 0}))} placeholder="Ex: 32" />
                   </div>
                 </div>
 
@@ -470,7 +478,7 @@ export default function CcnlRegistryPage() {
                     <Input 
                       type="number" 
                       value={formData.accrualRules.usefulDaysThreshold} 
-                      onChange={(e) => updateAccrualRule('usefulDaysThreshold', parseInt(e.target.value))} 
+                      onChange={(e) => updateAccrualRule('usefulDaysThreshold', parseInt(e.target.value) || 0)} 
                     />
                     <p className="text-[9px] text-muted-foreground italic">Standard Italie : 14 jours travaillés ou assimilés.</p>
                   </div>
