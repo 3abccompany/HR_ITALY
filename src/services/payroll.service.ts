@@ -377,6 +377,7 @@ export async function resolvePayrollRateSnapshot(
     payCalculationMode,
     ordinaryHourlyRate,
     grossMonthly,
+    levelCode: levelData?.levelCode ?? contract.levelCode ?? null,
     nightPremiumPercent,
     overtimePremiumPercent,
     overtimeNightPremiumPercent,

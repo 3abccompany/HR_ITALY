@@ -13,6 +13,7 @@ export interface PayrollRateSnapshot {
   payCalculationMode?: "monthly" | "hourly";
   ordinaryHourlyRate: number;
   grossMonthly?: number | null;
+  levelCode?: string | null;
   nightPremiumPercent?: number | null;
   overtimePremiumPercent?: number | null;
   overtimeNightPremiumPercent?: number | null;
