@@ -77,9 +77,10 @@ interface ClassifiedSegment {
   isHoliday: boolean;
 }
 
-function getWorkedSegmentsFromRecord(record: AttendanceRecord): WorkedSegment[] {
+function getWorkedSegmentsFromRecord(record: AttendanceRecord, holidaysMap: Map<string, string>): WorkedSegment[] {
   const baseDate = parseISO(record.attendanceDate);
   const segments: WorkedSegment[] = [];
+  const isHoliday = record.holidayFlag || holidaysMap.has(record.attendanceDate);
 
   record.punches?.forEach(p => {
     if (!p.timeIn || !p.timeOut || p.timeIn === 'INVALID' || p.timeOut === 'INVALID') return;
@@ -102,7 +103,7 @@ function getWorkedSegmentsFromRecord(record: AttendanceRecord): WorkedSegment[] 
     segments.push({
       start,
       end,
-      isHoliday: record.holidayFlag || false
+      isHoliday: isHoliday || false
     });
   });
 
@@ -161,7 +162,8 @@ function classifyExclusiveSegment(seg: ClassifiedSegment): 'holiday' | 'sunday' 
 
 async function reconcileWeeklyOvertime(
   records: AttendanceRecord[],
-  expectedWeeklyHours: number | null
+  expectedWeeklyHours: number | null,
+  holidaysMap: Map<string, string>
 ): Promise<{
   weeklyReconciledOvertimeHours: number;
   overtimeDayHours: number;
@@ -205,7 +207,7 @@ async function reconcileWeeklyOvertime(
     
     const allSegments: ClassifiedSegment[] = [];
     weekRecords.forEach(r => {
-      const worked = getWorkedSegmentsFromRecord(r);
+      const worked = getWorkedSegmentsFromRecord(r, holidaysMap);
       worked.forEach(ws => {
         allSegments.push(...splitSegmentByBoundaries(ws));
       });
@@ -358,7 +360,8 @@ export async function aggregateMonthlyAttendance(
   db: Firestore, 
   entityId: string, 
   year: number, 
-  month: number
+  month: number,
+  holidaysMap: Map<string, string>
 ): Promise<Record<string, PayrollAttendanceAggregation>> {
   const { startDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
   
@@ -413,10 +416,9 @@ export async function aggregateMonthlyAttendance(
 
     agg.totalValidatedHours += vh;
     
-    // Improved Holiday Worked Hours aggregation
-    // If the record is flagged as holiday but holidayWorkedHours is empty, 
-    // we use the validated hours as the base.
-    const hw = data.holidayWorkedHours || (data.holidayFlag ? vh : 0);
+    // Robust Holiday Worked Hours aggregation (Flag OR Registry match)
+    const isHoliday = data.holidayFlag === true || holidaysMap.has(data.attendanceDate);
+    const hw = data.holidayWorkedHours || (isHoliday ? vh : 0);
     agg.holidayWorkedHours += hw;
   });
 
@@ -505,7 +507,7 @@ export async function resolvePayrollRateSnapshot(
     if (levelSnap.exists()) levelData = levelSnap.data() as CCNLLevel;
   }
 
-  // Rate Priority: PayrollParameter > Level Rate > (Monthly / Divisor) > null
+  // 1. Rate Priority: PayrollParameter > Level Rate > (Monthly / Divisor)
   let rate = activeParam?.ordinaryHourlyRate || levelData?.minimumGrossHourly || 0;
   const divisor = ccnlData?.hourlyDivisor || 0;
   const monthly = activeParam?.grossMonthly || contract.grossMonthly || levelData?.minimumGrossMonthly || 0;
@@ -514,13 +516,13 @@ export async function resolvePayrollRateSnapshot(
     rate = monthly / divisor;
   }
 
-  // Expected Weekly Hours priority: Contract > Root Standard > Root Schedule Sum
+  // 2. Expected Weekly Hours priority: Contract > Root Standard > Root Schedule Sum
   let expectedWeeklyHours: number | null = null;
-  const isValid = (v: any): v is number => typeof v === 'number' && v > 0;
+  const isValidNum = (v: any): v is number => typeof v === 'number' && v > 0;
 
-  if (isValid(contract.weeklyHours)) {
+  if (isValidNum(contract.weeklyHours)) {
     expectedWeeklyHours = contract.weeklyHours;
-  } else if (ccnlData && isValid(ccnlData.standardWeeklyHours)) {
+  } else if (ccnlData && isValidNum(ccnlData.standardWeeklyHours)) {
     expectedWeeklyHours = ccnlData.standardWeeklyHours;
   } else if (ccnlData && ccnlData.weeklySchedule) {
     const s = ccnlData.weeklySchedule;
@@ -528,11 +530,11 @@ export async function resolvePayrollRateSnapshot(
     if (sum > 0) expectedWeeklyHours = sum;
   }
 
-  // Premium Priority: PayrollParameter > Level value > null
+  // 3. Premium Priority: PayrollParameter > Level value > null
   return {
     source: activeParam ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
     payCalculationMode: monthly ? "monthly" : "hourly",
-    ordinaryHourlyRate: rate,
+    ordinaryHourlyRate: rate || 0,
     grossMonthly: monthly || null,
     levelCode: contract.levelCode || levelData?.levelCode || null,
     expectedWeeklyHours,
@@ -630,8 +632,25 @@ export async function calculateAndSaveMonthlyPayroll(
   month: number,
   actorUid: string
 ) {
-  const { startDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
-  const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month);
+  const { startDateIso, endDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
+  
+  // Fetch Holidays from Registry for robust detection (Phase Fix)
+  const holidaysRef = collection(db, `entities/${entityId}/holidays`);
+  const hQuery = query(
+    holidaysRef,
+    where("date", ">=", startDateIso),
+    where("date", "<=", endDateIso)
+  );
+  const hSnap = await getDocs(hQuery);
+  const holidaysMap = new Map<string, string>();
+  hSnap.docs.forEach(d => {
+    const h = d.data();
+    if (h.status === 'active') {
+      holidaysMap.set(h.date, h.name);
+    }
+  });
+
+  const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month, holidaysMap);
   const allWarnings = await buildPrePayrollReconciliation(db, entityId, year, month, aggregations);
   
   const finalCalculations: PayrollCalculation[] = [];
@@ -668,7 +687,7 @@ export async function calculateAndSaveMonthlyPayroll(
            .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
            .filter(r => reliableStatuses.includes(r.status));
 
-         const reconciliation = await reconcileWeeklyOvertime(records, threshold);
+         const reconciliation = await reconcileWeeklyOvertime(records, threshold, holidaysMap);
          
          agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
          agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
