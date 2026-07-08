@@ -306,7 +306,6 @@ function sanitizeForFirestore(obj: any, seen = new WeakSet()): any {
   const isPlainObject = Object.prototype.toString.call(obj) === '[object Object]';
   
   if (!isArray && !isPlainObject) {
-    // Treat complex class instances or functions as opaque strings to prevent deep recursion
     return typeof obj.toString === 'function' ? obj.toString() : "[Opaque Object]";
   }
 
@@ -464,20 +463,29 @@ export async function resolvePayrollRateSnapshot(
   year: number,
   month: number
 ): Promise<PayrollRateSnapshot> {
-  const empRef = doc(db, `entities/${entityId}/employees`, employeeId);
-  const empSnap = await getDoc(empRef);
-  if (!empSnap.exists()) return { source: "missing", ordinaryHourlyRate: 0 };
-  
-  const emp = empSnap.data() as Employee;
+  const [empRefSnap, paramsSnap] = await Promise.all([
+    getDoc(doc(db, `entities/${entityId}/employees`, employeeId)),
+    getDocs(query(
+      collection(db, `entities/${entityId}/payrollParameters`),
+      where("employeeId", "==", employeeId),
+      where("status", "==", "active"),
+      orderBy("effectiveFrom", "desc"),
+      limit(1)
+    ))
+  ]);
+
+  if (!empRefSnap.exists()) return { source: "missing", ordinaryHourlyRate: 0 };
+  const emp = empRefSnap.data() as Employee;
   if (!emp.activeContractId) return { source: "missing", ordinaryHourlyRate: 0 };
 
-  const contractRef = doc(db, `entities/${entityId}/contracts`, emp.activeContractId);
-  const contractSnap = await getDoc(contractRef);
+  const [contractSnap, activeParam] = [
+    await getDoc(doc(db, `entities/${entityId}/contracts`, emp.activeContractId)),
+    !paramsSnap.empty ? paramsSnap.docs[0].data() as any : null
+  ];
+
   if (!contractSnap.exists()) return { source: "missing", ordinaryHourlyRate: 0 };
-  
   const contract = contractSnap.data() as Contract;
 
-  // 7L Fix: Fetch CCNL and Level for dynamic rates and premiums
   let ccnlData: CCNL | null = null;
   let levelData: CCNLLevel | null = null;
 
@@ -491,16 +499,16 @@ export async function resolvePayrollRateSnapshot(
     if (levelSnap.exists()) levelData = levelSnap.data() as CCNLLevel;
   }
 
-  // Priority: Explicit Level Hourly Rate > Calculated via Divisor > Hardcoded Fallback
-  let rate = levelData?.minimumGrossHourly || 0;
-  const divisor = ccnlData?.hourlyDivisor || 173;
-  const monthly = contract.grossMonthly || levelData?.minimumGrossMonthly || 0;
+  // Rate Priority: PayrollParameter > Level Rate > (Monthly / Divisor) > null
+  let rate = activeParam?.ordinaryHourlyRate || levelData?.minimumGrossHourly || 0;
+  const divisor = ccnlData?.hourlyDivisor || 0;
+  const monthly = activeParam?.grossMonthly || contract.grossMonthly || levelData?.minimumGrossMonthly || 0;
 
-  if (rate <= 0 && monthly > 0) {
+  if (rate <= 0 && monthly > 0 && divisor > 0) {
     rate = monthly / divisor;
   }
 
-  // Expected Weekly Hours priority: Contract > Root Standard > Root Schedule
+  // Expected Weekly Hours priority: Contract > Root Standard > Root Schedule Sum
   let expectedWeeklyHours: number | null = null;
   const isValid = (v: any): v is number => typeof v === 'number' && v > 0;
 
@@ -514,8 +522,9 @@ export async function resolvePayrollRateSnapshot(
     if (sum > 0) expectedWeeklyHours = sum;
   }
 
+  // Premium Priority: PayrollParameter > Level value > null (no Root fallback)
   return {
-    source: levelData ? "ccnl_level" : "contract",
+    source: activeParam ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
     payCalculationMode: monthly ? "monthly" : "hourly",
     ordinaryHourlyRate: rate,
     grossMonthly: monthly || null,
@@ -524,12 +533,12 @@ export async function resolvePayrollRateSnapshot(
     contractId: emp.activeContractId,
     ccnlId: contract.ccnlId,
     ccnlLevelId: contract.levelId,
-    // 7L Fix: Map premiums dynamically from the level classification
-    nightPremiumPercent: levelData?.nightPremiumPercent ?? ccnlData?.nightPremiumPercent ?? 25,
-    overtimePremiumPercent: levelData?.overtimePremiumPercent ?? ccnlData?.overtimePremiumPercent ?? 30,
-    overtimeNightPremiumPercent: levelData?.overtimeNightPremiumPercent ?? ccnlData?.overtimeNightPremiumPercent ?? 50,
-    holidayPremiumPercent: levelData?.holidayPremiumPercent ?? ccnlData?.holidayPremiumPercent ?? 50,
-    sundayPremiumPercent: levelData?.sundayPremiumPercent ?? ccnlData?.sundayPremiumPercent ?? 35,
+    payrollParameterId: !paramsSnap.empty ? paramsSnap.docs[0].id : undefined,
+    nightPremiumPercent: activeParam?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null,
+    overtimePremiumPercent: activeParam?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? null,
+    overtimeNightPremiumPercent: activeParam?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? null,
+    holidayPremiumPercent: activeParam?.holidayPremiumPercent ?? levelData?.holidayPremiumPercent ?? null,
+    sundayPremiumPercent: activeParam?.sundayPremiumPercent ?? levelData?.sundayPremiumPercent ?? null,
   };
 }
 
@@ -548,25 +557,19 @@ export async function calculatePayrollEconomicValues(
     baseGrossValue = roundMoney(agg.totalValidatedHours * rateValue);
   }
 
-  // 7L Fix: Use dynamic multipliers based on the resolved rate snapshot
   const pNight = (rate.nightPremiumPercent || 0) / 100;
   const pOvDay = (rate.overtimePremiumPercent || 0) / 100;
   const pOvNight = (rate.overtimeNightPremiumPercent || 0) / 100;
   const pOvSun = (rate.sundayPremiumPercent || 0) / 100;
   const pOvHol = (rate.holidayPremiumPercent || 0) / 100;
 
-  // Night Value is the premium part (ordinary hours worked at night)
   const nightValue = roundMoney(agg.ordinaryNightHours * rateValue * pNight);
-  
-  // Overtime categories (Total pay = Base + Premium)
   const overtimeDayValue = roundMoney((agg.overtimeDayHours || 0) * rateValue * (1 + pOvDay));
   const overtimeNightValue = roundMoney((agg.overtimeNightHours || 0) * rateValue * (1 + pOvNight));
   const overtimeSundayValue = roundMoney((agg.overtimeSundayHours || 0) * rateValue * (1 + pOvSun));
   const overtimeHolidayValue = roundMoney((agg.overtimeHolidayHours || 0) * rateValue * (1 + pOvHol));
 
   const overtimeValue = roundMoney(overtimeDayValue + overtimeNightValue + overtimeSundayValue + overtimeHolidayValue);
-  
-  // Holiday worked (Non-overtime premium only as base is in monthly)
   const holidayWorkedValue = roundMoney((agg.holidayWorkedHours || 0) * rateValue * pOvHol);
 
   const grossEconomicTotal = roundMoney(baseGrossValue + nightValue + overtimeValue + holidayWorkedValue);
