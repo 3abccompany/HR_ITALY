@@ -36,6 +36,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 // Use strings for numeric inputs in form state to allow empty values while typing
 const initialLevelForm = {
