@@ -356,7 +356,7 @@ function sanitizeForFirestore(obj: any): any {
 /**
  * Calculates the date range for a payroll month.
  */
-export function getPayrollMonthRange(year: number, month: number) {
+export async function getPayrollMonthRange(year: number, month: number) {
   if (month < 1 || month > 12) throw new Error("Mois invalide (1-12)");
   
   const startDate = startOfMonth(new Date(year, month - 1));
@@ -373,7 +373,7 @@ export function getPayrollMonthRange(year: number, month: number) {
 /**
  * Helper to convert percentage to multiplier (e.g. 25 -> 1.25)
  */
-export function percentageToMultiplier(percent?: number | null): number {
+export async function percentageToMultiplier(percent?: number | null): number {
   if (percent === undefined || percent === null || isNaN(percent) || percent < 0) return 1;
   if (percent === 0) return 1;
   return 1 + (percent / 100);
@@ -382,7 +382,7 @@ export function percentageToMultiplier(percent?: number | null): number {
 /**
  * Helper to get pure premium decimal (e.g. 25 -> 0.25)
  */
-export function percentageToDecimal(percent?: number | null): number {
+export async function percentageToDecimal(percent?: number | null): number {
   if (percent === undefined || percent === null || isNaN(percent) || percent < 0) return 0;
   return percent / 100;
 }
@@ -404,7 +404,7 @@ export async function aggregateMonthlyAttendance(
   year: number, 
   month: number
 ): Promise<Record<string, PayrollAttendanceAggregation>> {
-  const { startDateIso, nextMonthStartDateIso } = getPayrollMonthRange(year, month);
+  const { startDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
   
   const attendanceRef = collection(db, `entities/${entityId}/attendances`);
   const q = query(
@@ -473,7 +473,7 @@ export async function buildPrePayrollReconciliation(
   month: number,
   aggregations: Record<string, PayrollAttendanceAggregation>
 ): Promise<PayrollReconciliationWarning[]> {
-  const { startDateIso, endDateIso } = getPayrollMonthRange(year, month);
+  const { startDateIso, endDateIso } = await getPayrollMonthRange(year, month);
   const warnings: PayrollReconciliationWarning[] = [];
 
   const timeOffRef = collection(db, `entities/${entityId}/timeOffRequests`);
@@ -603,7 +603,7 @@ export async function resolvePayrollRateSnapshot(
   year: number,
   month: number
 ): Promise<PayrollRateSnapshot> {
-  const { startDateIso } = getPayrollMonthRange(year, month);
+  const { startDateIso } = await getPayrollMonthRange(year, month);
 
   // 1. Check Payroll Parameters (Most specific)
   const paramsRef = collection(db, `entities/${entityId}/payrollParameters`);
@@ -678,7 +678,7 @@ export async function resolvePayrollRateSnapshot(
  * Correctly distinguishes between mensualized (base fixed) and hourly staff.
  * Integrates exclusive overtime buckets.
  */
-export function calculatePayrollEconomicValues(
+export async function calculatePayrollEconomicValues(
   agg: PayrollAttendanceAggregation,
   rate: PayrollRateSnapshot,
   warnings: PayrollReconciliationWarning[] = [],
@@ -688,7 +688,7 @@ export function calculatePayrollEconomicValues(
   const isMonthly = rate.payCalculationMode === "monthly";
   
   // Multipliers/Decimals
-  const nightDec = percentageToDecimal(rate.nightPremiumPercent);
+  const nightDec = await percentageToDecimal(rate.nightPremiumPercent);
   
   // Exclusive Overtime Logic
   const ovDayHours = agg.overtimeDayHours || 0;
@@ -697,10 +697,10 @@ export function calculatePayrollEconomicValues(
   const ovHolidayHours = agg.overtimeHolidayHours || 0;
 
   // Resolved Premium Multipliers (Strictly from specific fields)
-  const otMult = percentageToMultiplier(rate.overtimePremiumPercent);
-  const otNightMult = percentageToMultiplier(rate.overtimeNightPremiumPercent);
-  const sunMult = percentageToMultiplier(rate.sundayPremiumPercent);
-  const holMult = percentageToMultiplier(rate.holidayPremiumPercent);
+  const otMult = await percentageToMultiplier(rate.overtimePremiumPercent);
+  const otNightMult = await percentageToMultiplier(rate.overtimeNightPremiumPercent);
+  const sunMult = await percentageToMultiplier(rate.sundayPremiumPercent);
+  const holMult = await percentageToMultiplier(rate.holidayPremiumPercent);
 
   // 1. Base Salary
   let baseGrossValue = 0;
@@ -826,7 +826,7 @@ export async function calculateAndSaveMonthlyPayroll(
   month: number,
   actorUid: string
 ) {
-  const { startDateIso, nextMonthStartDateIso } = getPayrollMonthRange(year, month);
+  const { startDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
   
   // 1. Inputs
   const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month);
@@ -926,7 +926,7 @@ export async function calculateAndSaveMonthlyPayroll(
        });
     }
 
-    const econ = calculatePayrollEconomicValues(agg, rate, empWarnings);
+    const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings);
     const isBlocked = empWarnings.some(w => w.severity === 'blocking');
 
     if (isBlocked) blockingCount++;
