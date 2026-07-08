@@ -1,3 +1,5 @@
+'use server';
+
 /**
  * @fileOverview Payroll service layer for Monthly Economic Calculation.
  * Handles attendance aggregation, pre-payroll reconciliation, and economic calculation.
@@ -25,20 +27,32 @@ import {
   PayrollCalculation,
   PayrollRateSnapshot,
   PayrollParameter,
-  PayrollCalculationStatus
+  PayrollCalculationStatus,
+  PayrollWeeklyBreakdown
 } from "@/types/payroll";
 import { AttendanceRecord } from "@/types/attendance";
 import { TimeOffRequest } from "@/types/time-off";
 import { resolveWorkSchedule } from "./work-schedule.service";
-import { format, parseISO, startOfMonth, endOfMonth, addMonths, eachDayOfInterval, startOfWeek, endOfWeek, addDays } from "date-fns";
+import { 
+  format, 
+  parseISO, 
+  startOfMonth, 
+  endOfMonth, 
+  addMonths, 
+  eachMonthOfInterval, 
+  eachDayOfInterval, 
+  startOfWeek, 
+  endOfWeek, 
+  addDays 
+} from "date-fns";
 import { fr } from "date-fns/locale";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
+import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.service";
+import { createNotification } from "./notification.service";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
 
-/**
- * 4E-3F-2A Internal Overtime Reconciliation Helpers
- */
+// --- Internal Overtime Reconciliation Helpers ---
 
 /**
  * Identifies the ISO week context for a given date.
@@ -120,7 +134,7 @@ function getWorkedSegmentsFromRecord(record: AttendanceRecord): WorkedSegment[] 
  * - Night Start (22:00)
  * - Night End (06:00)
  * 
- * This ensuring that each slice can be classified exclusively.
+ * This ensures that each slice can be classified exclusively.
  */
 function splitSegmentByBoundaries(segment: WorkedSegment): ClassifiedSegment[] {
   const start = segment.start.getTime();
@@ -178,6 +192,131 @@ function classifyExclusiveSegment(seg: ClassifiedSegment): 'holiday' | 'sunday' 
   if (seg.isNight) return 'night';
   return 'day';
 }
+
+/**
+ * Performs weekly overtime reconciliation based on ISO weeks.
+ * Chronologically identifies which hours exceed the weekly threshold.
+ */
+async function reconcileWeeklyOvertime(
+  records: AttendanceRecord[],
+  expectedWeeklyHours: number | null
+): Promise<{
+  weeklyReconciledOvertimeHours: number;
+  overtimeDayHours: number;
+  overtimeNightHours: number;
+  overtimeSundayHours: number;
+  overtimeHolidayHours: number;
+  ordinaryNightHours: number;
+  weeklyBreakdown: PayrollWeeklyBreakdown[];
+}> {
+  if (expectedWeeklyHours === null) {
+    return {
+      weeklyReconciledOvertimeHours: 0,
+      overtimeDayHours: 0,
+      overtimeNightHours: 0,
+      overtimeSundayHours: 0,
+      overtimeHolidayHours: 0,
+      ordinaryNightHours: 0,
+      weeklyBreakdown: []
+    };
+  }
+
+  // 1. Group records by ISO week
+  const weeksMap = new Map<string, { weekStart: string, weekEnd: string, records: AttendanceRecord[] }>();
+  records.forEach(r => {
+    const ctx = getWeekContext(r.attendanceDate);
+    if (!weeksMap.has(ctx.weekKey)) {
+      weeksMap.set(ctx.weekKey, { weekStart: ctx.weekStart, weekEnd: ctx.weekEnd, records: [] });
+    }
+    weeksMap.get(ctx.weekKey)!.records.push(r);
+  });
+
+  let totalOvertime = 0;
+  let totalOvDay = 0;
+  let totalOvNight = 0;
+  let totalOvSun = 0;
+  let totalOvHol = 0;
+  let totalOrdNight = 0;
+  const breakdown: PayrollWeeklyBreakdown[] = [];
+
+  // 2. Process each week
+  for (const [weekKey, weekData] of Array.from(weeksMap.entries())) {
+    const weekRecords = [...weekData.records].sort((a, b) => a.attendanceDate.localeCompare(b.attendanceDate));
+    
+    // Build chronological segments
+    const allSegments: ClassifiedSegment[] = [];
+    weekRecords.forEach(r => {
+      const worked = getWorkedSegmentsFromRecord(r);
+      worked.forEach(ws => {
+        allSegments.push(...splitSegmentByBoundaries(ws));
+      });
+    });
+
+    let weekWorked = 0;
+    let weekOvDay = 0;
+    let weekOvNight = 0;
+    let weekOvSun = 0;
+    let weekOvHol = 0;
+    let weekOrdNight = 0;
+    let weekRawSup = weekRecords.reduce((s, r) => s + (r.overtimeHours || 0), 0);
+
+    for (const seg of allSegments) {
+      const remaining = seg.durationHours;
+      const portionBefore = Math.max(0, Math.min(remaining, expectedWeeklyHours - weekWorked));
+      const portionAfter = remaining - portionBefore;
+      
+      if (portionBefore > 0) {
+        if (seg.isNight) weekOrdNight += portionBefore;
+      }
+
+      if (portionAfter > 0) {
+        const cat = classifyExclusiveSegment(seg);
+        if (cat === 'holiday') weekOvHol += portionAfter;
+        else if (cat === 'sunday') weekOvSun += portionAfter;
+        else if (cat === 'night') weekOvNight += portionAfter;
+        else weekOvDay += portionAfter;
+      }
+
+      weekWorked += remaining;
+    }
+
+    const weekOv = Math.max(0, weekWorked - expectedWeeklyHours);
+    
+    breakdown.push({
+      weekKey,
+      weekStart: weekData.weekStart,
+      weekEnd: weekData.weekEnd,
+      expectedWeeklyHours,
+      workedHoursInWeek: Number(weekWorked.toFixed(2)),
+      rawImportedOvertimeHours: Number(weekRawSup.toFixed(2)),
+      weeklyOvertimeHours: Number(weekOv.toFixed(2)),
+      overtimeDayHours: Number(weekOvDay.toFixed(2)),
+      overtimeNightHours: Number(weekOvNight.toFixed(2)),
+      overtimeSundayHours: Number(weekOvSun.toFixed(2)),
+      overtimeHolidayHours: Number(weekOvHol.toFixed(2)),
+      classificationStatus: "classified"
+    });
+
+    totalOvertime += weekOv;
+    totalOvDay += weekOvDay;
+    totalOvNight += weekOvNight;
+    totalOvSun += weekOvSun;
+    totalOvHol += weekOvHol;
+    totalOrdNight += weekOrdNight;
+  }
+
+  return {
+    weeklyReconciledOvertimeHours: Number(totalOvertime.toFixed(2)),
+    overtimeDayHours: Number(totalOvDay.toFixed(2)),
+    overtimeNightHours: Number(totalOvNight.toFixed(2)),
+    overtimeSundayHours: Number(totalOvSun.toFixed(2)),
+    overtimeHolidayHours: Number(totalOvHol.toFixed(2)),
+    ordinaryNightHours: Number(totalOrdNight.toFixed(2)),
+    weeklyBreakdown: breakdown
+  };
+}
+
+// --- Main Service Logic ---
 
 /**
  * Recursively removes undefined values from an object and replaces them with null
@@ -257,6 +396,7 @@ function roundMoney(value: number): number {
 
 /**
  * Aggregates validated attendance records for an entity/month.
+ * Performs initial daily-based aggregation.
  */
 export async function aggregateMonthlyAttendance(
   db: Firestore, 
@@ -303,7 +443,7 @@ export async function aggregateMonthlyAttendance(
     const vh = data.validatedHours || 0;
     if (vh > 0) agg.workedDays++;
 
-    // Split logic with legacy fallback
+    // Initial splits (Legacy Daily)
     const hasSplits = (data.dayHours || 0) > 0 || (data.nightHours || 0) > 0 || (data.overtimeHours || 0) > 0;
     
     if (vh > 0 && !hasSplits) {
@@ -508,7 +648,7 @@ export async function resolvePayrollRateSnapshot(
   const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
   const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
 
-  // Premium fallbacks: Param -> Level -> null (STRICT: No Root Fallback)
+  // Premium fallbacks: Param -> Level -> null
   const nightPremiumPercent = p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null;
   const overtimePremiumPercent = p?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? null;
   const overtimeNightPremiumPercent = p?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? null;
@@ -536,6 +676,7 @@ export async function resolvePayrollRateSnapshot(
 /**
  * Calculates financial values for a calculation object.
  * Correctly distinguishes between mensualized (base fixed) and hourly staff.
+ * Integrates exclusive overtime buckets.
  */
 export function calculatePayrollEconomicValues(
   agg: PayrollAttendanceAggregation,
@@ -548,7 +689,17 @@ export function calculatePayrollEconomicValues(
   
   // Multipliers/Decimals
   const nightDec = percentageToDecimal(rate.nightPremiumPercent);
+  
+  // Exclusive Overtime Logic
+  const ovDayHours = agg.overtimeDayHours || 0;
+  const ovNightHours = agg.overtimeNightHours || 0;
+  const ovSundayHours = agg.overtimeSundayHours || 0;
+  const ovHolidayHours = agg.overtimeHolidayHours || 0;
+
+  // Resolved Premium Multipliers (Strictly from specific fields)
   const otMult = percentageToMultiplier(rate.overtimePremiumPercent);
+  const otNightMult = percentageToMultiplier(rate.overtimeNightPremiumPercent);
+  const sunMult = percentageToMultiplier(rate.sundayPremiumPercent);
   const holMult = percentageToMultiplier(rate.holidayPremiumPercent);
 
   // 1. Base Salary
@@ -556,18 +707,21 @@ export function calculatePayrollEconomicValues(
   if (isMonthly) {
     baseGrossValue = roundMoney(rate.grossMonthly || 0);
   } else {
+    // For hourly, ordinary hours cover all non-overtime segments (Day + Night)
     baseGrossValue = roundMoney(agg.ordinaryDayHours * rateValue);
   }
 
   // 2. Additions / Premiums
-  // Night: For monthly, it's a pure premium addition (base is already in monthly gross). 
-  // For hourly, it's the full (base + premium) value.
-  const nightValue = isMonthly 
-    ? roundMoney(agg.ordinaryNightHours * rateValue * nightDec)
-    : roundMoney(agg.ordinaryNightHours * rateValue * (1 + nightDec));
+  // Ordinary Night: Standalone premium addition (base is already in monthly gross or ordinary day calculation)
+  const nightValue = roundMoney(agg.ordinaryNightHours * rateValue * nightDec);
 
-  const overtimeValue = roundMoney(agg.overtimeHours * rateValue * otMult);
-  const holidayWorkedValue = roundMoney(agg.holidayWorkedHours * rateValue * holMult);
+  // Overtime buckets (Full value: Base + Premium)
+  const overtimeDayValue = roundMoney(ovDayHours * rateValue * otMult);
+  const overtimeNightValue = roundMoney(ovNightHours * rateValue * otNightMult);
+  const overtimeSundayValue = roundMoney(ovSundayHours * rateValue * sunMult);
+  const overtimeHolidayValue = roundMoney(ovHolidayHours * rateValue * holMult);
+  
+  const totalOvertimeValue = roundMoney(overtimeDayValue + overtimeNightValue + overtimeSundayValue + overtimeHolidayValue);
 
   // 3. Deductions (Unpaid Missing Hours)
   let deductionValue = 0;
@@ -585,17 +739,20 @@ export function calculatePayrollEconomicValues(
 
   // 5. Grand Total
   const grossEconomicTotal = roundMoney(
-    baseGrossValue - deductionValue + nightValue + overtimeValue + holidayWorkedValue +
+    baseGrossValue - deductionValue + nightValue + totalOvertimeValue +
     mealTicketsValue + mileageValue + bonusValue
   );
 
   return {
     baseGrossValue,
-    ordinaryValue: isMonthly ? baseGrossValue : (baseGrossValue + nightValue), // "Base" display mapping
+    ordinaryValue: isMonthly ? baseGrossValue : roundMoney((agg.ordinaryDayHours + agg.ordinaryNightHours) * rateValue),
     nightValue,
-    overtimeValue,
-    overtimeNightValue: 0,
-    holidayWorkedValue,
+    overtimeValue: totalOvertimeValue, // Total payable overtime
+    overtimeDayValue,
+    overtimeNightValue,
+    overtimeSundayValue,
+    overtimeHolidayValue,
+    holidayWorkedValue: overtimeHolidayValue, // Alias for standard display
     deductionValue,
     mealTicketsValue,
     mileageValue,
@@ -606,7 +763,6 @@ export function calculatePayrollEconomicValues(
 
 /**
  * Persists payroll calculations to Firestore.
- * Prevents overwriting approved/locked records.
  */
 export async function saveMonthlyPayrollCalculations(
   db: Firestore,
@@ -661,6 +817,7 @@ export async function saveMonthlyPayrollCalculations(
 
 /**
  * Main service entry point: Aggregates, reconciles, calculates and persists.
+ * Wired for Weekly Overtime Reconciliation (Phase 4E-3F-2B).
  */
 export async function calculateAndSaveMonthlyPayroll(
   db: Firestore,
@@ -669,6 +826,8 @@ export async function calculateAndSaveMonthlyPayroll(
   month: number,
   actorUid: string
 ) {
+  const { startDateIso, nextMonthStartDateIso } = getPayrollMonthRange(year, month);
+  
   // 1. Inputs
   const aggregations = await aggregateMonthlyAttendance(db, entityId, year, month);
   const allWarnings = await buildPrePayrollReconciliation(db, entityId, year, month, aggregations);
@@ -682,6 +841,71 @@ export async function calculateAndSaveMonthlyPayroll(
     const agg = aggregations[empId];
     const rate = await resolvePayrollRateSnapshot(db, entityId, empId, year, month);
     const empWarnings = allWarnings.filter(w => w.employeeId === empId);
+
+    // --- PHASE 4E-3F-2B: Weekly Overtime Reconciliation ---
+    
+    // Resolve expected weekly threshold
+    // Priority: Snapshot -> 39h fallback (as per standard practice if completely missing)
+    const expectedWeekly = rate.grossMonthly ? (rate.ordinaryHourlyRate > 0 ? Number(((rate.grossMonthly / (rate.ordinaryHourlyRate * 173/40)) * 40).toFixed(0)) : null) : null;
+    const threshold = expectedWeekly || 40; // Defaulting to 40h if unavailable
+
+    if (!expectedWeekly) {
+       empWarnings.push({
+         code: "missing_weekly_schedule",
+         severity: "warning",
+         employeeId: empId,
+         message: "Seuil hebdomadaire non détecté. Utilisation par défaut (40h) pour la réconciliation."
+       });
+    }
+
+    // Fetch all validated records for the employee to perform chronological analysis
+    const attRef = collection(db, `entities/${entityId}/attendances`);
+    const attSnap = await getDocs(query(
+      attRef,
+      where("employeeId", "==", empId),
+      where("attendanceDate", ">=", startDateIso),
+      where("attendanceDate", "<", nextMonthStartDateIso)
+    ));
+    
+    const reliableStatuses = ["validated", "corrected", "locked"];
+    const records = attSnap.docs
+      .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
+      .filter(r => reliableStatuses.includes(r.status));
+
+    const reconciliation = await reconcileWeeklyOvertime(records, threshold);
+    
+    // Update Aggregation with reconciled values
+    agg.rawImportedOvertimeHours = agg.overtimeHours;
+    agg.weeklyReconciledOvertimeHours = reconciliation.weeklyReconciledOvertimeHours;
+    agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours; // Standard pointer override
+    agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
+    agg.overtimeDayHours = reconciliation.overtimeDayHours;
+    agg.overtimeNightHours = reconciliation.overtimeNightHours;
+    agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
+    agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
+    agg.overtimeClassificationSource = "weekly_reconciled";
+    agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
+
+    // Reconciliation Audit Warnings
+    if (agg.rawImportedOvertimeHours > 0 && agg.weeklyReconciledOvertimeHours === 0) {
+       empWarnings.push({
+         code: "raw_overtime_not_weekly_reconciled",
+         severity: "info",
+         employeeId: empId,
+         message: "Des heures SUP quotidiennes ont été importées mais ne dépassent pas le seuil hebdomadaire."
+       });
+    }
+
+    if (agg.overtimeNightHours > 0 && !rate.overtimeNightPremiumPercent) {
+       empWarnings.push({
+         code: "missing_overtime_night_premium",
+         severity: "blocking",
+         employeeId: empId,
+         message: "Majorations pour heures supplémentaires de nuit manquantes dans le CCNL."
+       });
+    }
+
+    // ------------------------------------------------------
 
     // Dynamic checks
     if (!rate.ordinaryHourlyRate || rate.ordinaryHourlyRate === 0) {
