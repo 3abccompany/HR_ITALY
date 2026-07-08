@@ -283,7 +283,7 @@ export default function CcnlLevelsPage() {
       <Dialog open={isLevelFormOpen} onOpenChange={(open) => !open && handleReset()}>
         <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto rounded-[2.5rem]">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Modifier le niveau" : "Nouveau niveau"}</DialogTitle>
+            <DialogTitle>{editingLevelId ? "Modifier le niveau" : "Nouveau niveau"}</DialogTitle>
             <DialogDescription>Classification et rémunération minimale pour ce niveau CCNL.</DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
@@ -434,6 +434,12 @@ export default function CcnlLevelsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
+            <Accordion type="single" collapsible>
+               <AccordionItem value="item-1" className="border-none">
+                  <AccordionTrigger className="hover:no-underline py-0" />
+                  <AccordionContent className="pb-0" />
+               </AccordionItem>
+            </Accordion>
             <AlertDialogCancel disabled={loading}>Annuler</AlertDialogCancel>
             <AlertDialogAction onClick={(e) => { e.preventDefault(); confirmArchive(); }} className="bg-red-600" disabled={loading}>Archiver</AlertDialogAction>
           </AlertDialogFooter>
