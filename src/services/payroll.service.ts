@@ -41,7 +41,9 @@ import { Contract } from "@/types/contract";
  * Preserves FieldValue and Timestamp identities.
  */
 function sanitizeForFirestore(obj: any): any {
-  if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    return obj === undefined ? null : obj;
+  }
   
   if (
     obj.constructor?.name === 'FieldValue' || 
@@ -309,6 +311,7 @@ export async function buildPrePayrollReconciliation(
 
 /**
  * Resolves the rate snapshot for a specific employee and period.
+ * Strictly adheres to Level-based configuration for premiums.
  */
 export async function resolvePayrollRateSnapshot(
   db: Firestore,
@@ -348,19 +351,12 @@ export async function resolvePayrollRateSnapshot(
   const { ccnlId, levelId } = contract;
 
   let levelData: CCNLLevel | null = null;
-  let ccnlData: CCNL | null = null;
 
-  if (ccnlId) {
-    const ccnlRef = doc(db, `entities/${entityId}/ccnls`, ccnlId);
-    const ccnlSnap = await getDoc(ccnlRef);
-    ccnlData = ccnlSnap.exists() ? ccnlSnap.data() as CCNL : null;
-
-    if (levelId) {
-      const levelRef = doc(db, `entities/${entityId}/ccnls/${ccnlId}/levels`, levelId);
-      const levelSnap = await getDoc(levelRef);
-      if (levelSnap.exists()) {
-        levelData = levelSnap.data() as CCNLLevel;
-      }
+  if (ccnlId && levelId) {
+    const levelRef = doc(db, `entities/${entityId}/ccnls/${ccnlId}/levels`, levelId);
+    const levelSnap = await getDoc(levelRef);
+    if (levelSnap.exists()) {
+      levelData = levelSnap.data() as CCNLLevel;
     }
   }
 
@@ -369,12 +365,12 @@ export async function resolvePayrollRateSnapshot(
   const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
   const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
 
-  // Premium fallbacks: Param -> Level -> Root -> null
-  const nightPremiumPercent = p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? ccnlData?.nightPremiumPercent ?? null;
-  const overtimePremiumPercent = p?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? ccnlData?.overtimePremiumPercent ?? null;
-  const overtimeNightPremiumPercent = p?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? ccnlData?.overtimeNightPremiumPercent ?? null;
-  const holidayPremiumPercent = p?.holidayPremiumPercent ?? levelData?.holidayPremiumPercent ?? ccnlData?.holidayPremiumPercent ?? null;
-  const sundayPremiumPercent = p?.sundayPremiumPercent ?? levelData?.sundayPremiumPercent ?? ccnlData?.sundayPremiumPercent ?? null;
+  // Premium fallbacks: Param -> Level -> null (STRICT: No Root Fallback)
+  const nightPremiumPercent = p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null;
+  const overtimePremiumPercent = p?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? null;
+  const overtimeNightPremiumPercent = p?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? null;
+  const holidayPremiumPercent = p?.holidayPremiumPercent ?? levelData?.holidayPremiumPercent ?? null;
+  const sundayPremiumPercent = p?.sundayPremiumPercent ?? levelData?.sundayPremiumPercent ?? null;
 
   return {
     source: p ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
@@ -395,6 +391,7 @@ export async function resolvePayrollRateSnapshot(
 
 /**
  * Calculates financial values for a calculation object.
+ * Correctly distinguishes between mensualized (base fixed) and hourly staff.
  */
 export function calculatePayrollEconomicValues(
   agg: PayrollAttendanceAggregation,
@@ -419,7 +416,8 @@ export function calculatePayrollEconomicValues(
   }
 
   // 2. Additions / Premiums
-  // Night: For monthly, it's a pure premium addition. For hourly, it's (base * multiplier)
+  // Night: For monthly, it's a pure premium addition (base is already in monthly gross). 
+  // For hourly, it's the full (base + premium) value.
   const nightValue = isMonthly 
     ? roundMoney(agg.ordinaryNightHours * rateValue * nightDec)
     : roundMoney(agg.ordinaryNightHours * rateValue * (1 + nightDec));
@@ -478,6 +476,8 @@ export async function saveMonthlyPayrollCalculations(
     const calcRef = doc(db, `entities/${entityId}/payrollCalculations`, calc.id);
     const existingSnap = await getDoc(calcRef);
 
+    const sanitizedCalc = sanitizeForFirestore(calc);
+
     if (existingSnap.exists()) {
       const existing = existingSnap.data() as PayrollCalculation;
       const terminalStatuses = ["approved", "exported", "locked"];
@@ -488,26 +488,26 @@ export async function saveMonthlyPayrollCalculations(
         continue;
       }
 
-      await updateDoc(calcRef, sanitizeForFirestore({
-        ...calc,
+      await updateDoc(calcRef, {
+        ...sanitizedCalc,
         createdAt: existing.createdAt, // Preserve
         createdBy: existing.createdBy,
         calculatedAt: serverTimestamp(),
         calculatedBy: actorUid,
         updatedAt: serverTimestamp(),
         updatedBy: actorUid
-      }));
+      });
       results.updated++;
     } else {
-      await setDoc(calcRef, sanitizeForFirestore({
-        ...calc,
+      await setDoc(calcRef, {
+        ...sanitizedCalc,
         createdAt: serverTimestamp(),
         createdBy: actorUid,
         calculatedAt: serverTimestamp(),
         calculatedBy: actorUid,
         updatedAt: serverTimestamp(),
         updatedBy: actorUid
-      }));
+      });
       results.created++;
     }
   }
