@@ -96,6 +96,14 @@ export function percentageToMultiplier(percent?: number | null): number {
 }
 
 /**
+ * Helper to get pure premium decimal (e.g. 25 -> 0.25)
+ */
+export function percentageToDecimal(percent?: number | null): number {
+  if (percent === undefined || percent === null || isNaN(percent) || percent < 0) return 0;
+  return percent / 100;
+}
+
+/**
  * Round monetary value to 2 decimal places.
  */
 function roundMoney(value: number): number {
@@ -322,18 +330,7 @@ export async function resolvePayrollRateSnapshot(
     limit(1)
   );
   const paramsSnap = await getDocs(paramsQuery);
-  
-  if (!paramsSnap.empty) {
-    const p = paramsSnap.docs[0].data() as PayrollParameter;
-    return {
-      source: "payroll_parameter",
-      ordinaryHourlyRate: p.ordinaryHourlyRate,
-      nightPremiumPercent: p.nightPremiumPercent,
-      overtimePremiumPercent: p.overtimePremiumPercent,
-      holidayPremiumPercent: p.holidayPremiumPercent,
-      payrollParameterId: paramsSnap.docs[0].id
-    };
-  }
+  const p = paramsSnap.empty ? null : paramsSnap.docs[0].data() as PayrollParameter;
 
   // 2. Check Contract & CCNL (Default hierarchy)
   const empRef = doc(db, `entities/${entityId}/employees`, employeeId);
@@ -350,43 +347,50 @@ export async function resolvePayrollRateSnapshot(
   const contract = contractSnap.data() as Contract;
   const { ccnlId, levelId } = contract;
 
+  let levelData: CCNLLevel | null = null;
+  let ccnlData: CCNL | null = null;
+
   if (ccnlId) {
     const ccnlRef = doc(db, `entities/${entityId}/ccnls`, ccnlId);
     const ccnlSnap = await getDoc(ccnlRef);
-    const ccnl = ccnlSnap.exists() ? ccnlSnap.data() as CCNL : null;
+    ccnlData = ccnlSnap.exists() ? ccnlSnap.data() as CCNL : null;
 
     if (levelId) {
       const levelRef = doc(db, `entities/${entityId}/ccnls/${ccnlId}/levels`, levelId);
       const levelSnap = await getDoc(levelRef);
       if (levelSnap.exists()) {
-        const level = levelSnap.data() as CCNLLevel;
-        return {
-          source: "ccnl_level",
-          ordinaryHourlyRate: level.minimumGrossHourly,
-          nightPremiumPercent: level.nightPremiumPercent ?? ccnl?.nightPremiumPercent,
-          overtimePremiumPercent: level.overtimePremiumPercent ?? ccnl?.overtimePremiumPercent,
-          holidayPremiumPercent: level.holidayPremiumPercent ?? ccnl?.holidayPremiumPercent,
-          ccnlId,
-          ccnlLevelId: levelId,
-          contractId: emp.activeContractId
-        };
+        levelData = levelSnap.data() as CCNLLevel;
       }
-    }
-
-    if (ccnl) {
-      return {
-        source: "ccnl_root",
-        ordinaryHourlyRate: 0, // Root usually doesn't have a single rate
-        nightPremiumPercent: ccnl.nightPremiumPercent,
-        overtimePremiumPercent: ccnl.overtimePremiumPercent,
-        holidayPremiumPercent: ccnl.holidayPremiumPercent,
-        ccnlId,
-        contractId: emp.activeContractId
-      };
     }
   }
 
-  return { source: "missing", ordinaryHourlyRate: 0 };
+  // Resolve fields with prioritized fallbacks
+  const ordinaryHourlyRate = p?.ordinaryHourlyRate ?? levelData?.minimumGrossHourly ?? 0;
+  const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
+  const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
+
+  // Premium fallbacks: Param -> Level -> Root -> null
+  const nightPremiumPercent = p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? ccnlData?.nightPremiumPercent ?? null;
+  const overtimePremiumPercent = p?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? ccnlData?.overtimePremiumPercent ?? null;
+  const overtimeNightPremiumPercent = p?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? ccnlData?.overtimeNightPremiumPercent ?? null;
+  const holidayPremiumPercent = p?.holidayPremiumPercent ?? levelData?.holidayPremiumPercent ?? ccnlData?.holidayPremiumPercent ?? null;
+  const sundayPremiumPercent = p?.sundayPremiumPercent ?? levelData?.sundayPremiumPercent ?? ccnlData?.sundayPremiumPercent ?? null;
+
+  return {
+    source: p ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
+    payCalculationMode,
+    ordinaryHourlyRate,
+    grossMonthly,
+    nightPremiumPercent,
+    overtimePremiumPercent,
+    overtimeNightPremiumPercent,
+    holidayPremiumPercent,
+    sundayPremiumPercent,
+    ccnlId: ccnlId || undefined,
+    ccnlLevelId: levelId || undefined,
+    contractId: emp.activeContractId,
+    payrollParameterId: p ? paramsSnap.docs[0].id : undefined
+  };
 }
 
 /**
@@ -395,34 +399,62 @@ export async function resolvePayrollRateSnapshot(
 export function calculatePayrollEconomicValues(
   agg: PayrollAttendanceAggregation,
   rate: PayrollRateSnapshot,
+  warnings: PayrollReconciliationWarning[] = [],
   extras: { mealTickets?: number; mileage?: number; bonus?: number } = {}
 ) {
   const rateValue = rate.ordinaryHourlyRate || 0;
+  const isMonthly = rate.payCalculationMode === "monthly";
   
-  const nightMult = percentageToMultiplier(rate.nightPremiumPercent);
+  // Multipliers/Decimals
+  const nightDec = percentageToDecimal(rate.nightPremiumPercent);
   const otMult = percentageToMultiplier(rate.overtimePremiumPercent);
   const holMult = percentageToMultiplier(rate.holidayPremiumPercent);
 
-  const ordinaryValue = roundMoney(agg.ordinaryDayHours * rateValue);
-  const nightValue = roundMoney(agg.ordinaryNightHours * rateValue * nightMult);
+  // 1. Base Salary
+  let baseGrossValue = 0;
+  if (isMonthly) {
+    baseGrossValue = roundMoney(rate.grossMonthly || 0);
+  } else {
+    baseGrossValue = roundMoney(agg.ordinaryDayHours * rateValue);
+  }
+
+  // 2. Additions / Premiums
+  // Night: For monthly, it's a pure premium addition. For hourly, it's (base * multiplier)
+  const nightValue = isMonthly 
+    ? roundMoney(agg.ordinaryNightHours * rateValue * nightDec)
+    : roundMoney(agg.ordinaryNightHours * rateValue * (1 + nightDec));
+
   const overtimeValue = roundMoney(agg.overtimeHours * rateValue * otMult);
   const holidayWorkedValue = roundMoney(agg.holidayWorkedHours * rateValue * holMult);
 
+  // 3. Deductions (Unpaid Missing Hours)
+  let deductionValue = 0;
+  const missingHoursWarnings = warnings.filter(w => w.code === "missing_hours" && w.differenceHours && w.differenceHours > 0);
+  const totalMissingHours = missingHoursWarnings.reduce((sum, w) => sum + (w.differenceHours || 0), 0);
+  
+  if (totalMissingHours > 0) {
+    deductionValue = roundMoney(totalMissingHours * rateValue);
+  }
+
+  // 4. Extras
   const mealTicketsValue = roundMoney(extras.mealTickets || 0);
   const mileageValue = roundMoney(extras.mileage || 0);
   const bonusValue = roundMoney(extras.bonus || 0);
 
+  // 5. Grand Total
   const grossEconomicTotal = roundMoney(
-    ordinaryValue + nightValue + overtimeValue + holidayWorkedValue +
+    baseGrossValue - deductionValue + nightValue + overtimeValue + holidayWorkedValue +
     mealTicketsValue + mileageValue + bonusValue
   );
 
   return {
-    ordinaryValue,
+    baseGrossValue,
+    ordinaryValue: isMonthly ? baseGrossValue : (baseGrossValue + nightValue), // "Base" display mapping
     nightValue,
     overtimeValue,
     overtimeNightValue: 0,
     holidayWorkedValue,
+    deductionValue,
     mealTicketsValue,
     mileageValue,
     bonusValue,
@@ -517,7 +549,16 @@ export async function calculateAndSaveMonthlyPayroll(
       });
     }
 
-    const econ = calculatePayrollEconomicValues(agg, rate);
+    if (rate.payCalculationMode === "monthly" && (!rate.grossMonthly || rate.grossMonthly <= 0)) {
+       empWarnings.push({
+         code: "missing_monthly_gross",
+         severity: "blocking",
+         employeeId: empId,
+         message: "Salaire mensuel de base introuvable pour ce profil mensualisé."
+       });
+    }
+
+    const econ = calculatePayrollEconomicValues(agg, rate, empWarnings);
     const isBlocked = empWarnings.some(w => w.severity === 'blocking');
 
     if (isBlocked) blockingCount++;
@@ -580,11 +621,13 @@ export async function prepareMonthlyPayrollDraft(
       attendanceAggregation: agg,
       rateSnapshot: { source: "missing", ordinaryHourlyRate: 0 },
       reconciliationWarnings: empWarnings,
+      baseGrossValue: 0,
       ordinaryValue: 0,
       nightValue: 0,
       overtimeValue: 0,
       overtimeNightValue: 0,
       holidayWorkedValue: 0,
+      deductionValue: 0,
       mealTicketsValue: 0,
       mileageValue: 0,
       bonusValue: 0,

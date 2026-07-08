@@ -10,7 +10,9 @@ export type PayrollCalculationStatus =
 
 export interface PayrollRateSnapshot {
   source: "ccnl_level" | "ccnl_root" | "contract" | "payroll_parameter" | "manual" | "missing";
-  ordinaryHourlyRate?: number;
+  payCalculationMode?: "monthly" | "hourly";
+  ordinaryHourlyRate: number;
+  grossMonthly?: number | null;
   nightPremiumPercent?: number | null;
   overtimePremiumPercent?: number | null;
   overtimeNightPremiumPercent?: number | null;
@@ -46,6 +48,7 @@ export interface PayrollReconciliationWarning {
     | "holiday_work" 
     | "legacy_attendance_split_missing" 
     | "missing_payroll_rate" 
+    | "missing_monthly_gross"
     | "missing_premium_rule";
   severity: "info" | "warning" | "blocking";
   employeeId: string;
@@ -70,11 +73,13 @@ export interface PayrollCalculation {
   reconciliationWarnings: PayrollReconciliationWarning[];
   
   // Financial Values
+  baseGrossValue: number;
   ordinaryValue: number;
   nightValue: number;
   overtimeValue: number;
   overtimeNightValue: number;
   holidayWorkedValue: number;
+  deductionValue: number;
   mealTicketsValue: number;
   mileageValue: number;
   bonusValue: number;
@@ -108,8 +113,11 @@ export interface PayrollParameter {
   effectiveFrom: string; // YYYY-MM-DD
   effectiveTo?: string | null;
   
+  payCalculationMode?: "monthly" | "hourly";
+  ordinaryHourlyRate?: number | null;
+  grossMonthly?: number | null;
+  
   // Overrides
-  ordinaryHourlyRate?: number;
   nightPremiumPercent?: number | null;
   overtimePremiumPercent?: number | null;
   overtimeNightPremiumPercent?: number | null;

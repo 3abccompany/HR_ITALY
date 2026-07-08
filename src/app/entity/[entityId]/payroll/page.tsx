@@ -8,7 +8,7 @@ import {
   Info, Clock, RefreshCw, ChevronRight, 
   Filter, X, Search, FileText, Ban,
   ShieldCheck, AlertCircle, TrendingUp,
-  XCircle
+  XCircle, ArrowDownCircle, ArrowUpCircle, Banknote, HelpCircle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -155,10 +155,15 @@ export default function PayrollSynthesisPage() {
 
   return (
     <div className="p-8 max-w-[1600px] mx-auto space-y-8 pb-32">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-black text-primary tracking-tight">Synthèse économique mensuelle</h1>
-          <p className="text-muted-foreground text-sm font-medium">Récapitulatif des montants bruts basés sur les présences validées.</p>
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="bg-primary p-2.5 rounded-2xl text-white shadow-xl shadow-primary/20">
+            <Banknote className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-primary tracking-tight">Synthèse économique — Pré-paie brute</h1>
+            <p className="text-muted-foreground text-sm font-medium">Récapitulatif des éléments variables pour {entity?.nomEntreprise}.</p>
+          </div>
         </div>
         
         <div className="flex items-center gap-3">
@@ -197,8 +202,23 @@ export default function PayrollSynthesisPage() {
         </div>
       </header>
 
+      {/* Stats Summary Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+         <SummaryStat label="Dossiers générés" value={calculations?.length || 0} icon={FileText} color="blue" />
+         <SummaryStat label="H. Totales" value={calculations?.reduce((s, c) => s + (c.attendanceAggregation.totalValidatedHours), 0).toFixed(1) || "0"} icon={Clock} color="slate" />
+         <SummaryStat label="Alertes" value={calculations?.reduce((s, c) => s + (c.reconciliationWarnings.length), 0) || 0} icon={AlertTriangle} color="orange" />
+         <Card className="rounded-2xl bg-primary text-white shadow-xl shadow-primary/10">
+            <CardContent className="p-4 flex items-center gap-4">
+               <div className="bg-white/20 p-2.5 rounded-xl"><Euro className="w-5 h-5" /></div>
+               <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Total Brut Estimé</p>
+                  <p className="text-xl font-black">€ {calculations?.reduce((s, c) => s + (c.grossEconomicTotal || 0), 0).toLocaleString('fr-FR', { minimumFractionDigits: 0 })}</p>
+               </div>
+            </CardContent>
+         </Card>
+      </div>
+
       <div className="space-y-6">
-        {/* Filters & Search */}
         <div className="flex items-center gap-4">
            <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -209,26 +229,21 @@ export default function PayrollSynthesisPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
            </div>
-           {!loadingCalcs && calculations && (
-             <div className="text-[10px] font-black uppercase text-muted-foreground tracking-widest bg-white px-4 py-2 rounded-full border shadow-sm">
-                {calculations.length} dossier(s) généré(s)
-             </div>
-           )}
         </div>
 
-        {/* Calculations Table */}
-        <Card className="rounded-[2rem] border-primary/5 shadow-xl shadow-primary/5 overflow-hidden bg-white">
+        <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
           <ScrollArea className="w-full">
             <Table>
-              <TableHeader className="bg-slate-50/50">
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest w-[220px]">Collaborateur</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest">Statut</TableHead>
+              <TableHeader className="bg-secondary/20 hover:bg-secondary/20">
+                <TableRow className="hover:bg-transparent border-none">
+                  <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest h-12">Collaborateur</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest">Type / Mode</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center">Heures (V/N/S)</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Valeur Ord.</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Base Mensuelle</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Maj. Nuit</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Maj. Sup</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Fériés</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Retenues</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Extras</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">TOTAL BRUT</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center">Alertes</TableHead>
@@ -237,10 +252,10 @@ export default function PayrollSynthesisPage() {
               </TableHeader>
               <TableBody>
                 {loadingCalcs ? (
-                  <TableRow><TableCell colSpan={11} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={12} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
                 ) : filteredCalculations.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="py-32 text-center space-y-4">
+                    <TableCell colSpan={12} className="py-32 text-center space-y-4">
                        <div className="bg-slate-50 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto">
                           <TrendingUp className="w-10 h-10 text-slate-200" />
                        </div>
@@ -254,6 +269,7 @@ export default function PayrollSynthesisPage() {
                   filteredCalculations.map((c) => {
                     const emp = employeesMap.get(c.employeeId);
                     const totalExtras = (c.mealTicketsValue || 0) + (c.mileageValue || 0) + (c.bonusValue || 0);
+                    const isMonthly = c.rateSnapshot.payCalculationMode === 'monthly';
                     
                     return (
                       <TableRow key={c.id} className="hover:bg-slate-50 transition-colors group">
@@ -267,9 +283,14 @@ export default function PayrollSynthesisPage() {
                            </div>
                         </TableCell>
                         <TableCell>
-                           <Badge variant="outline" className={cn("text-[9px] font-black uppercase px-2 h-5", STATUS_STYLES[c.status])}>
-                             {STATUS_LABELS[c.status as PayrollCalculationStatus] || c.status}
-                           </Badge>
+                           <div className="flex flex-col gap-1">
+                              <Badge variant="outline" className={cn("text-[8px] font-black uppercase px-2 h-4 border-none", isMonthly ? "bg-indigo-50 text-indigo-700" : "bg-teal-50 text-teal-700")}>
+                                {isMonthly ? "Mensualisé" : "Horaire"}
+                              </Badge>
+                              {isMonthly && c.rateSnapshot.ccnlLevelId && (
+                                <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-tight">Level {c.rateSnapshot.levelCode}</span>
+                              )}
+                           </div>
                         </TableCell>
                         <TableCell className="text-center">
                            <div className="flex items-center justify-center gap-2">
@@ -280,10 +301,21 @@ export default function PayrollSynthesisPage() {
                               <span className="text-[10px] font-bold text-orange-600" title="Supp">{c.attendanceAggregation.overtimeHours.toFixed(1)}</span>
                            </div>
                         </TableCell>
-                        <TableCell className="text-right font-medium text-slate-600">€ {c.ordinaryValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right font-black text-slate-700">
+                          {isMonthly ? (
+                            `€ ${c.baseGrossValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}`
+                          ) : (
+                            <span className="text-muted-foreground font-medium italic">Calc. horaire</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right font-medium text-indigo-700">€ {c.nightValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right font-medium text-orange-700">€ {c.overtimeValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right font-medium text-teal-700">€ {c.holidayWorkedValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right">
+                           {c.deductionValue > 0 ? (
+                             <span className="font-bold text-red-600 text-xs">- € {c.deductionValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</span>
+                           ) : <span className="text-slate-300">—</span>}
+                        </TableCell>
                         <TableCell className="text-right font-medium text-slate-500">€ {totalExtras.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right bg-primary/[0.02]">
                            <span className="font-black text-primary text-sm">€ {c.grossEconomicTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</span>
@@ -305,15 +337,34 @@ export default function PayrollSynthesisPage() {
         </Card>
       </div>
 
-      <div className="flex items-start gap-4 p-6 bg-blue-50/50 rounded-[2rem] border border-blue-100">
-         <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-         <div className="space-y-1">
-            <p className="text-xs font-black uppercase text-blue-800 tracking-widest">Guide de lecture</p>
-            <p className="text-[11px] text-blue-700 leading-relaxed font-medium">
-               Ces montants représentent la <strong>synthèse brute des éléments variables</strong> du mois. Ils sont calculés à partir des pointages validés et des taux contractuels snapshots. 
-               Cette synthèse n'inclut pas les charges sociales, les impôts ou les déductions nettes (ceci n'est pas un bulletin de paie officiel).
-            </p>
-         </div>
+      <div className="flex flex-col md:flex-row items-stretch gap-6">
+        <div className="flex-1 p-6 bg-blue-50/50 rounded-[2rem] border border-blue-100 flex items-start gap-4">
+           <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+           <div className="space-y-1">
+              <p className="text-xs font-black uppercase text-blue-800 tracking-widest">Information Importante — Non officiel</p>
+              <p className="text-[11px] text-blue-700 leading-relaxed font-medium">
+                Cette synthèse représente les <strong>éléments variables bruts</strong> basés sur les données RH (présences, CCNL). 
+                Ceci <strong>n'est pas une fiche de paie officielle</strong> : le calcul des cotisations sociales, de l'impôt (IRPEF/PAS) et du salaire net à payer est réalisé par le logiciel de paie du consultant après export.
+              </p>
+           </div>
+        </div>
+        <Card className="md:w-72 rounded-[2rem] border-orange-100 bg-orange-50/20 overflow-hidden">
+           <CardHeader className="py-3 px-6 bg-orange-50/50 border-b">
+              <CardTitle className="text-[10px] font-black uppercase tracking-widest text-orange-700 flex items-center gap-2">
+                 <HelpCircle className="w-4 h-4" /> Mode de calcul
+              </CardTitle>
+           </CardHeader>
+           <CardContent className="p-4 space-y-2">
+              <div className="flex justify-between text-[10px]">
+                 <span className="text-muted-foreground font-bold">Mensualisé</span>
+                 <span className="font-black">Base fixe + Maj.</span>
+              </div>
+              <div className="flex justify-between text-[10px]">
+                 <span className="text-muted-foreground font-bold">Horaire</span>
+                 <span className="font-black">H. Réelles × Taux</span>
+              </div>
+           </CardContent>
+        </Card>
       </div>
 
       {/* Summary Dialog */}
@@ -339,15 +390,8 @@ export default function PayrollSynthesisPage() {
                    <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                    <div>
                       <p className="text-xs font-bold text-red-800 uppercase">Attention : Anomalies bloquantes</p>
-                      <p className="text-[11px] text-red-700 font-medium">{calcSummary.blockingWarningsCount} dossier(s) sont restés en "Brouillon" car des données contractuelles (taux horaire) sont manquantes.</p>
+                      <p className="text-[11px] text-red-700 font-medium">{calcSummary.blockingWarningsCount} dossier(s) sont restés en "Brouillon" car des données contractuelles (taux horaire ou base mensuelle) sont manquantes.</p>
                    </div>
-                </div>
-              )}
-
-              {calcSummary?.skippedCount > 0 && (
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-start gap-3">
-                   <Ban className="w-5 h-5 text-slate-400 shrink-0 mt-0.5" />
-                   <p className="text-[11px] text-slate-600 font-medium">Les records en statut "Approuvé", "Exporté" ou "Verrouillé" n'ont pas été écrasés par ce calcul.</p>
                 </div>
               )}
            </div>
@@ -358,6 +402,27 @@ export default function PayrollSynthesisPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function SummaryStat({ label, value, icon: Icon, color }: { label: string, value: number | string, icon: any, color: string }) {
+  const colors: Record<string, string> = {
+    slate: "bg-slate-50 text-slate-600 border-slate-100",
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100"
+  };
+  return (
+    <Card className="border-primary/5 shadow-sm rounded-2xl bg-white">
+      <CardContent className="p-4 flex items-center gap-4">
+        <div className={cn("p-2.5 rounded-xl border", colors[color] || colors.slate)}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div>
+          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{label}</p>
+          <p className="text-lg font-black text-primary leading-none mt-1">{value}</p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -428,26 +493,5 @@ function renderWarningIndicator(warnings: PayrollReconciliationWarning[]) {
         </ScrollArea>
       </PopoverContent>
     </Popover>
-  );
-}
-
-function StatCard({ title, value, icon: Icon, color }: any) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600 border-blue-100",
-    green: "bg-green-50 text-green-600 border-green-100",
-    orange: "bg-orange-50 text-orange-600 border-orange-100"
-  };
-  return (
-    <Card className="border-primary/5 shadow-sm rounded-2xl group bg-white">
-      <CardContent className="p-5 flex items-center gap-4">
-        <div className={cn("p-3 rounded-2xl border transition-colors", colors[color])}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{title}</p>
-          <p className="text-2xl font-black text-primary leading-none mt-1">{value}</p>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
