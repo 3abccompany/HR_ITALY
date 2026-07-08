@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   Plus, Edit, PowerOff, Loader2, ArrowLeft,
-  ListTodo, ShieldCheck, 
-  Trash2, Info, Euro, Briefcase, Calendar, Clock,
+  ListTodo, Trash2, Info, Euro, Calendar, Clock,
   CheckCircle2, Save, Percent
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,11 +14,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { useFirebase, useCollection, useDoc, useUser } from "@/firebase";
+import { useFirebase, useCollection, useDoc, useUser, useAuth } from "@/firebase";
 import { collection, query, orderBy, doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { createCcnlLevel, updateCcnlLevel, archiveCcnlLevel } from "@/services/ccnl.service";
-import { CCNL, CCNLLevel, WeeklySchedule } from "@/types/ccnl";
+import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
@@ -36,16 +35,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-
-const initialSchedule: WeeklySchedule = {
-  monday: 8,
-  tuesday: 8,
-  wednesday: 8,
-  thursday: 8,
-  friday: 8,
-  saturday: 0,
-  sunday: 0
-};
+import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 
 // Use strings for numeric inputs in form state to allow empty values while typing
 const initialLevelForm = {
@@ -59,7 +49,6 @@ const initialLevelForm = {
   annualExHolidayHours: "0",
   effectiveFrom: new Date().toISOString().split('T')[0],
   notes: "",
-  weeklySchedule: undefined as WeeklySchedule | undefined,
   // Premium Overrides
   nightPremiumPercent: "",
   overtimePremiumPercent: "",
@@ -76,6 +65,7 @@ export default function CcnlLevelsPage() {
   
   const { db } = useFirebase();
   const { user } = useUser();
+  const auth = useAuth();
   const { toast } = useToast();
   const { loading: membershipLoading } = useActiveMembership(entityId);
 
@@ -95,17 +85,6 @@ export default function CcnlLevelsPage() {
 
   const { data: levels, loading: loadingLevels } = useCollection<CCNLLevel>(levelsQuery);
 
-  const scheduleSum = useMemo(() => {
-    if (!formData.weeklySchedule) return 0;
-    const s = formData.weeklySchedule;
-    return (s.monday || 0) + (s.tuesday || 0) + (s.wednesday || 0) + (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0) + (s.sunday || 0);
-  }, [formData.weeklySchedule]);
-
-  const isScheduleInvalid = useMemo(() => {
-    if (!formData.weeklySchedule || !ccnl) return false;
-    return Math.abs(scheduleSum - ccnl.standardWeeklyHours) > 0.01;
-  }, [formData.weeklySchedule, scheduleSum, ccnl]);
-
   const handleReset = () => {
     setFormData(initialLevelForm);
     setEditingId(null);
@@ -124,7 +103,6 @@ export default function CcnlLevelsPage() {
       annualExHolidayHours: (l.annualExHolidayHours || 0).toString(),
       effectiveFrom: l.effectiveFrom,
       notes: l.notes || "",
-      weeklySchedule: l.weeklySchedule,
       nightPremiumPercent: (l.nightPremiumPercent ?? "").toString(),
       overtimePremiumPercent: (l.overtimePremiumPercent ?? "").toString(),
       overtimeNightPremiumPercent: (l.overtimeNightPremiumPercent ?? "").toString(),
@@ -135,35 +113,9 @@ export default function CcnlLevelsPage() {
     setIsLevelFormOpen(true);
   };
 
-  const handleApplyTemplate = (type: '40h' | '39h' | '44h') => {
-    if (type === '40h') {
-      setFormData(p => ({ ...p, weeklySchedule: { monday: 8, tuesday: 8, wednesday: 8, thursday: 8, friday: 8, saturday: 0, sunday: 0 } }));
-    } else if (type === '39h') {
-      setFormData(p => ({ ...p, weeklySchedule: { monday: 8, tuesday: 8, wednesday: 8, thursday: 8, friday: 7, saturday: 0, sunday: 0 } }));
-    } else if (type === '44h') {
-      setFormData(p => ({ ...p, weeklySchedule: { monday: 8, tuesday: 8, wednesday: 8, thursday: 8, friday: 8, saturday: 4, sunday: 0 } }));
-    }
-  };
-
-  const updateDayHour = (day: keyof WeeklySchedule, val: string) => {
-    const num = parseFloat(val) || 0;
-    setFormData(p => ({
-      ...p,
-      weeklySchedule: {
-        ...(p.weeklySchedule || initialSchedule),
-        [day]: num
-      }
-    }));
-  };
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !ccnl) return;
-
-    if (isScheduleInvalid) {
-      toast({ variant: "destructive", title: "Répartition invalide", description: `La somme des heures (${scheduleSum}h) doit correspondre au total CCNL (${ccnl.standardWeeklyHours}h).` });
-      return;
-    }
 
     const mStr = formData.minimumGrossMonthly.toString().trim().replace(',', '.');
     const hStr = formData.minimumGrossHourly.toString().trim().replace(',', '.');
@@ -331,8 +283,8 @@ export default function CcnlLevelsPage() {
       <Dialog open={isLevelFormOpen} onOpenChange={(open) => !open && handleReset()}>
         <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto rounded-[2.5rem]">
           <DialogHeader>
-            <DialogTitle>{editingLevelId ? "Modifier le niveau" : "Nouveau niveau"}</DialogTitle>
-            <DialogDescription>Détails du salaire minimum pour ce niveau CCNL.</DialogDescription>
+            <DialogTitle>{editingId ? "Modifier le niveau" : "Nouveau niveau"}</DialogTitle>
+            <DialogDescription>Classification et rémunération minimale pour ce niveau CCNL.</DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
             <div className="grid grid-cols-3 gap-4">
@@ -349,41 +301,6 @@ export default function CcnlLevelsPage() {
             <div className="space-y-2">
               <Label htmlFor="qualificationLabel">Qualification (Flexible)</Label>
               <Input id="qualificationLabel" value={formData.qualificationLabel} onChange={(e) => setFormData(p => ({...p, qualificationLabel: e.target.value}))} required placeholder="Ex: Impiegato, Operaio specializzato..." />
-            </div>
-
-            {/* Phase 4E-0A: Optional Level Override for Working Schedule */}
-            <div className="space-y-4 pt-2 border-t">
-               <div className="flex items-center justify-between">
-                  <Label className="text-[10px] uppercase font-black text-primary tracking-widest flex items-center gap-2">
-                    <Clock className="w-4 h-4" /> Répartition hebdomadaire spécifique
-                  </Label>
-                  <div className="flex gap-2">
-                    <Button type="button" variant="outline" size="sm" onClick={() => handleApplyTemplate('39h')} className="h-6 text-[8px] font-black px-2">39h</Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => handleApplyTemplate('40h')} className="h-6 text-[8px] font-black px-2">40h</Button>
-                  </div>
-               </div>
-
-               <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-                  {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => (
-                    <div key={day} className="space-y-1">
-                      <Label className="text-[8px] uppercase font-black text-center block text-muted-foreground">{day.slice(0, 3)}</Label>
-                      <Input 
-                        type="number" 
-                        step="0.5" 
-                        className="h-8 px-1 text-center font-bold text-xs" 
-                        value={(formData.weeklySchedule as any)?.[day] ?? ""} 
-                        onChange={(e) => updateDayHour(day as any, e.target.value)}
-                      />
-                    </div>
-                  ))}
-               </div>
-
-               {formData.weeklySchedule && (
-                  <div className={cn("p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold", isScheduleInvalid ? "bg-red-50 border-red-200 text-red-700" : "bg-green-50 border-green-200 text-green-700")}>
-                    <span>Somme : {scheduleSum}h</span>
-                    {isScheduleInvalid && <span className="text-[9px]">Cible CCNL: {ccnl.standardWeeklyHours}h</span>}
-                  </div>
-               )}
             </div>
 
             <div className="grid grid-cols-2 gap-4 pt-2 border-t">
@@ -434,7 +351,7 @@ export default function CcnlLevelsPage() {
                </div>
             </div>
 
-            {/* Phase 4E-3E-1: Premium Configuration Section */}
+            {/* Premium Configuration Section */}
             <div className="space-y-4 pt-2 border-t">
                <h3 className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
                   <Percent className="w-3 h-3" /> Majorations — Synthèse économique
@@ -498,7 +415,7 @@ export default function CcnlLevelsPage() {
 
             <DialogFooter className="pt-4 border-t gap-2">
               <Button type="button" variant="outline" onClick={handleReset} disabled={loading}>Annuler</Button>
-              <Button onClick={handleSave} disabled={loading || isScheduleInvalid} className="rounded-xl px-8 font-black shadow-lg">
+              <Button onClick={handleSave} disabled={loading} className="rounded-xl px-8 font-black shadow-lg">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                 {editingLevelId ? "Enregistrer" : "Ajouter le niveau"}
               </Button>
