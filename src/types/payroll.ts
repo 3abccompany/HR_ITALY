@@ -14,6 +14,7 @@ export interface PayrollRateSnapshot {
   ordinaryHourlyRate: number;
   grossMonthly?: number | null;
   levelCode?: string | null;
+  expectedWeeklyHours?: number | null;
   nightPremiumPercent?: number | null;
   overtimePremiumPercent?: number | null;
   overtimeNightPremiumPercent?: number | null;

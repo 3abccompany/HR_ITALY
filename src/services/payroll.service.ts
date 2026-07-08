@@ -19,7 +19,8 @@ import {
   serverTimestamp,
   limit,
   Timestamp,
-  FieldValue
+  FieldValue,
+  arrayUnion
 } from "firebase/firestore";
 import { 
   PayrollAttendanceAggregation, 
@@ -30,7 +31,7 @@ import {
   PayrollCalculationStatus,
   PayrollWeeklyBreakdown
 } from "@/types/payroll";
-import { AttendanceRecord } from "@/types/attendance";
+import { AttendanceRecord, AttendancePunch } from "@/types/attendance";
 import { TimeOffRequest } from "@/types/time-off";
 import { resolveWorkSchedule } from "./work-schedule.service";
 import { 
@@ -373,7 +374,7 @@ export async function getPayrollMonthRange(year: number, month: number) {
 /**
  * Helper to convert percentage to multiplier (e.g. 25 -> 1.25)
  */
-export async function percentageToMultiplier(percent?: number | null): number {
+export async function percentageToMultiplier(percent?: number | null): Promise<number> {
   if (percent === undefined || percent === null || isNaN(percent) || percent < 0) return 1;
   if (percent === 0) return 1;
   return 1 + (percent / 100);
@@ -382,7 +383,7 @@ export async function percentageToMultiplier(percent?: number | null): number {
 /**
  * Helper to get pure premium decimal (e.g. 25 -> 0.25)
  */
-export async function percentageToDecimal(percent?: number | null): number {
+export async function percentageToDecimal(percent?: number | null): Promise<number> {
   if (percent === undefined || percent === null || isNaN(percent) || percent < 0) return 0;
   return percent / 100;
 }
@@ -634,12 +635,21 @@ export async function resolvePayrollRateSnapshot(
   const { ccnlId, levelId } = contract;
 
   let levelData: CCNLLevel | null = null;
+  let ccnlData: CCNL | null = null;
 
-  if (ccnlId && levelId) {
-    const levelRef = doc(db, `entities/${entityId}/ccnls/${ccnlId}/levels`, levelId);
-    const levelSnap = await getDoc(levelRef);
-    if (levelSnap.exists()) {
-      levelData = levelSnap.data() as CCNLLevel;
+  if (ccnlId) {
+    const ccnlRef = doc(db, `entities/${entityId}/ccnls`, ccnlId);
+    const ccnlSnap = await getDoc(ccnlRef);
+    if (ccnlSnap.exists()) {
+      ccnlData = ccnlSnap.data() as CCNL;
+    }
+    
+    if (levelId) {
+      const levelRef = doc(db, `entities/${entityId}/ccnls/${ccnlId}/levels`, levelId);
+      const levelSnap = await getDoc(levelRef);
+      if (levelSnap.exists()) {
+        levelData = levelSnap.data() as CCNLLevel;
+      }
     }
   }
 
@@ -647,6 +657,11 @@ export async function resolvePayrollRateSnapshot(
   const ordinaryHourlyRate = p?.ordinaryHourlyRate ?? levelData?.minimumGrossHourly ?? 0;
   const grossMonthly = p?.grossMonthly ?? levelData?.minimumGrossMonthly ?? contract.grossMonthly ?? null;
   const payCalculationMode = p?.payCalculationMode ?? (grossMonthly ? "monthly" : "hourly");
+
+  // Priority for threshold:
+  // 1. Contract weekly hours (specific to employee)
+  // 2. CCNL standard weekly hours (general fallback)
+  const expectedWeeklyHours = contract.weeklyHours ?? ccnlData?.standardWeeklyHours ?? null;
 
   // Premium fallbacks: Param -> Level -> null
   const nightPremiumPercent = p?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null;
@@ -661,6 +676,7 @@ export async function resolvePayrollRateSnapshot(
     ordinaryHourlyRate,
     grossMonthly,
     levelCode: levelData?.levelCode ?? contract.levelCode ?? null,
+    expectedWeeklyHours,
     nightPremiumPercent,
     overtimePremiumPercent,
     overtimeNightPremiumPercent,
@@ -683,7 +699,22 @@ export async function calculatePayrollEconomicValues(
   rate: PayrollRateSnapshot,
   warnings: PayrollReconciliationWarning[] = [],
   extras: { mealTickets?: number; mileage?: number; bonus?: number } = {}
-) {
+): Promise<{
+  baseGrossValue: number;
+  ordinaryValue: number;
+  nightValue: number;
+  overtimeValue: number;
+  overtimeDayValue: number;
+  overtimeNightValue: number;
+  overtimeSundayValue: number;
+  overtimeHolidayValue: number;
+  holidayWorkedValue: number;
+  deductionValue: number;
+  mealTicketsValue: number;
+  mileageValue: number;
+  bonusValue: number;
+  grossEconomicTotal: number;
+}> {
   const rateValue = rate.ordinaryHourlyRate || 0;
   const isMonthly = rate.payCalculationMode === "monthly";
   
@@ -844,65 +875,74 @@ export async function calculateAndSaveMonthlyPayroll(
 
     // --- PHASE 4E-3F-2B: Weekly Overtime Reconciliation ---
     
-    // Resolve expected weekly threshold
-    // Priority: Snapshot -> 39h fallback (as per standard practice if completely missing)
-    const expectedWeekly = rate.grossMonthly ? (rate.ordinaryHourlyRate > 0 ? Number(((rate.grossMonthly / (rate.ordinaryHourlyRate * 173/40)) * 40).toFixed(0)) : null) : null;
-    const threshold = expectedWeekly || 40; // Defaulting to 40h if unavailable
+    // Resolve expected weekly threshold (No global 40h fallback)
+    const threshold = rate.expectedWeeklyHours;
 
-    if (!expectedWeekly) {
+    if (threshold === null || threshold === undefined) {
        empWarnings.push({
          code: "missing_weekly_schedule",
          severity: "warning",
          employeeId: empId,
-         message: "Seuil hebdomadaire non détecté. Utilisation par défaut (40h) pour la réconciliation."
+         message: "Seuil hebdomadaire non détecté. Réconciliation des heures supplémentaires impossible."
        });
-    }
+       
+       // Diagnostic preservation & Safe Defaults
+       agg.rawImportedOvertimeHours = agg.overtimeHours;
+       agg.weeklyReconciledOvertimeHours = 0;
+       agg.overtimeHours = 0; 
+       agg.overtimeDayHours = 0;
+       agg.overtimeNightHours = 0;
+       agg.overtimeSundayHours = 0;
+       agg.overtimeHolidayHours = 0;
+       agg.overtimeClassificationSource = "not_available";
+       agg.weeklyBreakdown = [];
+    } else {
+       // Fetch all validated records for the employee to perform chronological analysis
+       const attRef = collection(db, `entities/${entityId}/attendances`);
+       const attSnap = await getDocs(query(
+         attRef,
+         where("employeeId", "==", empId),
+         where("attendanceDate", ">=", startDateIso),
+         where("attendanceDate", "<", nextMonthStartDateIso)
+       ));
+       
+       const reliableStatuses = ["validated", "corrected", "locked"];
+       const records = attSnap.docs
+         .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
+         .filter(r => reliableStatuses.includes(r.status));
 
-    // Fetch all validated records for the employee to perform chronological analysis
-    const attRef = collection(db, `entities/${entityId}/attendances`);
-    const attSnap = await getDocs(query(
-      attRef,
-      where("employeeId", "==", empId),
-      where("attendanceDate", ">=", startDateIso),
-      where("attendanceDate", "<", nextMonthStartDateIso)
-    ));
-    
-    const reliableStatuses = ["validated", "corrected", "locked"];
-    const records = attSnap.docs
-      .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
-      .filter(r => reliableStatuses.includes(r.status));
+       const reconciliation = await reconcileWeeklyOvertime(records, threshold);
+       
+       // Update Aggregation with reconciled values
+       agg.rawImportedOvertimeHours = agg.overtimeHours;
+       agg.weeklyReconciledOvertimeHours = reconciliation.weeklyReconciledOvertimeHours;
+       agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours; // Standard pointer override
+       agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
+       agg.overtimeDayHours = reconciliation.overtimeDayHours;
+       agg.overtimeNightHours = reconciliation.overtimeNightHours;
+       agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
+       agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
+       agg.overtimeClassificationSource = "weekly_reconciled";
+       agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
 
-    const reconciliation = await reconcileWeeklyOvertime(records, threshold);
-    
-    // Update Aggregation with reconciled values
-    agg.rawImportedOvertimeHours = agg.overtimeHours;
-    agg.weeklyReconciledOvertimeHours = reconciliation.weeklyReconciledOvertimeHours;
-    agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours; // Standard pointer override
-    agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
-    agg.overtimeDayHours = reconciliation.overtimeDayHours;
-    agg.overtimeNightHours = reconciliation.overtimeNightHours;
-    agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
-    agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
-    agg.overtimeClassificationSource = "weekly_reconciled";
-    agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
+       // Reconciliation Audit Warnings
+       if (agg.rawImportedOvertimeHours > 0 && agg.weeklyReconciledOvertimeHours === 0) {
+          empWarnings.push({
+            code: "raw_overtime_not_weekly_reconciled",
+            severity: "info",
+            employeeId: empId,
+            message: "Des heures SUP quotidiennes ont été importées mais ne dépassent pas le seuil hebdomadaire."
+          });
+       }
 
-    // Reconciliation Audit Warnings
-    if (agg.rawImportedOvertimeHours > 0 && agg.weeklyReconciledOvertimeHours === 0) {
-       empWarnings.push({
-         code: "raw_overtime_not_weekly_reconciled",
-         severity: "info",
-         employeeId: empId,
-         message: "Des heures SUP quotidiennes ont été importées mais ne dépassent pas le seuil hebdomadaire."
-       });
-    }
-
-    if (agg.overtimeNightHours > 0 && !rate.overtimeNightPremiumPercent) {
-       empWarnings.push({
-         code: "missing_overtime_night_premium",
-         severity: "blocking",
-         employeeId: empId,
-         message: "Majorations pour heures supplémentaires de nuit manquantes dans le CCNL."
-       });
+       if (agg.overtimeNightHours > 0 && !rate.overtimeNightPremiumPercent) {
+          empWarnings.push({
+            code: "missing_overtime_night_premium",
+            severity: "blocking",
+            employeeId: empId,
+            message: "Majorations pour heures supplémentaires de nuit manquantes dans le CCNL."
+          });
+       }
     }
 
     // ------------------------------------------------------
