@@ -61,6 +61,32 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: "bg-red-50 text-red-700 border-red-200"
 };
 
+type PayrollMode = NonNullable<PayrollCalculation["rateSnapshot"]["payCalculationMode"]>;
+
+const MODE_LABELS: Record<PayrollMode, string> = {
+  monthly: "Mensualisé",
+  hourly: "Horaire historique",
+  actual_worked_hours: "Heures réellement travaillées",
+};
+
+const MODE_BADGE_STYLES: Record<PayrollMode, string> = {
+  monthly: "bg-indigo-50 text-indigo-700 border-indigo-100",
+  hourly: "bg-slate-100 text-slate-700 border-slate-200",
+  actual_worked_hours: "bg-teal-50 text-teal-700 border-teal-100",
+};
+
+const BASE_LABELS: Record<PayrollMode, string> = {
+  monthly: "Base mensuelle",
+  hourly: "Base horaire",
+  actual_worked_hours: "Base heures travaillées",
+};
+
+const formatEuro = (value?: number | null) =>
+  `€ ${(value ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 2 })}`;
+
+const formatHours = (value?: number | null) =>
+  `${(value ?? 0).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h`;
+
 export default function PayrollSynthesisPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -238,14 +264,10 @@ export default function PayrollSynthesisPage() {
               <TableHeader className="bg-secondary/20 hover:bg-secondary/20">
                 <TableRow className="hover:bg-transparent border-none">
                   <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest h-12">Collaborateur</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest">Type / Mode</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center">Heures (V/N/S)</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Base Mensuelle</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Maj. Nuit</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Maj. Sup</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Fériés</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Retenues</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Extras</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest">Mode</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Heures validées</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Base</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Variables</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">TOTAL BRUT</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center">Alertes</TableHead>
                   <TableHead className="text-right pr-8"></TableHead>
@@ -253,10 +275,10 @@ export default function PayrollSynthesisPage() {
               </TableHeader>
               <TableBody>
                 {loadingCalcs ? (
-                  <TableRow><TableCell colSpan={12} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
                 ) : filteredCalculations.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-32 text-center space-y-4">
+                    <TableCell colSpan={8} className="py-32 text-center space-y-4">
                        <div className="bg-slate-50 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto">
                           <TrendingUp className="w-10 h-10 text-slate-200" />
                        </div>
@@ -270,7 +292,18 @@ export default function PayrollSynthesisPage() {
                   filteredCalculations.map((c) => {
                     const emp = employeesMap.get(c.employeeId);
                     const totalExtras = (c.mealTicketsValue || 0) + (c.mileageValue || 0) + (c.bonusValue || 0);
-                    const isMonthly = c.rateSnapshot.payCalculationMode === 'monthly';
+                    const mode = c.rateSnapshot.payCalculationMode || "monthly";
+                    const isActualWorkedHours = mode === "actual_worked_hours";
+                    const baseValue =
+                      isActualWorkedHours && c.baseWorkedValue != null
+                        ? c.baseWorkedValue
+                        : c.baseGrossValue;
+                    const variablesTotal =
+                      (c.nightValue || 0) +
+                      (c.overtimeValue || 0) +
+                      (c.holidayWorkedValue || 0) +
+                      totalExtras -
+                      (c.deductionValue || 0);
                     
                     return (
                       <TableRow key={c.id} className="hover:bg-slate-50 transition-colors group">
@@ -284,42 +317,41 @@ export default function PayrollSynthesisPage() {
                            </div>
                         </TableCell>
                         <TableCell>
-                           <div className="flex flex-col gap-1">
-                              <Badge variant="outline" className={cn("text-[8px] font-black uppercase px-2 h-4 border-none", isMonthly ? "bg-indigo-50 text-indigo-700" : "bg-teal-50 text-teal-700")}>
-                                {isMonthly ? "Mensualisé" : "Horaire"}
+                           <div className="flex flex-col items-start gap-1.5">
+                              <Badge variant="outline" className={cn("rounded-lg border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide", MODE_BADGE_STYLES[mode])}>
+                                {MODE_LABELS[mode]}
                               </Badge>
-                              {isMonthly && c.rateSnapshot.ccnlLevelId && (
+                              {c.rateSnapshot.ccnlLevelId && (
                                 <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-tight">Level {c.rateSnapshot.levelCode}</span>
                               )}
                            </div>
                         </TableCell>
-                        <TableCell className="text-center">
-                           <div className="flex items-center justify-center gap-2">
-                              <span className="text-xs font-black text-slate-800" title="Validées">{c.attendanceAggregation.totalValidatedHours.toFixed(1)}</span>
-                              <span className="text-[10px] text-muted-foreground">/</span>
-                              <span className="text-[10px] font-bold text-indigo-600" title="Nuit">{c.attendanceAggregation.ordinaryNightHours.toFixed(1)}</span>
-                              <span className="text-[10px] text-muted-foreground">/</span>
-                              <span className="text-[10px] font-bold text-orange-600" title="Supp">{c.attendanceAggregation.overtimeHours.toFixed(1)}</span>
+                        <TableCell className="text-right">
+                           <div className="space-y-0.5">
+                              <p className="text-sm font-black text-slate-800">{formatHours(c.attendanceAggregation.totalValidatedHours)}</p>
+                              <p className="text-[10px] font-bold text-muted-foreground">
+                                Nuit {formatHours(c.attendanceAggregation.ordinaryNightHours)} · Sup. {formatHours(c.attendanceAggregation.overtimeHours)}
+                              </p>
                            </div>
                         </TableCell>
-                        <TableCell className="text-right font-black text-slate-700">
-                          {isMonthly ? (
-                            `€ ${c.baseGrossValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}`
-                          ) : (
-                            <span className="text-muted-foreground font-medium italic">Calc. horaire</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right font-medium text-indigo-700">€ {c.nightValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right font-medium text-orange-700">€ {c.overtimeValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right font-medium text-teal-700">€ {c.holidayWorkedValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right">
-                           {c.deductionValue > 0 ? (
-                             <span className="font-bold text-red-600 text-xs">- € {c.deductionValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</span>
-                           ) : <span className="text-slate-300">—</span>}
+                          <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase tracking-wide text-muted-foreground">{BASE_LABELS[mode]}</p>
+                            <p className="font-black text-slate-700">{formatEuro(baseValue)}</p>
+                          </div>
                         </TableCell>
-                        <TableCell className="text-right font-medium text-slate-500">€ {totalExtras.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="space-y-0.5">
+                            <p className="font-bold text-slate-700">{formatEuro(variablesTotal)}</p>
+                            {isActualWorkedHours && c.paidHolidayValue != null && (
+                              <p className="text-[10px] font-bold text-teal-700">
+                                Fériés rémunérés: {formatEuro(c.paidHolidayValue)}
+                              </p>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right bg-primary/[0.02]">
-                           <span className="font-black text-primary text-sm">€ {c.grossEconomicTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</span>
+                           <span className="font-black text-primary text-sm">{formatEuro(c.grossEconomicTotal)}</span>
                         </TableCell>
                         <TableCell className="text-center">
                            {renderWarningIndicator(c.reconciliationWarnings)}
@@ -366,8 +398,12 @@ export default function PayrollSynthesisPage() {
                  <span className="font-black">Base fixe + Maj.</span>
               </div>
               <div className="flex justify-between text-[10px]">
-                 <span className="text-muted-foreground font-bold">Horaire</span>
-                 <span className="font-black">H. Réelles × Taux</span>
+                 <span className="text-muted-foreground font-bold">Horaire historique</span>
+                 <span className="font-black">Compatibilité</span>
+              </div>
+              <div className="flex justify-between gap-3 text-[10px]">
+                 <span className="text-muted-foreground font-bold">Heures réelles</span>
+                 <span className="text-right font-black">Base + majorations</span>
               </div>
            </CardContent>
         </Card>

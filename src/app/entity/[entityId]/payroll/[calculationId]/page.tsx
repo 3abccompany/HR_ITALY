@@ -29,6 +29,7 @@ import { useCollection, useDoc, useFirebase } from "@/firebase";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import type {
   PayrollCalculation,
+  PayrollPayCalculationMode,
   PayrollReconciliationWarning,
   PayrollWeeklyBreakdown,
 } from "@/types/payroll";
@@ -117,6 +118,33 @@ const CLASSIFICATION_LABELS: Record<string, string> = {
   not_classified: "Non classé",
 };
 
+const MODE_LABELS: Record<PayrollPayCalculationMode, string> = {
+  monthly: "Mensualisé",
+  hourly: "Horaire historique",
+  actual_worked_hours: "Heures réellement travaillées",
+};
+
+const MODE_BADGE_STYLES: Record<PayrollPayCalculationMode, string> = {
+  monthly: "bg-indigo-50 text-indigo-700 border-indigo-100 hover:bg-indigo-50",
+  hourly: "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-100",
+  actual_worked_hours: "bg-teal-50 text-teal-700 border-teal-100 hover:bg-teal-50",
+};
+
+const BASE_LABELS: Record<PayrollPayCalculationMode, string> = {
+  monthly: "Base mensuelle",
+  hourly: "Base horaire",
+  actual_worked_hours: "Base heures travaillées",
+};
+
+const MODE_HELP_TEXT: Record<PayrollPayCalculationMode, string> = {
+  monthly:
+    "Le salarié est calculé sur une base mensuelle contractuelle. Les heures servent à calculer les variables, majorations et retenues.",
+  hourly:
+    "Ce calcul provient du mode horaire historique. Les valeurs enregistrées restent affichées telles quelles pour compatibilité.",
+  actual_worked_hours:
+    "Le salarié est calculé à partir des heures réellement validées. Les majorations sont ajoutées séparément afin d’éviter le double comptage.",
+};
+
 const euro = (value?: number | null) =>
   new Intl.NumberFormat("fr-FR", {
     style: "currency",
@@ -124,8 +152,14 @@ const euro = (value?: number | null) =>
     minimumFractionDigits: 2,
   }).format(value ?? 0);
 
+const optionalEuro = (value?: number | null) =>
+  value == null ? "Non renseigné" : euro(value);
+
 const hours = (value?: number | null) =>
   `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value ?? 0)} h`;
+
+const optionalHours = (value?: number | null) =>
+  value == null ? "Non renseigné" : hours(value);
 
 const formatIsoDate = (value?: string | null) => {
   if (!value) return "Non renseigné";
@@ -436,6 +470,9 @@ export default function PayrollCalculationDetailPage() {
 
   const aggregation = calculation.attendanceAggregation;
   const rate = calculation.rateSnapshot;
+  const mode: PayrollPayCalculationMode = rate.payCalculationMode || "monthly";
+  const isActualWorkedHours = mode === "actual_worked_hours";
+  const isMonthly = mode === "monthly";
   const warnings: PayrollReconciliationWarning[] = Array.isArray(
     calculation.reconciliationWarnings
   )
@@ -581,6 +618,14 @@ export default function PayrollCalculationDetailPage() {
         </AlertDescription>
       </Alert>
 
+      <Alert className="rounded-3xl border-primary/10 bg-white shadow-sm">
+        <Banknote className="h-4 w-4 text-primary" />
+        <AlertTitle className="text-primary">Mode de calcul : {MODE_LABELS[mode]}</AlertTitle>
+        <AlertDescription className="text-slate-700">
+          {MODE_HELP_TEXT[mode]}
+        </AlertDescription>
+      </Alert>
+
       <Card className="rounded-3xl border-primary/10 shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl font-black text-primary">
@@ -593,8 +638,8 @@ export default function PayrollCalculationDetailPage() {
           <SnapshotValue
             label="Mode de calcul"
             value={
-              <Badge className="bg-primary/10 text-primary hover:bg-primary/10">
-                {rate.payCalculationMode === "hourly" ? "Horaire" : "Mensuel"}
+              <Badge variant="outline" className={cn("rounded-lg border px-2 py-0.5 font-black", MODE_BADGE_STYLES[mode])}>
+                {MODE_LABELS[mode]}
               </Badge>
             }
           />
@@ -709,10 +754,22 @@ export default function PayrollCalculationDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <SnapshotValue label="Base mensuelle" value={euro(calculation.baseGrossValue)} />
+            <SnapshotValue label={BASE_LABELS[mode]} value={euro(calculation.baseGrossValue)} />
+            {isActualWorkedHours && (
+              <>
+                <SnapshotValue label="Base heures validées" value={optionalEuro(calculation.baseWorkedValue)} />
+                <SnapshotValue label="Heures validées" value={hours(aggregation.totalValidatedHours)} />
+                <SnapshotValue label="Taux horaire" value={euro(rate.ordinaryHourlyRate)} />
+                <SnapshotValue label="Heures fériées rémunérées" value={optionalHours(calculation.paidHolidayHours)} />
+                <SnapshotValue label="Jours fériés rémunérés" value={optionalEuro(calculation.paidHolidayValue)} />
+              </>
+            )}
             <SnapshotValue label="Majoration nuit" value={euro(calculation.nightValue)} />
             <SnapshotValue label="Heures supplémentaires" value={euro(calculation.overtimeValue)} />
-            <SnapshotValue label="Jour férié travaillé" value={euro(calculation.holidayWorkedValue)} />
+            <SnapshotValue
+              label={isActualWorkedHours ? "Majoration férié travaillé" : "Jour férié travaillé"}
+              value={euro(calculation.holidayWorkedValue)}
+            />
             <SnapshotValue label="Retenues" value={euro(calculation.deductionValue)} />
             <SnapshotValue label="Total extras" value={euro(extras)} />
           </div>
@@ -788,18 +845,46 @@ export default function PayrollCalculationDetailPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-slate-700">
-            <p>
-              Base brute persistée : <strong>{euro(calculation.baseGrossValue)}</strong>.
-            </p>
-            <p>
-              Majorations persistées : nuit <strong>{euro(calculation.nightValue)}</strong>,
-              heures supplémentaires <strong>{euro(calculation.overtimeValue)}</strong> et
-              jours fériés <strong>{euro(calculation.holidayWorkedValue)}</strong>.
-            </p>
-            <p>
-              Extras persistés : <strong>{euro(extras)}</strong>. Retenues persistées :{" "}
-              <strong>{euro(calculation.deductionValue)}</strong>.
-            </p>
+            {isActualWorkedHours ? (
+              <>
+                <p>
+                  Base heures travaillées persistée :{" "}
+                  <strong>{optionalEuro(calculation.baseWorkedValue)}</strong>
+                  {" "}pour <strong>{hours(aggregation.totalValidatedHours)}</strong> à{" "}
+                  <strong>{euro(rate.ordinaryHourlyRate)}</strong>.
+                </p>
+                <p>
+                  Jours fériés rémunérés persistés :{" "}
+                  <strong>{optionalHours(calculation.paidHolidayHours)}</strong> pour{" "}
+                  <strong>{optionalEuro(calculation.paidHolidayValue)}</strong>.
+                </p>
+                <p>
+                  Majorations uniquement : nuit <strong>{euro(calculation.nightValue)}</strong>,
+                  heures supplémentaires <strong>{euro(calculation.overtimeValue)}</strong> et
+                  férié travaillé <strong>{euro(calculation.holidayWorkedValue)}</strong>.
+                </p>
+                <p>
+                  Extras persistés : <strong>{euro(extras)}</strong>. Retenues persistées :{" "}
+                  <strong>{euro(calculation.deductionValue)}</strong>.
+                </p>
+              </>
+            ) : (
+              <>
+                <p>
+                  {isMonthly ? "Base mensuelle" : "Base horaire"} persistée :{" "}
+                  <strong>{euro(calculation.baseGrossValue)}</strong>.
+                </p>
+                <p>
+                  Variables persistées : nuit <strong>{euro(calculation.nightValue)}</strong>,
+                  heures supplémentaires <strong>{euro(calculation.overtimeValue)}</strong> et
+                  jours fériés <strong>{euro(calculation.holidayWorkedValue)}</strong>.
+                </p>
+                <p>
+                  Extras persistés : <strong>{euro(extras)}</strong>. Retenues persistées :{" "}
+                  <strong>{euro(calculation.deductionValue)}</strong>.
+                </p>
+              </>
+            )}
             <Separator />
             <p className="font-bold text-primary">
               Total enregistré : {euro(calculation.grossEconomicTotal)}.
