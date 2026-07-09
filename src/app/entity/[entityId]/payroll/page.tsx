@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { 
   Euro, Calculator, Loader2, Calendar, 
   User, AlertTriangle, CheckCircle2, 
@@ -324,7 +325,12 @@ export default function PayrollSynthesisPage() {
                            {renderWarningIndicator(c.reconciliationWarnings)}
                         </TableCell>
                         <TableCell className="text-right pr-8">
-                           <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100"><ChevronRight className="w-4 h-4" /></Button>
+                           <Button asChild variant="ghost" size="sm" className="h-8 gap-1.5">
+                             <Link href={`/entity/${entityId}/payroll/${encodeURIComponent(c.id)}`}>
+                               Voir détail
+                               <ChevronRight className="w-4 h-4" />
+                             </Link>
+                           </Button>
                         </TableCell>
                       </TableRow>
                     );
