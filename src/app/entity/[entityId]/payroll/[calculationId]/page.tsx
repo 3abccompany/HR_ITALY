@@ -230,11 +230,31 @@ export default function PayrollCalculationDetailPage() {
 
   const aggregation = calculation.attendanceAggregation;
   const rate = calculation.rateSnapshot;
-  const warnings = calculation.reconciliationWarnings ?? [];
-  const weeklyBreakdown: PayrollWeeklyBreakdown[] =
-    calculation.weeklyBreakdown ?? aggregation.weeklyBreakdown ?? [];
-  const sourceAttendanceIds =
-    calculation.sourceAttendanceIds ?? aggregation.sourceAttendanceIds ?? [];
+  const warnings: PayrollReconciliationWarning[] = Array.isArray(
+    calculation.reconciliationWarnings
+  )
+    ? calculation.reconciliationWarnings.filter(
+        (warning): warning is PayrollReconciliationWarning =>
+          warning !== null && typeof warning === "object"
+      )
+    : [];
+  const persistedWeeklyBreakdown = Array.isArray(calculation.weeklyBreakdown)
+    ? calculation.weeklyBreakdown
+    : Array.isArray(aggregation.weeklyBreakdown)
+      ? aggregation.weeklyBreakdown
+      : [];
+  const weeklyBreakdown: PayrollWeeklyBreakdown[] = persistedWeeklyBreakdown.filter(
+    (week): week is PayrollWeeklyBreakdown => week !== null && typeof week === "object"
+  );
+  const persistedSourceAttendanceIds = Array.isArray(calculation.sourceAttendanceIds)
+    ? calculation.sourceAttendanceIds
+    : Array.isArray(aggregation.sourceAttendanceIds)
+      ? aggregation.sourceAttendanceIds
+      : [];
+  const sourceAttendanceIds = persistedSourceAttendanceIds.filter(
+    (attendanceId): attendanceId is string =>
+      typeof attendanceId === "string" && attendanceId.trim().length > 0
+  );
   const extras =
     (calculation.mealTicketsValue ?? 0) +
     (calculation.mileageValue ?? 0) +
@@ -498,9 +518,11 @@ export default function PayrollCalculationDetailPage() {
         </CardHeader>
         <CardContent>
           {sourceAttendanceIds.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Aucun identifiant de présence enregistré.
-            </p>
+            <div className="rounded-2xl border border-dashed border-primary/15 bg-slate-50/70 p-6">
+              <p className="text-sm font-medium text-muted-foreground">
+                Aucune source de présence disponible.
+              </p>
+            </div>
           ) : (
             <div className="flex flex-wrap gap-2">
               {sourceAttendanceIds.map((attendanceId) => (
