@@ -59,6 +59,7 @@ export interface Contract {
   grossMonthly: number;
   grossAnnual: number;
   monthlyPayments?: number;
+  payCalculationMode?: "monthly" | "hourly" | "actual_worked_hours";
   overtimeNote?: string;
 
   // --- Compliance ---

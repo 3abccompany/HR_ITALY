@@ -26,7 +26,8 @@ import {
   PayrollCalculation,
   PayrollRateSnapshot,
   PayrollWeeklyBreakdown,
-  PayrollParameter
+  PayrollParameter,
+  PayrollPayCalculationMode
 } from "@/types/payroll";
 import { AttendanceRecord } from "@/types/attendance";
 import { TimeOffRequest } from "@/types/time-off";
@@ -357,6 +358,32 @@ function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function resolveSupportedPayCalculationMode(
+  mode?: PayrollPayCalculationMode | null
+): PayrollPayCalculationMode | undefined {
+  return mode === "monthly" || mode === "hourly" || mode === "actual_worked_hours"
+    ? mode
+    : undefined;
+}
+
+async function resolvePaidHolidayHoursForActualWorkedMode(
+  db: Firestore,
+  entityId: string,
+  employeeId: string,
+  holidayDates: string[]
+): Promise<number> {
+  let paidHolidayHours = 0;
+
+  for (const holidayDate of holidayDates) {
+    const schedule = await resolveWorkSchedule(db, entityId, employeeId, holidayDate);
+    if (schedule.isReliable && typeof schedule.expectedDailyHours === "number") {
+      paidHolidayHours += Math.max(0, schedule.expectedDailyHours);
+    }
+  }
+
+  return Number(paidHolidayHours.toFixed(2));
+}
+
 export async function aggregateMonthlyAttendance(
   db: Firestore, 
   entityId: string, 
@@ -553,9 +580,14 @@ export async function resolvePayrollRateSnapshot(
   }
 
   // 3. Premium Priority: PayrollParameter > Level value > null
+  const payCalculationMode =
+    resolveSupportedPayCalculationMode(activeParam?.payCalculationMode) ??
+    resolveSupportedPayCalculationMode(contract.payCalculationMode) ??
+    "monthly";
+
   return {
     source: activeParam ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
-    payCalculationMode: activeParam?.payCalculationMode ?? "monthly",
+    payCalculationMode,
     ordinaryHourlyRate: rate || 0,
     grossMonthly: monthly,
     levelCode: contract.levelCode || levelData?.levelCode || null,
@@ -575,10 +607,12 @@ export async function resolvePayrollRateSnapshot(
 export async function calculatePayrollEconomicValues(
   agg: PayrollAttendanceAggregation,
   rate: PayrollRateSnapshot,
-  warnings: PayrollReconciliationWarning[] = []
+  warnings: PayrollReconciliationWarning[] = [],
+  options: { paidHolidayHours?: number } = {}
 ): Promise<any> {
   const rateValue = rate.ordinaryHourlyRate || 0;
   const isMonthly = rate.payCalculationMode === "monthly";
+  const isActualWorkedHours = rate.payCalculationMode === "actual_worked_hours";
 
   const addMissingPremiumWarning = (
     premium: number | null | undefined,
@@ -604,6 +638,15 @@ export async function calculatePayrollEconomicValues(
     });
   }
 
+  if (isActualWorkedHours && rateValue <= 0) {
+    warnings.push({
+      code: "missing_payroll_rate",
+      severity: "blocking",
+      employeeId: agg.employeeId,
+      message: "Taux horaire ordinaire introuvable pour le mode heures réellement travaillées."
+    });
+  }
+
   addMissingPremiumWarning(rate.nightPremiumPercent, agg.ordinaryNightHours || 0, "de nuit");
   addMissingPremiumWarning(rate.overtimePremiumPercent, agg.overtimeDayHours || 0, "heures supplémentaires");
   addMissingPremiumWarning(rate.overtimeNightPremiumPercent, agg.overtimeNightHours || 0, "heures supplémentaires de nuit");
@@ -615,10 +658,14 @@ export async function calculatePayrollEconomicValues(
   );
   
   let baseGrossValue = 0;
+  const baseWorkedValue = roundMoney(agg.totalValidatedHours * rateValue);
+  const paidHolidayHours = isActualWorkedHours ? options.paidHolidayHours ?? 0 : 0;
+  const paidHolidayValue = isActualWorkedHours ? roundMoney(paidHolidayHours * rateValue) : 0;
+
   if (isMonthly) {
     baseGrossValue = roundMoney(rate.grossMonthly || 0);
   } else {
-    baseGrossValue = roundMoney(agg.totalValidatedHours * rateValue);
+    baseGrossValue = baseWorkedValue;
   }
 
   const pNight = (rate.nightPremiumPercent || 0) / 100;
@@ -628,22 +675,34 @@ export async function calculatePayrollEconomicValues(
   const pOvHol = (rate.holidayPremiumPercent || 0) / 100;
 
   const nightValue = roundMoney(agg.ordinaryNightHours * rateValue * pNight);
-  const overtimeDayValue = roundMoney((agg.overtimeDayHours || 0) * rateValue * (1 + pOvDay));
-  const overtimeNightValue = roundMoney((agg.overtimeNightHours || 0) * rateValue * (1 + pOvNight));
-  const overtimeSundayValue = roundMoney((agg.overtimeSundayHours || 0) * rateValue * (1 + pOvSun));
-  const overtimeHolidayValue = roundMoney((agg.overtimeHolidayHours || 0) * rateValue * (1 + pOvHol));
+  const overtimeDayValue = isActualWorkedHours
+    ? roundMoney((agg.overtimeDayHours || 0) * rateValue * pOvDay)
+    : roundMoney((agg.overtimeDayHours || 0) * rateValue * (1 + pOvDay));
+  const overtimeNightValue = isActualWorkedHours
+    ? roundMoney((agg.overtimeNightHours || 0) * rateValue * pOvNight)
+    : roundMoney((agg.overtimeNightHours || 0) * rateValue * (1 + pOvNight));
+  const overtimeSundayValue = isActualWorkedHours
+    ? roundMoney((agg.overtimeSundayHours || 0) * rateValue * pOvSun)
+    : roundMoney((agg.overtimeSundayHours || 0) * rateValue * (1 + pOvSun));
+  const overtimeHolidayValue = isActualWorkedHours
+    ? roundMoney((agg.overtimeHolidayHours || 0) * rateValue * pOvHol)
+    : roundMoney((agg.overtimeHolidayHours || 0) * rateValue * (1 + pOvHol));
 
   const overtimeValue = roundMoney(overtimeDayValue + overtimeNightValue + overtimeSundayValue + overtimeHolidayValue);
 
   // Calculate ordinary holiday value (total holiday hours minus those already paid as overtime)
   const ordinaryHolidayHours = Math.max(0, (agg.holidayWorkedHours || 0) - (agg.overtimeHolidayHours || 0));
-  const holidayWorkedValue = roundMoney(ordinaryHolidayHours * rateValue * (1 + pOvHol));
+  const holidayWorkedValue = isActualWorkedHours
+    ? roundMoney((agg.holidayWorkedHours || 0) * rateValue * pOvHol)
+    : roundMoney(ordinaryHolidayHours * rateValue * (1 + pOvHol));
 
-  const grossEconomicTotal = roundMoney(baseGrossValue + nightValue + overtimeValue + holidayWorkedValue);
+  const grossEconomicTotal = roundMoney(
+    baseGrossValue + paidHolidayValue + nightValue + overtimeValue + holidayWorkedValue
+  );
 
-  return {
+  const result: any = {
     baseGrossValue,
-    ordinaryValue: isMonthly ? baseGrossValue : roundMoney(agg.totalValidatedHours * rateValue),
+    ordinaryValue: isMonthly ? baseGrossValue : baseWorkedValue,
     nightValue,
     overtimeValue,
     overtimeDayValue,
@@ -657,6 +716,15 @@ export async function calculatePayrollEconomicValues(
     bonusValue: 0,
     grossEconomicTotal
   };
+
+  if (isActualWorkedHours) {
+    result.baseWorkedValue = baseWorkedValue;
+    result.paidHolidayHours = paidHolidayHours;
+    result.paidHolidayValue = paidHolidayValue;
+    result.calculationFormulaVersion = "actual_worked_hours_v1";
+  }
+
+  return result;
 }
 
 export async function saveMonthlyPayrollCalculations(
@@ -717,6 +785,15 @@ export async function calculateAndSaveMonthlyPayroll(
       const agg = aggregations[empId];
       const rate = await resolvePayrollRateSnapshot(db, entityId, empId, year, month);
       const empWarnings = allWarnings.filter(w => w.employeeId === empId);
+      const paidHolidayHours =
+        rate.payCalculationMode === "actual_worked_hours"
+          ? await resolvePaidHolidayHoursForActualWorkedMode(
+              db,
+              entityId,
+              empId,
+              Array.from(holidaysMap.keys())
+            )
+          : 0;
 
       const threshold = rate.expectedWeeklyHours;
 
@@ -754,7 +831,9 @@ export async function calculateAndSaveMonthlyPayroll(
          agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
       }
 
-      const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings);
+      const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings, {
+        paidHolidayHours
+      });
 
       finalCalculations.push({
         id: `${empId}_${year}_${month}`,

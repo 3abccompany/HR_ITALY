@@ -8,9 +8,11 @@ export type PayrollCalculationStatus =
   | "locked" 
   | "cancelled";
 
+export type PayrollPayCalculationMode = "monthly" | "hourly" | "actual_worked_hours";
+
 export interface PayrollRateSnapshot {
   source: "ccnl_level" | "ccnl_root" | "contract" | "payroll_parameter" | "manual" | "missing";
-  payCalculationMode?: "monthly" | "hourly";
+  payCalculationMode?: PayrollPayCalculationMode;
   ordinaryHourlyRate: number;
   grossMonthly?: number | null;
   levelCode?: string | null;
@@ -118,6 +120,9 @@ export interface PayrollCalculation {
   
   // Financial Values
   baseGrossValue: number;
+  baseWorkedValue?: number;
+  paidHolidayHours?: number;
+  paidHolidayValue?: number;
   ordinaryValue: number;
   nightValue: number;
   overtimeValue: number;
@@ -138,6 +143,7 @@ export interface PayrollCalculation {
 
   /** Total gross sum before taxes and contributions */
   grossEconomicTotal: number;
+  calculationFormulaVersion?: string;
   
   sourceAttendanceIds: string[];
   sourceTimeOffRequestIds?: string[];
@@ -165,7 +171,7 @@ export interface PayrollParameter {
   effectiveFrom: string; // YYYY-MM-DD
   effectiveTo?: string | null;
   
-  payCalculationMode?: "monthly" | "hourly";
+  payCalculationMode?: PayrollPayCalculationMode;
   ordinaryHourlyRate?: number | null;
   grossMonthly?: number | null;
   
