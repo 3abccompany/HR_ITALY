@@ -3,7 +3,14 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { doc, type DocumentReference } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  query,
+  where,
+  type DocumentReference,
+  type Query,
+} from "firebase/firestore";
 import {
   AlertCircle,
   AlertTriangle,
@@ -13,11 +20,12 @@ import {
   CheckCircle2,
   Clock3,
   FileText,
+  Landmark,
   ShieldCheck,
   User,
 } from "lucide-react";
 
-import { useDoc, useFirebase } from "@/firebase";
+import { useCollection, useDoc, useFirebase } from "@/firebase";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import type {
   PayrollCalculation,
@@ -25,6 +33,11 @@ import type {
   PayrollWeeklyBreakdown,
 } from "@/types/payroll";
 import type { Employee } from "@/types/employee";
+import type { Contract } from "@/types/contract";
+import type { CCNL, CCNLLevel } from "@/types/ccnl";
+import type { Holiday } from "@/types/holiday";
+import type { AttendanceRecord } from "@/types/attendance";
+import type { AppUser } from "@/types/user";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,6 +80,43 @@ const SOURCE_LABELS: Record<string, string> = {
   missing: "Source manquante",
 };
 
+const CONTRACT_STATUS_LABELS: Record<string, string> = {
+  draft: "Brouillon",
+  pending_signature: "En attente de signature",
+  pending_activation: "En attente d’activation",
+  active: "Actif",
+  suspended: "Suspendu",
+  terminated: "Terminé",
+  archived: "Archivé",
+  renewed: "Renouvelé",
+  expired: "Expiré",
+};
+
+const WARNING_LABELS: Record<string, string> = {
+  missing_schedule: "Horaire contractuel manquant",
+  missing_hours: "Heures manquantes",
+  over_expected_hours: "Dépassement des heures prévues",
+  non_working_day_work: "Travail un jour non planifié",
+  holiday_work: "Travail un jour férié",
+  legacy_attendance_split_missing: "Répartition des heures indisponible",
+  missing_payroll_rate: "Taux de rémunération manquant",
+  missing_monthly_gross: "Brut mensuel manquant",
+  missing_premium_rule: "Règle de majoration manquante",
+  raw_overtime_not_weekly_reconciled: "Heures supplémentaires à rapprocher",
+  missing_time_segments_for_overtime_classification: "Plages horaires indisponibles",
+  missing_weekly_schedule: "Seuil hebdomadaire manquant",
+  missing_night_window: "Plage de nuit manquante",
+  missing_overtime_night_premium: "Majoration de nuit manquante",
+  overtime_classification_limited: "Classement des heures supplémentaire limité",
+  calculation_failed: "Calcul incomplet",
+};
+
+const CLASSIFICATION_LABELS: Record<string, string> = {
+  classified: "Classé",
+  limited: "Partiel",
+  not_classified: "Non classé",
+};
+
 const euro = (value?: number | null) =>
   new Intl.NumberFormat("fr-FR", {
     style: "currency",
@@ -76,6 +126,17 @@ const euro = (value?: number | null) =>
 
 const hours = (value?: number | null) =>
   `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value ?? 0)} h`;
+
+const formatIsoDate = (value?: string | null) => {
+  if (!value) return "Non renseigné";
+  const [year, month, day] = value.split("-");
+  return year && month && day ? `${day}/${month}/${year}` : "Non renseigné";
+};
+
+const auditUserLabel = (user: AppUser | null) => {
+  if (!user) return "Non renseigné";
+  return user.displayName?.trim() || [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email || "Non renseigné";
+};
 
 function formatStoredDate(value: unknown): string {
   if (!value) return "Non renseigné";
@@ -135,7 +196,7 @@ function WarningCard({ warning }: { warning: PayrollReconciliationWarning }) {
       )}
       <div>
         <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-          {warning.code.replaceAll("_", " ")}
+          {WARNING_LABELS[warning.code] || "Alerte de cohérence"}
           {warning.date ? ` • ${warning.date}` : ""}
         </p>
         <p className="mt-1 text-sm font-semibold text-slate-800">{warning.message}</p>
@@ -182,6 +243,151 @@ export default function PayrollCalculationDetailPage() {
     [db, entityId, calculation?.employeeId, canRead]
   );
   const { data: employee } = useDoc<Employee>(employeeRef, "payroll.calculation-employee");
+
+  const contractRef = useMemo(
+    () =>
+      db && entityId && calculation?.rateSnapshot?.contractId && canRead
+        ? (doc(
+            db,
+            `entities/${entityId}/contracts`,
+            calculation.rateSnapshot.contractId
+          ) as DocumentReference<Contract>)
+        : null,
+    [db, entityId, calculation?.rateSnapshot?.contractId, canRead]
+  );
+  const { data: contract } = useDoc<Contract>(contractRef, "payroll.calculation-contract");
+
+  const ccnlRef = useMemo(
+    () =>
+      db && entityId && calculation?.rateSnapshot?.ccnlId && canRead
+        ? (doc(
+            db,
+            `entities/${entityId}/ccnls`,
+            calculation.rateSnapshot.ccnlId
+          ) as DocumentReference<CCNL>)
+        : null,
+    [db, entityId, calculation?.rateSnapshot?.ccnlId, canRead]
+  );
+  const { data: ccnl } = useDoc<CCNL>(ccnlRef, "payroll.calculation-ccnl");
+
+  const levelRef = useMemo(
+    () =>
+      db &&
+      entityId &&
+      calculation?.rateSnapshot?.ccnlId &&
+      calculation?.rateSnapshot?.ccnlLevelId &&
+      canRead
+        ? (doc(
+            db,
+            `entities/${entityId}/ccnls/${calculation.rateSnapshot.ccnlId}/levels`,
+            calculation.rateSnapshot.ccnlLevelId
+          ) as DocumentReference<CCNLLevel>)
+        : null,
+    [
+      db,
+      entityId,
+      calculation?.rateSnapshot?.ccnlId,
+      calculation?.rateSnapshot?.ccnlLevelId,
+      canRead,
+    ]
+  );
+  const { data: level } = useDoc<CCNLLevel>(levelRef, "payroll.calculation-level");
+
+  const period = useMemo(() => {
+    if (!calculation) return null;
+    const month = String(calculation.month).padStart(2, "0");
+    const lastDay = String(new Date(calculation.year, calculation.month, 0).getDate()).padStart(
+      2,
+      "0"
+    );
+    return {
+      start: `${calculation.year}-${month}-01`,
+      end: `${calculation.year}-${month}-${lastDay}`,
+    };
+  }, [calculation]);
+
+  const holidaysQuery = useMemo(
+    () =>
+      db && entityId && period && canRead
+        ? (query(
+            collection(db, `entities/${entityId}/holidays`),
+            where("date", ">=", period.start),
+            where("date", "<=", period.end)
+          ) as Query<Holiday>)
+        : null,
+    [db, entityId, period, canRead]
+  );
+  const { data: monthlyHolidays } = useCollection<Holiday>(
+    holidaysQuery,
+    "payroll.calculation-holidays"
+  );
+
+  const attendanceQuery = useMemo(
+    () =>
+      db && entityId && calculation?.employeeId && period && canRead
+        ? (query(
+            collection(db, `entities/${entityId}/attendances`),
+            where("employeeId", "==", calculation.employeeId),
+            where("attendanceDate", ">=", period.start),
+            where("attendanceDate", "<=", period.end)
+          ) as Query<AttendanceRecord>)
+        : null,
+    [db, entityId, calculation?.employeeId, period, canRead]
+  );
+  const { data: monthlyAttendance } = useCollection<AttendanceRecord>(
+    attendanceQuery,
+    "payroll.calculation-attendance"
+  );
+
+  const calculatedByRef = useMemo(
+    () =>
+      db && calculation?.calculatedBy && canRead
+        ? (doc(db, "users", calculation.calculatedBy) as DocumentReference<AppUser>)
+        : null,
+    [db, calculation?.calculatedBy, canRead]
+  );
+  const updatedByRef = useMemo(
+    () =>
+      db && calculation?.updatedBy && canRead
+        ? (doc(db, "users", calculation.updatedBy) as DocumentReference<AppUser>)
+        : null,
+    [db, calculation?.updatedBy, canRead]
+  );
+  const approvedByRef = useMemo(
+    () =>
+      db && calculation?.approvedBy && canRead
+        ? (doc(db, "users", calculation.approvedBy) as DocumentReference<AppUser>)
+        : null,
+    [db, calculation?.approvedBy, canRead]
+  );
+  const exportedByRef = useMemo(
+    () =>
+      db && calculation?.exportedBy && canRead
+        ? (doc(db, "users", calculation.exportedBy) as DocumentReference<AppUser>)
+        : null,
+    [db, calculation?.exportedBy, canRead]
+  );
+  const lockedByRef = useMemo(
+    () =>
+      db && calculation?.lockedBy && canRead
+        ? (doc(db, "users", calculation.lockedBy) as DocumentReference<AppUser>)
+        : null,
+    [db, calculation?.lockedBy, canRead]
+  );
+  const { data: calculatedByUser } = useDoc<AppUser>(
+    calculatedByRef,
+    "payroll.audit-calculated-by"
+  );
+  const { data: updatedByUser } = useDoc<AppUser>(updatedByRef, "payroll.audit-updated-by");
+  const { data: approvedByUser } = useDoc<AppUser>(
+    approvedByRef,
+    "payroll.audit-approved-by"
+  );
+  const { data: exportedByUser } = useDoc<AppUser>(
+    exportedByRef,
+    "payroll.audit-exported-by"
+  );
+  const { data: lockedByUser } = useDoc<AppUser>(lockedByRef, "payroll.audit-locked-by");
 
   if (membershipLoading || calculationLoading) {
     return (
@@ -246,19 +452,58 @@ export default function PayrollCalculationDetailPage() {
   const weeklyBreakdown: PayrollWeeklyBreakdown[] = persistedWeeklyBreakdown.filter(
     (week): week is PayrollWeeklyBreakdown => week !== null && typeof week === "object"
   );
-  const persistedSourceAttendanceIds = Array.isArray(calculation.sourceAttendanceIds)
-    ? calculation.sourceAttendanceIds
-    : Array.isArray(aggregation.sourceAttendanceIds)
-      ? aggregation.sourceAttendanceIds
-      : [];
-  const sourceAttendanceIds = persistedSourceAttendanceIds.filter(
-    (attendanceId): attendanceId is string =>
-      typeof attendanceId === "string" && attendanceId.trim().length > 0
-  );
   const extras =
     (calculation.mealTicketsValue ?? 0) +
     (calculation.mileageValue ?? 0) +
     (calculation.bonusValue ?? 0);
+  const activeHolidays = monthlyHolidays.filter((holiday) => holiday.status === "active");
+  const holidaysByDate = new Map(activeHolidays.map((holiday) => [holiday.date, holiday]));
+  const reliableAttendanceStatuses = new Set(["validated", "corrected", "locked"]);
+  const inferredHolidayRows = monthlyAttendance
+    .filter((attendance) => {
+      const isHoliday =
+        attendance.holidayFlag === true || holidaysByDate.has(attendance.attendanceDate);
+      const workedHours = attendance.holidayWorkedHours ?? attendance.validatedHours ?? 0;
+      return (
+        reliableAttendanceStatuses.has(attendance.status) &&
+        isHoliday &&
+        workedHours > 0
+      );
+    })
+    .map((attendance) => {
+      const holiday = holidaysByDate.get(attendance.attendanceDate);
+      return {
+        date: attendance.attendanceDate,
+        name: attendance.holidayName || holiday?.name || "Jour férié",
+        workedHours: attendance.holidayWorkedHours ?? attendance.validatedHours ?? 0,
+      };
+    });
+  const holidayRows =
+    inferredHolidayRows.length > 0
+      ? inferredHolidayRows
+      : aggregation.holidayWorkedHours > 0 && activeHolidays.length === 1
+        ? [
+            {
+              date: activeHolidays[0].date,
+              name: activeHolidays[0].name,
+              workedHours: aggregation.holidayWorkedHours,
+            },
+          ]
+        : [];
+  const contractSummary = contract
+    ? [
+        contract.contractType,
+        CONTRACT_STATUS_LABELS[contract.status] || contract.status,
+        contract.startDate ? `depuis le ${formatIsoDate(contract.startDate)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" • ")
+    : "Non renseigné";
+  const ccnlLabel = ccnl?.name || contract?.ccnlName || "Non renseigné";
+  const livelloLabel =
+    [level?.levelCode || contract?.levelCode || rate.levelCode, level?.label || contract?.levelLabel]
+      .filter(Boolean)
+      .join(" — ") || "Non renseigné";
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-8 p-8 pb-24">
@@ -280,9 +525,22 @@ export default function PayrollCalculationDetailPage() {
                 Synthèse économique / Pré-paie brute
               </p>
               <h1 className="mt-1 text-3xl font-black tracking-tight text-primary">
-                {employee?.displayName || calculation.employeeId}
+                {employee
+                  ? `${employee.firstName || ""} ${employee.lastName || ""}`.trim() ||
+                    employee.displayName
+                  : contract?.employeeDisplayName || "Collaborateur non renseigné"}
               </h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
+                {(employee?.employeeCode || contract?.employeeCode) && (
+                  <Badge variant="outline" className="rounded-lg">
+                    Matricule {employee?.employeeCode || contract?.employeeCode}
+                  </Badge>
+                )}
+                {(employee?.taxCode || contract?.taxCode) && (
+                  <Badge variant="outline" className="rounded-lg">
+                    Codice fiscale {employee?.taxCode || contract?.taxCode}
+                  </Badge>
+                )}
                 <Badge variant="outline" className="gap-1.5 rounded-lg">
                   <CalendarDays className="h-3.5 w-3.5" />
                   {String(calculation.month).padStart(2, "0")}/{calculation.year}
@@ -331,20 +589,93 @@ export default function PayrollCalculationDetailPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <SnapshotValue label="Source du taux" value={SOURCE_LABELS[rate.source] || rate.source} />
-          <SnapshotValue label="Mode de calcul" value={rate.payCalculationMode === "hourly" ? "Horaire" : "Mensuel"} />
+          <SnapshotValue label="Source du taux" value={SOURCE_LABELS[rate.source] || "Non renseigné"} />
+          <SnapshotValue
+            label="Mode de calcul"
+            value={
+              <Badge className="bg-primary/10 text-primary hover:bg-primary/10">
+                {rate.payCalculationMode === "hourly" ? "Horaire" : "Mensuel"}
+              </Badge>
+            }
+          />
           <SnapshotValue label="Taux horaire ordinaire" value={euro(rate.ordinaryHourlyRate)} />
           <SnapshotValue label="Brut mensuel" value={rate.grossMonthly == null ? "Non renseigné" : euro(rate.grossMonthly)} />
-          <SnapshotValue label="Contrat" value={rate.contractId || "Non renseigné"} />
-          <SnapshotValue label="CCNL" value={rate.ccnlId || "Non renseigné"} />
-          <SnapshotValue label="Livello" value={rate.levelCode || rate.ccnlLevelId || "Non renseigné"} />
-          <SnapshotValue label="Paramètre salarié" value={rate.payrollParameterId || "Aucun"} />
+          <SnapshotValue label="Contrat" value={contractSummary} />
+          <SnapshotValue label="CCNL" value={ccnlLabel} />
+          <SnapshotValue label="Livello" value={livelloLabel} />
+          <SnapshotValue
+            label="Paramètre salarié"
+            value={rate.payrollParameterId ? "Dérogation individuelle appliquée" : "Aucune dérogation"}
+          />
           <SnapshotValue label="Seuil hebdomadaire" value={rate.expectedWeeklyHours == null ? "Non renseigné" : hours(rate.expectedWeeklyHours)} />
           <SnapshotValue label="Majoration nuit" value={rate.nightPremiumPercent == null ? "Non renseignée" : `${rate.nightPremiumPercent} %`} />
           <SnapshotValue label="Majoration supplémentaire" value={rate.overtimePremiumPercent == null ? "Non renseignée" : `${rate.overtimePremiumPercent} %`} />
           <SnapshotValue label="Majoration sup. nuit" value={rate.overtimeNightPremiumPercent == null ? "Non renseignée" : `${rate.overtimeNightPremiumPercent} %`} />
           <SnapshotValue label="Majoration dimanche" value={rate.sundayPremiumPercent == null ? "Non renseignée" : `${rate.sundayPremiumPercent} %`} />
           <SnapshotValue label="Majoration jour férié" value={rate.holidayPremiumPercent == null ? "Non renseignée" : `${rate.holidayPremiumPercent} %`} />
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden rounded-3xl border-emerald-200 bg-emerald-50/40 shadow-sm">
+        <CardHeader className="border-b border-emerald-100 bg-white/70">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-xl font-black text-emerald-900">
+                <Landmark className="h-5 w-5" />
+                Jour férié travaillé
+              </CardTitle>
+              <p className="mt-1 text-sm text-emerald-800/70">
+                Lecture des présences et du registre des jours fériés du mois.
+              </p>
+            </div>
+            <div className="rounded-2xl bg-emerald-900 px-5 py-3 text-white">
+              <p className="text-[10px] font-black uppercase tracking-widest text-white/60">
+                Montant enregistré
+              </p>
+              <p className="text-xl font-black">{euro(calculation.holidayWorkedValue)}</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-6">
+          {holidayRows.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-emerald-200 bg-white/70 p-6">
+              <p className="font-bold text-emerald-950">
+                Aucun détail nominatif de jour férié disponible.
+              </p>
+              <p className="mt-1 text-sm text-emerald-800/70">
+                Le calcul enregistré conserve {hours(aggregation.holidayWorkedHours)} de
+                travail férié pour un montant de {euro(calculation.holidayWorkedValue)}.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {holidayRows.map((holiday, index) => (
+                <div
+                  key={`${holiday.date}-${index}`}
+                  className="grid gap-4 rounded-2xl border border-emerald-100 bg-white p-5 sm:grid-cols-2 lg:grid-cols-5"
+                >
+                  <SnapshotValue label="Jour férié" value={holiday.name} />
+                  <SnapshotValue label="Date" value={formatIsoDate(holiday.date)} />
+                  <SnapshotValue label="Heures travaillées" value={hours(holiday.workedHours)} />
+                  <SnapshotValue label="Taux horaire" value={euro(rate.ordinaryHourlyRate)} />
+                  <SnapshotValue
+                    label="Majoration férié"
+                    value={
+                      rate.holidayPremiumPercent == null
+                        ? "Non renseignée"
+                        : `${rate.holidayPremiumPercent} %`
+                    }
+                  />
+                </div>
+              ))}
+              {holidayRows.length > 1 && (
+                <p className="text-xs text-emerald-800/70">
+                  Le montant affiché est le total enregistré pour l’ensemble des jours fériés
+                  travaillés. Il n’est pas réparti à nouveau par date.
+                </p>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -377,20 +708,12 @@ export default function PayrollCalculationDetailPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <SnapshotValue label="Base brute" value={euro(calculation.baseGrossValue)} />
-            <SnapshotValue label="Valeur ordinaire" value={euro(calculation.ordinaryValue)} />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <SnapshotValue label="Base mensuelle" value={euro(calculation.baseGrossValue)} />
             <SnapshotValue label="Majoration nuit" value={euro(calculation.nightValue)} />
-            <SnapshotValue label="Total heures supplémentaires" value={euro(calculation.overtimeValue)} />
-            <SnapshotValue label="Sup. jour" value={euro(calculation.overtimeDayValue)} />
-            <SnapshotValue label="Sup. nuit" value={euro(calculation.overtimeNightValue)} />
-            <SnapshotValue label="Sup. dimanche" value={euro(calculation.overtimeSundayValue)} />
-            <SnapshotValue label="Sup. férié" value={euro(calculation.overtimeHolidayValue)} />
-            <SnapshotValue label="Travail jour férié" value={euro(calculation.holidayWorkedValue)} />
+            <SnapshotValue label="Heures supplémentaires" value={euro(calculation.overtimeValue)} />
+            <SnapshotValue label="Jour férié travaillé" value={euro(calculation.holidayWorkedValue)} />
             <SnapshotValue label="Retenues" value={euro(calculation.deductionValue)} />
-            <SnapshotValue label="Tickets repas" value={euro(calculation.mealTicketsValue)} />
-            <SnapshotValue label="Indemnité kilométrique" value={euro(calculation.mileageValue)} />
-            <SnapshotValue label="Prime / bonus" value={euro(calculation.bonusValue)} />
             <SnapshotValue label="Total extras" value={euro(extras)} />
           </div>
           <Separator />
@@ -427,7 +750,7 @@ export default function PayrollCalculationDetailPage() {
                     <TableHead className="text-right">Jour</TableHead>
                     <TableHead className="text-right">Nuit</TableHead>
                     <TableHead className="text-right">Dimanche</TableHead>
-                    <TableHead className="text-right">Férié</TableHead>
+                    <TableHead className="text-right">Sup. férié</TableHead>
                     <TableHead>Classement</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -444,7 +767,9 @@ export default function PayrollCalculationDetailPage() {
                       <TableCell className="text-right">{hours(week.overtimeSundayHours)}</TableCell>
                       <TableCell className="text-right">{hours(week.overtimeHolidayHours)}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{week.classificationStatus}</Badge>
+                        <Badge variant="outline">
+                          {CLASSIFICATION_LABELS[week.classificationStatus] || "Non renseigné"}
+                        </Badge>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -512,35 +837,6 @@ export default function PayrollCalculationDetailPage() {
 
       <Card className="rounded-3xl border-primary/10 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-xl font-black text-primary">
-            Sources de présence
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {sourceAttendanceIds.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-primary/15 bg-slate-50/70 p-6">
-              <p className="text-sm font-medium text-muted-foreground">
-                Aucune source de présence disponible.
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {sourceAttendanceIds.map((attendanceId) => (
-                <Badge
-                  key={attendanceId}
-                  variant="outline"
-                  className="max-w-full break-all rounded-lg font-mono text-[10px]"
-                >
-                  {attendanceId}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-3xl border-primary/10 shadow-sm">
-        <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl font-black text-primary">
             <User className="h-5 w-5" />
             Métadonnées d’audit enregistrées
@@ -548,17 +844,15 @@ export default function PayrollCalculationDetailPage() {
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SnapshotValue label="Calculé le" value={formatStoredDate(calculation.calculatedAt)} />
-          <SnapshotValue label="Calculé par" value={calculation.calculatedBy || "Non renseigné"} />
-          <SnapshotValue label="Créé le" value={formatStoredDate(calculation.createdAt)} />
-          <SnapshotValue label="Créé par" value={calculation.createdBy || "Non renseigné"} />
+          <SnapshotValue label="Calculé par" value={auditUserLabel(calculatedByUser)} />
           <SnapshotValue label="Mis à jour le" value={formatStoredDate(calculation.updatedAt)} />
-          <SnapshotValue label="Mis à jour par" value={calculation.updatedBy || "Non renseigné"} />
+          <SnapshotValue label="Mis à jour par" value={auditUserLabel(updatedByUser)} />
           <SnapshotValue label="Approuvé le" value={formatStoredDate(calculation.approvedAt)} />
-          <SnapshotValue label="Approuvé par" value={calculation.approvedBy || "Non renseigné"} />
+          <SnapshotValue label="Approuvé par" value={auditUserLabel(approvedByUser)} />
           <SnapshotValue label="Exporté le" value={formatStoredDate(calculation.exportedAt)} />
-          <SnapshotValue label="Exporté par" value={calculation.exportedBy || "Non renseigné"} />
+          <SnapshotValue label="Exporté par" value={auditUserLabel(exportedByUser)} />
           <SnapshotValue label="Verrouillé le" value={formatStoredDate(calculation.lockedAt)} />
-          <SnapshotValue label="Verrouillé par" value={calculation.lockedBy || "Non renseigné"} />
+          <SnapshotValue label="Verrouillé par" value={auditUserLabel(lockedByUser)} />
         </CardContent>
       </Card>
     </div>
