@@ -16,7 +16,6 @@ import {
   setDoc,
   updateDoc,
   serverTimestamp,
-  limit,
   Timestamp,
   FieldValue,
   runTransaction
@@ -26,7 +25,8 @@ import {
   PayrollReconciliationWarning, 
   PayrollCalculation,
   PayrollRateSnapshot,
-  PayrollWeeklyBreakdown
+  PayrollWeeklyBreakdown,
+  PayrollParameter
 } from "@/types/payroll";
 import { AttendanceRecord } from "@/types/attendance";
 import { TimeOffRequest } from "@/types/time-off";
@@ -47,6 +47,7 @@ import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { getDefaultAccrualRules, resolveAccrualRulesForCcnlLevel } from "./ccnl.service";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
+import { createAuditLog } from "./audit.service";
 
 // --- Internal Overtime Reconciliation Helpers ---
 
@@ -471,14 +472,15 @@ export async function resolvePayrollRateSnapshot(
   year: number,
   month: number
 ): Promise<PayrollRateSnapshot> {
+  const { startDateIso, endDateIso } = await getPayrollMonthRange(year, month);
   const [empRefSnap, paramsSnap] = await Promise.all([
     getDoc(doc(db, `entities/${entityId}/employees`, employeeId)),
     getDocs(query(
       collection(db, `entities/${entityId}/payrollParameters`),
       where("employeeId", "==", employeeId),
       where("status", "==", "active"),
+      where("effectiveFrom", "<=", endDateIso),
       orderBy("effectiveFrom", "desc"),
-      limit(1)
     ))
   ]);
 
@@ -486,10 +488,17 @@ export async function resolvePayrollRateSnapshot(
   const emp = empRefSnap.data() as Employee;
   if (!emp.activeContractId) return { source: "missing", ordinaryHourlyRate: 0 };
 
-  const [contractSnap, activeParam] = [
-    await getDoc(doc(db, `entities/${entityId}/contracts`, emp.activeContractId)),
-    !paramsSnap.empty ? paramsSnap.docs[0].data() as any : null
-  ];
+  const activeParamDoc = paramsSnap.docs.find((parameterDoc) => {
+    const parameter = parameterDoc.data() as PayrollParameter;
+    return !parameter.effectiveTo || parameter.effectiveTo >= startDateIso;
+  });
+  const activeParam = activeParamDoc
+    ? { ...activeParamDoc.data(), id: activeParamDoc.id } as PayrollParameter
+    : null;
+
+  const contractSnap = await getDoc(
+    doc(db, `entities/${entityId}/contracts`, emp.activeContractId)
+  );
 
   if (!contractSnap.exists()) return { source: "missing", ordinaryHourlyRate: 0 };
   const contract = contractSnap.data() as Contract;
@@ -508,11 +517,24 @@ export async function resolvePayrollRateSnapshot(
   }
 
   // 1. Rate Priority: PayrollParameter > Level Rate > (Monthly / Divisor)
-  let rate = activeParam?.ordinaryHourlyRate || levelData?.minimumGrossHourly || 0;
-  const divisor = ccnlData?.hourlyDivisor || 0;
-  const monthly = activeParam?.grossMonthly || contract.grossMonthly || levelData?.minimumGrossMonthly || 0;
+  const isValidPositive = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value) && value > 0;
 
-  if (rate <= 0 && monthly > 0 && divisor > 0) {
+  let rate = isValidPositive(activeParam?.ordinaryHourlyRate)
+    ? activeParam.ordinaryHourlyRate
+    : isValidPositive(levelData?.minimumGrossHourly)
+      ? levelData.minimumGrossHourly
+      : 0;
+  const divisor = ccnlData?.hourlyDivisor || 0;
+  const monthly = isValidPositive(activeParam?.grossMonthly)
+    ? activeParam.grossMonthly
+    : isValidPositive(levelData?.minimumGrossMonthly)
+      ? levelData.minimumGrossMonthly
+      : isValidPositive(contract.grossMonthly)
+        ? contract.grossMonthly
+        : null;
+
+  if (rate <= 0 && monthly !== null && divisor > 0) {
     rate = monthly / divisor;
   }
 
@@ -533,15 +555,15 @@ export async function resolvePayrollRateSnapshot(
   // 3. Premium Priority: PayrollParameter > Level value > null
   return {
     source: activeParam ? "payroll_parameter" : (levelData ? "ccnl_level" : "contract"),
-    payCalculationMode: monthly ? "monthly" : "hourly",
+    payCalculationMode: activeParam?.payCalculationMode ?? "monthly",
     ordinaryHourlyRate: rate || 0,
-    grossMonthly: monthly || null,
+    grossMonthly: monthly,
     levelCode: contract.levelCode || levelData?.levelCode || null,
     expectedWeeklyHours,
     contractId: emp.activeContractId,
     ccnlId: contract.ccnlId,
     ccnlLevelId: contract.levelId,
-    payrollParameterId: !paramsSnap.empty ? paramsSnap.docs[0].id : undefined,
+    payrollParameterId: activeParamDoc?.id,
     nightPremiumPercent: activeParam?.nightPremiumPercent ?? levelData?.nightPremiumPercent ?? null,
     overtimePremiumPercent: activeParam?.overtimePremiumPercent ?? levelData?.overtimePremiumPercent ?? null,
     overtimeNightPremiumPercent: activeParam?.overtimeNightPremiumPercent ?? levelData?.overtimeNightPremiumPercent ?? null,
@@ -557,6 +579,40 @@ export async function calculatePayrollEconomicValues(
 ): Promise<any> {
   const rateValue = rate.ordinaryHourlyRate || 0;
   const isMonthly = rate.payCalculationMode === "monthly";
+
+  const addMissingPremiumWarning = (
+    premium: number | null | undefined,
+    applicableHours: number,
+    label: string
+  ) => {
+    if (premium == null && applicableHours > 0) {
+      warnings.push({
+        code: "missing_premium_rule",
+        severity: "warning",
+        employeeId: agg.employeeId,
+        message: `Majoration ${label} non configurée pour ${applicableHours.toFixed(2)} heure(s).`
+      });
+    }
+  };
+
+  if (isMonthly && rate.grossMonthly == null) {
+    warnings.push({
+      code: "missing_monthly_gross",
+      severity: "blocking",
+      employeeId: agg.employeeId,
+      message: "Salaire brut mensuel introuvable dans le paramètre salarié, le Livello et le contrat."
+    });
+  }
+
+  addMissingPremiumWarning(rate.nightPremiumPercent, agg.ordinaryNightHours || 0, "de nuit");
+  addMissingPremiumWarning(rate.overtimePremiumPercent, agg.overtimeDayHours || 0, "heures supplémentaires");
+  addMissingPremiumWarning(rate.overtimeNightPremiumPercent, agg.overtimeNightHours || 0, "heures supplémentaires de nuit");
+  addMissingPremiumWarning(rate.sundayPremiumPercent, agg.overtimeSundayHours || 0, "dimanche");
+  addMissingPremiumWarning(
+    rate.holidayPremiumPercent,
+    Math.max(agg.holidayWorkedHours || 0, agg.overtimeHolidayHours || 0),
+    "jour férié"
+  );
   
   let baseGrossValue = 0;
   if (isMonthly) {
@@ -712,6 +768,8 @@ export async function calculateAndSaveMonthlyPayroll(
         reconciliationWarnings: empWarnings,
         ...econ,
         sourceAttendanceIds: agg.sourceAttendanceIds,
+        calculatedAt: new Date(),
+        calculatedBy: actorUid,
         createdAt: new Date(),
         createdBy: actorUid,
         updatedAt: new Date(),
@@ -724,6 +782,34 @@ export async function calculateAndSaveMonthlyPayroll(
   }
 
   const saveResults = await saveMonthlyPayrollCalculations(db, entityId, finalCalculations, actorUid);
+
+  try {
+    await createAuditLog({
+      userId: actorUid,
+      entityId,
+      action: "payroll.calculated",
+      resourceType: "payrollCalculation",
+      resourceId: `${year}_${month}`,
+      details: {
+        year,
+        month,
+        employeesCalculated: finalCalculations.length,
+        calculationsCreatedOrUpdated: saveResults.created + saveResults.updated,
+        warningsCount: finalCalculations.reduce(
+          (total, calculation) => total + calculation.reconciliationWarnings.length,
+          0
+        ),
+        totalGrossEconomicAmount: roundMoney(
+          finalCalculations.reduce(
+            (total, calculation) => total + calculation.grossEconomicTotal,
+            0
+          )
+        )
+      }
+    });
+  } catch (auditError) {
+    console.warn("[Payroll] Failed to write payroll calculation audit log:", auditError);
+  }
 
   return {
     totalEmployees: Object.keys(aggregations).length,
