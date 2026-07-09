@@ -38,7 +38,6 @@ import type { Contract } from "@/types/contract";
 import type { CCNL, CCNLLevel } from "@/types/ccnl";
 import type { Holiday } from "@/types/holiday";
 import type { AttendanceRecord } from "@/types/attendance";
-import type { AppUser } from "@/types/user";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -161,15 +160,23 @@ const hours = (value?: number | null) =>
 const optionalHours = (value?: number | null) =>
   value == null ? "Non renseigné" : hours(value);
 
+const persistedAuditActorLabel = (calculation: PayrollCalculation, field: string) => {
+  const raw = calculation as unknown as Record<string, unknown>;
+  const readableValue =
+    raw[`${field}DisplayName`] ||
+    raw[`${field}Name`] ||
+    raw[`${field}Email`] ||
+    raw[`${field}UserEmail`];
+
+  return typeof readableValue === "string" && readableValue.trim().length > 0
+    ? readableValue
+    : "Non renseigné";
+};
+
 const formatIsoDate = (value?: string | null) => {
   if (!value) return "Non renseigné";
   const [year, month, day] = value.split("-");
   return year && month && day ? `${day}/${month}/${year}` : "Non renseigné";
-};
-
-const auditUserLabel = (user: AppUser | null) => {
-  if (!user) return "Non renseigné";
-  return user.displayName?.trim() || [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email || "Non renseigné";
 };
 
 function formatStoredDate(value: unknown): string {
@@ -372,56 +379,6 @@ export default function PayrollCalculationDetailPage() {
     attendanceQuery,
     "payroll.calculation-attendance"
   );
-
-  const calculatedByRef = useMemo(
-    () =>
-      db && calculation?.calculatedBy && canRead
-        ? (doc(db, "users", calculation.calculatedBy) as DocumentReference<AppUser>)
-        : null,
-    [db, calculation?.calculatedBy, canRead]
-  );
-  const updatedByRef = useMemo(
-    () =>
-      db && calculation?.updatedBy && canRead
-        ? (doc(db, "users", calculation.updatedBy) as DocumentReference<AppUser>)
-        : null,
-    [db, calculation?.updatedBy, canRead]
-  );
-  const approvedByRef = useMemo(
-    () =>
-      db && calculation?.approvedBy && canRead
-        ? (doc(db, "users", calculation.approvedBy) as DocumentReference<AppUser>)
-        : null,
-    [db, calculation?.approvedBy, canRead]
-  );
-  const exportedByRef = useMemo(
-    () =>
-      db && calculation?.exportedBy && canRead
-        ? (doc(db, "users", calculation.exportedBy) as DocumentReference<AppUser>)
-        : null,
-    [db, calculation?.exportedBy, canRead]
-  );
-  const lockedByRef = useMemo(
-    () =>
-      db && calculation?.lockedBy && canRead
-        ? (doc(db, "users", calculation.lockedBy) as DocumentReference<AppUser>)
-        : null,
-    [db, calculation?.lockedBy, canRead]
-  );
-  const { data: calculatedByUser } = useDoc<AppUser>(
-    calculatedByRef,
-    "payroll.audit-calculated-by"
-  );
-  const { data: updatedByUser } = useDoc<AppUser>(updatedByRef, "payroll.audit-updated-by");
-  const { data: approvedByUser } = useDoc<AppUser>(
-    approvedByRef,
-    "payroll.audit-approved-by"
-  );
-  const { data: exportedByUser } = useDoc<AppUser>(
-    exportedByRef,
-    "payroll.audit-exported-by"
-  );
-  const { data: lockedByUser } = useDoc<AppUser>(lockedByRef, "payroll.audit-locked-by");
 
   if (membershipLoading || calculationLoading) {
     return (
@@ -929,15 +886,15 @@ export default function PayrollCalculationDetailPage() {
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SnapshotValue label="Calculé le" value={formatStoredDate(calculation.calculatedAt)} />
-          <SnapshotValue label="Calculé par" value={auditUserLabel(calculatedByUser)} />
+          <SnapshotValue label="Calculé par" value={persistedAuditActorLabel(calculation, "calculatedBy")} />
           <SnapshotValue label="Mis à jour le" value={formatStoredDate(calculation.updatedAt)} />
-          <SnapshotValue label="Mis à jour par" value={auditUserLabel(updatedByUser)} />
+          <SnapshotValue label="Mis à jour par" value={persistedAuditActorLabel(calculation, "updatedBy")} />
           <SnapshotValue label="Approuvé le" value={formatStoredDate(calculation.approvedAt)} />
-          <SnapshotValue label="Approuvé par" value={auditUserLabel(approvedByUser)} />
+          <SnapshotValue label="Approuvé par" value={persistedAuditActorLabel(calculation, "approvedBy")} />
           <SnapshotValue label="Exporté le" value={formatStoredDate(calculation.exportedAt)} />
-          <SnapshotValue label="Exporté par" value={auditUserLabel(exportedByUser)} />
+          <SnapshotValue label="Exporté par" value={persistedAuditActorLabel(calculation, "exportedBy")} />
           <SnapshotValue label="Verrouillé le" value={formatStoredDate(calculation.lockedAt)} />
-          <SnapshotValue label="Verrouillé par" value={auditUserLabel(lockedByUser)} />
+          <SnapshotValue label="Verrouillé par" value={persistedAuditActorLabel(calculation, "lockedBy")} />
         </CardContent>
       </Card>
     </div>

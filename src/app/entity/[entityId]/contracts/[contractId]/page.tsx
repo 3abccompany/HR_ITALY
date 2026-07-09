@@ -89,6 +89,39 @@ import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 import { sendContractToEmployeeAction } from "@/services/email.service";
 
+type PayrollMode = "monthly" | "hourly" | "actual_worked_hours";
+
+const PAYROLL_MODE_OPTIONS: Array<{
+  value: PayrollMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "monthly",
+    label: "Mensualisé",
+    description: "Base mensuelle contractuelle + variables.",
+  },
+  {
+    value: "hourly",
+    label: "Horaire historique",
+    description: "Mode conservé pour compatibilité avec les anciens dossiers.",
+  },
+  {
+    value: "actual_worked_hours",
+    label: "Heures réellement travaillées",
+    description:
+      "Heures validées × taux horaire + jours fériés rémunérés + majorations uniquement.",
+  },
+];
+
+const PAYROLL_MODE_LABELS = PAYROLL_MODE_OPTIONS.reduce(
+  (acc, option) => ({ ...acc, [option.value]: option.label }),
+  {} as Record<PayrollMode, string>
+);
+
+const resolvePayrollMode = (mode?: string | null): PayrollMode =>
+  mode === "hourly" || mode === "actual_worked_hours" ? mode : "monthly";
+
 /**
  * Robust date parser for mixed formats.
  */
@@ -542,6 +575,7 @@ export default function ContractDetailPage() {
       grossMonthly: getEffectiveValue('grossMonthly', offer?.proposedGrossMonthly),
       grossAnnual: getEffectiveValue('grossGrossAnnual' as any, offer?.proposedGrossAnnual),
       monthlyPayments: getEffectiveValue('monthlyPayments', offer?.monthlyPayments || 13),
+      payCalculationMode: resolvePayrollMode(getEffectiveValue('payCalculationMode', "monthly")),
 
       uniLavProtocolNumber: getEffectiveValue('uniLavProtocolNumber', mandatoryCommunication?.protocolNumber),
       uniLavSubmissionDate: getEffectiveValue('uniLavSubmissionDate', mandatoryCommunication?.submittedAt ? 
@@ -582,7 +616,7 @@ export default function ContractDetailPage() {
         allowedKeys.push(
           "startDate", "jobTitleName", "departmentName", "worksiteName",
           "ccnlId", "ccnlName", "levelId", "levelCode", "grossMonthly", "grossAnnual", "weeklyHours",
-          "isPartTime", "monthlyPayments"
+          "isPartTime", "monthlyPayments", "payCalculationMode"
         );
       }
 
@@ -1280,6 +1314,77 @@ export default function ContractDetailPage() {
                    <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v: string) => setFormData(p => ({...p, contractType: v}))} />
                    <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, startDate: v}))} />
                    <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, endDate: v}))} />
+                </div>
+             </CardContent>
+          </Card>
+
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <Euro className="w-4 h-4" /> Paie / Synthèse économique
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-5">
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start">
+                   <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase tracking-tight opacity-70">
+                        Mode de calcul paie
+                      </Label>
+                      {isEditing ? (
+                        <Select
+                          value={resolvePayrollMode(formData.payCalculationMode || effectiveData.payCalculationMode)}
+                          onValueChange={(value: PayrollMode) =>
+                            setFormData((previous) => ({
+                              ...previous,
+                              payCalculationMode: value,
+                            }))
+                          }
+                          disabled={!isDraft}
+                        >
+                          <SelectTrigger className="h-12 rounded-xl bg-white font-bold">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PAYROLL_MODE_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge className="rounded-xl bg-primary/10 px-3 py-1.5 font-black text-primary hover:bg-primary/10">
+                            {contract.payCalculationMode
+                              ? PAYROLL_MODE_LABELS[resolvePayrollMode(contract.payCalculationMode)]
+                              : "Mensualisé par défaut"}
+                          </Badge>
+                        </div>
+                      )}
+                      <p className="text-xs font-medium leading-relaxed text-muted-foreground">
+                        Si un paramètre salarié actif définit un mode, il remplace le mode du
+                        contrat pour la période calculée.
+                      </p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary/60">
+                        Priorité appliquée : Paramètre salarié actif → Contrat → Mensualisé par défaut.
+                      </p>
+                   </div>
+
+                   <div className="rounded-2xl border border-primary/10 bg-slate-50/70 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                        Options disponibles
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        {PAYROLL_MODE_OPTIONS.map((option) => (
+                          <div key={option.value} className="rounded-xl bg-white p-3 shadow-sm">
+                            <p className="text-sm font-black text-slate-800">{option.label}</p>
+                            <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">
+                              {option.description}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                   </div>
                 </div>
              </CardContent>
           </Card>
