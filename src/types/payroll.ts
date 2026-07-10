@@ -62,6 +62,7 @@ export interface PayrollAttendanceAggregation {
   ordinaryNightHours: number;
   overtimeHours: number;
   holidayWorkedHours: number;
+  sundayWorkedHours?: number;
   workedDays: number;
   sourceAttendanceIds: string[];
   hasLegacyFallback?: boolean;

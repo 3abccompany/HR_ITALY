@@ -172,6 +172,7 @@ async function reconcileWeeklyOvertime(
   overtimeNightHours: number;
   overtimeSundayHours: number;
   overtimeHolidayHours: number;
+  sundayWorkedHours: number;
   ordinaryNightHours: number;
   weeklyBreakdown: PayrollWeeklyBreakdown[];
 }> {
@@ -182,6 +183,7 @@ async function reconcileWeeklyOvertime(
       overtimeNightHours: 0,
       overtimeSundayHours: 0,
       overtimeHolidayHours: 0,
+      sundayWorkedHours: 0,
       ordinaryNightHours: 0,
       weeklyBreakdown: []
     };
@@ -201,6 +203,7 @@ async function reconcileWeeklyOvertime(
   let totalOvNight = 0;
   let totalOvSun = 0;
   let totalOvHol = 0;
+  let totalSundayWorked = 0;
   let totalOrdNight = 0;
   const breakdown: PayrollWeeklyBreakdown[] = [];
 
@@ -222,11 +225,15 @@ async function reconcileWeeklyOvertime(
     let weekOvNight = 0;
     let weekOvSun = 0;
     let weekOvHol = 0;
+    let weekSundayWorked = 0;
     let weekOrdNight = 0;
     const weekRawSup = weekRecords.reduce((s, r) => s + (r.overtimeHours || 0), 0);
 
     for (const seg of allSegments) {
       const remaining = seg.durationHours;
+      if (seg.isSunday && remaining > 0) {
+        weekSundayWorked += remaining;
+      }
       const portionBefore = Math.max(0, Math.min(remaining, expectedWeeklyHours - weekWorked));
       const portionAfter = remaining - portionBefore;
       
@@ -267,6 +274,7 @@ async function reconcileWeeklyOvertime(
     totalOvNight += weekOvNight;
     totalOvSun += weekOvSun;
     totalOvHol += weekOvHol;
+    totalSundayWorked += weekSundayWorked;
     totalOrdNight += weekOrdNight;
   }
 
@@ -276,6 +284,7 @@ async function reconcileWeeklyOvertime(
     overtimeNightHours: Number(totalOvNight.toFixed(2)),
     overtimeSundayHours: Number(totalOvSun.toFixed(2)),
     overtimeHolidayHours: Number(totalOvHol.toFixed(2)),
+    sundayWorkedHours: Number(totalSundayWorked.toFixed(2)),
     ordinaryNightHours: Number(totalOrdNight.toFixed(2)),
     weeklyBreakdown: breakdown
   };
@@ -419,6 +428,7 @@ export async function aggregateMonthlyAttendance(
         ordinaryNightHours: 0,
         overtimeHours: 0,
         holidayWorkedHours: 0,
+        sundayWorkedHours: 0,
         workedDays: 0,
         sourceAttendanceIds: []
       };
@@ -429,6 +439,10 @@ export async function aggregateMonthlyAttendance(
     
     const vh = data.validatedHours || 0;
     if (vh > 0) agg.workedDays++;
+    const attendanceDate = parseISO(data.attendanceDate);
+    if (!isNaN(attendanceDate.getTime()) && attendanceDate.getDay() === 0 && vh > 0) {
+      agg.sundayWorkedHours = (agg.sundayWorkedHours || 0) + vh;
+    }
 
     const hasSplits = (data.dayHours || 0) > 0 || (data.nightHours || 0) > 0 || (data.overtimeHours || 0) > 0;
     
@@ -650,7 +664,10 @@ export async function calculatePayrollEconomicValues(
   addMissingPremiumWarning(rate.nightPremiumPercent, agg.ordinaryNightHours || 0, "de nuit");
   addMissingPremiumWarning(rate.overtimePremiumPercent, agg.overtimeDayHours || 0, "heures supplémentaires");
   addMissingPremiumWarning(rate.overtimeNightPremiumPercent, agg.overtimeNightHours || 0, "heures supplémentaires de nuit");
-  addMissingPremiumWarning(rate.sundayPremiumPercent, agg.overtimeSundayHours || 0, "dimanche");
+  const sundayPremiumHours = isActualWorkedHours
+    ? (agg.sundayWorkedHours || 0)
+    : (agg.overtimeSundayHours || 0);
+  addMissingPremiumWarning(rate.sundayPremiumPercent, sundayPremiumHours, "dimanche");
   addMissingPremiumWarning(
     rate.holidayPremiumPercent,
     Math.max(agg.holidayWorkedHours || 0, agg.overtimeHolidayHours || 0),
@@ -682,7 +699,7 @@ export async function calculatePayrollEconomicValues(
     ? roundMoney((agg.overtimeNightHours || 0) * rateValue * pOvNight)
     : roundMoney((agg.overtimeNightHours || 0) * rateValue * (1 + pOvNight));
   const overtimeSundayValue = isActualWorkedHours
-    ? roundMoney((agg.overtimeSundayHours || 0) * rateValue * pOvSun)
+    ? roundMoney(sundayPremiumHours * rateValue * pOvSun)
     : roundMoney((agg.overtimeSundayHours || 0) * rateValue * (1 + pOvSun));
   const overtimeHolidayValue = isActualWorkedHours
     ? roundMoney((agg.overtimeHolidayHours || 0) * rateValue * pOvHol)
@@ -828,6 +845,7 @@ export async function calculateAndSaveMonthlyPayroll(
          agg.overtimeNightHours = reconciliation.overtimeNightHours;
          agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
          agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
+         agg.sundayWorkedHours = reconciliation.sundayWorkedHours;
          agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
       }
 
