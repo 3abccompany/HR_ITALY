@@ -77,6 +77,13 @@ const getNumberLikeField = (source: unknown, keys: string[]): number | null => {
   return null;
 };
 
+const isIndefiniteContractType = (contractType?: string | null) => {
+  const normalized = (contractType || "").toLowerCase();
+  return ["tempo indeterminato", "cdi", "indeterminato"].some((label) =>
+    normalized.includes(label)
+  );
+};
+
 export default function ContractsRegistryPage() {
   const params = useParams();
   const router = useRouter();
@@ -146,7 +153,7 @@ export default function ContractsRegistryPage() {
       if (c.status === 'active') acc.active++;
       if (c.status === 'pending_activation') acc.pending++;
       
-      const endDate = parseSafeDate(c.endDate);
+      const endDate = isIndefiniteContractType(c.contractType) ? null : parseSafeDate(c.endDate);
       if (c.status === 'active' && endDate && isBefore(endDate, thirtyDaysOut)) {
         acc.alert++;
       }
@@ -187,7 +194,7 @@ export default function ContractsRegistryPage() {
 
       // 5. Expiry
       if (filters.expiry !== "all") {
-        const endDate = parseSafeDate(c.endDate);
+        const endDate = isIndefiniteContractType(c.contractType) ? null : parseSafeDate(c.endDate);
         if (c.status !== 'active' || !endDate) return false;
         
         if (filters.expiry === "overdue" && !isBefore(endDate, today)) return false;
@@ -201,7 +208,7 @@ export default function ContractsRegistryPage() {
     // 6. Weighted Sorting
     result.sort((a, b) => {
       const getWeight = (c: Contract) => {
-        const endDate = parseSafeDate(c.endDate);
+        const endDate = isIndefiniteContractType(c.contractType) ? null : parseSafeDate(c.endDate);
         if (c.status === 'active') {
           if (endDate && isBefore(endDate, today)) return 0; // Overdue Active
           if (endDate && isBefore(endDate, thirtyDaysOut)) return 1; // Soon Active
@@ -377,6 +384,7 @@ export default function ContractsRegistryPage() {
 
                   const monthlyRem = getNumberLikeField(c, ['proposedGrossMonthly', 'grossMonthly', 'grossMonthlySalary', 'monthlyGross', 'monthlySalary', 'salaryMonthly', 'remunerationMonthly']) || 0;
                   const annualRem = getNumberLikeField(c, ['proposedGrossAnnual', 'grossAnnual', 'grossAnnualSalary', 'annualGross', 'annualSalary', 'salaryAnnual', 'ral', 'ralAnnuel']) || 0;
+                  const isIndefinite = isIndefiniteContractType(c.contractType);
 
                   return (
                     <TableRow key={c.contractId} className="group hover:bg-muted/50 transition-colors">
@@ -402,7 +410,11 @@ export default function ContractsRegistryPage() {
                            <div className="flex items-center gap-1.5 text-xs font-medium">
                              <CalendarIcon className="w-3 h-3 text-primary/40" /> {c.startDate || "N/A"}
                            </div>
-                           {c.endDate && (
+                           {isIndefinite ? (
+                             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                               <Info className="w-2.5 h-2.5" /> Durée indéterminée
+                             </div>
+                           ) : c.endDate && (
                              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                <ArrowUpRight className="w-2.5 h-2.5" /> Fin: {c.endDate}
                              </div>
@@ -563,6 +575,7 @@ function getStatusBadge(status: ContractStatus) {
 
 function getExpiryBadge(contract: Contract) {
   if (contract.status !== 'active') return null;
+  if (isIndefiniteContractType(contract.contractType)) return null;
   const endDate = parseSafeDate(contract.endDate);
   if (!endDate) return null;
   

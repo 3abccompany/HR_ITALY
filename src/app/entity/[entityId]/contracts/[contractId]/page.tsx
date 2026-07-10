@@ -123,6 +123,13 @@ const PAYROLL_MODE_LABELS = PAYROLL_MODE_OPTIONS.reduce(
 const resolvePayrollMode = (mode?: string | null): PayrollMode =>
   mode === "hourly" || mode === "actual_worked_hours" ? mode : "monthly";
 
+const isIndefiniteContractType = (contractType?: string | null) => {
+  const normalized = (contractType || "").toLowerCase();
+  return ["tempo indeterminato", "cdi", "indeterminato"].some((label) =>
+    normalized.includes(label)
+  );
+};
+
 const RENEWAL_MODE_OPTIONS: Array<{
   value: ContractRenewalMode;
   label: string;
@@ -410,6 +417,7 @@ export default function ContractDetailPage() {
   const isTerminated = contract?.status === 'terminated';
   const isRenewed = contract?.status === 'renewed';
   const isImported = !!(contract?.source === 'direct_hr_creation' || contract?.source === 'historical_import');
+  const isContractIndefinite = isIndefiniteContractType(contract?.contractType);
   
   const today = startOfDay(new Date());
   const contractStartDate = parseSafeDate(contract?.startDate);
@@ -427,7 +435,7 @@ export default function ContractDetailPage() {
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
   const isPdfObsolete = !!(pdfDate && contentDate && isBefore(pdfDate, contentDate));
 
-  const contractExpiryDate = parseSafeDate(contract?.endDate);
+  const contractExpiryDate = isContractIndefinite ? null : parseSafeDate(contract?.endDate);
   const isContractExpired = !!(isActive && contractExpiryDate && isBefore(contractExpiryDate, today));
   const isContractExpiringSoon = !!(isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30)));
 
@@ -885,14 +893,6 @@ export default function ContractDetailPage() {
     if (!user || !entityId || !contractId) return;
     if (!renewalForm.newStartDate) {
       toast({ variant: "destructive", title: "Erreur", description: "Veuillez renseigner la date d'effet du nouveau contrat." });
-      return;
-    }
-    if (renewalStartsMidMonth) {
-      toast({
-        variant: "destructive",
-        title: "Date d'effet non supportée",
-        description: "Le changement de contrat en cours de mois nécessite un traitement RH séparé, car la synthèse économique ne découpe pas encore automatiquement un mois entre deux contrats."
-      });
       return;
     }
     if (renewalForm.renewalMode === "renew_cdd" && !renewalForm.newEndDate) {
@@ -1496,7 +1496,22 @@ export default function ContractDetailPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                    <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v: string) => setFormData(p => ({...p, contractType: v}))} />
                    <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, startDate: v}))} />
-                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, endDate: v}))} />
+                   {isIndefiniteContractType(effectiveData.contractType) ? (
+                     <div className="space-y-1.5">
+                       <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-70">
+                         Durée
+                       </p>
+                       <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+                         <Calendar className="w-3.5 h-3.5 text-primary/40" />
+                         Durée indéterminée
+                       </div>
+                       <p className="text-xs font-medium text-muted-foreground">
+                         Aucune date de fin n'est affichée pour un CDI.
+                       </p>
+                     </div>
+                   ) : (
+                     <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, endDate: v}))} />
+                   )}
                 </div>
              </CardContent>
           </Card>
@@ -1683,7 +1698,9 @@ export default function ContractDetailPage() {
                   </div>
                   <div>
                     <p className="text-[10px] font-black uppercase text-muted-foreground">Période</p>
-                    <p className="text-sm font-black text-slate-800">{formatDate(contract?.startDate)} → {formatDate(contract?.endDate)}</p>
+                    <p className="text-sm font-black text-slate-800">
+                      {formatDate(contract?.startDate)} → {isIndefiniteContractType(contract?.contractType) ? "Durée indéterminée" : formatDate(contract?.endDate)}
+                    </p>
                   </div>
                   <div>
                     <p className="text-[10px] font-black uppercase text-muted-foreground">CCNL / Livello</p>
@@ -1729,7 +1746,7 @@ export default function ContractDetailPage() {
                   <AlertTriangle className="h-4 w-4" />
                   <AlertTitle className="font-black">Date d'effet en cours de mois</AlertTitle>
                   <AlertDescription className="text-xs font-medium">
-                    Le changement de contrat en cours de mois nécessite un traitement RH séparé, car la synthèse économique ne découpe pas encore automatiquement un mois entre deux contrats.
+                    Date d'effet en cours de mois : le brouillon peut être créé, mais la synthèse économique du mois concerné devra être vérifiée manuellement car le découpage automatique entre deux contrats n'est pas encore disponible.
                   </AlertDescription>
                 </Alert>
               )}
@@ -1836,7 +1853,7 @@ export default function ContractDetailPage() {
 
           <DialogFooter className="border-t bg-slate-50 px-8 py-5">
              <Button variant="ghost" onClick={() => setIsRenewalModalOpen(false)}>Annuler</Button>
-             <Button onClick={handleCreateRenewal} disabled={!!processing || renewalStartsMidMonth} className="rounded-xl px-8 font-black">
+             <Button onClick={handleCreateRenewal} disabled={!!processing} className="rounded-xl px-8 font-black">
                {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                Créer brouillon
              </Button>
