@@ -12,7 +12,7 @@ import {
   getDocs,
   arrayUnion
 } from "firebase/firestore";
-import { Contract, ContractStatus } from "@/types/contract";
+import { Contract, ContractRenewalMode, ContractStatus } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
 import { registerSignedContractDocument } from "./document.service";
 import { Employee } from "@/types/employee";
@@ -606,14 +606,33 @@ export async function prepareContractRenewalAction(
   entityId: string, 
   oldContractId: string, 
   payload: { 
+    renewalMode?: ContractRenewalMode,
     newStartDate: string, 
-    newEndDate: string, 
+    newEndDate?: string,
+    contractType?: string,
+    ccnlId?: string | null,
+    ccnlName?: string | null,
+    levelId?: string | null,
+    levelCode?: string | null,
+    levelLabel?: string | null,
+    qualificationCategory?: string | null,
+    grossMonthly?: number,
+    grossAnnual?: number,
+    weeklyHours?: number,
+    monthlyPayments?: number,
+    payCalculationMode?: Contract["payCalculationMode"],
     renewalReason?: string, 
     actorUid: string 
   }
 ) {
   if (!db) throw new Error("Firestore not initialized");
-  const { newStartDate, newEndDate, renewalReason, actorUid } = payload;
+  const {
+    renewalMode = "renew_cdd",
+    newStartDate,
+    newEndDate,
+    renewalReason,
+    actorUid
+  } = payload;
 
   const oldContractRef = doc(db, `entities/${entityId}/contracts`, oldContractId);
   const newContractRef = doc(collection(db, `entities/${entityId}/contracts`));
@@ -635,10 +654,28 @@ export async function prepareContractRenewalAction(
       throw new Error("Une demande de renouvellement existe déjà pour ce contrat.");
     }
 
-    if (!newStartDate || !newEndDate) throw new Error("Dates de début et de fin requises.");
-    if (new Date(newEndDate) <= new Date(newStartDate)) {
+    if (!newStartDate) throw new Error("Date de début requise.");
+
+    const targetContractType =
+      renewalMode === "convert_to_cdi"
+        ? "Tempo indeterminato"
+        : (payload.contractType || old.contractType);
+    const targetTypeLower = (targetContractType || "").toLowerCase();
+    const targetIsCDD = cddLabels.some(l => targetTypeLower.includes(l.toLowerCase()));
+
+    if (targetIsCDD && !newEndDate) throw new Error("Date de fin requise pour un renouvellement CDD.");
+    if (targetIsCDD && newEndDate && new Date(newEndDate) <= new Date(newStartDate)) {
       throw new Error("La date de fin doit être postérieure à la date de début.");
     }
+
+    const requestKind =
+      renewalMode === "renew_cdd"
+        ? "unilav_proroga"
+        : "unilav_trasformazione";
+    const mandatoryCommunicationType =
+      requestKind === "unilav_proroga"
+        ? "UNILAV_PROROGA"
+        : "UNILAV_TRASFORMAZIONE";
 
     const personRef = old.personId ? doc(db!, `entities/${entityId}/persons`, old.personId) : null;
     const employeeRef = old.employeeId ? doc(db!, `entities/${entityId}/employees`, old.employeeId) : null;
@@ -680,26 +717,30 @@ export async function prepareContractRenewalAction(
       worksiteName: old.worksiteName,
       missionsSnapshot: old.missionsSnapshot || [],
       
-      contractType: old.contractType,
-      weeklyHours: old.weeklyHours,
+      contractType: targetContractType,
+      weeklyHours: payload.weeklyHours ?? old.weeklyHours,
       isPartTime: old.isPartTime ?? null,
       workingScheduleNotes: old.workingScheduleNotes || null,
       
-      ccnlName: old.ccnlName,
-      levelCode: old.levelCode,
-      levelLabel: old.levelLabel,
-      qualificationCategory: old.qualificationCategory,
+      ccnlId: payload.ccnlId ?? old.ccnlId ?? null,
+      ccnlName: payload.ccnlName ?? old.ccnlName,
+      levelId: payload.levelId ?? old.levelId ?? null,
+      levelCode: payload.levelCode ?? old.levelCode,
+      levelLabel: payload.levelLabel ?? old.levelLabel,
+      qualificationCategory: payload.qualificationCategory ?? old.qualificationCategory,
       
-      grossMonthly: old.grossMonthly,
-      grossAnnual: old.grossAnnual,
-      monthlyPayments: old.monthlyPayments,
+      grossMonthly: payload.grossMonthly ?? old.grossMonthly,
+      grossAnnual: payload.grossAnnual ?? old.grossAnnual,
+      monthlyPayments: payload.monthlyPayments ?? old.monthlyPayments,
+      payCalculationMode: payload.payCalculationMode ?? old.payCalculationMode ?? "monthly",
 
       status: "draft",
       previousContractId: oldContractId,
       isRenewal: true,
+      renewalMode,
       renewalReason: renewalReason || null,
       startDate: newStartDate,
-      endDate: newEndDate,
+      endDate: targetIsCDD ? newEndDate : null,
       
       createdAt: serverTimestamp(),
       createdBy: actorUid,
@@ -717,7 +758,7 @@ export async function prepareContractRenewalAction(
       updatedBy: actorUid,
     });
 
-    const requestId = `proroga_${newContractId}`;
+    const requestId = `${requestKind === "unilav_proroga" ? "proroga" : "trasformazione"}_${newContractId}`;
     const requestRef = doc(db!, `entities/${entityId}/employmentRequests`, requestId);
     
     transaction.set(requestRef, sanitizePayload({
@@ -730,13 +771,13 @@ export async function prepareContractRenewalAction(
       candidateDisplayName: old.employeeDisplayName,
       
       source: "contract_renewal",
-      type: "unilav_proroga",
+      type: requestKind,
       status: "draft",
 
       plannedHireDate: newStartDate,
       jobRoleId: old.jobTitleName || "",
       worksiteId: old.worksiteName || "",
-      contractType: old.contractType || null,
+      contractType: targetContractType || null,
       
       createdAt: serverTimestamp(),
       createdBy: actorUid,
@@ -745,8 +786,26 @@ export async function prepareContractRenewalAction(
     }));
 
     const commRef = doc(collection(db!, `entities/${entityId}/mandatoryCommunications`));
-    const prorogaSubject = `Richiesta Proroga UniLav — ${old.employeeDisplayName} — ${newStartDate}`;
-    const prorogaBody = `Buongiorno,
+    const isTransformation = requestKind === "unilav_trasformazione";
+    const prorogaSubject = isTransformation
+      ? `Richiesta Trasformazione UniLav — ${old.employeeDisplayName} — ${newStartDate}`
+      : `Richiesta Proroga UniLav — ${old.employeeDisplayName} — ${newStartDate}`;
+    const prorogaBody = isTransformation ? `Buongiorno,
+
+con la presente si richiede la predisposizione e/o trasmissione della comunicazione obbligatoria UniLav/CPI relativa alla trasformazione del contratto del seguente lavoratore:
+
+Azienda: ${old.entityLegalName || old.entityName || 'Non disponibile'}
+Lavoratore: ${old.employeeDisplayName || 'Non disponibile'}
+Codice fiscale: ${resolvedTaxCode || 'Non disponibile'}
+Mansione: ${old.jobTitleName || 'Non disponibile'}
+Tipologia contratto precedente: ${old.contractType || 'Tempo determinato'}
+Nuova tipologia contratto: ${targetContractType || 'Non disponibile'}
+Data effetto trasformazione: ${newStartDate}
+Contratto precedente / riferimento: ${oldContractId}
+
+Si richiede cortesemente di procedere con la comunicazione di trasformazione e di trasmettere il numero di protocollo e la ricevuta PDF una volta disponibile.
+
+Cordiali saluti,` : `Buongiorno,
 
 con la presente si richiede la predisposizione e/o trasmissione della communicatione obbligatoria UniLav/CPI relativa alla proroga del contratto a tempo determinato del seguente lavoratore:
 
@@ -769,7 +828,7 @@ Cordiali saluti,`;
       employmentOfferId: requestId,
       employmentRequestId: requestId,
       contractId: newContractId,
-      type: "UNILAV_PROROGA",
+      type: mandatoryCommunicationType,
       status: "draft",
       emailSubject: prorogaSubject,
       emailBody: prorogaBody,
@@ -788,8 +847,8 @@ Cordiali saluti,`;
         employeeId: old.employeeId,
         contractId: newContractId,
         type: "contract.renewal_prepared",
-        label: "Renouvellement CDD initié",
-        description: `Brouillon de renouvellement créé pour la période du ${newStartDate} au ${newEndDate}. Dossier UniLav de proroga ouvert.`,
+        label: renewalMode === "convert_to_cdi" ? "Transformation CDI initiée" : "Renouvellement CDD initié",
+        description: `Brouillon de renouvellement créé à partir du ${newStartDate}${targetIsCDD && newEndDate ? ` jusqu'au ${newEndDate}` : ""}. Dossier UniLav ${isTransformation ? "de transformation" : "de proroga"} ouvert.`,
         sourceCollection: "contracts",
         sourceId: newContractId,
         createdAt: serverTimestamp(),
@@ -811,7 +870,7 @@ Cordiali saluti,`;
     action: "contract.renewal_draft_created",
     resourceType: "contract",
     resourceId: newContractId,
-    details: { oldContractId, newStartDate, newEndDate }
+    details: { oldContractId, renewalMode, newStartDate, newEndDate: renewalMode === "convert_to_cdi" ? null : newEndDate }
   });
 
   return result;
