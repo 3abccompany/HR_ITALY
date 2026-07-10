@@ -145,6 +145,12 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "mealTickets.calculate", module: "mealTickets", action: "calculate", label: "Calculer les previews buoni pasto", description: "Génération des previews mensuelles à partir des présences validées.", scope: "entity" },
   { code: "mealTickets.export", module: "mealTickets", action: "export", label: "Exporter les buoni pasto", description: "Extraction des données buoni pasto pour contrôle RH.", scope: "entity" },
 
+  // --- Kilometer Reimbursements / Rimborsi Chilometrici ---
+  { code: "reimbursements.read", module: "reimbursements", action: "read", label: "Voir les remboursements kilométriques", description: "Consultation des politiques, trajets et summaries de remboursement kilométrique.", scope: "entity" },
+  { code: "reimbursements.manage", module: "reimbursements", action: "manage", label: "Gérer les remboursements kilométriques", description: "Configuration des politiques et saisie des trajets kilométriques.", scope: "entity" },
+  { code: "reimbursements.approve", module: "reimbursements", action: "approve", label: "Approuver les remboursements kilométriques", description: "Validation et confirmation mensuelle des remboursements kilométriques.", scope: "entity" },
+  { code: "reimbursements.export", module: "reimbursements", action: "export", label: "Exporter les remboursements kilométriques", description: "Extraction des remboursements kilométriques pour contrôle RH.", scope: "entity" },
+
   // --- Employee Self-Service (Phase 1A) ---
   { code: "self.profile.read", module: "self-service", action: "read", label: "Voir mon profil", description: "Accès personnel à ses propres données RH.", scope: "entity" },
   { code: "self.leaves.read", module: "self-service", action: "read", label: "Voir mes absences", description: "Consultation de ses propres demandes de congés.", scope: "entity" },

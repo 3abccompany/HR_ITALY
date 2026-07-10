@@ -382,6 +382,45 @@ service cloud.firestore {
                               && request.resource.data.entityId == entityId;
         allow delete: if hasPermission(entityId, 'mealTickets.manage') || isPlatformAdmin();
       }
+
+      match /kilometerReimbursementPolicies/{policyId} {
+        allow read: if hasPermission(entityId, 'reimbursements.read')
+                    || hasPermission(entityId, 'reimbursements.manage')
+                    || hasPermission(entityId, 'reimbursements.approve')
+                    || hasPermission(entityId, 'reimbursements.export')
+                    || isPlatformAdmin();
+        allow create, update: if (hasPermission(entityId, 'reimbursements.manage') || isPlatformAdmin())
+                              && request.resource.data.entityId == entityId;
+        allow delete: if hasPermission(entityId, 'reimbursements.manage') || isPlatformAdmin();
+      }
+
+      match /kilometerReimbursements/{itemId} {
+        allow read: if hasPermission(entityId, 'reimbursements.read')
+                    || hasPermission(entityId, 'reimbursements.manage')
+                    || hasPermission(entityId, 'reimbursements.approve')
+                    || hasPermission(entityId, 'reimbursements.export')
+                    || isPlatformAdmin();
+        allow create: if (hasPermission(entityId, 'reimbursements.manage') || isPlatformAdmin())
+                      && request.resource.data.entityId == entityId;
+        allow update: if (hasPermission(entityId, 'reimbursements.manage')
+                          || hasPermission(entityId, 'reimbursements.approve')
+                          || isPlatformAdmin())
+                      && request.resource.data.entityId == entityId;
+        allow delete: if hasPermission(entityId, 'reimbursements.manage') || isPlatformAdmin();
+      }
+
+      match /kilometerReimbursementMonthlySummaries/{summaryId} {
+        allow read: if hasPermission(entityId, 'reimbursements.read')
+                    || hasPermission(entityId, 'reimbursements.manage')
+                    || hasPermission(entityId, 'reimbursements.approve')
+                    || hasPermission(entityId, 'reimbursements.export')
+                    || isPlatformAdmin();
+        allow create, update: if (hasPermission(entityId, 'reimbursements.approve')
+                                  || hasPermission(entityId, 'reimbursements.manage')
+                                  || isPlatformAdmin())
+                              && request.resource.data.entityId == entityId;
+        allow delete: if hasPermission(entityId, 'reimbursements.manage') || isPlatformAdmin();
+      }
     }
 
     // --- Global Reference Data ---

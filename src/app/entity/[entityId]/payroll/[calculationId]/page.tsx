@@ -17,6 +17,7 @@ import {
   ArrowLeft,
   Banknote,
   CalendarDays,
+  Car,
   CheckCircle2,
   Clock3,
   FileText,
@@ -41,6 +42,7 @@ import type { CCNL, CCNLLevel } from "@/types/ccnl";
 import type { Holiday } from "@/types/holiday";
 import type { AttendanceRecord } from "@/types/attendance";
 import type { MealTicketMonthlySummary } from "@/types/meal-ticket";
+import type { KilometerReimbursementMonthlySummary } from "@/types/kilometer-reimbursement";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -185,6 +187,9 @@ const formatIsoDate = (value?: string | null) => {
 const getMealTicketMonthlySummaryId = (employeeId: string, year: number, month: number) =>
   `${employeeId}_${year}_${String(month).padStart(2, "0")}`;
 
+const getKilometerReimbursementMonthlySummaryId = (employeeId: string, year: number, month: number) =>
+  `${employeeId}_${year}_${String(month).padStart(2, "0")}`;
+
 function formatStoredDate(value: unknown): string {
   if (!value) return "Non renseigné";
 
@@ -260,6 +265,11 @@ export default function PayrollCalculationDetailPage() {
   const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
   const canRead = hasPermission("payroll.read");
   const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
+  const canReadReimbursements =
+    hasPermission("reimbursements.read") ||
+    hasPermission("reimbursements.manage") ||
+    hasPermission("reimbursements.approve") ||
+    hasPermission("reimbursements.export");
 
   const calculationRef = useMemo(
     () =>
@@ -414,6 +424,33 @@ export default function PayrollCalculationDetailPage() {
     "payroll.meal-ticket-summary"
   );
 
+  const kilometerSummaryRef = useMemo(
+    () =>
+      db && entityId && calculation?.employeeId && canReadReimbursements
+        ? (doc(
+            db,
+            `entities/${entityId}/kilometerReimbursementMonthlySummaries`,
+            getKilometerReimbursementMonthlySummaryId(
+              calculation.employeeId,
+              calculation.year,
+              calculation.month
+            )
+          ) as DocumentReference<KilometerReimbursementMonthlySummary>)
+        : null,
+    [
+      db,
+      entityId,
+      calculation?.employeeId,
+      calculation?.year,
+      calculation?.month,
+      canReadReimbursements,
+    ]
+  );
+  const { data: kilometerSummary } = useDoc<KilometerReimbursementMonthlySummary>(
+    kilometerSummaryRef,
+    "payroll.kilometer-reimbursement-summary"
+  );
+
   if (membershipLoading || calculationLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -480,9 +517,7 @@ export default function PayrollCalculationDetailPage() {
   const weeklyBreakdown: PayrollWeeklyBreakdown[] = persistedWeeklyBreakdown.filter(
     (week): week is PayrollWeeklyBreakdown => week !== null && typeof week === "object"
   );
-  const extras =
-    (calculation.mileageValue ?? 0) +
-    (calculation.bonusValue ?? 0);
+  const extras = calculation.bonusValue ?? 0;
   const activeHolidays = monthlyHolidays.filter((holiday) => holiday.status === "active");
   const holidaysByDate = new Map(activeHolidays.map((holiday) => [holiday.date, holiday]));
   const reliableAttendanceStatuses = new Set(["validated", "corrected", "locked"]);
@@ -777,11 +812,12 @@ export default function PayrollCalculationDetailPage() {
         <CardHeader className="border-b border-emerald-100 bg-white/70">
           <CardTitle className="flex items-center gap-2 text-xl font-black text-emerald-900">
             <Utensils className="h-5 w-5" />
+            <Car className="h-5 w-5" />
             Avantages / Remboursements
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 p-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <SnapshotValue
               label="Buoni pasto"
               value={
@@ -819,19 +855,64 @@ export default function PayrollCalculationDetailPage() {
               }
             />
             <SnapshotValue
-              label="Confirmation"
+              label="Rimborsi chilometrici"
+              value={
+                kilometerSummary?.status === "confirmed"
+                  ? euro(kilometerSummary.totalAmount)
+                  : "Non intégré à cette synthèse"
+              }
+            />
+            <SnapshotValue
+              label="Kilomètres remboursés"
+              value={
+                kilometerSummary?.status === "confirmed"
+                  ? `${kilometerSummary.totalKilometers.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} km`
+                  : "Non intégré à cette synthèse"
+              }
+            />
+            <SnapshotValue
+              label="Trajets approuvés"
+              value={
+                kilometerSummary?.status === "confirmed"
+                  ? kilometerSummary.itemCount
+                  : "Non intégré à cette synthèse"
+              }
+            />
+            <SnapshotValue
+              label="Statut rimborsi km"
+              value={
+                kilometerSummary?.status === "confirmed" ? (
+                  <Badge className="rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                    Confirmé
+                  </Badge>
+                ) : (
+                  "Non confirmé"
+                )
+              }
+            />
+            <SnapshotValue
+              label="Confirmation buoni pasto"
               value={
                 mealTicketSummary?.status === "confirmed"
                   ? formatStoredDate(mealTicketSummary.generatedAt)
                   : "Confirmez le mois depuis le module Buoni pasto pour l’afficher ici."
               }
             />
+            <SnapshotValue
+              label="Confirmation rimborsi km"
+              value={
+                kilometerSummary?.status === "confirmed"
+                  ? formatStoredDate(kilometerSummary.generatedAt)
+                  : "Confirmez le mois depuis le module Rimborsi chilometrici pour l’afficher ici."
+              }
+            />
           </div>
           <Alert className="rounded-2xl border-emerald-200 bg-white text-emerald-900">
             <Info className="h-4 w-4 text-emerald-700" />
-            <AlertTitle>Avantage économique séparé</AlertTitle>
+            <AlertTitle>Avantages et remboursements séparés</AlertTitle>
             <AlertDescription>
-              Les buoni pasto sont affichés comme avantage économique séparé. Ils ne modifient pas le brut mensuel ni le total brut économique.
+              Les buoni pasto et les rimborsi chilometrici sont affichés comme éléments économiques séparés.
+              Ils ne modifient pas le brut mensuel ni le total brut économique.
             </AlertDescription>
           </Alert>
         </CardContent>

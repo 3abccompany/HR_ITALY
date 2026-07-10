@@ -27,7 +27,8 @@ import {
   Bell,
   CalendarDays,
   Euro,
-  Utensils
+  Utensils,
+  Car
 } from "lucide-react";
 
 export interface MenuItem {
@@ -59,6 +60,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Contrats", href: "contracts", permission: "contracts.read", icon: FileText },
   { label: "Synthèse économique", href: "payroll", permission: "payroll.read", icon: Euro },
   { label: "Buoni pasto", href: "meal-tickets", permission: "mealTickets.read", icon: Utensils },
+  { label: "Remboursements km", href: "kilometer-reimbursements", permission: "reimbursements.read", icon: Car },
   { label: "Documents", href: "documents", permission: "documents.read", icon: FolderOpen },
   { label: "Visites médicales", href: "medical-visits", permission: "medicalVisits.read", icon: Stethoscope },
   { label: "Formation", href: "training", permission: "training.read", icon: GraduationCap },

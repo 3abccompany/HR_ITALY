@@ -29,6 +29,7 @@ import {
   PayrollReconciliationWarning 
 } from "@/types/payroll";
 import { MealTicketMonthlySummary } from "@/types/meal-ticket";
+import { KilometerReimbursementMonthlySummary } from "@/types/kilometer-reimbursement";
 import { Employee } from "@/types/employee";
 import { calculateAndSaveMonthlyPayroll } from "@/services/payroll.service";
 import { useToast } from "@/hooks/use-toast";
@@ -109,6 +110,11 @@ export default function PayrollSynthesisPage() {
   const canRead = hasPermission("payroll.read");
   const canCalculate = hasPermission("payroll.calculate") || hasPermission("payroll.write");
   const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
+  const canReadReimbursements =
+    hasPermission("reimbursements.read") ||
+    hasPermission("reimbursements.manage") ||
+    hasPermission("reimbursements.approve") ||
+    hasPermission("reimbursements.export");
 
   const calculationsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
@@ -134,11 +140,25 @@ export default function PayrollSynthesisPage() {
     ) as Query<MealTicketMonthlySummary>;
   }, [db, entityId, canReadMealTickets, selectedYear, selectedMonth]);
 
+  const kilometerSummariesQuery = useMemo(() => {
+    if (!db || !entityId || !canReadReimbursements) return null;
+    return query(
+      collection(db, `entities/${entityId}/kilometerReimbursementMonthlySummaries`),
+      where("year", "==", selectedYear),
+      where("month", "==", selectedMonth),
+      where("status", "==", "confirmed")
+    ) as Query<KilometerReimbursementMonthlySummary>;
+  }, [db, entityId, canReadReimbursements, selectedYear, selectedMonth]);
+
   const { data: calculations, loading: loadingCalcs } = useCollection<PayrollCalculation>(calculationsQuery, "payroll.calculations");
   const { data: employees } = useCollection<Employee>(employeesQuery, "payroll.employees");
   const { data: mealTicketSummaries } = useCollection<MealTicketMonthlySummary>(
     mealTicketSummariesQuery,
     "payroll.meal-ticket-summaries"
+  );
+  const { data: kilometerSummaries } = useCollection<KilometerReimbursementMonthlySummary>(
+    kilometerSummariesQuery,
+    "payroll.kilometer-reimbursement-summaries"
   );
 
   const employeesMap = useMemo(() => {
@@ -152,6 +172,12 @@ export default function PayrollSynthesisPage() {
     mealTicketSummaries?.forEach((summary) => map.set(summary.employeeId, summary));
     return map;
   }, [mealTicketSummaries]);
+
+  const kilometerSummaryMap = useMemo(() => {
+    const map = new Map<string, KilometerReimbursementMonthlySummary>();
+    kilometerSummaries?.forEach((summary) => map.set(summary.employeeId, summary));
+    return map;
+  }, [kilometerSummaries]);
 
   const filteredCalculations = useMemo(() => {
     if (!calculations) return [];
@@ -319,7 +345,12 @@ export default function PayrollSynthesisPage() {
                       mealTicketSummary?.status === "confirmed"
                         ? mealTicketSummary.totalValue || 0
                         : 0;
-                    const totalExtras = (c.mileageValue || 0) + (c.bonusValue || 0);
+                    const kilometerSummary = kilometerSummaryMap.get(c.employeeId);
+                    const kilometerBenefit =
+                      kilometerSummary?.status === "confirmed"
+                        ? kilometerSummary.totalAmount || 0
+                        : c.mileageValue || 0;
+                    const totalExtras = c.bonusValue || 0;
                     const mode = c.rateSnapshot.payCalculationMode || "monthly";
                     const isActualWorkedHours = mode === "actual_worked_hours";
                     const baseValue =
@@ -385,10 +416,19 @@ export default function PayrollSynthesisPage() {
                         </TableCell>
                         <TableCell className="py-4 align-middle text-right border-r border-slate-100">
                            <div className="space-y-1">
-                             {mealTicketsBenefit > 0 ? (
-                               <p className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">
-                                 Buoni pasto: {formatEuro(mealTicketsBenefit)}
-                               </p>
+                             {mealTicketsBenefit > 0 || kilometerBenefit > 0 ? (
+                               <>
+                                 {mealTicketsBenefit > 0 && (
+                                   <p className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">
+                                     Buoni pasto: {formatEuro(mealTicketsBenefit)}
+                                   </p>
+                                 )}
+                                 {kilometerBenefit > 0 && (
+                                   <p className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-black text-blue-700">
+                                     Rimborsi km: {formatEuro(kilometerBenefit)}
+                                   </p>
+                                 )}
+                               </>
                              ) : (
                                <p className="text-[10px] font-bold text-muted-foreground">Non intégré</p>
                              )}
