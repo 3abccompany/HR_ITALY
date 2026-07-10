@@ -28,6 +28,7 @@ import {
   PayrollCalculationStatus,
   PayrollReconciliationWarning 
 } from "@/types/payroll";
+import { MealTicketMonthlySummary } from "@/types/meal-ticket";
 import { Employee } from "@/types/employee";
 import { calculateAndSaveMonthlyPayroll } from "@/services/payroll.service";
 import { useToast } from "@/hooks/use-toast";
@@ -107,6 +108,7 @@ export default function PayrollSynthesisPage() {
   // Queries
   const canRead = hasPermission("payroll.read");
   const canCalculate = hasPermission("payroll.calculate") || hasPermission("payroll.write");
+  const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
 
   const calculationsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
@@ -122,14 +124,34 @@ export default function PayrollSynthesisPage() {
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
   }, [db, entityId, canRead]);
 
+  const mealTicketSummariesQuery = useMemo(() => {
+    if (!db || !entityId || !canReadMealTickets) return null;
+    return query(
+      collection(db, `entities/${entityId}/mealTicketMonthlySummaries`),
+      where("year", "==", selectedYear),
+      where("month", "==", selectedMonth),
+      where("status", "==", "confirmed")
+    ) as Query<MealTicketMonthlySummary>;
+  }, [db, entityId, canReadMealTickets, selectedYear, selectedMonth]);
+
   const { data: calculations, loading: loadingCalcs } = useCollection<PayrollCalculation>(calculationsQuery, "payroll.calculations");
   const { data: employees } = useCollection<Employee>(employeesQuery, "payroll.employees");
+  const { data: mealTicketSummaries } = useCollection<MealTicketMonthlySummary>(
+    mealTicketSummariesQuery,
+    "payroll.meal-ticket-summaries"
+  );
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
     employees?.forEach(e => map.set(e.employeeId, e));
     return map;
   }, [employees]);
+
+  const mealTicketSummaryMap = useMemo(() => {
+    const map = new Map<string, MealTicketMonthlySummary>();
+    mealTicketSummaries?.forEach((summary) => map.set(summary.employeeId, summary));
+    return map;
+  }, [mealTicketSummaries]);
 
   const filteredCalculations = useMemo(() => {
     if (!calculations) return [];
@@ -261,24 +283,25 @@ export default function PayrollSynthesisPage() {
         <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
           <ScrollArea className="w-full">
             <Table>
-              <TableHeader className="bg-secondary/20 hover:bg-secondary/20">
-                <TableRow className="hover:bg-transparent border-none">
-                  <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest h-12">Collaborateur</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest">Mode</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Heures validées</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Base</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Variables</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">TOTAL BRUT</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center">Alertes</TableHead>
-                  <TableHead className="text-right pr-8"></TableHead>
+              <TableHeader className="bg-slate-50/80 hover:bg-slate-50/80">
+                <TableRow className="hover:bg-transparent border-b border-slate-200/70">
+                  <TableHead className="pl-6 text-[10px] font-black uppercase tracking-widest h-12 border-r border-slate-200/70 min-w-[190px]">Collaborateur</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest border-r border-slate-200/70 min-w-[150px]">Mode</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[120px]">Heures validées</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[115px]">Base</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[140px]">Variables</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[130px]">Avantages</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 bg-primary/[0.03] min-w-[120px]">Total brut</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-200/70 min-w-[95px]">Alertes</TableHead>
+                  <TableHead className="text-right pr-6 min-w-[120px] sticky right-0 z-20 bg-slate-50/95"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loadingCalcs ? (
-                  <TableRow><TableCell colSpan={8} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
                 ) : filteredCalculations.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-32 text-center space-y-4">
+                    <TableCell colSpan={9} className="py-32 text-center space-y-4">
                        <div className="bg-slate-50 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto">
                           <TrendingUp className="w-10 h-10 text-slate-200" />
                        </div>
@@ -291,7 +314,12 @@ export default function PayrollSynthesisPage() {
                 ) : (
                   filteredCalculations.map((c) => {
                     const emp = employeesMap.get(c.employeeId);
-                    const totalExtras = (c.mealTicketsValue || 0) + (c.mileageValue || 0) + (c.bonusValue || 0);
+                    const mealTicketSummary = mealTicketSummaryMap.get(c.employeeId);
+                    const mealTicketsBenefit =
+                      mealTicketSummary?.status === "confirmed"
+                        ? mealTicketSummary.totalValue || 0
+                        : 0;
+                    const totalExtras = (c.mileageValue || 0) + (c.bonusValue || 0);
                     const mode = c.rateSnapshot.payCalculationMode || "monthly";
                     const isActualWorkedHours = mode === "actual_worked_hours";
                     const baseValue =
@@ -306,43 +334,48 @@ export default function PayrollSynthesisPage() {
                       (c.deductionValue || 0);
                     
                     return (
-                      <TableRow key={c.id} className="hover:bg-slate-50 transition-colors group">
-                        <TableCell className="pl-8 py-5">
+                      <TableRow key={c.id} className="group border-b border-slate-100 odd:bg-white even:bg-slate-50/30 hover:bg-slate-50 transition-colors">
+                        <TableCell className="pl-6 py-4 align-middle border-r border-slate-100">
                            <div className="flex items-center gap-3">
-                              <div className="bg-primary/5 p-2 rounded-lg text-primary"><User className="w-4 h-4" /></div>
+                              <div className="bg-primary/5 p-2 rounded-lg text-primary shrink-0"><User className="w-4 h-4" /></div>
                               <div className="min-w-0">
                                  <p className="font-bold text-slate-900 text-sm truncate">{emp?.displayName || "Inconnu"}</p>
-                                 <p className="text-[9px] font-mono text-muted-foreground uppercase">{emp?.employeeCode || c.employeeId.slice(0, 8)}</p>
+                                 <p className="mt-0.5 text-[10px] font-mono text-muted-foreground uppercase tracking-wide">{emp?.employeeCode || c.employeeId.slice(0, 8)}</p>
                               </div>
                            </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="py-4 align-middle border-r border-slate-100">
                            <div className="flex flex-col items-start gap-1.5">
                               <Badge variant="outline" className={cn("rounded-lg border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide", MODE_BADGE_STYLES[mode])}>
                                 {MODE_LABELS[mode]}
                               </Badge>
                               {c.rateSnapshot.ccnlLevelId && (
-                                <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-tight">Level {c.rateSnapshot.levelCode}</span>
+                                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">Niveau {c.rateSnapshot.levelCode}</span>
                               )}
                            </div>
                         </TableCell>
-                        <TableCell className="text-right">
-                           <div className="space-y-0.5">
-                              <p className="text-sm font-black text-slate-800">{formatHours(c.attendanceAggregation.totalValidatedHours)}</p>
-                              <p className="text-[10px] font-bold text-muted-foreground">
-                                Nuit {formatHours(c.attendanceAggregation.ordinaryNightHours)} · Sup. {formatHours(c.attendanceAggregation.overtimeHours)}
-                              </p>
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
+                           <div className="space-y-1">
+                              <p className="font-black text-slate-900 text-sm">{formatHours(c.attendanceAggregation.totalValidatedHours)}</p>
+                              <div className="flex flex-wrap justify-end gap-1">
+                                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                                  Nuit {formatHours(c.attendanceAggregation.ordinaryNightHours)}
+                                </span>
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                                  Sup. {formatHours(c.attendanceAggregation.overtimeHours)}
+                                </span>
+                              </div>
                            </div>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
                           <div className="space-y-0.5">
                             <p className="text-[10px] font-black uppercase tracking-wide text-muted-foreground">{BASE_LABELS[mode]}</p>
-                            <p className="font-black text-slate-700">{formatEuro(baseValue)}</p>
+                            <p className="font-black text-slate-800 text-sm">{formatEuro(baseValue)}</p>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right">
-                          <div className="space-y-0.5">
-                            <p className="font-bold text-slate-700">{formatEuro(variablesTotal)}</p>
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
+                          <div className="space-y-1">
+                            <p className="font-bold text-slate-800 text-sm">{formatEuro(variablesTotal)}</p>
                             {isActualWorkedHours && c.paidHolidayValue != null && (
                               <p className="text-[10px] font-bold text-teal-700">
                                 Fériés rémunérés: {formatEuro(c.paidHolidayValue)}
@@ -350,14 +383,28 @@ export default function PayrollSynthesisPage() {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right bg-primary/[0.02]">
-                           <span className="font-black text-primary text-sm">{formatEuro(c.grossEconomicTotal)}</span>
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
+                           <div className="space-y-1">
+                             {mealTicketsBenefit > 0 ? (
+                               <p className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">
+                                 Buoni pasto: {formatEuro(mealTicketsBenefit)}
+                               </p>
+                             ) : (
+                               <p className="text-[10px] font-bold text-muted-foreground">Non intégré</p>
+                             )}
+                           </div>
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className="py-4 align-middle text-right bg-primary/[0.025] border-r border-primary/10">
+                           <div className="space-y-0.5">
+                             <p className="text-[10px] font-black uppercase tracking-wide text-primary/60">Total brut</p>
+                             <span className="block font-black text-primary text-base">{formatEuro(c.grossEconomicTotal)}</span>
+                           </div>
+                        </TableCell>
+                        <TableCell className="py-4 align-middle text-center border-r border-slate-100">
                            {renderWarningIndicator(c.reconciliationWarnings)}
                         </TableCell>
-                        <TableCell className="text-right pr-8">
-                           <Button asChild variant="ghost" size="sm" className="h-8 gap-1.5">
+                        <TableCell className="py-4 align-middle text-right pr-6 sticky right-0 z-10 bg-white group-hover:bg-slate-50 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)]">
+                           <Button asChild variant="ghost" size="sm" className="h-8 gap-1.5 font-bold text-primary hover:text-primary">
                              <Link href={`/entity/${entityId}/payroll/${encodeURIComponent(c.id)}`}>
                                Voir détail
                                <ChevronRight className="w-4 h-4" />

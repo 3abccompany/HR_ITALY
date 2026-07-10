@@ -20,8 +20,10 @@ import {
   CheckCircle2,
   Clock3,
   FileText,
+  Info,
   Landmark,
   ShieldCheck,
+  Utensils,
   User,
 } from "lucide-react";
 
@@ -38,6 +40,7 @@ import type { Contract } from "@/types/contract";
 import type { CCNL, CCNLLevel } from "@/types/ccnl";
 import type { Holiday } from "@/types/holiday";
 import type { AttendanceRecord } from "@/types/attendance";
+import type { MealTicketMonthlySummary } from "@/types/meal-ticket";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -179,6 +182,9 @@ const formatIsoDate = (value?: string | null) => {
   return year && month && day ? `${day}/${month}/${year}` : "Non renseigné";
 };
 
+const getMealTicketMonthlySummaryId = (employeeId: string, year: number, month: number) =>
+  `${employeeId}_${year}_${String(month).padStart(2, "0")}`;
+
 function formatStoredDate(value: unknown): string {
   if (!value) return "Non renseigné";
 
@@ -253,6 +259,7 @@ export default function PayrollCalculationDetailPage() {
   const { db } = useFirebase();
   const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
   const canRead = hasPermission("payroll.read");
+  const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
 
   const calculationRef = useMemo(
     () =>
@@ -380,6 +387,33 @@ export default function PayrollCalculationDetailPage() {
     "payroll.calculation-attendance"
   );
 
+  const mealTicketSummaryRef = useMemo(
+    () =>
+      db && entityId && calculation?.employeeId && canReadMealTickets
+        ? (doc(
+            db,
+            `entities/${entityId}/mealTicketMonthlySummaries`,
+            getMealTicketMonthlySummaryId(
+              calculation.employeeId,
+              calculation.year,
+              calculation.month
+            )
+          ) as DocumentReference<MealTicketMonthlySummary>)
+        : null,
+    [
+      db,
+      entityId,
+      calculation?.employeeId,
+      calculation?.year,
+      calculation?.month,
+      canReadMealTickets,
+    ]
+  );
+  const { data: mealTicketSummary } = useDoc<MealTicketMonthlySummary>(
+    mealTicketSummaryRef,
+    "payroll.meal-ticket-summary"
+  );
+
   if (membershipLoading || calculationLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -447,7 +481,6 @@ export default function PayrollCalculationDetailPage() {
     (week): week is PayrollWeeklyBreakdown => week !== null && typeof week === "object"
   );
   const extras =
-    (calculation.mealTicketsValue ?? 0) +
     (calculation.mileageValue ?? 0) +
     (calculation.bonusValue ?? 0);
   const activeHolidays = monthlyHolidays.filter((holiday) => holiday.status === "active");
@@ -737,6 +770,70 @@ export default function PayrollCalculationDetailPage() {
             </span>
             <span className="text-2xl font-black">{euro(calculation.grossEconomicTotal)}</span>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl border-emerald-200 bg-emerald-50/30 shadow-sm">
+        <CardHeader className="border-b border-emerald-100 bg-white/70">
+          <CardTitle className="flex items-center gap-2 text-xl font-black text-emerald-900">
+            <Utensils className="h-5 w-5" />
+            Avantages / Remboursements
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 p-6">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <SnapshotValue
+              label="Buoni pasto"
+              value={
+                mealTicketSummary?.status === "confirmed"
+                  ? euro(mealTicketSummary.totalValue)
+                  : "Non intégré à cette synthèse"
+              }
+            />
+            <SnapshotValue
+              label="Jours éligibles"
+              value={
+                mealTicketSummary?.status === "confirmed"
+                  ? mealTicketSummary.eligibleDays
+                  : "Non intégré à cette synthèse"
+              }
+            />
+            <SnapshotValue
+              label="Valeur par ticket"
+              value={
+                mealTicketSummary?.status === "confirmed"
+                  ? euro(mealTicketSummary.valuePerTicket)
+                  : "Non intégré à cette synthèse"
+              }
+            />
+            <SnapshotValue
+              label="Statut buoni pasto"
+              value={
+                mealTicketSummary?.status === "confirmed" ? (
+                  <Badge className="rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Confirmé
+                  </Badge>
+                ) : (
+                  "Non confirmé"
+                )
+              }
+            />
+            <SnapshotValue
+              label="Confirmation"
+              value={
+                mealTicketSummary?.status === "confirmed"
+                  ? formatStoredDate(mealTicketSummary.generatedAt)
+                  : "Confirmez le mois depuis le module Buoni pasto pour l’afficher ici."
+              }
+            />
+          </div>
+          <Alert className="rounded-2xl border-emerald-200 bg-white text-emerald-900">
+            <Info className="h-4 w-4 text-emerald-700" />
+            <AlertTitle>Avantage économique séparé</AlertTitle>
+            <AlertDescription>
+              Les buoni pasto sont affichés comme avantage économique séparé. Ils ne modifient pas le brut mensuel ni le total brut économique.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
 

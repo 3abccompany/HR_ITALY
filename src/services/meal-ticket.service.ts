@@ -52,6 +52,10 @@ export function getMealTicketMonthRange(year: number, month: number) {
   return { startDate, endDate };
 }
 
+export function getMealTicketMonthlySummaryId(employeeId: string, year: number, month: number) {
+  return `${employeeId}_${year}_${pad2(month)}`;
+}
+
 function overlapsPeriod(policy: MealTicketPolicy, startDate: string, endDate: string) {
   return policy.effectiveFrom <= endDate && (!policy.effectiveTo || policy.effectiveTo >= startDate);
 }
@@ -400,6 +404,52 @@ export async function saveEntityMealTicketPolicy(
   });
 
   return policyId;
+}
+
+export async function confirmMealTicketMonthlySummaries(
+  entityId: string,
+  summaries: MealTicketMonthlySummary[],
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const batch = writeBatch(db);
+  const confirmedAt = serverTimestamp();
+  const summaryIds: string[] = [];
+
+  for (const summary of summaries) {
+    const summaryId = getMealTicketMonthlySummaryId(summary.employeeId, summary.year, summary.month);
+    const ref = doc(db, `entities/${entityId}/mealTicketMonthlySummaries`, summaryId);
+    summaryIds.push(summaryId);
+
+    batch.set(ref, {
+      ...summary,
+      id: summaryId,
+      entityId,
+      status: "confirmed",
+      generatedAt: confirmedAt,
+      generatedBy: actorUid,
+    } satisfies MealTicketMonthlySummary);
+  }
+
+  await batch.commit();
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "meal_ticket.month_confirmed",
+    resourceType: "mealTicketMonthlySummary",
+    resourceId: `${summaries[0]?.year || "unknown"}_${summaries[0]?.month || "unknown"}`,
+    details: {
+      year: summaries[0]?.year,
+      month: summaries[0]?.month,
+      employeesConfirmed: summaries.length,
+      totalValue: summaries.reduce((sum, summary) => sum + (summary.totalValue || 0), 0),
+      summaryIds,
+    },
+  });
+
+  return { confirmed: summaries.length, summaryIds };
 }
 
 export type MealTicketContractSnapshot = Pick<Contract, "contractId">;

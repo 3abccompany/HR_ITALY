@@ -54,6 +54,7 @@ import { useCollection, useFirebase, useUser } from "@/firebase";
 import { cn } from "@/lib/utils";
 import {
   calculateMealTicketMonthlySummary,
+  confirmMealTicketMonthlySummaries,
   getMealTicketMonthRange,
   resolveMealTicketPolicyFromList,
   saveEntityMealTicketPolicy,
@@ -104,10 +105,12 @@ export default function MealTicketsPage() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [policyForm, setPolicyForm] = useState(initialPolicyForm);
   const [savingPolicy, setSavingPolicy] = useState(false);
+  const [confirmingMonth, setConfirmingMonth] = useState(false);
   const [selectedSummary, setSelectedSummary] = useState<MealTicketMonthlySummary | null>(null);
 
   const canRead = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
   const canManage = hasPermission("mealTickets.manage");
+  const canConfirm = hasPermission("mealTickets.calculate") || hasPermission("mealTickets.manage");
   const { startDate, endDate } = useMemo(
     () => getMealTicketMonthRange(selectedYear, selectedMonth),
     [selectedYear, selectedMonth]
@@ -153,11 +156,25 @@ export default function MealTicketsPage() {
     ) as Query<Holiday>;
   }, [db, entityId, canRead, startDate, endDate]);
 
+  const confirmedSummariesQuery = useMemo(() => {
+    if (!db || !entityId || !canRead) return null;
+    return query(
+      collection(db, `entities/${entityId}/mealTicketMonthlySummaries`),
+      where("year", "==", selectedYear),
+      where("month", "==", selectedMonth),
+      where("status", "==", "confirmed")
+    ) as Query<MealTicketMonthlySummary>;
+  }, [db, entityId, canRead, selectedMonth, selectedYear]);
+
   const { data: policies, loading: loadingPolicies } = useCollection<MealTicketPolicy>(policiesQuery, "meal-tickets.policies");
   const { data: employees, loading: loadingEmployees } = useCollection<Employee>(employeesQuery, "meal-tickets.employees");
   const { data: attendanceRecords, loading: loadingAttendance } = useCollection<AttendanceRecord>(attendanceQuery, "meal-tickets.attendance");
   const { data: timeOffRequests } = useCollection<TimeOffRequest>(timeOffQuery, "meal-tickets.time-off");
   const { data: holidays } = useCollection<Holiday>(holidaysQuery, "meal-tickets.holidays");
+  const { data: confirmedSummaries, loading: loadingConfirmedSummaries } = useCollection<MealTicketMonthlySummary>(
+    confirmedSummariesQuery,
+    "meal-tickets.confirmed-summaries"
+  );
 
   const entityPolicy = useMemo(() => {
     return (policies || [])
@@ -232,6 +249,17 @@ export default function MealTicketsPage() {
     );
   }, [summaries]);
 
+  const confirmedTotals = useMemo(() => {
+    return (confirmedSummaries || []).reduce(
+      (acc, summary) => ({
+        employees: acc.employees + 1,
+        totalValue: acc.totalValue + (summary.totalValue || 0),
+        latestGeneratedAt: getLatestStoredDate(acc.latestGeneratedAt, summary.generatedAt),
+      }),
+      { employees: 0, totalValue: 0, latestGeneratedAt: null as any }
+    );
+  }, [confirmedSummaries]);
+
   const handleSavePolicy = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!entityId || !user) return;
@@ -270,6 +298,27 @@ export default function MealTicketsPage() {
     }
   };
 
+  const handleConfirmMonth = async () => {
+    if (!entityId || !user || summaries.length === 0) return;
+
+    setConfirmingMonth(true);
+    try {
+      const result = await confirmMealTicketMonthlySummaries(entityId, summaries, user.uid);
+      toast({
+        title: "Mois confirmé",
+        description: `${result.confirmed} synthèse(s) buoni pasto confirmée(s).`,
+      });
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Erreur de confirmation",
+        description: err.message || "Impossible de confirmer le mois.",
+      });
+    } finally {
+      setConfirmingMonth(false);
+    }
+  };
+
   if (membershipLoading) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
@@ -286,7 +335,7 @@ export default function MealTicketsPage() {
     );
   }
 
-  const loadingPreview = loadingPolicies || loadingEmployees || loadingAttendance;
+  const loadingPreview = loadingPolicies || loadingEmployees || loadingAttendance || loadingConfirmedSummaries;
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 pb-24">
@@ -331,6 +380,17 @@ export default function MealTicketsPage() {
               ))}
             </SelectContent>
           </Select>
+
+          {canConfirm && (
+            <Button
+              onClick={handleConfirmMonth}
+              disabled={confirmingMonth || loadingPreview || summaries.length === 0}
+              className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10"
+            >
+              {confirmingMonth ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              Confirmer le mois
+            </Button>
+          )}
         </div>
       </header>
 
@@ -339,6 +399,26 @@ export default function MealTicketsPage() {
         <SummaryCard title="Valeur prévisionnelle" value={formatEuro(totals.totalValue)} icon={Ticket} color="blue" />
         <SummaryCard title="Alertes preview" value={totals.warnings.toLocaleString("fr-FR")} icon={Info} color="amber" />
       </div>
+
+      <Alert className={cn(
+        "rounded-3xl",
+        confirmedTotals.employees > 0 ? "border-emerald-200 bg-emerald-50" : "border-blue-200 bg-blue-50"
+      )}>
+        <CheckCircle2 className={cn("h-4 w-4", confirmedTotals.employees > 0 ? "text-emerald-700" : "text-blue-700")} />
+        <AlertTitle className={confirmedTotals.employees > 0 ? "text-emerald-900" : "text-blue-900"}>
+          {confirmedTotals.employees > 0 ? "Mois confirmé" : "Mois non confirmé"}
+        </AlertTitle>
+        <AlertDescription className={confirmedTotals.employees > 0 ? "text-emerald-800" : "text-blue-800"}>
+          {confirmedTotals.employees > 0 ? (
+            <>
+              {confirmedTotals.employees} synthèse(s) confirmée(s), total buoni pasto {formatEuro(confirmedTotals.totalValue)}
+              {confirmedTotals.latestGeneratedAt ? ` — confirmé le ${formatStoredDate(confirmedTotals.latestGeneratedAt)}` : ""}.
+            </>
+          ) : (
+            "La confirmation fige les valeurs du mois pour affichage dans la synthèse économique. Elle ne modifie pas le brut."
+          )}
+        </AlertDescription>
+      </Alert>
 
       <Card className="rounded-[2rem] border-primary/5 shadow-xl shadow-primary/5 overflow-hidden">
         <CardHeader className="bg-slate-50 border-b px-6 py-5">
@@ -754,4 +834,29 @@ function formatPolicyDate(date?: string | null) {
   } catch {
     return date;
   }
+}
+
+function storedDateToMillis(value: any) {
+  if (!value) return 0;
+  if (typeof value.toDate === "function") return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value.seconds === "number") return value.seconds * 1000;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getLatestStoredDate(current: any, next: any) {
+  return storedDateToMillis(next) > storedDateToMillis(current) ? next : current;
+}
+
+function formatStoredDate(value: any) {
+  const millis = storedDateToMillis(value);
+  if (!millis) return "Non renseigné";
+  return new Date(millis).toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
