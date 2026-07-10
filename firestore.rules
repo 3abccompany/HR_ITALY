@@ -362,6 +362,15 @@ service cloud.firestore {
         allow update: if (hasPermission(entityId, 'payroll.recalculate') || hasPermission(entityId, 'payroll.calculate') || hasPermission(entityId, 'payroll.write') || hasPermission(entityId, 'payroll.approve') || hasPermission(entityId, 'payroll.lock') || isPlatformAdmin()) && request.resource.data.entityId == entityId;
         allow delete: if isPlatformAdmin();
       }
+
+      match /mealTicketPolicies/{policyId} {
+        allow read: if hasPermission(entityId, 'mealTickets.read')
+                    || hasPermission(entityId, 'mealTickets.manage')
+                    || isPlatformAdmin();
+        allow create, update: if (hasPermission(entityId, 'mealTickets.manage') || isPlatformAdmin())
+                              && request.resource.data.entityId == entityId;
+        allow delete: if hasPermission(entityId, 'mealTickets.manage') || isPlatformAdmin();
+      }
     }
 
     // --- Global Reference Data ---
