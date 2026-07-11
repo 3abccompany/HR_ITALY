@@ -29,6 +29,15 @@ service cloud.firestore {
         get(/databases/$(database)/documents/memberships/$(membershipId)).data.status == 'active';
     }
 
+    function isSelfEmployee(entityId, employeeId) {
+      return isAuthenticated()
+        && employeeId != null
+        && isEntityMember(entityId)
+        && exists(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId))
+        && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId)).data.userId == request.auth.uid
+        && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId)).data.status == 'active';
+    }
+
     // --- Public Collection Group Rules ---
     
     match /{path=**}/applicationForms/{formId} {
@@ -301,10 +310,18 @@ service cloud.firestore {
       match /timeOffRequests/{requestId} {
         allow read: if hasPermission(entityId, 'leaveRequests.read') 
                      || isPlatformAdmin()
-                     || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(request.auth.uid)).data.userId == request.auth.uid);
+                     || isSelfEmployee(entityId, resource.data.employeeId);
         
         allow create: if hasPermission(entityId, 'leaveRequests.create') 
-                      || isPlatformAdmin();
+                      || isPlatformAdmin()
+                      || (
+                        hasPermission(entityId, 'self.leaves.create')
+                        && request.resource.data.entityId == entityId
+                        && request.resource.data.source == 'employee_created'
+                        && request.resource.data.status == 'submitted'
+                        && request.resource.data.createdByUid == request.auth.uid
+                        && isSelfEmployee(entityId, request.resource.data.employeeId)
+                      );
 
         allow update: if hasPermission(entityId, 'leaveRequests.update') 
                       || hasPermission(entityId, 'leaveRequests.approve') 
@@ -316,7 +333,7 @@ service cloud.firestore {
       match /leaveBalances/{balanceId} {
         allow read: if hasPermission(entityId, 'leaveRequests.read') 
                     || isPlatformAdmin()
-                    || (isAuthenticated() && resource.data.employeeId != null && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(request.auth.uid)).data.userId == request.auth.uid);
+                    || isSelfEmployee(entityId, resource.data.employeeId);
         
         allow write: if hasPermission(entityId, 'leaveRequests.update') || isPlatformAdmin();
       }

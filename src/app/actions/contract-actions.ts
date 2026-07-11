@@ -8,11 +8,48 @@
 import { adminDb, adminAuth, adminBucket } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 
+function getAdminAuthLocalDiagnostic(error?: any) {
+  const code = String(error?.code || error?.errorInfo?.code || "");
+  const message = String(error?.message || "");
+  const isAuthCredentialIssue =
+    code.includes("credential") ||
+    code.includes("auth") ||
+    message.includes("invalid authentication credentials") ||
+    message.includes("UNAUTHENTICATED") ||
+    message.includes("Could not load the default credentials");
+
+  if (!isAuthCredentialIssue) {
+    return null;
+  }
+
+  return [
+    "Firebase Admin authentication is not available for local server actions.",
+    "Check local environment variables only; do not expose secret values.",
+    "Required names: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY.",
+    "Alternative ADC names: GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT.",
+  ].join(" ");
+}
+
 /**
  * Validates the authenticated user and retrieves their employee profile.
  */
 async function getVerifiedEmployee(entityId: string, idToken: string) {
-  const decodedToken = await adminAuth.verifyIdToken(idToken);
+  if (!adminDb || !adminAuth) {
+    throw new Error(
+      "Service indisponible. Firebase Admin local requis: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY ou GOOGLE_APPLICATION_CREDENTIALS."
+    );
+  }
+
+  let decodedToken;
+  try {
+    decodedToken = await adminAuth.verifyIdToken(idToken);
+  } catch (error: any) {
+    const diagnostic = getAdminAuthLocalDiagnostic(error);
+    if (diagnostic) {
+      throw new Error(diagnostic);
+    }
+    throw error;
+  }
   const uid = decodedToken.uid;
 
   const employeeSnap = await adminDb.collection("entities").doc(entityId).collection("employees")
@@ -37,7 +74,21 @@ export async function getMyContractsAction(params: {
   idToken: string;
 }) {
   const { entityId, idToken } = params;
-  if (!adminDb) throw new Error("Service indisponible.");
+  if (!adminDb || !adminAuth) {
+    return {
+      success: false,
+      contracts: [],
+      error: "Service indisponible. Firebase Admin local requis.",
+      requiredEnvNames: [
+        "FIREBASE_PROJECT_ID",
+        "FIREBASE_CLIENT_EMAIL",
+        "FIREBASE_PRIVATE_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_CLOUD_PROJECT",
+        "GCLOUD_PROJECT",
+      ],
+    };
+  }
 
   try {
     const { employee } = await getVerifiedEmployee(entityId, idToken);
@@ -73,8 +124,25 @@ export async function getMyContractsAction(params: {
 
     return { success: true, contracts };
   } catch (err: any) {
+    const diagnostic = getAdminAuthLocalDiagnostic(err);
+    if (diagnostic) {
+      console.warn("[getMyContractsAction] Firebase Admin auth diagnostic:", diagnostic);
+      return {
+        success: false,
+        contracts: [],
+        error: diagnostic,
+        requiredEnvNames: [
+          "FIREBASE_PROJECT_ID",
+          "FIREBASE_CLIENT_EMAIL",
+          "FIREBASE_PRIVATE_KEY",
+          "GOOGLE_APPLICATION_CREDENTIALS",
+          "GOOGLE_CLOUD_PROJECT",
+          "GCLOUD_PROJECT",
+        ],
+      };
+    }
     console.error("[getMyContractsAction] Error:", err.message);
-    throw err;
+    return { success: false, contracts: [], error: err.message || "Chargement des contrats indisponible." };
   }
 }
 

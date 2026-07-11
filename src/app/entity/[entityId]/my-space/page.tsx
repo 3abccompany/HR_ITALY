@@ -138,6 +138,7 @@ export default function MySpacePage() {
   // Contracts state (controlled via server action to bypass direct read rules)
   const [myContracts, setMyContracts] = useState<any[]>([]);
   const [loadingContracts, setLoadingContracts] = useState(true);
+  const [contractsError, setContractsError] = useState<string | null>(null);
 
   // Contract Upload State
   const [isContractUploadOpen, setIsContractUploadOpen] = useState(false);
@@ -190,16 +191,23 @@ export default function MySpacePage() {
       }
       
       setLoadingContracts(true);
+      setContractsError(null);
       try {
         const idToken = await auth.currentUser?.getIdToken();
         if (idToken) {
           const result = await getMyContractsAction({ entityId, idToken });
           if (result.success) {
             setMyContracts(result.contracts);
+          } else {
+            setMyContracts([]);
+            setContractsError(result.error || "Contrats temporairement indisponibles.");
           }
+        } else {
+          setContractsError("Session utilisateur indisponible. Veuillez vous reconnecter.");
         }
       } catch (err) {
         console.error("[MySpace] Contracts load failed:", err);
+        setContractsError("Contrats temporairement indisponibles.");
       } finally {
         setLoadingContracts(false);
       }
@@ -359,7 +367,12 @@ export default function MySpacePage() {
 
       // Refresh contracts list
       const updatedList = await getMyContractsAction({ entityId, idToken });
-      if (updatedList.success) setMyContracts(updatedList.contracts);
+      if (updatedList.success) {
+        setMyContracts(updatedList.contracts);
+        setContractsError(null);
+      } else {
+        setContractsError(updatedList.error || "Contrats temporairement indisponibles.");
+      }
 
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur de transfert", description: err.message });
@@ -482,6 +495,20 @@ export default function MySpacePage() {
                    <TableBody>
                       {loadingContracts ? (
                         <TableRow><TableCell colSpan={3} className="text-center py-10"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
+                      ) : contractsError ? (
+                        <TableRow>
+                          <TableCell colSpan={3} className="px-8 py-8">
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                              <p className="flex items-center gap-2 text-xs font-black uppercase tracking-widest">
+                                <AlertCircle className="h-4 w-4" />
+                                Contrats temporairement indisponibles
+                              </p>
+                              <p className="mt-2 text-xs leading-relaxed">
+                                {contractsError}
+                              </p>
+                            </div>
+                          </TableCell>
+                        </TableRow>
                       ) : !myContracts || myContracts.length === 0 ? (
                         <TableRow><TableCell colSpan={3} className="text-center py-16 text-muted-foreground italic text-xs">Aucun contrat disponible.</TableCell></TableRow>
                       ) : (
