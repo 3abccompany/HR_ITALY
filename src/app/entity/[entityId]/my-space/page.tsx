@@ -635,6 +635,7 @@ export default function MySpacePage() {
                 <div className="space-y-4">
                   <DetailItem label="Nom Complet" value={employee.displayName} icon={User} />
                   <DetailItem label="Matricule" value={employee.employeeCode} icon={Fingerprint} />
+                  <DetailItem label="Codice fiscale" value={employee.taxCode || "Non renseigné"} icon={Fingerprint} />
                   <DetailItem label="Poste" value={employee.jobTitle} icon={Briefcase} />
                   <DetailItem label="Département" value={employee.departmentName} icon={Building2} />
                   <DetailItem label="Site" value={employee.worksiteName} icon={MapPin} />

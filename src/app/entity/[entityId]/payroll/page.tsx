@@ -187,7 +187,8 @@ export default function PayrollSynthesisPage() {
       const emp = employeesMap.get(c.employeeId);
       return (
         emp?.displayName.toLowerCase().includes(term) ||
-        emp?.employeeCode?.toLowerCase().includes(term)
+        emp?.employeeCode?.toLowerCase().includes(term) ||
+        emp?.taxCode?.toLowerCase().includes(term)
       );
     });
   }, [calculations, search, employeesMap]);
@@ -299,7 +300,7 @@ export default function PayrollSynthesisPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input 
                 className="pl-10 h-11 rounded-xl bg-white border-primary/10" 
-                placeholder="Rechercher un employé ou matricule..." 
+                placeholder="Rechercher un employé, matricule ou codice fiscale..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -371,7 +372,11 @@ export default function PayrollSynthesisPage() {
                               <div className="bg-primary/5 p-2 rounded-lg text-primary shrink-0"><User className="w-4 h-4" /></div>
                               <div className="min-w-0">
                                  <p className="font-bold text-slate-900 text-sm truncate">{emp?.displayName || "Inconnu"}</p>
-                                 <p className="mt-0.5 text-[10px] font-mono text-muted-foreground uppercase tracking-wide">{emp?.employeeCode || c.employeeId.slice(0, 8)}</p>
+                                 <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                   Matricule: <span className="font-mono uppercase">{emp?.employeeCode || "Non renseigné"}</span>
+                                   {" · "}
+                                   Codice fiscale: <span className="font-mono uppercase">{emp?.taxCode || "Non renseigné"}</span>
+                                 </p>
                               </div>
                            </div>
                         </TableCell>

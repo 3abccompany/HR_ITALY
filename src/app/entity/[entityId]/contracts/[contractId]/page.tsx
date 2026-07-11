@@ -1086,7 +1086,9 @@ export default function ContractDetailPage() {
               <h1 className="text-2xl font-black text-primary tracking-tight">Détails du Contrat</h1>
               {getStatusBadge(contract.status as ContractStatus)}
             </div>
-            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">Référence : {businessReference}</p>
+            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">
+              Matricule : {effectiveData.employeeCode || businessReference || "Non renseigné"} · Codice fiscale : {effectiveData.taxCode || "Non renseigné"}
+            </p>
           </div>
         </div>
 
@@ -1458,6 +1460,7 @@ export default function ContractDetailPage() {
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                    <DetailEditable label="Nom Complet" value={effectiveData.employeeDisplayName} editValue={formData.employeeDisplayName} isEditing={isEditing} id="employeeDisplayName" disabled required onChange={(v: string) => setFormData(p => ({...p, employeeDisplayName: v}))} />
+                   <DetailEditable label="Matricule" value={effectiveData.employeeCode} editValue={formData.employeeCode} isEditing={isEditing} id="employeeCode" disabled className="font-mono uppercase" onChange={(v: string) => setFormData(p => ({...p, employeeCode: v}))} />
                    <DetailEditable label="Code Fiscal / ID National" value={effectiveData.taxCode} editValue={formData.taxCode} isEditing={isEditing} id="taxCode" required disabled={!!effectiveData.taxCode} className="font-mono uppercase" onChange={(v: string) => setFormData(p => ({...p, taxCode: v}))} />
                    <DetailEditable label="Date de Naissance" value={effectiveData.dateOfBirth} editValue={formData.dateOfBirth} isEditing={isEditing} id="dateOfBirth" type="date" disabled={!!effectiveData.dateOfBirth} onChange={(v: string) => setFormData(p => ({...p, dateOfBirth: v}))} />
                    <DetailEditable label="Lieu de Naissance" value={effectiveData.placeOfBirth} editValue={formData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v: string) => setFormData(p => ({...p, placeOfBirth: v}))} />

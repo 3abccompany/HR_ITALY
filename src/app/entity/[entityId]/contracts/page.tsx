@@ -172,12 +172,13 @@ export default function ContractsRegistryPage() {
       const emp = employeesMap.get(c.employeeId);
       const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "");
       const code = c.employeeCode || (emp ? emp.employeeCode : "");
+      const taxCode = c.taxCode || emp?.taxCode || "";
 
       // 1. Search
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const searchTarget = [
-          displayName, code, c.contractId, c.contractType, 
+          displayName, code, taxCode, c.contractId, c.contractType,
           c.ccnlName, c.levelCode, c.status
         ].join(' ').toLowerCase();
         if (!searchTarget.includes(term)) return false;
@@ -272,7 +273,7 @@ export default function ContractsRegistryPage() {
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input 
-                  placeholder="Nom, matricule, ID..." 
+                  placeholder="Nom, matricule, codice fiscale..."
                   className="h-10 pl-8 text-xs bg-background rounded-xl border-primary/10" 
                   value={filters.search}
                   onChange={(e) => updateFilter('search', e.target.value)}
@@ -381,6 +382,7 @@ export default function ContractsRegistryPage() {
                   const emp = employeesMap.get(c.employeeId);
                   const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "Collaborateur inconnu");
                   const code = c.employeeCode || (emp ? emp.employeeCode : "N/A");
+                  const taxCode = c.taxCode || emp?.taxCode || "";
 
                   const monthlyRem = getNumberLikeField(c, ['proposedGrossMonthly', 'grossMonthly', 'grossMonthlySalary', 'monthlyGross', 'monthlySalary', 'salaryMonthly', 'remunerationMonthly']) || 0;
                   const annualRem = getNumberLikeField(c, ['proposedGrossAnnual', 'grossAnnual', 'grossAnnualSalary', 'annualGross', 'annualSalary', 'salaryAnnual', 'ral', 'ralAnnuel']) || 0;
@@ -391,8 +393,11 @@ export default function ContractsRegistryPage() {
                       <TableCell className="pl-6 py-4">
                         <div className="flex flex-col">
                            <span className="font-bold text-slate-900">{displayName}</span>
-                           <span className="text-[10px] font-mono text-muted-foreground uppercase bg-secondary/30 w-fit px-1 rounded mt-0.5">
-                              <Fingerprint className="w-2.5 h-2.5 inline mr-1" /> {code}
+                           <span className="text-[10px] text-muted-foreground bg-secondary/30 w-fit px-1 rounded mt-0.5">
+                              <Fingerprint className="w-2.5 h-2.5 inline mr-1" />
+                              Matricule: <span className="font-mono uppercase">{code || "Non renseigné"}</span>
+                              {" · "}
+                              Codice fiscale: <span className="font-mono uppercase">{taxCode || "Non renseigné"}</span>
                            </span>
                         </div>
                       </TableCell>

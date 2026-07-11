@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -76,6 +76,13 @@ const months = Array.from({ length: 12 }, (_, index) => ({
   value: index + 1,
   label: format(new Date(2026, index, 1), "MMMM", { locale: fr }),
 }));
+
+const getMonthDateDefaults = (year: number, month: number) => {
+  const paddedMonth = String(month).padStart(2, "0");
+  const firstDay = `${year}-${paddedMonth}-01`;
+  const lastDay = new Date(year, month, 0).toISOString().slice(0, 10);
+  return { firstDay, lastDay };
+};
 
 const initialPolicyForm = {
   effectiveFrom: `${new Date().getFullYear()}-01-01`,
@@ -155,6 +162,10 @@ export default function KilometerReimbursementsPage() {
     () => getKilometerReimbursementMonthRange(selectedYear, selectedMonth),
     [selectedMonth, selectedYear]
   );
+  const monthDefaults = useMemo(
+    () => getMonthDateDefaults(selectedYear, selectedMonth),
+    [selectedMonth, selectedYear]
+  );
 
   const years = useMemo(() => {
     const current = new Date().getFullYear();
@@ -211,6 +222,12 @@ export default function KilometerReimbursementsPage() {
     return (employees || [])
       .filter((employee) => employee.status === "active")
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
+  }, [employees]);
+
+  const employeesMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    (employees || []).forEach((employee) => map.set(employee.employeeId, employee));
+    return map;
   }, [employees]);
 
   const policyHistory = useMemo(() => {
@@ -282,17 +299,66 @@ export default function KilometerReimbursementsPage() {
       policies || [],
       itemForm.employeeId,
       selectedEmployee?.activeContractId,
-      { year, month }
+      { year, month, startDate: itemForm.tripDate, endDate: itemForm.tripDate }
     );
   }, [entityPolicyForSelectedMonth, itemForm.employeeId, itemForm.tripDate, policies, selectedEmployee?.activeContractId]);
 
-  const itemTotal = calculateReimbursementItemTotal(itemForm.kilometers, itemForm.ratePerKm);
+  const resolvedRatePerKm = resolvedPolicyForItem?.ratePerKm || 0;
+  const resolvedPolicyReference = resolvedPolicyForItem
+    ? [
+        resolvedPolicyForItem.rateSource === "aci"
+          ? "ACI"
+          : resolvedPolicyForItem.rateSource === "company_policy"
+            ? "Politique entreprise"
+            : "Manuel",
+        resolvedPolicyForItem.aciReferenceLabel,
+      ]
+        .filter(Boolean)
+        .join(" / ")
+    : null;
+  const itemTotal = calculateReimbursementItemTotal(itemForm.kilometers, resolvedRatePerKm);
+  const isTripDateInSelectedMonth =
+    !!itemForm.tripDate && itemForm.tripDate >= startDate && itemForm.tripDate <= endDate;
+  const canSaveItem =
+    canManage &&
+    !savingItem &&
+    !!selectedEmployee &&
+    !!resolvedPolicyForItem &&
+    isTripDateInSelectedMonth &&
+    itemForm.kilometers > 0 &&
+    !!itemForm.tripDate &&
+    !!itemForm.origin &&
+    !!itemForm.destination &&
+    !!itemForm.reason;
   const isLoading = membershipLoading || loadingPolicies || loadingEmployees || loadingItems;
+
+  useEffect(() => {
+    setPolicyForm((prev) => ({
+      ...prev,
+      effectiveFrom: monthDefaults.firstDay,
+      effectiveTo: monthDefaults.lastDay,
+    }));
+    setItemForm((prev) => {
+      const shouldResetDate = !prev.tripDate || prev.tripDate < startDate || prev.tripDate > endDate;
+      return {
+        ...prev,
+        tripDate: shouldResetDate ? monthDefaults.firstDay : prev.tripDate,
+      };
+    });
+  }, [endDate, monthDefaults.firstDay, monthDefaults.lastDay, startDate]);
+
+  useEffect(() => {
+    setItemForm((prev) => ({
+      ...prev,
+      ratePerKm: resolvedRatePerKm,
+      policyId: resolvedPolicyForItem?.id || "",
+    }));
+  }, [resolvedPolicyForItem?.id, resolvedRatePerKm]);
 
   function resetItemForm() {
     setItemForm({
       ...initialItemForm,
-      tripDate: `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-01`,
+      tripDate: monthDefaults.firstDay,
       ratePerKm: entityPolicyForSelectedMonth?.ratePerKm || 0,
       policyId: entityPolicyForSelectedMonth?.id || "",
     });
@@ -316,7 +382,11 @@ export default function KilometerReimbursementsPage() {
         title: "Nouvelle politique enregistrée",
         description: "L'ancien historique est conservé. Les chevauchements actifs sont bloqués.",
       });
-      setPolicyForm(initialPolicyForm);
+      setPolicyForm({
+        ...initialPolicyForm,
+        effectiveFrom: monthDefaults.firstDay,
+        effectiveTo: monthDefaults.lastDay,
+      });
     } catch (error: any) {
       toast({
         title: "Impossible d'enregistrer",
@@ -330,10 +400,26 @@ export default function KilometerReimbursementsPage() {
 
   async function handleSaveItem() {
     if (!user?.uid || !selectedEmployee) return;
-    if (!itemForm.tripDate || !itemForm.origin || !itemForm.destination || !itemForm.reason || itemForm.kilometers <= 0 || itemForm.ratePerKm <= 0) {
+    if (!isTripDateInSelectedMonth) {
+      toast({
+        title: "Date hors période",
+        description: "La date du trajet doit appartenir au mois sélectionné.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!resolvedPolicyForItem || resolvedRatePerKm <= 0) {
+      toast({
+        title: "Aucune politique €/km active",
+        description: "Créez une politique active couvrant la date du trajet avant d'ajouter un remboursement.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!itemForm.tripDate || !itemForm.origin || !itemForm.destination || !itemForm.reason || itemForm.kilometers <= 0) {
       toast({
         title: "Trajet incomplet",
-        description: "Veuillez renseigner le collaborateur, le trajet, le motif, les kilomètres et le tarif.",
+        description: "Veuillez renseigner le collaborateur, le trajet, le motif et les kilomètres.",
         variant: "destructive",
       });
       return;
@@ -346,7 +432,8 @@ export default function KilometerReimbursementsPage() {
         {
           ...itemForm,
           employeeName: selectedEmployee.displayName,
-          policyId: itemForm.policyId || resolvedPolicyForItem?.id || null,
+          ratePerKm: resolvedRatePerKm,
+          policyId: resolvedPolicyForItem.id || null,
         },
         user.uid,
         itemForm.id || undefined
@@ -685,6 +772,24 @@ export default function KilometerReimbursementsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {!isTripDateInSelectedMonth && (
+            <Alert className="rounded-2xl border-amber-200 bg-amber-50 text-amber-900">
+              <AlertTriangle className="h-4 w-4 text-amber-700" />
+              <AlertTitle>Date hors période</AlertTitle>
+              <AlertDescription>
+                La date du trajet doit être comprise entre {startDate} et {endDate}.
+              </AlertDescription>
+            </Alert>
+          )}
+          {isTripDateInSelectedMonth && !resolvedPolicyForItem && (
+            <Alert className="rounded-2xl border-amber-200 bg-amber-50 text-amber-900">
+              <AlertTriangle className="h-4 w-4 text-amber-700" />
+              <AlertTitle>Aucune politique €/km active</AlertTitle>
+              <AlertDescription>
+                Aucune politique €/km active pour cette date. Créez une politique avant d’ajouter un trajet.
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
             <div className="space-y-2 xl:col-span-2">
               <Label>Collaborateur</Label>
@@ -698,12 +803,12 @@ export default function KilometerReimbursementsPage() {
                     policies || [],
                     employeeId,
                     employee?.activeContractId,
-                    { year, month }
+                    { year, month, startDate: itemForm.tripDate, endDate: itemForm.tripDate }
                   );
                   setItemForm((prev) => ({
                     ...prev,
                     employeeId,
-                    ratePerKm: policy?.ratePerKm || prev.ratePerKm,
+                    ratePerKm: policy?.ratePerKm || 0,
                     policyId: policy?.id || "",
                   }));
                 }}
@@ -724,6 +829,8 @@ export default function KilometerReimbursementsPage() {
               <Label>Date trajet</Label>
               <Input
                 type="date"
+                min={startDate}
+                max={endDate}
                 className="rounded-xl"
                 value={itemForm.tripDate}
                 onChange={(e) => setItemForm((prev) => ({ ...prev, tripDate: e.target.value }))}
@@ -742,14 +849,14 @@ export default function KilometerReimbursementsPage() {
             </div>
             <div className="space-y-2">
               <Label>Tarif €/km</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                className="rounded-xl"
-                value={itemForm.ratePerKm}
-                onChange={(e) => setItemForm((prev) => ({ ...prev, ratePerKm: Number(e.target.value) }))}
-              />
+              <div className="flex min-h-10 flex-col justify-center rounded-xl border bg-slate-50 px-3 py-2">
+                <span className="text-sm font-black text-primary">{formatEuro(resolvedRatePerKm)} / km</span>
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  {resolvedPolicyReference
+                    ? `Tarif appliqué automatiquement depuis la politique active · ${resolvedPolicyReference}`
+                    : "Tarif appliqué automatiquement depuis la politique active"}
+                </span>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Total</Label>
@@ -783,7 +890,7 @@ export default function KilometerReimbursementsPage() {
               />
             </div>
             <div className="flex items-end gap-2">
-              <Button className="flex-1 rounded-xl" onClick={handleSaveItem} disabled={!canManage || savingItem}>
+              <Button className="flex-1 rounded-xl" onClick={handleSaveItem} disabled={!canSaveItem}>
                 {savingItem ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                 {itemForm.id ? "Mettre à jour" : "Ajouter"}
               </Button>
@@ -823,9 +930,18 @@ export default function KilometerReimbursementsPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  sortedItems.map((item) => (
+                  sortedItems.map((item) => {
+                    const employee = employeesMap.get(item.employeeId);
+                    return (
                     <TableRow key={item.id}>
-                      <TableCell className="font-bold">{item.employeeName || item.employeeId}</TableCell>
+                      <TableCell>
+                        <p className="font-bold">{item.employeeName || employee?.displayName || "Collaborateur"}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "Non renseigné"}</span>
+                          {" · "}
+                          Codice fiscale: <span className="font-mono uppercase">{employee?.taxCode || "Non renseigné"}</span>
+                        </p>
+                      </TableCell>
                       <TableCell>{item.tripDate ? format(parseISO(item.tripDate), "dd/MM/yyyy", { locale: fr }) : "—"}</TableCell>
                       <TableCell>
                         <p className="font-medium">{item.origin} → {item.destination}</p>
@@ -882,7 +998,8 @@ export default function KilometerReimbursementsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -939,9 +1056,17 @@ export default function KilometerReimbursementsPage() {
                   const isConfirmed = (confirmedSummaries || []).some(
                     (confirmed) => confirmed.employeeId === summary.employeeId
                   );
+                  const employee = employeesMap.get(summary.employeeId);
                   return (
                     <TableRow key={summary.employeeId}>
-                      <TableCell className="font-bold">{summary.employeeName || summary.employeeId}</TableCell>
+                      <TableCell>
+                        <p className="font-bold">{summary.employeeName || employee?.displayName || "Collaborateur"}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "Non renseigné"}</span>
+                          {" · "}
+                          Codice fiscale: <span className="font-mono uppercase">{employee?.taxCode || "Non renseigné"}</span>
+                        </p>
+                      </TableCell>
                       <TableCell className="text-right">{summary.itemCount}</TableCell>
                       <TableCell className="text-right">{formatKm(summary.totalKilometers)}</TableCell>
                       <TableCell className="text-right font-black text-primary">{formatEuro(summary.totalAmount)}</TableCell>

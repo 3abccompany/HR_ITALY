@@ -272,6 +272,7 @@ function formatRowDate(dateStr: string, dayName: string): string {
 interface GroupedEmployeeAttendance {
   employeeId: string;
   employeeCode: string;
+  taxCode?: string | null;
   employeeDisplayName: string;
   departmentName?: string | null;
   worksiteName?: string | null;
@@ -434,7 +435,11 @@ export default function AttendancesPage() {
 
       if (registryFilters.search) {
         const term = registryFilters.search.toLowerCase();
-        const match = a.employeeDisplayName?.toLowerCase().includes(term) || a.employeeCode.toLowerCase().includes(term);
+        const employee = employeesMapByCode.get(a.employeeCode);
+        const match =
+          a.employeeDisplayName?.toLowerCase().includes(term) ||
+          a.employeeCode.toLowerCase().includes(term) ||
+          employee?.taxCode?.toLowerCase().includes(term);
         if (!match) return false;
       }
 
@@ -443,7 +448,7 @@ export default function AttendancesPage() {
 
       return true;
     });
-  }, [registryAttendances, selectedMonth, selectedYear, registryFilters]);
+  }, [employeesMapByCode, registryAttendances, selectedMonth, selectedYear, registryFilters]);
 
   const groupedEmployeeData = useMemo(() => {
     const groups = new Map<string, GroupedEmployeeAttendance>();
@@ -464,6 +469,7 @@ export default function AttendancesPage() {
         groups.set(key, {
           employeeId: a.employeeId,
           employeeCode: a.employeeCode,
+          taxCode: employeesMapByCode.get(a.employeeCode)?.taxCode || null,
           employeeDisplayName: a.employeeDisplayName || "Employé inconnu",
           departmentName: a.departmentName,
           worksiteName: a.worksiteName,
@@ -1194,7 +1200,11 @@ export default function AttendancesPage() {
                                         <TableCell>
                                           <div className="flex flex-col">
                                               <span className="font-bold text-slate-800 text-xs">{row.employeeName}</span>
-                                              <span className="text-[10px] text-muted-foreground font-mono">{row.employeeCode}</span>
+                                              <span className="text-[10px] text-muted-foreground">
+                                                Matricule: <span className="font-mono uppercase">{row.employeeCode || "Non renseigné"}</span>
+                                                {" · "}
+                                                Codice fiscale: <span className="font-mono uppercase">{employeesMapByCode.get(row.employeeCode)?.taxCode || "Non renseigné"}</span>
+                                              </span>
                                           </div>
                                         </TableCell>
                                         <TableCell>
@@ -1297,7 +1307,11 @@ export default function AttendancesPage() {
                                     <div className="min-w-0">
                                        <h3 className="font-bold text-slate-900 truncate">{group.employeeDisplayName}</h3>
                                        <div className="flex items-center gap-2 mt-1">
-                                          <span className="text-[10px] font-mono text-muted-foreground uppercase bg-slate-100 px-1.5 py-0.5 rounded">{group.employeeCode}</span>
+                                          <span className="text-[10px] text-muted-foreground bg-slate-100 px-1.5 py-0.5 rounded">
+                                            Matricule: <span className="font-mono uppercase">{group.employeeCode || "Non renseigné"}</span>
+                                            {" · "}
+                                            Codice fiscale: <span className="font-mono uppercase">{group.taxCode || "Non renseigné"}</span>
+                                          </span>
                                           {group.departmentName && (
                                             <>
                                               <span className="text-slate-300 text-[8px]">•</span>

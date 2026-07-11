@@ -215,6 +215,12 @@ export default function MealTicketsPage() {
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
   }, [employees]);
 
+  const employeesMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    (employees || []).forEach((employee) => map.set(employee.employeeId, employee));
+    return map;
+  }, [employees]);
+
   const summaries = useMemo(() => {
     return activeEmployees.map((employee) => {
       const policy = resolveMealTicketPolicyFromList(policies || [], employee.employeeId, employee.activeContractId, {
@@ -642,10 +648,17 @@ export default function MealTicketsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {summaries.map((summary) => (
+                {summaries.map((summary) => {
+                  const employee = employeesMap.get(summary.employeeId);
+                  return (
                   <TableRow key={summary.id} className="hover:bg-slate-50/60">
                     <TableCell>
                       <div className="font-black text-primary">{summary.employeeName || "Employé"}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "Non renseigné"}</span>
+                        {" · "}
+                        Codice fiscale: <span className="font-mono uppercase">{employee?.taxCode || "Non renseigné"}</span>
+                      </div>
                       <div className="text-[11px] text-muted-foreground">Preview buoni pasto</div>
                     </TableCell>
                     <TableCell className="text-right font-black text-emerald-700">{summary.eligibleDays}</TableCell>
@@ -670,7 +683,8 @@ export default function MealTicketsPage() {
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}

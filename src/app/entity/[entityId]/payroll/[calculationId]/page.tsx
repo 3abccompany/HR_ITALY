@@ -593,16 +593,12 @@ export default function PayrollCalculationDetailPage() {
                   : contract?.employeeDisplayName || "Collaborateur non renseigné"}
               </h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                {(employee?.employeeCode || contract?.employeeCode) && (
-                  <Badge variant="outline" className="rounded-lg">
-                    Matricule {employee?.employeeCode || contract?.employeeCode}
-                  </Badge>
-                )}
-                {(employee?.taxCode || contract?.taxCode) && (
-                  <Badge variant="outline" className="rounded-lg">
-                    Codice fiscale {employee?.taxCode || contract?.taxCode}
-                  </Badge>
-                )}
+                <Badge variant="outline" className="rounded-lg">
+                  Matricule {employee?.employeeCode || contract?.employeeCode || "Non renseigné"}
+                </Badge>
+                <Badge variant="outline" className="rounded-lg">
+                  Codice fiscale {employee?.taxCode || contract?.taxCode || "Non renseigné"}
+                </Badge>
                 <Badge variant="outline" className="gap-1.5 rounded-lg">
                   <CalendarDays className="h-3.5 w-3.5" />
                   {String(calculation.month).padStart(2, "0")}/{calculation.year}
