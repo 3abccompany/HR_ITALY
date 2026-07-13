@@ -58,6 +58,34 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
+const getFiniteNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const formatWeeklyOrdinaryNightHours = (week: PayrollWeeklyBreakdown) => {
+  const raw = week as unknown as Record<string, unknown>;
+  const directOrdinaryNightHours =
+    getFiniteNumber(raw.ordinaryNightHours) ??
+    getFiniteNumber(raw.ordinaryNightHoursInWeek) ??
+    getFiniteNumber(raw.weeklyOrdinaryNightHours);
+
+  if (directOrdinaryNightHours !== null) {
+    return hours(Math.max(0, directOrdinaryNightHours));
+  }
+
+  const totalNightHours =
+    getFiniteNumber(raw.totalNightHours) ??
+    getFiniteNumber(raw.nightHours) ??
+    getFiniteNumber(raw.nightHoursInWeek) ??
+    getFiniteNumber(raw.workedNightHours) ??
+    getFiniteNumber(raw.weeklyNightHours);
+
+  if (totalNightHours !== null) {
+    return hours(Math.max(0, totalNightHours - (week.overtimeNightHours || 0)));
+  }
+
+  return "Non disponible";
+};
+
 const STATUS_LABELS: Record<string, string> = {
   draft: "Brouillon / Incomplet",
   calculated: "Calculé",
@@ -921,6 +949,11 @@ export default function PayrollCalculationDetailPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <p className="mb-4 rounded-2xl bg-slate-50 p-4 text-sm text-muted-foreground">
+            Les colonnes Sup. jour, Sup. nuit, Sup. dimanche et Sup. ferie representent
+            uniquement la classification des heures supplementaires. Les heures de nuit
+            ordinaires sont affichees separement lorsqu'elles existent dans le snapshot.
+          </p>
           {weeklyBreakdown.length === 0 ? (
             <p className="rounded-2xl bg-slate-50 p-6 text-sm text-muted-foreground">
               Aucun détail hebdomadaire n’a été enregistré pour cette synthèse.
@@ -934,10 +967,11 @@ export default function PayrollCalculationDetailPage() {
                     <TableHead>Période</TableHead>
                     <TableHead className="text-right">Seuil</TableHead>
                     <TableHead className="text-right">Travaillées</TableHead>
-                    <TableHead className="text-right">Sup.</TableHead>
-                    <TableHead className="text-right">Jour</TableHead>
-                    <TableHead className="text-right">Nuit</TableHead>
-                    <TableHead className="text-right">Dimanche</TableHead>
+                    <TableHead className="text-right">Nuit ordinaire</TableHead>
+                    <TableHead className="text-right">Sup. total</TableHead>
+                    <TableHead className="text-right">Sup. jour</TableHead>
+                    <TableHead className="text-right">Sup. nuit</TableHead>
+                    <TableHead className="text-right">Sup. dimanche</TableHead>
                     <TableHead className="text-right">Sup. férié</TableHead>
                     <TableHead>Classement</TableHead>
                   </TableRow>
@@ -949,6 +983,7 @@ export default function PayrollCalculationDetailPage() {
                       <TableCell>{week.weekStart} → {week.weekEnd}</TableCell>
                       <TableCell className="text-right">{week.expectedWeeklyHours == null ? "—" : hours(week.expectedWeeklyHours)}</TableCell>
                       <TableCell className="text-right">{hours(week.workedHoursInWeek)}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{formatWeeklyOrdinaryNightHours(week)}</TableCell>
                       <TableCell className="text-right">{hours(week.weeklyOvertimeHours)}</TableCell>
                       <TableCell className="text-right">{hours(week.overtimeDayHours)}</TableCell>
                       <TableCell className="text-right">{hours(week.overtimeNightHours)}</TableCell>
