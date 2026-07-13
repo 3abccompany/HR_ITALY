@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { collection, limit, query, where, type Query } from "firebase/firestore";
@@ -43,6 +43,7 @@ export function EntitySidebar() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { membership, entity, loading, hasPermission } = useActiveMembership(entityId);
+  const [loadingHref, setLoadingHref] = useState<string | null>(null);
 
   const mySpaceItem = entityMenu.find((item) => item.href === MY_SPACE_HREF);
   const businessMenuItems = entityMenu.filter((item) => item.href !== MY_SPACE_HREF);
@@ -73,6 +74,34 @@ export function EntitySidebar() {
     }
   }, [linkedEmployeeError]);
 
+  useEffect(() => {
+    setLoadingHref(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!loadingHref) return;
+
+    const timeout = window.setTimeout(() => {
+      setLoadingHref(null);
+    }, 3000);
+
+    return () => window.clearTimeout(timeout);
+  }, [loadingHref]);
+
+  const handleMenuAnchorClick = (event: MouseEvent<HTMLAnchorElement>, href: string) => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    setLoadingHref(href);
+  };
+
   const handleLogout = async () => {
     try {
       await logout();
@@ -97,6 +126,7 @@ export function EntitySidebar() {
   const renderNavigationLink = (item: MenuItem) => {
     const href = `/entity/${entityId}/${item.href}`;
     const isActive = pathname === href;
+    const isLoading = loadingHref === href && !isActive;
     const Icon = item.icon;
 
     return (
@@ -106,6 +136,7 @@ export function EntitySidebar() {
           data-sidebar="menu-button"
           data-active={isActive}
           data-size="default"
+          onClick={(event) => handleMenuAnchorClick(event, href)}
           className={cn(
             "peer/menu-button flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-[width,height,padding]",
             "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground",
@@ -113,7 +144,11 @@ export function EntitySidebar() {
             "group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0"
           )}
         >
-          <Icon className="w-4 h-4" aria-hidden="true" />
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Icon className="w-4 h-4" aria-hidden="true" />
+          )}
           <span>{item.label}</span>
         </a>
       </SidebarMenuItem>
