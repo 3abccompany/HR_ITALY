@@ -42,6 +42,7 @@ export interface PayrollWeeklyBreakdown {
   rawImportedOvertimeHours?: number;
   weeklyOvertimeHours: number;
   payableOvertimeHoursInPayrollMonth?: number;
+  ordinaryNightHours?: number;
   
   // Exclusive Classification buckets
   overtimeDayHours: number;

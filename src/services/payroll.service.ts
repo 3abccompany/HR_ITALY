@@ -262,6 +262,7 @@ async function reconcileWeeklyOvertime(
       workedHoursInWeek: Number(weekWorked.toFixed(2)),
       rawImportedOvertimeHours: Number(weekRawSup.toFixed(2)),
       weeklyOvertimeHours: Number(weekOv.toFixed(2)),
+      ordinaryNightHours: Number(weekOrdNight.toFixed(2)),
       overtimeDayHours: Number(weekOvDay.toFixed(2)),
       overtimeNightHours: Number(weekOvNight.toFixed(2)),
       overtimeSundayHours: Number(weekOvSun.toFixed(2)),
