@@ -49,6 +49,7 @@ import type { EmploymentRequest } from "@/types/employment-request";
 import type { KilometerReimbursementMonthlySummary } from "@/types/kilometer-reimbursement";
 import type { MealTicketMonthlySummary } from "@/types/meal-ticket";
 import type { PayrollCalculation } from "@/types/payroll";
+import type { MandatoryCommunication } from "@/types/post-acceptance-hiring";
 
 type PayrollMode = NonNullable<PayrollCalculation["rateSnapshot"]["payCalculationMode"]>;
 
@@ -460,10 +461,12 @@ export default function ReportsPage() {
 
   const employmentRequestsQuery = useMemo(() => {
     if (!db || !entityId || !canReadReports || !canReadEmploymentRequests) return null;
-    return query(
-      collection(db, `entities/${entityId}/employmentRequests`),
-      where("source", "==", "contract_renewal")
-    ) as Query<EmploymentRequest>;
+    return query(collection(db, `entities/${entityId}/employmentRequests`)) as Query<EmploymentRequest>;
+  }, [db, entityId, canReadReports, canReadEmploymentRequests]);
+
+  const mandatoryCommunicationsQuery = useMemo(() => {
+    if (!db || !entityId || !canReadReports || !canReadEmploymentRequests) return null;
+    return query(collection(db, `entities/${entityId}/mandatoryCommunications`)) as Query<MandatoryCommunication>;
   }, [db, entityId, canReadReports, canReadEmploymentRequests]);
 
   const { data: employees, loading: loadingEmployees } = useCollection<Employee>(
@@ -494,6 +497,11 @@ export default function ReportsPage() {
     employmentRequestsQuery,
     "reports.employment-requests"
   );
+  const { data: mandatoryCommunications, loading: loadingMandatoryCommunications } =
+    useCollection<MandatoryCommunication>(
+      mandatoryCommunicationsQuery,
+      "reports.mandatory-communications"
+    );
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -608,10 +616,35 @@ export default function ReportsPage() {
   const employmentRequestByContractId = useMemo(() => {
     const map = new Map<string, EmploymentRequest>();
     (employmentRequests || []).forEach((request) => {
-      if (request.contractId) map.set(request.contractId, request);
+      if (request.source === "contract_renewal" && request.contractId) {
+        map.set(request.contractId, request);
+      }
     });
     return map;
   }, [employmentRequests]);
+
+  const offerEmploymentRequestByOfferId = useMemo(() => {
+    const map = new Map<string, EmploymentRequest>();
+    (employmentRequests || []).forEach((request) => {
+      if (request.source === "offer" && request.offerId) {
+        map.set(request.offerId, request);
+      }
+    });
+    return map;
+  }, [employmentRequests]);
+
+  const assunzioneCommunicationByOfferId = useMemo(() => {
+    const map = new Map<string, MandatoryCommunication>();
+    (mandatoryCommunications || []).forEach((communication) => {
+      if (
+        communication.employmentOfferId &&
+        communication.type === "UNILAV_ASSUNZIONE"
+      ) {
+        map.set(communication.employmentOfferId, communication);
+      }
+    });
+    return map;
+  }, [mandatoryCommunications]);
 
   const contractRows = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -619,8 +652,17 @@ export default function ReportsPage() {
       .map((contract) => {
         const employee = employeesMap.get(contract.employeeId);
         const request = employmentRequestByContractId.get(contract.contractId);
+        const offerRequest = contract.sourceOfferId
+          ? offerEmploymentRequestByOfferId.get(contract.sourceOfferId)
+          : null;
+        const assunzioneCommunication = contract.sourceOfferId
+          ? assunzioneCommunicationByOfferId.get(contract.sourceOfferId)
+          : null;
         const renewalMode = contract.renewalMode || (contract.isRenewal ? "renew_cdd" : null);
         const isCdi = /indeterminato|cdi/i.test(contract.contractType || "");
+        const isHistoricalIntake = /historical_import|direct_hr_creation|old_employee_intake/i.test(
+          contract.source || ""
+        );
         const movement = renewalMode
           ? renewalMode === "convert_to_cdi"
             ? "CDD → CDI"
@@ -628,6 +670,17 @@ export default function ReportsPage() {
               ? "Changement Livello"
               : "Renouvellement CDD"
           : "Nouveau contrat";
+        const unilavLabel = request
+          ? `${request.type === "unilav_trasformazione" ? "UNILAV_TRASFORMAZIONE" : "UNILAV_PROROGA"} · ${request.status}`
+          : assunzioneCommunication
+            ? `UNILAV_ASSUNZIONE · ${assunzioneCommunication.status}`
+            : offerRequest
+              ? `UNILAV_ASSUNZIONE · ${offerRequest.status}`
+              : isHistoricalIntake
+                ? "Reprise historique — UNILAV externe / à archiver"
+                : contract.sourceOfferId
+                  ? "UNILAV_ASSUNZIONE manquant"
+                  : "UNILAV à vérifier";
 
         return {
           contract,
@@ -637,6 +690,7 @@ export default function ReportsPage() {
           unilavLabel: request
             ? `${request.type === "unilav_trasformazione" ? "UNILAV_TRASFORMAZIONE" : "UNILAV_PROROGA"} · ${request.status}`
             : "Non renseigné",
+          resolvedUnilavLabel: unilavLabel,
           isMidMonth: !!contract.startDate && !contract.startDate.endsWith("-01"),
         };
       })
@@ -645,7 +699,14 @@ export default function ReportsPage() {
         return getEmployeeSearchText(row.employee, row.contract.employeeId).includes(term);
       })
       .sort((a, b) => (b.contract.startDate || "").localeCompare(a.contract.startDate || ""));
-  }, [contracts, employeesMap, employmentRequestByContractId, search]);
+  }, [
+    assunzioneCommunicationByOfferId,
+    contracts,
+    employeesMap,
+    employmentRequestByContractId,
+    offerEmploymentRequestByOfferId,
+    search,
+  ]);
 
   const anomalyRows = useMemo(() => {
     const rows: { category: string; severity: "Info" | "Attention" | "Critique"; employeeLabel: string; employeeCode: string; taxCode: string; message: string }[] = [];
@@ -780,7 +841,8 @@ export default function ReportsPage() {
     loadingKilometers ||
     loadingAttendance ||
     loadingContracts ||
-    loadingEmploymentRequests;
+    loadingEmploymentRequests ||
+    loadingMandatoryCommunications;
 
   const exportEconomicCsv = () => {
     const rows = filteredPayroll.map((calculation) => {
@@ -919,7 +981,7 @@ export default function ReportsPage() {
     row.contract.previousContractId || "—",
     row.contract.contractId,
     [row.contract.levelCode, row.contract.levelLabel].filter(Boolean).join(" · ") || "Non renseigné",
-    row.unilavLabel,
+    row.resolvedUnilavLabel,
   ]);
 
   const anomalyHeaders = ["Catégorie", "Sévérité", "Collaborateur", "Matricule", "Codice fiscale", "Message"];
@@ -1489,7 +1551,7 @@ export default function ReportsPage() {
                         <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{row.contract.previousContractId || "—"}</TableCell>
                         <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{row.contract.contractId}</TableCell>
                         <TableCell>{[row.contract.levelCode, row.contract.levelLabel].filter(Boolean).join(" · ") || "Non renseigné"}</TableCell>
-                        <TableCell className="text-xs">{row.unilavLabel}</TableCell>
+                        <TableCell className="text-xs">{row.resolvedUnilavLabel}</TableCell>
                       </TableRow>
                     ))
                   )}
