@@ -104,6 +104,28 @@ function isIndefiniteContractType(contractType?: string | null) {
   );
 }
 
+function toPositiveNumber(value: unknown) {
+  const numeric = typeof value === "string" ? Number(value) : value;
+  return typeof numeric === "number" && Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function resolveAnnualGross(contract?: Contract | null) {
+  const savedAnnual = toPositiveNumber(contract?.grossAnnual);
+  if (savedAnnual !== null) return savedAnnual;
+
+  const monthly = toPositiveNumber(contract?.grossMonthly);
+  const payments = toPositiveNumber(contract?.monthlyPayments);
+  if (monthly !== null && payments !== null) {
+    return Math.round(monthly * payments * 100) / 100;
+  }
+
+  return null;
+}
+
+function formatEuroAmount(value: number | null) {
+  return value === null ? "Non renseigné" : `€ ${value.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}`;
+}
+
 /**
  * Renders the contract lifecycle context for a document.
  */
@@ -354,6 +376,7 @@ export default function Employee360HubPage() {
   }, [contractsByEmp]);
 
   const activeContract = useMemo(() => allContracts?.find(c => c.status === 'active'), [allContracts]);
+  const activeContractAnnualGross = useMemo(() => resolveAnnualGross(activeContract), [activeContract]);
   const contractHistory = useMemo(() => allContracts?.filter(c => c.status !== 'active') || [], [allContracts]);
 
   // --- 2B. Documents Sub-Queries ---
@@ -776,9 +799,11 @@ export default function Employee360HubPage() {
                              <div className="md:w-px md:bg-white/10" />
                              <div className="md:w-64 space-y-6 text-right md:text-left">
                                 <div className="space-y-1">
-                                   <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">Rémunération Brute</p>
-                                   <p className="text-3xl font-black">€ {activeContract.grossAnnual?.toLocaleString('fr-FR')}</p>
-                                   <p className="text-xs text-white/40">{activeContract.monthlyPayments} mensualités</p>
+                                   <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">RAL brute</p>
+                                   <p className="text-3xl font-black">{formatEuroAmount(activeContractAnnualGross)}</p>
+                                   <p className="text-xs text-white/40">
+                                     {activeContract.monthlyPayments ? `${activeContract.monthlyPayments} mensualités` : "Mensualités non renseignées"}
+                                   </p>
                                 </div>
                                 <Button asChild variant="outline" className="w-full bg-white/10 border-white/20 hover:bg-white/20 text-white font-bold rounded-xl gap-2">
                                    <Link href={`/entity/${entityId}/contracts/${activeContract.contractId}`}>

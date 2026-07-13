@@ -68,6 +68,17 @@ const initialForm = {
   openingExFest: { report: 0, acquis: 0, utilisé: 0 }
 };
 
+function toSafeNumber(value: unknown, fallback = 0) {
+  const numeric = typeof value === "string" ? Number(value) : value;
+  return typeof numeric === "number" && Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function calculateGrossAnnual(grossMonthly: unknown, monthlyPayments: unknown) {
+  const monthly = toSafeNumber(grossMonthly);
+  const payments = toSafeNumber(monthlyPayments, 13);
+  return Math.round(monthly * payments * 100) / 100;
+}
+
 export default function EmployeeIntakePage() {
   const params = useParams();
   const router = useRouter();
@@ -198,22 +209,27 @@ export default function EmployeeIntakePage() {
     const profile = jobProfiles.find(p => p.jobProfileId === profileId);
     if (!profile) return;
 
-    setFormData(p => ({
-      ...p,
-      jobProfileId: profileId,
-      jobTitle: profile.jobTitleName,
-      departmentId: profile.departmentId || p.departmentId,
-      departmentName: profile.departmentName || p.departmentName,
-      // Prefill recommendations
-      ccnlId: profile.defaultCcnlId || p.ccnlId,
-      ccnlName: profile.defaultCcnlName || p.ccnlName,
-      levelId: profile.defaultLevelId || p.levelId,
-      levelCode: profile.defaultLevelCode || p.levelCode,
-      weeklyHours: profile.defaultWeeklyHours || p.weeklyHours,
-      monthlyPayments: profile.defaultMonthlyPayments || p.monthlyPayments,
-      grossMonthly: profile.defaultMinimumGrossMonthly || p.grossMonthly,
-      grossAnnual: (profile.defaultMinimumGrossMonthly || p.grossMonthly) * (profile.defaultMonthlyPayments || p.monthlyPayments)
-    }));
+    setFormData(p => {
+      const monthlyPayments = toSafeNumber(profile.defaultMonthlyPayments || p.monthlyPayments, 13);
+      const grossMonthly = toSafeNumber(profile.defaultMinimumGrossMonthly || p.grossMonthly);
+
+      return {
+        ...p,
+        jobProfileId: profileId,
+        jobTitle: profile.jobTitleName,
+        departmentId: profile.departmentId || p.departmentId,
+        departmentName: profile.departmentName || p.departmentName,
+        // Prefill recommendations
+        ccnlId: profile.defaultCcnlId || p.ccnlId,
+        ccnlName: profile.defaultCcnlName || p.ccnlName,
+        levelId: profile.defaultLevelId || p.levelId,
+        levelCode: profile.defaultLevelCode || p.levelCode,
+        weeklyHours: profile.defaultWeeklyHours || p.weeklyHours,
+        monthlyPayments,
+        grossMonthly,
+        grossAnnual: calculateGrossAnnual(grossMonthly, monthlyPayments)
+      };
+    });
   };
 
   const handleWorksiteChange = (id: string) => {
@@ -225,26 +241,35 @@ export default function EmployeeIntakePage() {
     const ccnl = ccnls.find(c => c.ccnlId === ccnlId);
     setLevelsError(null);
     setActiveLevels([]);
-    setFormData(p => ({
-      ...p,
-      ccnlId,
-      ccnlName: ccnl?.name || "",
-      levelId: "",
-      levelCode: "",
-      weeklyHours: ccnl?.standardWeeklyHours || p.weeklyHours,
-      monthlyPayments: ccnl?.monthlyPayments || p.monthlyPayments
-    }));
+    setFormData(p => {
+      const monthlyPayments = toSafeNumber(ccnl?.monthlyPayments || p.monthlyPayments, 13);
+
+      return {
+        ...p,
+        ccnlId,
+        ccnlName: ccnl?.name || "",
+        levelId: "",
+        levelCode: "",
+        weeklyHours: ccnl?.standardWeeklyHours || p.weeklyHours,
+        monthlyPayments,
+        grossAnnual: calculateGrossAnnual(p.grossMonthly, monthlyPayments)
+      };
+    });
   };
 
   const handleLevelChange = (levelId: string) => {
     const level = activeLevels.find(l => l.levelId === levelId);
-    setFormData(p => ({
-      ...p,
-      levelId,
-      levelCode: level?.levelCode || "",
-      grossMonthly: level?.minimumGrossMonthly || p.grossMonthly,
-      grossAnnual: (level?.minimumGrossMonthly || p.grossMonthly) * p.monthlyPayments
-    }));
+    setFormData(p => {
+      const grossMonthly = toSafeNumber(level?.minimumGrossMonthly || p.grossMonthly);
+
+      return {
+        ...p,
+        levelId,
+        levelCode: level?.levelCode || "",
+        grossMonthly,
+        grossAnnual: calculateGrossAnnual(grossMonthly, p.monthlyPayments)
+      };
+    });
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -274,15 +299,25 @@ export default function EmployeeIntakePage() {
 
     setLoading(true);
     try {
+      const grossMonthly = toSafeNumber(formData.grossMonthly);
+      const monthlyPayments = toSafeNumber(formData.monthlyPayments, 13);
+      const grossAnnual = calculateGrossAnnual(grossMonthly, monthlyPayments);
+      const selectedLevel = activeLevels.find(l => l.levelId === formData.levelId);
       const payload = {
         ...formData,
+        grossMonthly,
+        monthlyPayments,
+        grossAnnual,
         personId: existingPerson?.personId || null,
         isNewPerson: !existingPerson,
         intakeSource: "historical_import",
         departmentName: departments?.find(d => d.departmentId === formData.departmentId)?.name || "",
         worksiteName: worksites?.find(w => w.worksiteId === formData.worksiteId)?.name || "",
         ccnlName: ccnls?.find(c => c.ccnlId === formData.ccnlId)?.name || "",
-        levelCode: activeLevels.find(l => l.levelId === formData.levelId)?.levelCode || formData.levelCode
+        levelCode: selectedLevel?.levelCode || formData.levelCode,
+        levelLabel: selectedLevel?.label || selectedLevel?.levelLabel || null,
+        qualificationCategory: selectedLevel?.qualificationCategory || selectedLevel?.qualificationLabel || null,
+        payCalculationMode: "monthly"
       };
 
       await executeEmployeeIntake(entityId, payload, user.uid);
@@ -514,15 +549,15 @@ export default function EmployeeIntakePage() {
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Brut Mensuel (€)</Label>
                   <Input type="number" value={formData.grossMonthly} onChange={(e) => {
-                    const m = parseFloat(e.target.value) || 0;
-                    setFormData(p => ({...p, grossMonthly: m, grossAnnual: m * p.monthlyPayments}));
+                    const m = toSafeNumber(e.target.value);
+                    setFormData(p => ({...p, grossMonthly: m, grossAnnual: calculateGrossAnnual(m, p.monthlyPayments)}));
                   }} className="rounded-xl font-bold" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Mensualités</Label>
                   <Input type="number" value={formData.monthlyPayments} onChange={(e) => {
-                    const mp = parseInt(e.target.value) || 13;
-                    setFormData(p => ({...p, monthlyPayments: mp, grossAnnual: p.grossMonthly * mp}));
+                    const mp = toSafeNumber(e.target.value, 13);
+                    setFormData(p => ({...p, monthlyPayments: mp, grossAnnual: calculateGrossAnnual(p.grossMonthly, mp)}));
                   }} className="rounded-xl" />
                 </div>
                 <div className="space-y-2">
