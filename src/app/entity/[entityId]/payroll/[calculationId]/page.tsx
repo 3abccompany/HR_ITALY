@@ -206,6 +206,24 @@ const persistedAuditActorLabel = (calculation: PayrollCalculation, field: string
     : "Non renseigné";
 };
 
+const persistedAuditActorName = (calculation: PayrollCalculation, field: string) => {
+  const label = persistedAuditActorLabel(calculation, field);
+  return label === "Non renseignÃ©" ? null : label;
+};
+
+const readableAuditActorName = (calculation: PayrollCalculation, field: string) => {
+  const raw = calculation as unknown as Record<string, unknown>;
+  const readableValue =
+    raw[`${field}DisplayName`] ||
+    raw[`${field}Name`] ||
+    raw[`${field}Email`] ||
+    raw[`${field}UserEmail`];
+
+  return typeof readableValue === "string" && readableValue.trim().length > 0
+    ? readableValue
+    : null;
+};
+
 const formatIsoDate = (value?: string | null) => {
   if (!value) return "Non renseigné";
   const [year, month, day] = value.split("-");
@@ -233,6 +251,18 @@ function formatStoredDate(value: unknown): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function hasStoredDate(value: unknown): boolean {
+  if (!value) return false;
+  const date =
+    value instanceof Date
+      ? value
+      : typeof (value as { toDate?: unknown })?.toDate === "function"
+        ? (value as { toDate: () => Date }).toDate()
+        : new Date(value as string | number);
+
+  return !Number.isNaN(date.getTime());
 }
 
 function SnapshotValue({
@@ -1093,17 +1123,86 @@ export default function PayrollCalculationDetailPage() {
             Métadonnées d’audit enregistrées
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <SnapshotValue label="Calculé le" value={formatStoredDate(calculation.calculatedAt)} />
-          <SnapshotValue label="Calculé par" value={persistedAuditActorLabel(calculation, "calculatedBy")} />
-          <SnapshotValue label="Mis à jour le" value={formatStoredDate(calculation.updatedAt)} />
-          <SnapshotValue label="Mis à jour par" value={persistedAuditActorLabel(calculation, "updatedBy")} />
-          <SnapshotValue label="Approuvé le" value={formatStoredDate(calculation.approvedAt)} />
-          <SnapshotValue label="Approuvé par" value={persistedAuditActorLabel(calculation, "approvedBy")} />
-          <SnapshotValue label="Exporté le" value={formatStoredDate(calculation.exportedAt)} />
-          <SnapshotValue label="Exporté par" value={persistedAuditActorLabel(calculation, "exportedBy")} />
-          <SnapshotValue label="Verrouillé le" value={formatStoredDate(calculation.lockedAt)} />
-          <SnapshotValue label="Verrouillé par" value={persistedAuditActorLabel(calculation, "lockedBy")} />
+        <CardContent className="space-y-5">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" className="rounded-full bg-amber-50 text-amber-700 border-amber-200">
+              {hasStoredDate(calculation.approvedAt) ? "Approuvé" : "Approbation en attente"}
+            </Badge>
+            <Badge variant="outline" className="rounded-full bg-blue-50 text-blue-700 border-blue-200">
+              {hasStoredDate(calculation.exportedAt) ? "Exporté" : "Export non effectué"}
+            </Badge>
+            <Badge variant="outline" className="rounded-full bg-slate-50 text-slate-700 border-slate-200">
+              {hasStoredDate(calculation.lockedAt) ? "Verrouillé" : "Non verrouillé"}
+            </Badge>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {hasStoredDate(calculation.calculatedAt) && (
+              <SnapshotValue
+                label="Calculé le"
+                value={
+                  <span>
+                    {formatStoredDate(calculation.calculatedAt)}
+                    <span className="mt-1 block text-xs font-medium text-muted-foreground">
+                      {readableAuditActorName(calculation, "calculatedBy") || "Auteur non historisé"}
+                    </span>
+                  </span>
+                }
+              />
+            )}
+            {hasStoredDate(calculation.updatedAt) && (
+              <SnapshotValue
+                label="Mis à jour le"
+                value={
+                  <span>
+                    {formatStoredDate(calculation.updatedAt)}
+                    <span className="mt-1 block text-xs font-medium text-muted-foreground">
+                      {readableAuditActorName(calculation, "updatedBy") || "Auteur non historisé"}
+                    </span>
+                  </span>
+                }
+              />
+            )}
+            {hasStoredDate(calculation.approvedAt) && (
+              <SnapshotValue
+                label="Approuvé le"
+                value={
+                  <span>
+                    {formatStoredDate(calculation.approvedAt)}
+                    <span className="mt-1 block text-xs font-medium text-muted-foreground">
+                      {readableAuditActorName(calculation, "approvedBy") || "Auteur non historisé"}
+                    </span>
+                  </span>
+                }
+              />
+            )}
+            {hasStoredDate(calculation.exportedAt) && (
+              <SnapshotValue
+                label="Exporté le"
+                value={
+                  <span>
+                    {formatStoredDate(calculation.exportedAt)}
+                    <span className="mt-1 block text-xs font-medium text-muted-foreground">
+                      {readableAuditActorName(calculation, "exportedBy") || "Auteur non historisé"}
+                    </span>
+                  </span>
+                }
+              />
+            )}
+            {hasStoredDate(calculation.lockedAt) && (
+              <SnapshotValue
+                label="Verrouillé le"
+                value={
+                  <span>
+                    {formatStoredDate(calculation.lockedAt)}
+                    <span className="mt-1 block text-xs font-medium text-muted-foreground">
+                      {readableAuditActorName(calculation, "lockedBy") || "Auteur non historisé"}
+                    </span>
+                  </span>
+                }
+              />
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>
