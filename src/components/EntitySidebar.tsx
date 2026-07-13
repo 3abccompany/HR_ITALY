@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import Link from "next/link";
 import { collection, limit, query, where, type Query } from "firebase/firestore";
 import { 
   Building, 
@@ -27,10 +26,11 @@ import {
   SidebarRail
 } from "@/components/ui/sidebar";
 import { useCollection, useFirebase, useUser } from "@/firebase";
-import { entityMenu } from "@/config/menu";
+import { entityMenu, type MenuItem } from "@/config/menu";
 import { logout } from "@/services/auth.service";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee } from "@/types/employee";
+import { cn } from "@/lib/utils";
 
 const MY_SPACE_HREF = "my-space";
 
@@ -94,6 +94,32 @@ export function EntitySidebar() {
 
   if (!membership || !entity) return null;
 
+  const renderNavigationLink = (item: MenuItem) => {
+    const href = `/entity/${entityId}/${item.href}`;
+    const isActive = pathname === href;
+    const Icon = item.icon;
+
+    return (
+      <SidebarMenuItem key={item.href}>
+        <a href={href}
+          title={item.label}
+          data-sidebar="menu-button"
+          data-active={isActive}
+          data-size="default"
+          className={cn(
+            "peer/menu-button flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-[width,height,padding]",
+            "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground",
+            "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
+            "group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0"
+          )}
+        >
+          <Icon className="w-4 h-4" aria-hidden="true" />
+          <span>{item.label}</span>
+        </a>
+      </SidebarMenuItem>
+    );
+  };
+
   return (
     <Sidebar collapsible="icon" className="border-r">
       <SidebarHeader className="border-b h-16 flex flex-col justify-center px-4 gap-0.5">
@@ -117,24 +143,8 @@ export function EntitySidebar() {
                 const permissions = Array.isArray(item.permission) ? item.permission : [item.permission];
                 const isVisible = permissions.some(p => hasPermission(p));
                 if (!isVisible) return null;
-                
-                const href = `/entity/${entityId}/${item.href}`;
-                const isActive = pathname === href;
 
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton 
-                      asChild 
-                      isActive={isActive} 
-                      tooltip={item.label}
-                    >
-                      <Link href={href}>
-                        <item.icon className="w-4 h-4" />
-                        <span>{item.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
+                return renderNavigationLink(item);
               })}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -145,25 +155,7 @@ export function EntitySidebar() {
             <SidebarGroupLabel>Espace personnel</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {(() => {
-                  const href = `/entity/${entityId}/${mySpaceItem.href}`;
-                  const isActive = pathname === href;
-
-                  return (
-                    <SidebarMenuItem key={mySpaceItem.href}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={isActive}
-                        tooltip={mySpaceItem.label}
-                      >
-                        <Link href={href}>
-                          <mySpaceItem.icon className="w-4 h-4" />
-                          <span>{mySpaceItem.label}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })()}
+                {renderNavigationLink(mySpaceItem)}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
