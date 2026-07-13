@@ -97,6 +97,13 @@ function formatDateSafe(val: any, formatStr: string = "dd/MM/yyyy"): string {
   return format(date, formatStr, { locale: fr });
 }
 
+function isIndefiniteContractType(contractType?: string | null) {
+  const normalized = (contractType || "").toLowerCase();
+  return ["tempo indeterminato", "cdi", "indeterminato"].some((label) =>
+    normalized.includes(label)
+  );
+}
+
 /**
  * Renders the contract lifecycle context for a document.
  */
@@ -704,6 +711,17 @@ export default function Employee360HubPage() {
                   <CardContent className="px-8 pb-8 space-y-4">
                       {!canReadContracts ? (
                         <p className="text-xs italic text-muted-foreground">Accès restreint aux dates contractuelles.</p>
+                      ) : activeContract && isIndefiniteContractType(activeContract.contractType) ? (
+                        <div className="p-4 bg-white rounded-2xl border shadow-sm flex items-center gap-3">
+                            <div className="bg-green-100 p-2 rounded-xl text-green-600"><Calendar className="w-4 h-4" /></div>
+                            <div>
+                              <p className="text-[10px] font-black uppercase text-muted-foreground">Contrat CDI</p>
+                              <p className="text-sm font-bold text-slate-800">Durée indéterminée</p>
+                              {activeContract.endDate && (
+                                <p className="text-[10px] font-medium text-muted-foreground">Date de fin ignorée pour un contrat à durée indéterminée.</p>
+                              )}
+                            </div>
+                        </div>
                       ) : activeContract?.endDate ? (
                         <div className="p-4 bg-white rounded-2xl border shadow-sm flex items-center gap-3">
                             <div className="bg-orange-100 p-2 rounded-xl text-orange-600"><Calendar className="w-4 h-4" /></div>
@@ -750,7 +768,7 @@ export default function Employee360HubPage() {
                                 </div>
                                 <div className="grid grid-cols-2 gap-8">
                                    <DetailItemWhite label="Début" value={formatDateSafe(activeContract.startDate)} icon={Calendar} />
-                                   <DetailItemWhite label="Fin" value={formatDateSafe(activeContract.endDate)} icon={Clock} />
+                                   <DetailItemWhite label="Fin" value={isIndefiniteContractType(activeContract.contractType) ? "Durée indéterminée" : formatDateSafe(activeContract.endDate)} icon={Clock} />
                                    <DetailItemWhite label="Temps de travail" value={`${activeContract.weeklyHours}h / semaine`} icon={Clock} />
                                    <DetailItemWhite label="Lieu" value={activeContract.worksiteName} icon={MapPin} />
                                 </div>
@@ -805,7 +823,7 @@ export default function Employee360HubPage() {
                                      <p className="text-[9px] text-muted-foreground uppercase">{c.ccnlName} • {c.levelCode}</p>
                                   </TableCell>
                                   <TableCell className="text-xs font-medium">
-                                     {formatDateSafe(c.startDate)} <ArrowRight className="w-3 h-3 inline mx-1 opacity-30" /> {formatDateSafe(c.endDate)}
+                                     {formatDateSafe(c.startDate)} <ArrowRight className="w-3 h-3 inline mx-1 opacity-30" /> {isIndefiniteContractType(c.contractType) ? "Durée indéterminée" : formatDateSafe(c.endDate)}
                                   </TableCell>
                                   <TableCell className="text-right">
                                      <Button variant="ghost" size="sm" asChild className="h-8 rounded-lg font-bold">

@@ -130,6 +130,14 @@ const isIndefiniteContractType = (contractType?: string | null) => {
   );
 };
 
+const formatMoney = (value?: number | string | null) => {
+  const numeric = typeof value === "string" ? Number(value) : value;
+  if (typeof numeric !== "number" || !Number.isFinite(numeric) || numeric <= 0) {
+    return "Non renseigné";
+  }
+  return `${numeric.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} €`;
+};
+
 const RENEWAL_MODE_OPTIONS: Array<{
   value: ContractRenewalMode;
   label: string;
@@ -691,6 +699,36 @@ export default function ContractDetailPage() {
     [activeCcnls]
   );
 
+  const renewalCcnlOptions = useMemo(() => {
+    const options = [...sortedActiveCcnls];
+    const hasCurrentOption = !!renewalForm.ccnlId && options.some((item) => item.ccnlId === renewalForm.ccnlId);
+    if (!hasCurrentOption && renewalForm.ccnlId && renewalForm.ccnlName) {
+      options.unshift({
+        ccnlId: renewalForm.ccnlId,
+        name: `${renewalForm.ccnlName} — CCNL actuel`,
+        status: "active",
+      } as CCNL);
+    }
+    return options;
+  }, [renewalForm.ccnlId, renewalForm.ccnlName, sortedActiveCcnls]);
+
+  const ccnlReferenceUnavailable = !!(
+    isRenewalModalOpen &&
+    renewalForm.ccnlId &&
+    renewalForm.ccnlName &&
+    (!activeCcnls || !activeCcnls.some((item) => item.ccnlId === renewalForm.ccnlId))
+  );
+
+  const renewalTargetContractType =
+    renewalForm.renewalMode === "convert_to_cdi"
+      ? "CDI / Tempo indeterminato"
+      : contract?.contractType || "Non renseigné";
+
+  const hasRenewalClassificationMismatch = !!(
+    renewalForm.levelId &&
+    (!renewalForm.ccnlId || !renewalForm.ccnlName)
+  );
+
   const renewalStartsMidMonth = useMemo(() => {
     if (!renewalForm.newStartDate) return false;
     const day = Number(renewalForm.newStartDate.split("-")[2]);
@@ -736,7 +774,7 @@ export default function ContractDetailPage() {
     setRenewalForm((previous) => ({
       ...previous,
       ccnlId,
-      ccnlName: selected?.name || "",
+      ccnlName: selected?.name || (ccnlId === contract?.ccnlId ? contract?.ccnlName || "" : ""),
       levelId: "",
       levelCode: "",
       levelLabel: "",
@@ -897,6 +935,14 @@ export default function ContractDetailPage() {
     }
     if (renewalForm.renewalMode === "renew_cdd" && !renewalForm.newEndDate) {
       toast({ variant: "destructive", title: "Erreur", description: "La date de fin est obligatoire pour un renouvellement CDD." });
+      return;
+    }
+    if (hasRenewalClassificationMismatch) {
+      toast({
+        variant: "destructive",
+        title: "Classification incohérente",
+        description: "Le Livello sélectionné doit être rattaché à un CCNL visible avant de créer le brouillon.",
+      });
       return;
     }
 
@@ -1516,6 +1562,56 @@ export default function ContractDetailPage() {
                      <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, endDate: v}))} />
                    )}
                 </div>
+
+                <div className="mt-8 rounded-3xl border border-primary/10 bg-slate-50/70 p-5">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary/70">
+                        Classification contractuelle
+                      </p>
+                      <p className="text-xs font-medium text-muted-foreground">
+                        CCNL, Livello et paramètres de base utilisés comme référence contractuelle.
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="rounded-xl bg-white px-3 py-1 font-black text-primary">
+                      CCNL & Livello
+                    </Badge>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">CCNL</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">{effectiveData.ccnlName || "Non renseigné"}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Livello</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {effectiveData.levelCode
+                          ? `${effectiveData.levelCode}${effectiveData.levelLabel ? ` · ${effectiveData.levelLabel}` : ""}`
+                          : "Non renseigné"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Catégorie qualification</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">{effectiveData.qualificationCategory || "Non renseigné"}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Salaire brut mensuel</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">{formatMoney(effectiveData.grossMonthly)}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Heures hebdomadaires</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {effectiveData.weeklyHours ? `${effectiveData.weeklyHours}h / semaine` : "Non renseigné"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Mensualités / Mode paie</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {effectiveData.monthlyPayments || "Non renseigné"} · {PAYROLL_MODE_LABELS[resolvePayrollMode(effectiveData.payCalculationMode)]}
+                      </p>
+                    </div>
+                  </div>
+                </div>
              </CardContent>
           </Card>
 
@@ -1694,7 +1790,15 @@ export default function ContractDetailPage() {
           <ScrollArea className="max-h-[68vh]">
             <div className="p-8 space-y-6">
               <Card className="rounded-3xl border-primary/10 bg-white shadow-sm">
-                <CardContent className="p-5 grid gap-4 md:grid-cols-4">
+                <CardContent className="p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary/70">Classification actuelle</p>
+                      <p className="text-xs font-medium text-muted-foreground">Données conservées sur le contrat existant.</p>
+                    </div>
+                    <Badge variant="outline" className="rounded-xl bg-primary/5 px-3 py-1 font-black text-primary">Actuel</Badge>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-4">
                   <div>
                     <p className="text-[10px] font-black uppercase text-muted-foreground">Contrat actuel</p>
                     <p className="text-sm font-black text-slate-800">{contract?.contractType || "-"}</p>
@@ -1712,6 +1816,7 @@ export default function ContractDetailPage() {
                   <div>
                     <p className="text-[10px] font-black uppercase text-muted-foreground">Brut mensuel</p>
                     <p className="text-sm font-black text-slate-800">{contract?.grossMonthly ? `${contract.grossMonthly.toLocaleString("fr-FR")} €` : "Non renseigné"}</p>
+                  </div>
                   </div>
                 </CardContent>
               </Card>
@@ -1735,6 +1840,58 @@ export default function ContractDetailPage() {
                   );
                 })}
               </div>
+
+              <Card className="rounded-3xl border-blue-100 bg-blue-50/60 shadow-sm">
+                <CardContent className="p-5">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Nouvelle classification cible</p>
+                      <p className="text-xs font-medium text-blue-900/70">
+                        Aperçu dynamique du contrat brouillon qui sera créé.
+                      </p>
+                    </div>
+                    <Badge className="rounded-xl bg-blue-600 px-3 py-1 font-black text-white hover:bg-blue-600">
+                      {renewalForm.renewalMode === "convert_to_cdi" ? "CDI" : renewalForm.renewalMode === "renew_cdd" ? "CDD" : "Livello"}
+                    </Badge>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-5">
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Type cible</p>
+                      <p className="text-sm font-black text-slate-900">{renewalTargetContractType}</p>
+                      {renewalForm.renewalMode === "convert_to_cdi" && (
+                        <p className="text-[11px] font-bold text-green-700">Durée indéterminée</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">CCNL cible</p>
+                      <p className="text-sm font-black text-slate-900">{renewalForm.ccnlName || contract?.ccnlName || "Non renseigné"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Livello cible</p>
+                      <p className="text-sm font-black text-slate-900">
+                        {renewalForm.levelCode || contract?.levelCode
+                          ? `${renewalForm.levelCode || contract?.levelCode}${renewalForm.levelLabel || contract?.levelLabel ? ` · ${renewalForm.levelLabel || contract?.levelLabel}` : ""}`
+                          : "Non renseigné"}
+                      </p>
+                      {(renewalForm.qualificationCategory || contract?.qualificationCategory) && (
+                        <p className="text-[11px] font-medium text-blue-900/60">
+                          {renewalForm.qualificationCategory || contract?.qualificationCategory}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Brut mensuel cible</p>
+                      <p className="text-sm font-black text-slate-900">{formatMoney(renewalForm.grossMonthly || contract?.grossMonthly)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Mode paie cible</p>
+                      <p className="text-sm font-black text-slate-900">
+                        {PAYROLL_MODE_LABELS[resolvePayrollMode(renewalForm.payCalculationMode)]}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
 
               <Alert className="rounded-2xl border-blue-200 bg-blue-50 text-blue-900">
                 <Info className="h-4 w-4" />
@@ -1780,11 +1937,16 @@ export default function ContractDetailPage() {
                     <SelectTrigger className="h-11 rounded-xl bg-white font-bold"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Conserver / Non renseigné</SelectItem>
-                      {sortedActiveCcnls.map((ccnl) => (
+                      {renewalCcnlOptions.map((ccnl) => (
                         <SelectItem key={ccnl.ccnlId} value={ccnl.ccnlId}>{ccnl.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {ccnlReferenceUnavailable && (
+                    <p className="text-xs font-medium text-amber-700">
+                      CCNL affiché depuis le contrat actuel. Référentiel CCNL non disponible.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Livello CCNL</Label>

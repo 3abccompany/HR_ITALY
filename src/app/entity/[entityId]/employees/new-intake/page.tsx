@@ -105,6 +105,7 @@ export default function EmployeeIntakePage() {
 
   const [activeLevels, setActiveLevels] = useState<any[]>([]);
   const [loadingLevels, setLoadingLevels] = useState(false);
+  const [levelsError, setLevelsError] = useState<string | null>(null);
 
   const canCreate = hasPermission("employees.create") && hasPermission("contracts.create");
 
@@ -113,15 +114,40 @@ export default function EmployeeIntakePage() {
     async function fetchLevels() {
       if (!formData.ccnlId || !user) {
         setActiveLevels([]);
+        setLevelsError(null);
         return;
       }
       setLoadingLevels(true);
+      setLevelsError(null);
       try {
-        const idToken = await auth.currentUser?.getIdToken();
-        const levels = await getLevelsForCcnlAction(entityId, formData.ccnlId, idToken!);
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setActiveLevels([]);
+          setFormData((previous) => ({ ...previous, levelId: "", levelCode: "" }));
+          setLevelsError("Session expirée. Veuillez actualiser la page ou vous reconnecter.");
+          return;
+        }
+
+        const idToken = await currentUser.getIdToken(true);
+        if (!idToken) {
+          setActiveLevels([]);
+          setFormData((previous) => ({ ...previous, levelId: "", levelCode: "" }));
+          setLevelsError("Session expirée. Veuillez actualiser la page ou vous reconnecter.");
+          return;
+        }
+
+        const levels = await getLevelsForCcnlAction(entityId, formData.ccnlId, idToken);
         setActiveLevels(levels);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error fetching levels:", err);
+        const message = String(err?.message || "");
+        setActiveLevels([]);
+        setFormData((previous) => ({ ...previous, levelId: "", levelCode: "" }));
+        setLevelsError(
+          message.includes("AUTH_INVALID") || message.includes("Session invalide") || message.includes("Session expir")
+            ? "Session expirée. Veuillez actualiser la page ou vous reconnecter."
+            : "Impossible de charger les niveaux CCNL. Veuillez réessayer."
+        );
       } finally {
         setLoadingLevels(false);
       }
@@ -197,6 +223,8 @@ export default function EmployeeIntakePage() {
 
   const handleCcnlChange = (ccnlId: string) => {
     const ccnl = ccnls.find(c => c.ccnlId === ccnlId);
+    setLevelsError(null);
+    setActiveLevels([]);
     setFormData(p => ({
       ...p,
       ccnlId,
@@ -401,6 +429,16 @@ export default function EmployeeIntakePage() {
                       {departments.map(d => <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  {loadingLevels && (
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Chargement des niveaux CCNL disponibles…
+                    </p>
+                  )}
+                  {levelsError && (
+                    <p className="text-xs font-bold text-destructive">
+                      {levelsError}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2 col-span-2">
                   <Label className="text-[10px] uppercase font-black">Intitulé du poste (Fiche de Poste)</Label>
@@ -445,7 +483,7 @@ export default function EmployeeIntakePage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Niveau de classification *</Label>
-                  <Select value={formData.levelId} onValueChange={handleLevelChange} disabled={!formData.ccnlId || loadingLevels}>
+                  <Select value={formData.levelId} onValueChange={handleLevelChange} disabled={!formData.ccnlId || loadingLevels || !!levelsError}>
                     <SelectTrigger className="rounded-xl">
                       <SelectValue placeholder={loadingLevels ? "Chargement..." : "Sélectionner niveau..."} />
                     </SelectTrigger>
