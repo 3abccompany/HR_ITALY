@@ -99,9 +99,9 @@ const navItems = [
   },
   {
     title: "Audit",
-    url: "#",
+    url: "/super-admin/audit",
     icon: History,
-    isActive: false,
+    isActive: true,
     label: "À venir",
   },
   {
