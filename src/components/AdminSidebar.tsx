@@ -16,7 +16,8 @@ import {
   LogOut,
   Loader2,
   Database,
-  Lock
+  Lock,
+  ShieldAlert
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
@@ -60,6 +61,13 @@ const navItems = [
     url: "/super-admin/memberships",
     icon: LinkIcon,
     isActive: true,
+  },
+  {
+    title: "Santé accès & permissions",
+    url: "/super-admin/security-health",
+    icon: ShieldAlert,
+    isActive: true,
+    label: "Read-only",
   },
   {
     title: "Catalogue Permissions",
