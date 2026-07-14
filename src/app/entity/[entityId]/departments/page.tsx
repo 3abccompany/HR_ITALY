@@ -18,10 +18,10 @@ import { collection, query, orderBy } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   createDepartment, 
-  updateDepartment, 
   disableDepartment, 
   reactivateDepartment 
 } from "@/services/department.service";
+import { updateDepartmentAction } from "@/app/actions/department-actions";
 import { 
   createJobTitle, 
   updateJobTitle, 
@@ -173,8 +173,18 @@ export default function DepartmentsManagementPage() {
     setLoading(true);
     try {
       if (editingDeptId) {
-        await updateDepartment(entityId, editingDeptId, deptFormData, user.uid);
-        toast({ title: "Mis à jour", description: "Le département a été modifié." });
+        const idToken = await user.getIdToken();
+        const result = await updateDepartmentAction({
+          entityId,
+          departmentId: editingDeptId,
+          data: deptFormData,
+          idToken,
+        });
+
+        if (!result.success) {
+          throw new Error(result.error || "Erreur lors de la mise a jour du departement.");
+        }
+        toast({ title: "Mis à jour", description: result.auditWarning || "Le département a été modifié." });
       } else {
         await createDepartment(entityId, deptFormData, user.uid);
         toast({ title: "Créé", description: "Le département a été enregistré." });

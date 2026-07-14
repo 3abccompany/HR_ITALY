@@ -40,6 +40,28 @@ type SeverityFilter = "all" | SuperAdminHealthSeverity;
 type CategoryFilter = "all" | SuperAdminHealthCategory;
 type PageSize = 10 | 20 | 30;
 
+interface RuntimeStatusSummary {
+  total: number;
+  active: number;
+  inactive: number;
+  archived: number;
+  invalidOrMissing: number;
+}
+
+interface PermissionShapeSummary {
+  validArray: number;
+  missing: number;
+  invalidType: number;
+}
+
+interface StatusCompatibilitySummary {
+  users: RuntimeStatusSummary;
+  entities: RuntimeStatusSummary;
+  memberships: RuntimeStatusSummary;
+  membershipPermissions: PermissionShapeSummary;
+  superAdmins: RuntimeStatusSummary;
+}
+
 const pageSizeOptions: PageSize[] = [10, 20, 30];
 
 const severityLabels: Record<SuperAdminHealthSeverity, string> = {
@@ -133,6 +155,7 @@ export default function SuperAdminSecurityHealthPage() {
     const startIndex = (effectiveCurrentPage - 1) * pageSize;
     return filteredDiagnostics.slice(startIndex, startIndex + pageSize);
   }, [effectiveCurrentPage, filteredDiagnostics, pageSize]);
+  const statusCompatibility = (report as (SuperAdminHealthReport & { statusCompatibility?: StatusCompatibilitySummary }) | null)?.statusCompatibility;
 
   useEffect(() => {
     setCurrentPage(1);
@@ -226,6 +249,27 @@ export default function SuperAdminSecurityHealthPage() {
               description="Volume total des observations affichées."
             />
           </section>
+
+          {statusCompatibility && (
+            <Card className="rounded-2xl border-primary/10">
+              <CardHeader className="space-y-2">
+                <CardTitle className="flex items-center gap-2 text-primary">
+                  <ShieldCheck className="w-5 h-5" />
+                  Compatibilité des statuts
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Agrégats read-only pour vérifier les statuts runtime avant tout renforcement de hasPermission(). Les valeurs invalides attendues sont à 0.
+                </p>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+                <StatusCompatibilityCard title="Utilisateurs" summary={statusCompatibility.users} invalidLabel="Utilisateurs avec statut invalide" />
+                <StatusCompatibilityCard title="Entités" summary={statusCompatibility.entities} invalidLabel="Entités avec statut invalide" />
+                <StatusCompatibilityCard title="Appartenances" summary={statusCompatibility.memberships} invalidLabel="Appartenances avec statut invalide" />
+                <PermissionShapeCard summary={statusCompatibility.membershipPermissions} />
+                <SuperAdminStatusCard summary={statusCompatibility.superAdmins} />
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="rounded-2xl border-primary/10">
             <CardHeader className="space-y-2">
@@ -339,6 +383,107 @@ function FilterSelect({
         ))}
       </select>
     </div>
+  );
+}
+
+function StatusCompatibilityCard({
+  title,
+  summary,
+  invalidLabel,
+}: {
+  title: string;
+  summary: RuntimeStatusSummary;
+  invalidLabel: string;
+}) {
+  return (
+    <div className="rounded-2xl border bg-slate-50/60 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-black text-primary">{title}</p>
+          <p className="text-xs text-muted-foreground">Total: {summary.total}</p>
+        </div>
+        <CompatibilityBadge value={summary.invalidOrMissing} />
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <StatusPill label="Actifs" value={summary.active} />
+        <StatusPill label="Inactifs" value={summary.inactive} />
+        <StatusPill label="Archivés" value={summary.archived} />
+      </div>
+      <p className={cn("text-xs font-semibold", summary.invalidOrMissing > 0 ? "text-red-700" : "text-green-700")}>
+        {invalidLabel}: {summary.invalidOrMissing}
+      </p>
+    </div>
+  );
+}
+
+function PermissionShapeCard({ summary }: { summary: PermissionShapeSummary }) {
+  const invalidTotal = summary.missing + summary.invalidType;
+
+  return (
+    <div className="rounded-2xl border bg-slate-50/60 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-black text-primary">Snapshots de permissions</p>
+          <p className="text-xs text-muted-foreground">Forme du champ permissions</p>
+        </div>
+        <CompatibilityBadge value={invalidTotal} />
+      </div>
+      <div className="space-y-2 text-xs">
+        <StatusPill label="Tableaux valides" value={summary.validArray} />
+        <StatusPill label="Permissions manquantes" value={summary.missing} tone={summary.missing > 0 ? "critical" : "default"} />
+        <StatusPill label="Permissions de type invalide" value={summary.invalidType} tone={summary.invalidType > 0 ? "critical" : "default"} />
+      </div>
+    </div>
+  );
+}
+
+function SuperAdminStatusCard({ summary }: { summary: RuntimeStatusSummary }) {
+  const invalidTotal = summary.inactive + summary.archived + summary.invalidOrMissing;
+
+  return (
+    <div className="rounded-2xl border bg-slate-50/60 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-black text-primary">Super Admins</p>
+          <p className="text-xs text-muted-foreground">Total: {summary.total}</p>
+        </div>
+        <CompatibilityBadge value={invalidTotal} />
+      </div>
+      <div className="space-y-2 text-xs">
+        <StatusPill label="Actifs" value={summary.active} />
+        <StatusPill label="Super Admins non actifs" value={summary.inactive + summary.archived} tone={summary.inactive + summary.archived > 0 ? "warning" : "default"} />
+        <StatusPill label="Super Admins avec statut invalide" value={summary.invalidOrMissing} tone={summary.invalidOrMissing > 0 ? "critical" : "default"} />
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ label, value, tone = "default" }: { label: string; value: number; tone?: "default" | "warning" | "critical" }) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-2 rounded-xl border bg-white px-3 py-2",
+        tone === "warning" && "border-orange-200 bg-orange-50 text-orange-700",
+        tone === "critical" && "border-red-200 bg-red-50 text-red-700"
+      )}
+    >
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-black text-slate-900">{value}</span>
+    </div>
+  );
+}
+
+function CompatibilityBadge({ value }: { value: number }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "rounded-full",
+        value > 0 ? "border-red-200 bg-red-100 text-red-700" : "border-green-200 bg-green-100 text-green-700"
+      )}
+    >
+      {value > 0 ? `${value} à revoir` : "OK"}
+    </Badge>
   );
 }
 

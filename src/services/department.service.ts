@@ -91,15 +91,6 @@ export async function updateDepartment(
   }
 
   await batch.commit();
-
-  await createAuditLog({
-    userId: actorUid,
-    entityId,
-    action: "department.updated",
-    resourceType: "department",
-    resourceId: departmentId,
-    details: data
-  });
 }
 
 export async function disableDepartment(entityId: string, departmentId: string, actorUid: string) {

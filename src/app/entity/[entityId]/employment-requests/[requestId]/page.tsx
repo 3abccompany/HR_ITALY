@@ -96,7 +96,7 @@ export default function EmploymentRequestDetailPage() {
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
   const canRead = hasPermission("employmentRequests.read");
-  const canUpdate = hasPermission("employmentRequests.update") || hasPermission("employmentRequests.write");
+  const canUpdate = hasPermission("employmentRequests.update");
   const canReadConsultants = hasPermission("consultants.read");
 
   const requestRef = useMemo(() => 

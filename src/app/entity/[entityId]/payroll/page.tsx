@@ -2,7 +2,6 @@
 
 import { useState, useMemo } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { 
   Euro, Calculator, Loader2, Calendar, 
   User, AlertTriangle, CheckCircle2, 
@@ -12,7 +11,7 @@ import {
   XCircle, ArrowDownCircle, ArrowUpCircle, Banknote, HelpCircle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -449,12 +448,17 @@ export default function PayrollSynthesisPage() {
                            {renderWarningIndicator(c.reconciliationWarnings)}
                         </TableCell>
                         <TableCell className="py-4 align-middle text-right pr-6 sticky right-0 z-10 bg-white group-hover:bg-slate-50 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)]">
-                           <Button asChild variant="ghost" size="sm" className="h-8 gap-1.5 font-bold text-primary hover:text-primary">
-                             <Link href={`/entity/${entityId}/payroll/${encodeURIComponent(c.id)}`}>
+                           <a
+                             href={`/entity/${entityId}/payroll/${encodeURIComponent(c.id)}`}
+                             className={buttonVariants({
+                               variant: "ghost",
+                               size: "sm",
+                               className: "h-8 gap-1.5 font-bold text-primary hover:text-primary",
+                             })}
+                           >
                                Voir détail
                                <ChevronRight className="w-4 h-4" />
-                             </Link>
-                           </Button>
+                           </a>
                         </TableCell>
                       </TableRow>
                     );

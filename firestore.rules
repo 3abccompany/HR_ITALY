@@ -14,19 +14,33 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
     }
 
-    function hasPermission(entityId, permission) {
+    function isActiveUser() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function isActiveEntity(entityId) {
+      return exists(/databases/$(database)/documents/entities/$(entityId)) &&
+        get(/databases/$(database)/documents/entities/$(entityId)).data.status == 'active';
+    }
+
+    function isActiveMembership(entityId) {
       let membershipId = request.auth.uid + "_" + entityId;
-      return isAuthenticated() && 
+      return isActiveUser() &&
+        isActiveEntity(entityId) &&
         exists(/databases/$(database)/documents/memberships/$(membershipId)) &&
-        get(/databases/$(database)/documents/memberships/$(membershipId)).data.status == 'active' &&
-        permission in get(/databases/$(database)/documents/memberships/$(membershipId)).data.permissions;
+        get(/databases/$(database)/documents/memberships/$(membershipId)).data.status == 'active';
     }
 
     function isEntityMember(entityId) {
+      return isActiveMembership(entityId);
+    }
+
+    function hasPermission(entityId, permission) {
       let membershipId = request.auth.uid + "_" + entityId;
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/memberships/$(membershipId)) &&
-        get(/databases/$(database)/documents/memberships/$(membershipId)).data.status == 'active';
+      return isActiveMembership(entityId) &&
+        permission in get(/databases/$(database)/documents/memberships/$(membershipId)).data.permissions;
     }
 
     function isSelfEmployee(entityId, employeeId) {
@@ -69,15 +83,15 @@ service cloud.firestore {
 
       match /attendances/{attendanceId} {
         allow read: if hasPermission(entityId, 'attendances.read') || isPlatformAdmin();
-        allow create: if (hasPermission(entityId, 'attendances.create') || hasPermission(entityId, 'attendances.write')) && request.resource.data.entityId == entityId;
-        allow update: if (hasPermission(entityId, 'attendances.update') || hasPermission(entityId, 'attendances.write') || hasPermission(entityId, 'attendances.validate') || hasPermission(entityId, 'attendances.correct')) && request.resource.data.entityId == entityId;
+        allow create: if hasPermission(entityId, 'attendances.create') && request.resource.data.entityId == entityId;
+        allow update: if (hasPermission(entityId, 'attendances.update') || hasPermission(entityId, 'attendances.validate') || hasPermission(entityId, 'attendances.correct')) && request.resource.data.entityId == entityId;
         allow delete: if false;
       }
 
       match /attendanceImportBatches/{batchId} {
         allow read: if hasPermission(entityId, 'attendances.read') || isPlatformAdmin();
-        allow create: if (hasPermission(entityId, 'attendances.create') || hasPermission(entityId, 'attendances.write')) && request.resource.data.entityId == entityId;
-        allow update: if (hasPermission(entityId, 'attendances.update') || hasPermission(entityId, 'attendances.write') || hasPermission(entityId, 'attendances.validate')) && request.resource.data.entityId == entityId;
+        allow create: if hasPermission(entityId, 'attendances.create') && request.resource.data.entityId == entityId;
+        allow update: if (hasPermission(entityId, 'attendances.update') || hasPermission(entityId, 'attendances.validate')) && request.resource.data.entityId == entityId;
         allow delete: if false;
       }
 
@@ -256,7 +270,6 @@ service cloud.firestore {
 
         allow create, update: if hasPermission(entityId, 'candidates.update') 
           || hasPermission(entityId, 'contracts.create') 
-          || hasPermission(entityId, 'employmentRequests.write') 
           || hasPermission(entityId, 'employmentRequests.update') 
           || isPlatformAdmin();
 

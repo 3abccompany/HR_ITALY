@@ -343,7 +343,7 @@ export default function AttendancesPage() {
 
   const canRead = hasPermission("attendances.read");
   const canReadHolidays = hasPermission("holidays.read");
-  const canCreate = hasPermission("attendances.create") || hasPermission("attendances.write");
+  const canCreate = hasPermission("attendances.create");
   const canValidate = hasPermission("attendances.validate");
 
   // --- Collection Queries ---

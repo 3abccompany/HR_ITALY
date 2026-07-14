@@ -33,6 +33,30 @@ export interface SuperAdminHealthInput {
   staticPermissions?: PermissionDefinition[];
 }
 
+type RuntimeStatus = "active" | "inactive" | "archived";
+
+interface RuntimeStatusSummary {
+  total: number;
+  active: number;
+  inactive: number;
+  archived: number;
+  invalidOrMissing: number;
+}
+
+interface PermissionShapeSummary {
+  validArray: number;
+  missing: number;
+  invalidType: number;
+}
+
+interface SuperAdminStatusCompatibilitySummary {
+  users: RuntimeStatusSummary;
+  entities: RuntimeStatusSummary;
+  memberships: RuntimeStatusSummary;
+  membershipPermissions: PermissionShapeSummary;
+  superAdmins: RuntimeStatusSummary;
+}
+
 const SENSITIVE_PERMISSION_PREFIXES = ["platform."];
 const SENSITIVE_PERMISSION_CODES = new Set([
   "platform.users.create",
@@ -141,6 +165,41 @@ function arraysDiffer(left: string[], right: string[]): boolean {
   return normalizedLeft.length !== normalizedRight.length || normalizedLeft.some((value, index) => value !== normalizedRight[index]);
 }
 
+function createStatusSummary(): RuntimeStatusSummary {
+  return {
+    total: 0,
+    active: 0,
+    inactive: 0,
+    archived: 0,
+    invalidOrMissing: 0,
+  };
+}
+
+function createPermissionShapeSummary(): PermissionShapeSummary {
+  return {
+    validArray: 0,
+    missing: 0,
+    invalidType: 0,
+  };
+}
+
+function isValidRuntimeStatus(value: unknown): value is RuntimeStatus {
+  return value === "active" || value === "inactive" || value === "archived";
+}
+
+function addStatus(summary: RuntimeStatusSummary, value: unknown) {
+  summary.total += 1;
+  if (isValidRuntimeStatus(value)) {
+    summary[value] += 1;
+  } else {
+    summary.invalidOrMissing += 1;
+  }
+}
+
+function hasOwnField(value: object, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, field);
+}
+
 function isActiveStatus(value?: string): boolean {
   return value === "active";
 }
@@ -149,22 +208,24 @@ export function isSensitivePermission(permissionCode: string): boolean {
   return SENSITIVE_PERMISSION_CODES.has(permissionCode) || SENSITIVE_PERMISSION_PREFIXES.some((prefix) => permissionCode.startsWith(prefix));
 }
 
-function createDiagnostic(params: Omit<SuperAdminHealthDiagnostic, "id">): SuperAdminHealthDiagnostic {
+function createDiagnostic(params: Omit<SuperAdminHealthDiagnostic, "id"> & { diagnosticKey?: string }): SuperAdminHealthDiagnostic {
+  const { diagnosticKey, ...diagnostic } = params;
   const base = [
-    params.code,
-    params.membershipId,
-    params.userId,
-    params.entityId,
-    params.roleId,
-    params.permissionCode,
+    diagnostic.code,
+    diagnosticKey,
+    diagnostic.membershipId,
+    diagnostic.userId,
+    diagnostic.entityId,
+    diagnostic.roleId,
+    diagnostic.permissionCode,
   ]
     .filter(Boolean)
     .join("__")
     .replace(/[^a-zA-Z0-9_.-]+/g, "_");
 
   return {
-    id: base || params.code,
-    ...params,
+    id: base || diagnostic.code,
+    ...diagnostic,
   };
 }
 
@@ -243,8 +304,113 @@ export function buildSuperAdminHealthReport(input: SuperAdminHealthInput): Super
   const membershipUserIds = new Set<string>();
   const permissionsUsedByRoles = new Set<string>();
   const permissionsUsedByMemberships = new Set<string>();
+  const statusCompatibility: SuperAdminStatusCompatibilitySummary = {
+    users: createStatusSummary(),
+    entities: createStatusSummary(),
+    memberships: createStatusSummary(),
+    membershipPermissions: createPermissionShapeSummary(),
+    superAdmins: createStatusSummary(),
+  };
 
-  input.memberships.forEach((membership) => {
+  input.users.forEach((user, index) => {
+    addStatus(statusCompatibility.users, user.status);
+
+    if (!isValidRuntimeStatus(user.status)) {
+      diagnostics.push(createDiagnostic({
+        diagnosticKey: `user_${index}`,
+        code: "user_invalid_status",
+        category: "membership",
+        severity: "critical",
+        title: "Utilisateur avec statut invalide",
+        explanation: "Un utilisateur possède un statut manquant, nul, non texte ou hors valeurs autorisées.",
+        status: typeof user.status === "string" ? user.status : undefined,
+      }));
+    }
+
+    if (user.platformRole === "superAdmin") {
+      addStatus(statusCompatibility.superAdmins, user.status);
+
+      if (user.status === "inactive" || user.status === "archived") {
+        diagnostics.push(createDiagnostic({
+          diagnosticKey: `super_admin_${index}`,
+          code: "super_admin_non_active",
+          category: "membership",
+          severity: "warning",
+          title: "Super Admin non actif",
+          explanation: "Un utilisateur Super Admin possède un statut inactif ou archivé. Diagnostic informatif, sans changement d'accès automatique.",
+          status: user.status,
+        }));
+      } else if (!isValidRuntimeStatus(user.status)) {
+        diagnostics.push(createDiagnostic({
+          diagnosticKey: `super_admin_${index}`,
+          code: "super_admin_invalid_status",
+          category: "membership",
+          severity: "critical",
+          title: "Super Admin avec statut invalide",
+          explanation: "Un utilisateur Super Admin possède un statut manquant, nul, non texte ou inconnu.",
+          status: typeof user.status === "string" ? user.status : undefined,
+        }));
+      }
+    }
+  });
+
+  input.entities.forEach((entity, index) => {
+    addStatus(statusCompatibility.entities, entity.status);
+
+    if (!isValidRuntimeStatus(entity.status)) {
+      diagnostics.push(createDiagnostic({
+        diagnosticKey: `entity_${index}`,
+        code: "entity_invalid_status",
+        category: "membership",
+        severity: "critical",
+        title: "Entité avec statut invalide",
+        explanation: "Une entité possède un statut manquant, nul, non texte ou hors valeurs autorisées.",
+        status: typeof entity.status === "string" ? entity.status : undefined,
+      }));
+    }
+  });
+
+  input.memberships.forEach((membership, index) => {
+    addStatus(statusCompatibility.memberships, membership.status);
+
+    if (!isValidRuntimeStatus(membership.status)) {
+      diagnostics.push(createDiagnostic({
+        diagnosticKey: `membership_${index}`,
+        code: "membership_invalid_status",
+        category: "membership",
+        severity: "critical",
+        title: "Membership avec statut invalide",
+        explanation: "Une affectation possède un statut manquant, nul, non texte ou hors valeurs autorisées.",
+        status: typeof membership.status === "string" ? membership.status : undefined,
+      }));
+    }
+
+    if (!hasOwnField(membership, "permissions")) {
+      statusCompatibility.membershipPermissions.missing += 1;
+      diagnostics.push(createDiagnostic({
+        diagnosticKey: `membership_permissions_${index}`,
+        code: "membership_permissions_missing",
+        category: "membership",
+        severity: "critical",
+        title: "Snapshot de permissions manquant",
+        explanation: "Une affectation ne contient pas de champ permissions exploitable.",
+        status: membership.status,
+      }));
+    } else if (!Array.isArray(membership.permissions)) {
+      statusCompatibility.membershipPermissions.invalidType += 1;
+      diagnostics.push(createDiagnostic({
+        diagnosticKey: `membership_permissions_${index}`,
+        code: "membership_permissions_invalid_type",
+        category: "membership",
+        severity: "critical",
+        title: "Snapshot de permissions de type invalide",
+        explanation: "Une affectation contient un champ permissions, mais sa valeur n'est pas un tableau.",
+        status: membership.status,
+      }));
+    } else {
+      statusCompatibility.membershipPermissions.validArray += 1;
+    }
+
     const membershipId = resolveMembershipId(membership);
     const userId = resolveUserId(membership);
     const entityId = resolveEntityId(membership);
@@ -595,13 +761,14 @@ export function buildSuperAdminHealthReport(input: SuperAdminHealthInput): Super
   return {
     diagnostics: reportDiagnostics,
     summary: buildSummary(reportDiagnostics),
+    statusCompatibility,
     isEmptyPlatform:
       input.entities.length === 0 &&
       input.users.length === 0 &&
       input.memberships.length === 0 &&
       input.roles.length === 0 &&
       input.permissions.length === 0,
-  };
+  } as SuperAdminHealthReport & { statusCompatibility: SuperAdminStatusCompatibilitySummary };
 }
 
 export function subscribeSuperAdminHealthReport(
