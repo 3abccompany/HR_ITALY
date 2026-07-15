@@ -1,5 +1,6 @@
 "use server";
 
+import { MVP_PERMISSIONS } from "@/config/permissions";
 import { MVP_ROLES } from "@/config/roles";
 import { adminDb } from "@/lib/firebase/admin";
 import { createTrustedAuditLog } from "@/services/audit.server";
@@ -42,6 +43,54 @@ type CustomRoleActionResult = {
   code?: CustomRoleActionCode;
 };
 
+export type CustomRoleManagementEntity = {
+  entityId: string;
+  name: string;
+  legalName: string;
+  status: string;
+};
+
+export type CustomRoleManagementPermission = {
+  code: string;
+  label: string;
+  description: string;
+  module: string;
+};
+
+export type CustomRoleManagementSystemRole = {
+  roleId: string;
+  name: string;
+  label: string;
+  description: string;
+  scope: string;
+  permissionCount: number;
+  cloneAllowed: boolean;
+  status: "active";
+};
+
+export type CustomRoleManagementCustomRole = {
+  roleId: string;
+  entityId: string;
+  name: string;
+  label: string;
+  description: string;
+  status: string;
+  permissions: string[];
+  permissionCount: number;
+  sourceRoleId?: string;
+  version?: number;
+};
+
+export type CustomRoleManagementDataResult = {
+  success: boolean;
+  entities?: CustomRoleManagementEntity[];
+  systemRoles?: CustomRoleManagementSystemRole[];
+  permissions?: CustomRoleManagementPermission[];
+  customRoles?: CustomRoleManagementCustomRole[];
+  error?: string;
+  code?: CustomRoleActionCode;
+};
+
 type CreateCustomRoleParams = {
   idToken: string;
   entityId: string;
@@ -74,6 +123,11 @@ type DeactivateCustomRoleParams = {
   idToken: string;
   entityId: string;
   customRoleId: string;
+};
+
+type ListCustomRoleManagementDataParams = {
+  idToken: string;
+  entityId?: string;
 };
 
 type MutatedRoleResult = {
@@ -116,6 +170,111 @@ function ensureAdminDb() {
     throw new Error("service-unavailable: Service administrateur indisponible.");
   }
   return adminDb;
+}
+
+function normalizePermissionDocument(code: string, data: FirebaseFirestore.DocumentData | undefined): CustomRoleManagementPermission | null {
+  const staticPermission = MVP_PERMISSIONS.find((permission) => permission.code === code);
+  const source = data || staticPermission;
+
+  if (!source) return null;
+  if (data && safeString(data.status) && safeString(data.status) !== "active") return null;
+  if (source.scope !== "entity") return null;
+  if (code.startsWith("platform.")) return null;
+
+  return {
+    code,
+    label: safeString(source.label) || code,
+    description: safeString(source.description),
+    module: safeString(source.module) || "Autres",
+  };
+}
+
+function normalizeCustomRoleForManagement(roleId: string, data: FirebaseFirestore.DocumentData): CustomRoleManagementCustomRole {
+  const permissions = Array.isArray(data.permissions)
+    ? data.permissions.filter((permission): permission is string => typeof permission === "string")
+    : [];
+
+  return {
+    roleId,
+    entityId: safeString(data.entityId),
+    name: safeString(data.name),
+    label: safeString(data.label) || roleId,
+    description: safeString(data.description),
+    status: safeString(data.status) || "inactive",
+    permissions,
+    permissionCount: permissions.length,
+    sourceRoleId: safeString(data.sourceRoleId) || undefined,
+    version: typeof data.version === "number" ? data.version : undefined,
+  };
+}
+
+export async function listCustomRoleManagementDataAction(params: ListCustomRoleManagementDataParams): Promise<CustomRoleManagementDataResult> {
+  try {
+    const db = ensureAdminDb();
+    await authorizeActiveSuperAdmin(params.idToken);
+
+    const [entitiesSnapshot, runtimePermissionsSnapshot] = await Promise.all([
+      db.collection("entities").get(),
+      db.collection("permissions").get(),
+    ]);
+
+    const entities = entitiesSnapshot.docs
+      .map((document) => {
+        const data = document.data();
+        return {
+          entityId: safeString(data.entityId) || document.id,
+          name: safeString(data.name) || safeString(data.nomEntreprise) || document.id,
+          legalName: safeString(data.legalName) || safeString(data.raisonSociale),
+          status: safeString(data.status) || "inactive",
+        };
+      })
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    const runtimePermissionMap = new Map<string, FirebaseFirestore.DocumentData>();
+    runtimePermissionsSnapshot.docs.forEach((document) => runtimePermissionMap.set(document.id, document.data()));
+
+    const permissions = Array.from(new Set([
+      ...MVP_PERMISSIONS.map((permission) => permission.code),
+      ...runtimePermissionsSnapshot.docs.map((document) => document.id),
+    ]))
+      .map((code) => normalizePermissionDocument(code, runtimePermissionMap.get(code)))
+      .filter((permission): permission is CustomRoleManagementPermission => !!permission)
+      .sort((left, right) => left.module.localeCompare(right.module) || left.label.localeCompare(right.label));
+
+    const systemRoles = MVP_ROLES.map((role) => ({
+      roleId: role.roleId,
+      name: role.name,
+      label: role.label,
+      description: role.description,
+      scope: role.scope,
+      permissionCount: role.getPermissions().length,
+      cloneAllowed: role.scope === "entity" && role.roleId !== "superAdmin",
+      status: "active" as const,
+    }));
+
+    let customRoles: CustomRoleManagementCustomRole[] = [];
+    const selectedEntityId = safeString(params.entityId);
+    if (selectedEntityId) {
+      if (!entities.some((entity) => entity.entityId === selectedEntityId)) {
+        throw new CustomRoleValidationError("entity-not-found", "Entité introuvable.");
+      }
+      const customRolesSnapshot = await db.collection("entities").doc(selectedEntityId).collection("roles").get();
+      customRoles = customRolesSnapshot.docs
+        .map((document) => normalizeCustomRoleForManagement(document.id, document.data()))
+        .filter((role) => role.entityId === selectedEntityId)
+        .sort((left, right) => left.label.localeCompare(right.label));
+    }
+
+    return {
+      success: true,
+      entities,
+      systemRoles,
+      permissions,
+      customRoles,
+    };
+  } catch (error) {
+    return mapError(error);
+  }
 }
 
 async function auditMutation(params: {

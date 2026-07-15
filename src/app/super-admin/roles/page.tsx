@@ -5,133 +5,260 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
-  CheckCircle2,
-  Database,
-  Filter,
+  Copy,
+  Edit,
+  Loader2,
+  Plus,
   Search,
   ShieldCheck,
-  Users,
+  ShieldOff,
 } from "lucide-react";
+import {
+  cloneSystemRoleAction,
+  createCustomRoleAction,
+  deactivateCustomRoleAction,
+  listCustomRoleManagementDataAction,
+  updateCustomRoleAction,
+  type CustomRoleManagementCustomRole,
+  type CustomRoleManagementDataResult,
+  type CustomRoleManagementEntity,
+  type CustomRoleManagementPermission,
+  type CustomRoleManagementSystemRole,
+} from "@/app/actions/custom-role-actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { subscribeSuperAdminCatalogReport } from "@/services/super-admin-catalog.service";
-import type {
-  SuperAdminCatalogComparisonState,
-  SuperAdminCatalogReport,
-  SuperAdminRoleCatalogItem,
-} from "@/types/super-admin-catalog";
+import { useUser } from "@/firebase";
 
-type ScopeFilter = "all" | "platform" | "entity";
-type StatusFilter = "all" | "active" | "inactive" | "missing";
-type ComparisonFilter = "all" | SuperAdminCatalogComparisonState;
-type SortKey = "label" | "roleId" | "permissionCount" | "activeMemberships" | "status" | "comparisonState";
-type PageSize = 10 | 20 | 30;
+type FormMode = "create" | "clone" | "edit";
 
-const pageSizeOptions: PageSize[] = [10, 20, 30];
+interface RoleFormState {
+  mode: FormMode;
+  customRoleId?: string;
+  sourceRoleId?: string;
+  name: string;
+  label: string;
+  description: string;
+  permissions: string[];
+}
 
-const comparisonLabels: Record<SuperAdminCatalogComparisonState, string> = {
-  synchronized: "Synchronisé",
-  "missing-runtime": "Absent runtime",
-  "runtime-only": "Runtime seul",
-  drifted: "Différent",
-  inactive: "Inactif",
+const emptyForm: RoleFormState = {
+  mode: "create",
+  name: "",
+  label: "",
+  description: "",
+  permissions: [],
 };
 
-export default function SuperAdminRolesCatalogPage() {
-  const [report, setReport] = useState<SuperAdminCatalogReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [subscriptionKey, setSubscriptionKey] = useState(0);
-  const [search, setSearch] = useState("");
-  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("all");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [comparisonFilter, setComparisonFilter] = useState<ComparisonFilter>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("label");
-  const [pageSize, setPageSize] = useState<PageSize>(10);
-  const [currentPage, setCurrentPage] = useState(1);
+function entityLabel(entity: CustomRoleManagementEntity): string {
+  return entity.name || entity.legalName || entity.entityId;
+}
 
-  useEffect(() => {
+function safeError(result: { error?: string; code?: string }): string {
+  return result.error || result.code || "Action impossible.";
+}
+
+export default function SuperAdminRolesCatalogPage() {
+  const { user } = useUser();
+  const { toast } = useToast();
+  const [data, setData] = useState<CustomRoleManagementDataResult | null>(null);
+  const [selectedEntityId, setSelectedEntityId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<RoleFormState | null>(null);
+  const [permissionSearch, setPermissionSearch] = useState("");
+  const [deactivateTarget, setDeactivateTarget] = useState<CustomRoleManagementCustomRole | null>(null);
+
+  const loadData = async (entityId = selectedEntityId) => {
+    if (!user) return;
     setLoading(true);
     setError(null);
-    setReport(null);
-
-    const unsubscribe = subscribeSuperAdminCatalogReport(
-      (nextReport) => {
-        setReport(nextReport);
-        setError(null);
-        setLoading(false);
-      },
-      (subscriptionError) => {
-        setReport(null);
-        setError(subscriptionError.message || "Impossible de synchroniser le catalogue des rôles.");
-        setLoading(false);
+    try {
+      const idToken = await user.getIdToken();
+      const result = await listCustomRoleManagementDataAction({ idToken, entityId: entityId || undefined });
+      if (!result.success) {
+        setError(safeError(result));
+        setData(null);
+        return;
       }
-    );
-
-    return unsubscribe;
-  }, [subscriptionKey]);
-
-  const filteredRoles = useMemo(() => {
-    if (!report) return [];
-    const normalizedSearch = search.trim().toLowerCase();
-
-    const rows = report.roles.filter((role) => {
-      if (scopeFilter !== "all" && role.scope !== scopeFilter) return false;
-      if (comparisonFilter !== "all" && role.comparisonState !== comparisonFilter) return false;
-      if (statusFilter !== "all") {
-        if (statusFilter === "missing" && role.runtimeStatus) return false;
-        if (statusFilter !== "missing" && role.runtimeStatus !== statusFilter) return false;
-      }
-      if (!normalizedSearch) return true;
-
-      return [role.label, role.roleId, role.name, role.description]
-        .filter(Boolean)
-        .some((value) => value!.toLowerCase().includes(normalizedSearch));
-    });
-
-    return rows.sort((left, right) => {
-      if (sortKey === "permissionCount") return right.permissionCount - left.permissionCount;
-      if (sortKey === "activeMemberships") return right.activeMemberships - left.activeMemberships;
-      if (sortKey === "status") return String(left.runtimeStatus || "").localeCompare(String(right.runtimeStatus || ""));
-      if (sortKey === "comparisonState") return left.comparisonState.localeCompare(right.comparisonState);
-      if (sortKey === "roleId") return left.roleId.localeCompare(right.roleId);
-      return left.label.localeCompare(right.label);
-    });
-  }, [comparisonFilter, report, scopeFilter, search, sortKey, statusFilter]);
-
-  const totalItems = filteredRoles.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-  const effectiveCurrentPage = totalItems === 0 ? 1 : Math.min(currentPage, totalPages);
-  const visibleStart = totalItems === 0 ? 0 : (effectiveCurrentPage - 1) * pageSize + 1;
-  const visibleEnd = totalItems === 0 ? 0 : Math.min(effectiveCurrentPage * pageSize, totalItems);
-  const paginatedRoles = useMemo(() => {
-    const startIndex = (effectiveCurrentPage - 1) * pageSize;
-    return filteredRoles.slice(startIndex, startIndex + pageSize);
-  }, [effectiveCurrentPage, filteredRoles, pageSize]);
+      setData(result);
+    } catch {
+      setError("Impossible de charger les rôles personnalisés.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [comparisonFilter, pageSize, scopeFilter, search, sortKey, statusFilter]);
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, selectedEntityId]);
 
-  useEffect(() => {
-    setCurrentPage((page) => {
-      if (totalItems === 0) return 1;
-      return Math.min(page, totalPages);
+  const entities = data?.entities || [];
+  const selectedEntity = entities.find((entity) => entity.entityId === selectedEntityId);
+  const systemRoles = data?.systemRoles || [];
+  const customRoles = data?.customRoles || [];
+  const permissions = data?.permissions || [];
+
+  const activeEntityPermissions = useMemo(
+    () => permissions.filter((permission) => !permission.code.startsWith("platform.")),
+    [permissions]
+  );
+
+  const permissionGroups = useMemo(() => {
+    const normalizedSearch = permissionSearch.trim().toLowerCase();
+    const groups = new Map<string, CustomRoleManagementPermission[]>();
+
+    activeEntityPermissions
+      .filter((permission) => {
+        if (!normalizedSearch) return true;
+        return [permission.code, permission.label, permission.description, permission.module]
+          .some((value) => value.toLowerCase().includes(normalizedSearch));
+      })
+      .forEach((permission) => {
+        const group = groups.get(permission.module) || [];
+        group.push(permission);
+        groups.set(permission.module, group);
+      });
+
+    return Array.from(groups.entries()).sort((left, right) => left[0].localeCompare(right[0]));
+  }, [activeEntityPermissions, permissionSearch]);
+
+  const openCreateForm = () => {
+    setForm({ ...emptyForm, mode: "create" });
+    setPermissionSearch("");
+  };
+
+  const openCloneForm = (role: CustomRoleManagementSystemRole) => {
+    if (!role.cloneAllowed) return;
+    setForm({
+      mode: "clone",
+      sourceRoleId: role.roleId,
+      name: `${role.name}Custom`,
+      label: `${role.label} (copie)`,
+      description: role.description,
+      permissions: [],
     });
-  }, [totalItems, totalPages]);
+    setPermissionSearch("");
+  };
+
+  const openEditForm = (role: CustomRoleManagementCustomRole) => {
+    if (role.status !== "active") return;
+    setForm({
+      mode: "edit",
+      customRoleId: role.roleId,
+      name: role.name,
+      label: role.label,
+      description: role.description,
+      permissions: role.permissions,
+    });
+    setPermissionSearch("");
+  };
+
+  const togglePermission = (code: string) => {
+    setForm((current) => {
+      if (!current || current.mode === "clone") return current;
+      const selected = new Set(current.permissions);
+      if (selected.has(code)) selected.delete(code);
+      else selected.add(code);
+      return { ...current, permissions: Array.from(selected).sort((left, right) => left.localeCompare(right)) };
+    });
+  };
+
+  const showMutationResult = (result: { success: boolean; auditWarning?: string; error?: string; code?: string }, successTitle: string) => {
+    if (!result.success) {
+      toast({ variant: "destructive", title: "Action refusée", description: safeError(result) });
+      return false;
+    }
+
+    toast({
+      title: successTitle,
+      description: result.auditWarning || "Action enregistrée avec succès.",
+      variant: result.auditWarning ? "default" : undefined,
+    });
+    return true;
+  };
+
+  const handleSubmitForm = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!user || !form || !selectedEntityId) return;
+
+    setActionLoading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const result = form.mode === "create"
+        ? await createCustomRoleAction({
+          idToken,
+          entityId: selectedEntityId,
+          name: form.name,
+          label: form.label,
+          description: form.description,
+          permissions: form.permissions,
+        })
+        : form.mode === "clone"
+          ? await cloneSystemRoleAction({
+            idToken,
+            entityId: selectedEntityId,
+            sourceRoleId: form.sourceRoleId || "",
+            name: form.name,
+            label: form.label,
+            description: form.description,
+          })
+          : await updateCustomRoleAction({
+            idToken,
+            entityId: selectedEntityId,
+            customRoleId: form.customRoleId || "",
+            name: form.name,
+            label: form.label,
+            description: form.description,
+            permissions: form.permissions,
+          });
+
+      if (showMutationResult(result, form.mode === "edit" ? "Rôle personnalisé mis à jour" : form.mode === "clone" ? "Rôle système cloné" : "Rôle personnalisé créé")) {
+        setForm(null);
+        await loadData(selectedEntityId);
+      }
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeactivate = async () => {
+    if (!user || !selectedEntityId || !deactivateTarget) return;
+    setActionLoading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const result = await deactivateCustomRoleAction({
+        idToken,
+        entityId: selectedEntityId,
+        customRoleId: deactivateTarget.roleId,
+      });
+      if (showMutationResult(result, result.alreadyInactive ? "Rôle déjà inactif" : "Rôle personnalisé désactivé")) {
+        setDeactivateTarget(null);
+        await loadData(selectedEntityId);
+      }
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-8 pb-24">
@@ -143,11 +270,11 @@ export default function SuperAdminRolesCatalogPage() {
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-primary">
             <ShieldCheck className="w-6 h-6" />
-            <span className="font-semibold uppercase tracking-wider text-sm">Catalogue read-only</span>
+            <span className="font-semibold uppercase tracking-wider text-sm">Super Admin uniquement</span>
           </div>
           <h1 className="text-3xl md:text-4xl font-headline font-bold text-primary">Rôles</h1>
           <p className="max-w-3xl text-muted-foreground">
-            Consultation des modèles de rôles système et runtime. La synchronisation reste séparée dans l'outil de maintenance.
+            Gestion des rôles personnalisés par entité. Les rôles prédéfinis restent protégés, non modifiables et prêts à l'emploi.
           </p>
         </div>
       </header>
@@ -155,272 +282,343 @@ export default function SuperAdminRolesCatalogPage() {
       {error && (
         <Alert variant="destructive" className="rounded-2xl">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Catalogue indisponible</AlertTitle>
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>{error}</span>
-            <Button variant="outline" size="sm" onClick={() => setSubscriptionKey((current) => current + 1)} className="bg-background text-foreground">
-              Réessayer
-            </Button>
-          </AlertDescription>
+          <AlertTitle>Gestion des rôles indisponible</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
       {loading ? (
-        <CatalogLoadingState />
-      ) : report ? (
-        <>
-          {report.isEmptyRuntimeCatalog && (
-            <Alert className="rounded-2xl border-orange-200 bg-orange-50/40">
-              <Database className="h-4 w-4 text-orange-700" />
-              <AlertTitle>Catalogue runtime vide</AlertTitle>
-              <AlertDescription>
-                Les modèles statiques existent, mais le catalogue Firestore semble vide. Cet état n'est pas considéré comme synchronisé.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {report.roleSummary.missingRuntime === 0 && report.roleSummary.runtimeOnly === 0 && report.roleSummary.drifted === 0 && report.roleSummary.inactive === 0 && (
-            <Alert className="rounded-2xl border-green-200 bg-green-50/40">
-              <CheckCircle2 className="h-4 w-4 text-green-700" />
-              <AlertTitle>Rôles synchronisés</AlertTitle>
-              <AlertDescription>Les rôles statiques et runtime sont alignés.</AlertDescription>
-            </Alert>
-          )}
-
-          <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-5">
-            <SummaryCard title="Total rôles" value={report.roleSummary.total} />
-            <SummaryCard title="Synchronisés" value={report.roleSummary.synchronized} tone="healthy" />
-            <SummaryCard title="Absents runtime" value={report.roleSummary.missingRuntime} tone={report.roleSummary.missingRuntime > 0 ? "warning" : "healthy"} />
-            <SummaryCard title="Runtime seuls" value={report.roleSummary.runtimeOnly} tone={report.roleSummary.runtimeOnly > 0 ? "warning" : "healthy"} />
-            <SummaryCard title="Différents" value={report.roleSummary.drifted} tone={report.roleSummary.drifted > 0 ? "warning" : "healthy"} />
-            <SummaryCard title="Affectations actives" value={report.roleSummary.activeMembershipAssignments} icon={Users} />
-          </section>
-
-          <CatalogFilters>
-            <SearchInput value={search} onChange={setSearch} placeholder="Rechercher un rôle..." />
-            <FilterSelect label="Portée" value={scopeFilter} onChange={(value) => setScopeFilter(value as ScopeFilter)} options={[["all", "Toutes"], ["platform", "Plateforme"], ["entity", "Entité"]]} />
-            <FilterSelect label="Statut runtime" value={statusFilter} onChange={(value) => setStatusFilter(value as StatusFilter)} options={[["all", "Tous"], ["active", "Actif"], ["inactive", "Inactif"], ["missing", "Absent runtime"]]} />
-            <FilterSelect label="Comparaison" value={comparisonFilter} onChange={(value) => setComparisonFilter(value as ComparisonFilter)} options={[["all", "Toutes"], ["synchronized", "Synchronisé"], ["missing-runtime", "Absent runtime"], ["runtime-only", "Runtime seul"], ["drifted", "Différent"], ["inactive", "Inactif"]]} />
-            <FilterSelect label="Tri" value={sortKey} onChange={(value) => setSortKey(value as SortKey)} options={[["label", "Libellé"], ["roleId", "Role ID"], ["permissionCount", "Permissions"], ["activeMemberships", "Affectations actives"], ["status", "Statut"], ["comparisonState", "Comparaison"]]} />
-          </CatalogFilters>
-
-          <RolesTable
-            roles={paginatedRoles}
-            currentPage={effectiveCurrentPage}
-            onPageChange={setCurrentPage}
-            onPageSizeChange={setPageSize}
-            pageSize={pageSize}
-            totalItems={totalItems}
-            totalPages={totalPages}
-            visibleEnd={visibleEnd}
-            visibleStart={visibleStart}
-          />
-        </>
+        <RolesManagementLoadingState />
       ) : (
-        <Alert className="rounded-2xl">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Aucune donnée affichable</AlertTitle>
-          <AlertDescription>Relancez la synchronisation du catalogue des rôles.</AlertDescription>
-        </Alert>
+        <>
+          <SystemRolesSection roles={systemRoles} onClone={openCloneForm} />
+
+          <Card className="rounded-2xl border-primary/10">
+            <CardHeader className="space-y-3">
+              <CardTitle className="text-primary">Rôles personnalisés</CardTitle>
+              <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Entité</label>
+                  <select
+                    value={selectedEntityId}
+                    onChange={(event) => {
+                      setSelectedEntityId(event.target.value);
+                      setForm(null);
+                      setDeactivateTarget(null);
+                    }}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Sélectionner une entité</option>
+                    {entities.map((entity) => (
+                      <option key={entity.entityId} value={entity.entityId}>
+                        {entityLabel(entity)} ({entity.status})
+                      </option>
+                    ))}
+                  </select>
+                  {selectedEntity && (
+                    <p className="text-xs text-muted-foreground">
+                      ID technique: <span className="font-mono">{selectedEntity.entityId}</span>
+                    </p>
+                  )}
+                </div>
+                <Button type="button" onClick={openCreateForm} disabled={!selectedEntityId || actionLoading} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Créer un rôle
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {!selectedEntityId ? (
+                <EmptyState title="Aucune entité sélectionnée" description="Choisissez une entité pour charger ses rôles personnalisés." />
+              ) : customRoles.length === 0 ? (
+                <EmptyState title="Aucun rôle personnalisé" description="Cette entité ne contient pas encore de rôle personnalisé." />
+              ) : (
+                <CustomRolesTable roles={customRoles} onEdit={openEditForm} onDeactivate={setDeactivateTarget} actionLoading={actionLoading} />
+              )}
+            </CardContent>
+          </Card>
+
+          {form && selectedEntityId && (
+            <RoleFormCard
+              actionLoading={actionLoading}
+              form={form}
+              onCancel={() => setForm(null)}
+              onChange={setForm}
+              onSubmit={handleSubmitForm}
+              permissionGroups={permissionGroups}
+              permissionSearch={permissionSearch}
+              selectedEntity={selectedEntity}
+              setPermissionSearch={setPermissionSearch}
+              togglePermission={togglePermission}
+            />
+          )}
+        </>
       )}
+
+      <AlertDialog open={!!deactivateTarget} onOpenChange={(open) => !open && setDeactivateTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Désactiver le rôle personnalisé</AlertDialogTitle>
+            <AlertDialogDescription>
+              Le rôle restera visible mais ne pourra plus être modifié dans cette phase. Les affectations existantes ne sont pas modifiées.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionLoading}>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={(event) => { event.preventDefault(); handleDeactivate(); }} disabled={actionLoading} className="bg-red-600 text-white hover:bg-red-700">
+              {actionLoading ? "Désactivation..." : "Confirmer"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-function RolesTable(props: {
-  roles: SuperAdminRoleCatalogItem[];
-  currentPage: number;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (size: PageSize) => void;
-  pageSize: PageSize;
-  totalItems: number;
-  totalPages: number;
-  visibleEnd: number;
-  visibleStart: number;
-}) {
-  const hasResults = props.totalItems > 0;
-  return (
-    <Card className="rounded-2xl overflow-hidden border-primary/10">
-      <CardHeader className="space-y-4">
-        <CardTitle className="text-primary">Catalogue des rôles</CardTitle>
-        <PaginationControls {...props} itemLabel="rôles" />
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Rôle</TableHead>
-                <TableHead>Portée</TableHead>
-                <TableHead>État</TableHead>
-                <TableHead>Permissions</TableHead>
-                <TableHead>Affectations</TableHead>
-                <TableHead>Maintenance</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {!hasResults ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
-                    Aucun rôle ne correspond aux filtres actuels.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                props.roles.map((role) => (
-                  <TableRow key={role.roleId} className="align-top">
-                    <TableCell className="min-w-[260px]">
-                      <p className="font-bold text-primary">{role.label}</p>
-                      <p className="text-xs text-muted-foreground">{role.roleId}</p>
-                      {role.name && role.name !== role.label && <p className="text-xs text-muted-foreground">{role.name}</p>}
-                      {role.description && <p className="mt-1 max-w-md text-sm text-muted-foreground">{role.description}</p>}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{role.scope === "platform" ? "Plateforme" : role.scope === "entity" ? "Entité" : "Non renseigné"}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <ComparisonBadge state={role.comparisonState} />
-                      <p className="mt-2 text-xs text-muted-foreground">Runtime: {role.runtimeStatus || "Absent"}</p>
-                      <p className="text-xs text-muted-foreground">Source: {role.source}</p>
-                    </TableCell>
-                    <TableCell className="font-semibold">{role.permissionCount}</TableCell>
-                    <TableCell>
-                      <p className="text-sm font-semibold">{role.totalMemberships} total</p>
-                      <p className="text-xs text-green-700">{role.activeMemberships} actives</p>
-                      <p className="text-xs text-muted-foreground">{role.inactiveMemberships} inactives</p>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-2">
-                        <Link href="/super-admin/memberships" className="text-xs font-semibold text-primary hover:underline">Voir affectations</Link>
-                        <Link href="/super-admin/security-health" className="text-xs font-semibold text-primary hover:underline">Voir diagnostics</Link>
-                        <Link href="/super-admin/roles-seed" className="text-xs font-semibold text-muted-foreground hover:underline">Outil sync séparé</Link>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SummaryCard({ title, value, tone = "default", icon: Icon = ShieldCheck }: { title: string; value: number; tone?: "default" | "warning" | "healthy"; icon?: any }) {
-  return (
-    <Card className={cn("rounded-2xl shadow-sm", tone === "warning" && "border-orange-200 bg-orange-50/30", tone === "healthy" && "border-green-100 bg-green-50/30")}>
-      <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
-        <CardTitle className="text-sm font-black text-primary">{title}</CardTitle>
-        <Icon className="w-4 h-4 text-primary" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-3xl font-black tracking-tight text-slate-900">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CatalogFilters({ children }: { children: React.ReactNode }) {
+function SystemRolesSection({ roles, onClone }: { roles: CustomRoleManagementSystemRole[]; onClone: (role: CustomRoleManagementSystemRole) => void }) {
   return (
     <Card className="rounded-2xl border-primary/10">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-primary"><Filter className="w-5 h-5" /> Filtres</CardTitle>
+        <CardTitle className="text-primary">Rôles prédéfinis</CardTitle>
       </CardHeader>
-      <CardContent className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">{children}</CardContent>
+      <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {roles.map((role) => (
+          <Card key={role.roleId} className="rounded-2xl bg-slate-50/60">
+            <CardContent className="space-y-4 p-5">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-bold text-primary">{role.label}</h2>
+                  <Badge variant="outline" className="rounded-full bg-blue-50 text-blue-700 border-blue-100">Protégé</Badge>
+                  <Badge variant="outline" className="rounded-full">Actif</Badge>
+                </div>
+                <p className="font-mono text-xs text-muted-foreground">{role.roleId}</p>
+                <p className="text-sm text-muted-foreground">{role.description}</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-sm font-semibold">{role.permissionCount} permissions</span>
+                {role.cloneAllowed ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => onClone(role)} className="gap-2">
+                    <Copy className="h-4 w-4" />
+                    Cloner
+                  </Button>
+                ) : (
+                  <Badge variant="outline" className="rounded-full bg-slate-100 text-slate-600">Non clonable</Badge>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </CardContent>
     </Card>
   );
 }
 
-function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
+function CustomRolesTable({ roles, onEdit, onDeactivate, actionLoading }: {
+  roles: CustomRoleManagementCustomRole[];
+  onEdit: (role: CustomRoleManagementCustomRole) => void;
+  onDeactivate: (role: CustomRoleManagementCustomRole) => void;
+  actionLoading: boolean;
+}) {
   return (
-    <div className="space-y-2">
-      <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Recherche</label>
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="pl-9" />
-      </div>
+    <div className="overflow-x-auto rounded-2xl border">
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 text-left text-xs uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="p-3">Rôle</th>
+            <th className="p-3">Statut</th>
+            <th className="p-3">Permissions</th>
+            <th className="p-3">Version</th>
+            <th className="p-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {roles.map((role) => {
+            const isActive = role.status === "active";
+            return (
+              <tr key={role.roleId} className="border-t align-top">
+                <td className="p-3">
+                  <p className="font-bold text-primary">{role.label}</p>
+                  <p className="font-mono text-xs text-muted-foreground">{role.roleId}</p>
+                  {role.name && <p className="text-xs text-muted-foreground">{role.name}</p>}
+                  {role.description && <p className="mt-1 max-w-lg text-sm text-muted-foreground">{role.description}</p>}
+                  {role.sourceRoleId && <p className="mt-1 text-xs text-muted-foreground">Source: {role.sourceRoleId}</p>}
+                </td>
+                <td className="p-3">
+                  <Badge variant="outline" className={cn("rounded-full", isActive ? "bg-green-50 text-green-700 border-green-100" : "bg-slate-50 text-slate-600 border-slate-200")}>
+                    {isActive ? "Actif" : "Inactif"}
+                  </Badge>
+                </td>
+                <td className="p-3 font-semibold">{role.permissionCount}</td>
+                <td className="p-3">{role.version || 1}</td>
+                <td className="p-3">
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => onEdit(role)} disabled={!isActive || actionLoading} className="gap-2">
+                      <Edit className="h-4 w-4" />
+                      Modifier
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => onDeactivate(role)} disabled={!isActive || actionLoading} className="gap-2 text-red-600 hover:text-red-700">
+                      <ShieldOff className="h-4 w-4" />
+                      Désactiver
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function FilterSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: [string, string][] }) {
+function RoleFormCard(props: {
+  actionLoading: boolean;
+  form: RoleFormState;
+  onCancel: () => void;
+  onChange: (form: RoleFormState) => void;
+  onSubmit: (event: React.FormEvent) => void;
+  permissionGroups: [string, CustomRoleManagementPermission[]][];
+  permissionSearch: string;
+  selectedEntity?: CustomRoleManagementEntity;
+  setPermissionSearch: (value: string) => void;
+  togglePermission: (code: string) => void;
+}) {
+  const isClone = props.form.mode === "clone";
+  const title = props.form.mode === "edit" ? "Modifier le rôle personnalisé" : props.form.mode === "clone" ? "Cloner un rôle prédéfini" : "Créer un rôle personnalisé";
+
+  return (
+    <Card className="rounded-2xl border-primary/20 shadow-sm">
+      <CardHeader>
+        <CardTitle className="text-primary">{title}</CardTitle>
+        {props.selectedEntity && (
+          <p className="text-sm text-muted-foreground">
+            Entité: {entityLabel(props.selectedEntity)} <span className="font-mono text-xs">({props.selectedEntity.entityId})</span>
+          </p>
+        )}
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={props.onSubmit} className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2">
+            <LabeledInput label="Nom technique" value={props.form.name} onChange={(value) => props.onChange({ ...props.form, name: value })} />
+            <LabeledInput label="Libellé" value={props.form.label} onChange={(value) => props.onChange({ ...props.form, label: value })} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Description</label>
+            <Textarea value={props.form.description} onChange={(event) => props.onChange({ ...props.form, description: event.target.value })} />
+          </div>
+
+          {isClone ? (
+            <Alert className="rounded-2xl">
+              <Copy className="h-4 w-4" />
+              <AlertTitle>Permissions copiées depuis le rôle source</AlertTitle>
+              <AlertDescription>
+                Le serveur validera toutes les permissions du rôle prédéfini avant de créer la copie. Les permissions plateforme sont rejetées.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <PermissionSelector
+              form={props.form}
+              permissionGroups={props.permissionGroups}
+              permissionSearch={props.permissionSearch}
+              setPermissionSearch={props.setPermissionSearch}
+              togglePermission={props.togglePermission}
+            />
+          )}
+
+          <div className="flex justify-end gap-3 border-t pt-4">
+            <Button type="button" variant="outline" onClick={props.onCancel} disabled={props.actionLoading}>
+              Annuler
+            </Button>
+            <Button type="submit" disabled={props.actionLoading || !props.form.name.trim() || !props.form.label.trim() || (!isClone && props.form.permissions.length === 0)}>
+              {props.actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Enregistrer
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PermissionSelector({ form, permissionGroups, permissionSearch, setPermissionSearch, togglePermission }: {
+  form: RoleFormState;
+  permissionGroups: [string, CustomRoleManagementPermission[]][];
+  permissionSearch: string;
+  setPermissionSearch: (value: string) => void;
+  togglePermission: (code: string) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Permissions entité actives</label>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={permissionSearch} onChange={(event) => setPermissionSearch(event.target.value)} placeholder="Rechercher une permission..." className="pl-9" />
+        </div>
+      </div>
+      <div className="max-h-[420px] space-y-4 overflow-y-auto rounded-2xl border p-4">
+        {permissionGroups.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune permission entité active ne correspond à la recherche.</p>
+        ) : (
+          permissionGroups.map(([module, permissions]) => (
+            <div key={module} className="space-y-2">
+              <h3 className="text-sm font-black uppercase tracking-wide text-primary">{module}</h3>
+              <div className="grid gap-2 md:grid-cols-2">
+                {permissions.map((permission) => (
+                  <label key={permission.code} className="flex cursor-pointer gap-3 rounded-xl border p-3 hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={form.permissions.includes(permission.code)}
+                      onChange={() => togglePermission(permission.code)}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="block font-semibold">{permission.label}</span>
+                      <span className="block break-all font-mono text-xs text-muted-foreground">{permission.code}</span>
+                      {permission.description && <span className="mt-1 block text-xs text-muted-foreground">{permission.description}</span>}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <p className="text-sm font-semibold text-muted-foreground">{form.permissions.length} permissions sélectionnées</p>
+    </div>
+  );
+}
+
+function LabeledInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <div className="space-y-2">
       <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</label>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-        {options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}
-      </select>
+      <Input value={value} onChange={(event) => onChange(event.target.value)} />
     </div>
   );
 }
 
-function PaginationControls(props: {
-  currentPage: number;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (size: PageSize) => void;
-  pageSize: PageSize;
-  totalItems: number;
-  totalPages: number;
-  visibleEnd: number;
-  visibleStart: number;
-  itemLabel: string;
-}) {
-  const hasResults = props.totalItems > 0;
+function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border bg-slate-50/60 p-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="text-sm font-semibold text-slate-700">
-        {hasResults ? `${props.visibleStart}–${props.visibleEnd} sur ${props.totalItems} ${props.itemLabel}` : `0 ${props.itemLabel}`}
-      </div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="whitespace-nowrap font-medium">Éléments par page</span>
-          <select value={props.pageSize} onChange={(event) => props.onPageSizeChange(Number(event.target.value) as PageSize)} className="h-9 rounded-md border border-input bg-background px-2 text-sm">
-            {pageSizeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => props.onPageChange(Math.max(1, props.currentPage - 1))} disabled={!hasResults || props.currentPage <= 1}>Précédent</Button>
-          <span className="min-w-[92px] text-center text-sm font-semibold text-slate-700">Page {hasResults ? props.currentPage : 0} sur {hasResults ? props.totalPages : 0}</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => props.onPageChange(Math.min(props.totalPages, props.currentPage + 1))} disabled={!hasResults || props.currentPage >= props.totalPages}>Suivant</Button>
-        </div>
-      </div>
+    <div className="rounded-2xl border border-dashed p-8 text-center">
+      <p className="font-bold text-primary">{title}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
     </div>
   );
 }
 
-function ComparisonBadge({ state }: { state: SuperAdminCatalogComparisonState }) {
+function RolesManagementLoadingState() {
   return (
-    <Badge variant="outline" className={cn(
-      "rounded-full",
-      state === "synchronized" && "bg-green-50 text-green-700 border-green-100",
-      state === "drifted" && "bg-orange-50 text-orange-700 border-orange-100",
-      state === "missing-runtime" && "bg-red-50 text-red-700 border-red-100",
-      state === "runtime-only" && "bg-blue-50 text-blue-700 border-blue-100",
-      state === "inactive" && "bg-slate-50 text-slate-600 border-slate-200"
-    )}>
-      {comparisonLabels[state]}
-    </Badge>
-  );
-}
-
-function CatalogLoadingState() {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-5">
-        {[0, 1, 2, 3, 4, 5].map((item) => (
-          <Card key={item} className="rounded-2xl">
-            <CardHeader><Skeleton className="h-5 w-24" /></CardHeader>
-            <CardContent><Skeleton className="h-9 w-16" /></CardContent>
-          </Card>
-        ))}
-      </div>
-      <Card className="rounded-2xl">
-        <CardHeader><Skeleton className="h-6 w-48" /></CardHeader>
-        <CardContent className="space-y-3">
-          {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full rounded-xl" />)}
-        </CardContent>
-      </Card>
+    <div className="space-y-5">
+      {[0, 1, 2].map((item) => (
+        <Card key={item} className="rounded-2xl">
+          <CardContent className="space-y-3 p-5">
+            <Skeleton className="h-5 w-48" />
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
-
