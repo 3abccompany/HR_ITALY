@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   collection,
@@ -45,7 +44,7 @@ import type { MealTicketMonthlySummary } from "@/types/meal-ticket";
 import type { KilometerReimbursementMonthlySummary } from "@/types/kilometer-reimbursement";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -537,12 +536,13 @@ export default function PayrollCalculationDetailPage() {
   if (error || !calculation) {
     return (
       <div className="space-y-6 p-8">
-        <Button asChild variant="ghost" className="gap-2">
-          <Link href={`/entity/${entityId}/payroll`}>
-            <ArrowLeft className="h-4 w-4" />
-            Retour à la synthèse économique
-          </Link>
-        </Button>
+        <a
+          href={`/entity/${entityId}/payroll`}
+          className={buttonVariants({ variant: "ghost", className: "gap-2" })}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Retour à la synthèse économique
+        </a>
         <Alert variant="destructive" className="rounded-3xl">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Synthèse introuvable</AlertTitle>
@@ -628,12 +628,13 @@ export default function PayrollCalculationDetailPage() {
   return (
     <div className="mx-auto max-w-[1500px] space-y-8 p-8 pb-24">
       <header className="space-y-5">
-        <Button asChild variant="ghost" className="-ml-3 gap-2">
-          <Link href={`/entity/${entityId}/payroll`}>
-            <ArrowLeft className="h-4 w-4" />
-            Retour à la synthèse économique
-          </Link>
-        </Button>
+        <a
+          href={`/entity/${entityId}/payroll`}
+          className={buttonVariants({ variant: "ghost", className: "-ml-3 gap-2" })}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Retour à la synthèse économique
+        </a>
 
         <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
           <div className="flex items-start gap-4">
