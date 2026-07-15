@@ -120,20 +120,23 @@ import ExcelJS from "exceljs";
 const getValidationBlockReason = (
   a: AttendanceRecord, 
   holidaysMap: Map<string, string>, 
-  timeOffRequests: TimeOffRequest[] | undefined
+  timeOffRequests: TimeOffRequest[] | undefined,
+  includeLeaveReconciliation = true
 ) => {
   const isWorked = (a.validatedHours || 0) > 0;
   const regHolidayName = holidaysMap.get(a.attendanceDate);
   const isRegHoliday = !!regHolidayName;
   
   // Prioritized matching: approved > submitted > rejected
-  const matchingRequest = (timeOffRequests || [])
-    .filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-    .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
-    .sort((req1, req2) => {
-      const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
-      return (priority[req1.status] || 99) - (priority[req2.status] || 99);
-    })[0];
+  const matchingRequest = includeLeaveReconciliation
+    ? (timeOffRequests || [])
+      .filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+      .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
+      .sort((req1, req2) => {
+        const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
+        return (priority[req1.status] || 99) - (priority[req2.status] || 99);
+      })[0]
+    : undefined;
 
   const isJustified = matchingRequest && matchingRequest.status === 'approved';
 
@@ -155,6 +158,7 @@ const getValidationBlockReason = (
   }
 
   if (a.absenceCode && !isJustified && !isWorked) {
+    if (!includeLeaveReconciliation) return null;
     const code = a.absenceCode.toLowerCase();
     if (code.includes('sick') || code.includes('malad') || code.includes('infort')) {
       return "Maladie Excel non confirmée";
@@ -294,6 +298,13 @@ const initialRegistryFilters = {
   anomalyOnly: false
 };
 
+const getSafeActionErrorMessage = (err: any) => {
+  if (err?.code === "permission-denied" || err?.message?.toLowerCase?.().includes("permission")) {
+    return "Vous ne disposez pas de l’autorisation nécessaire pour effectuer cette action.";
+  }
+  return err?.message || "Une erreur inattendue est survenue.";
+};
+
 export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -339,17 +350,23 @@ export default function AttendancesPage() {
   const [validationBlockSummary, setValidationBlockSummary] = useState<{
     total: number;
     reasons: Record<string, number>;
+    eligibleIds?: string[];
   } | null>(null);
 
-  const canRead = hasPermission("attendances.read");
+  const canReadAttendances = hasPermission("attendances.read");
+  const canRead = canReadAttendances;
+  const canReadEmployees = hasPermission("employees.read");
+  const canReadLeaveRequests = hasPermission("leaveRequests.read");
   const canReadHolidays = hasPermission("holidays.read");
   const canCreate = hasPermission("attendances.create");
   const canValidate = hasPermission("attendances.validate");
+  const canUseImportTools = canCreate && canReadEmployees;
+  const canUseLeaveReconciliation = canReadAttendances && canReadLeaveRequests;
 
   // --- Collection Queries ---
   const empQuery = useMemo(() => 
-    db ? query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active")) as Query<Employee> : null,
-  [db, entityId]);
+    db && entityId && canReadEmployees ? query(collection(db, `entities/${entityId}/employees`), where("status", "==", "active")) as Query<Employee> : null,
+  [db, entityId, canReadEmployees]);
 
   const attendancesQuery = useMemo(() => 
     db && entityId && canRead ? query(collection(db, `entities/${entityId}/attendances`)) as Query<AttendanceRecord> : null,
@@ -371,9 +388,9 @@ export default function AttendancesPage() {
   }, [db, entityId, canReadHolidays, selectedMonth, selectedYear]);
 
   const timeOffRequestsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !canReadAttendances || !canReadLeaveRequests) return null;
     return query(collection(db, `entities/${entityId}/timeOffRequests`)) as Query<TimeOffRequest>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, canReadAttendances, canReadLeaveRequests]);
 
   const { data: employees } = useCollection<Employee>(empQuery, "attendances.employees");
   const { data: registryAttendances, loading: loadingRegistry } = useCollection<AttendanceRecord>(attendancesQuery, "attendances.registry");
@@ -439,7 +456,7 @@ export default function AttendancesPage() {
         const match =
           a.employeeDisplayName?.toLowerCase().includes(term) ||
           a.employeeCode.toLowerCase().includes(term) ||
-          employee?.taxCode?.toLowerCase().includes(term);
+          (canReadEmployees && employee?.taxCode?.toLowerCase().includes(term));
         if (!match) return false;
       }
 
@@ -448,7 +465,7 @@ export default function AttendancesPage() {
 
       return true;
     });
-  }, [employeesMapByCode, registryAttendances, selectedMonth, selectedYear, registryFilters]);
+  }, [canReadEmployees, employeesMapByCode, registryAttendances, selectedMonth, selectedYear, registryFilters]);
 
   const groupedEmployeeData = useMemo(() => {
     const groups = new Map<string, GroupedEmployeeAttendance>();
@@ -457,19 +474,21 @@ export default function AttendancesPage() {
       const key = a.employeeId || a.employeeCode;
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
 
-      const matchingRequest = (timeOffRequests || [])
-        ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-        .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
-        .sort((req1, req2) => {
-          const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
-          return (priority[req1.status] || 99) - (priority[req2.status] || 99);
-        })[0];
+      const matchingRequest = canUseLeaveReconciliation
+        ? (timeOffRequests || [])
+          ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+          .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
+          .sort((req1, req2) => {
+            const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
+            return (priority[req1.status] || 99) - (priority[req2.status] || 99);
+          })[0]
+        : undefined;
 
       if (!groups.has(key)) {
         groups.set(key, {
           employeeId: a.employeeId,
           employeeCode: a.employeeCode,
-          taxCode: employeesMapByCode.get(a.employeeCode)?.taxCode || null,
+          taxCode: canReadEmployees ? employeesMapByCode.get(a.employeeCode)?.taxCode || null : null,
           employeeDisplayName: a.employeeDisplayName || "Employé inconnu",
           departmentName: a.departmentName,
           worksiteName: a.worksiteName,
@@ -521,7 +540,7 @@ export default function AttendancesPage() {
     });
 
     return sortedGroups;
-  }, [filteredRegistry, dateSortDirection, holidaysMap, timeOffRequests]);
+  }, [canReadEmployees, canUseLeaveReconciliation, filteredRegistry, dateSortDirection, holidaysMap, timeOffRequests, employeesMapByCode]);
 
   const registryStats = useMemo(() => {
     const stats = {
@@ -545,13 +564,15 @@ export default function AttendancesPage() {
       const isRegHoliday = holidaysMap.has(a.attendanceDate);
       const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
       
-      const matchingRequest = (timeOffRequests || [])
-        ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
-        .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
-        .sort((req1, req2) => {
-          const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
-          return (priority[req1.status] || 99) - (priority[req2.status] || 99);
-        })[0];
+      const matchingRequest = canUseLeaveReconciliation
+        ? (timeOffRequests || [])
+          ?.filter(r => r.employeeId === a.employeeId && r.status !== 'cancelled')
+          .filter(r => a.attendanceDate >= r.startDate && a.attendanceDate <= r.endDate)
+          .sort((req1, req2) => {
+            const priority: Record<string, number> = { approved: 1, submitted: 2, rejected: 3 };
+            return (priority[req1.status] || 99) - (priority[req2.status] || 99);
+          })[0]
+        : undefined;
         
       const isJustified = matchingRequest && matchingRequest.status === 'approved';
 
@@ -560,7 +581,7 @@ export default function AttendancesPage() {
       }
     });
     return stats;
-  }, [filteredRegistry, holidaysMap, timeOffRequests]);
+  }, [canUseLeaveReconciliation, filteredRegistry, holidaysMap, timeOffRequests]);
 
   const draftIdsToValidate = useMemo(() => 
     filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
@@ -579,6 +600,12 @@ export default function AttendancesPage() {
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canUseImportTools) {
+      setUploadError(canCreate ? "Cette fonction nécessite l’accès au répertoire des employés." : "Vous ne disposez pas de l’autorisation nécessaire pour effectuer cette action.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -863,7 +890,7 @@ export default function AttendancesPage() {
       toast({ title: "Fichier analysé", description: `${rows.length} lignes extraites.` });
     } catch (err: any) {
       console.error("[Excel Parsing Error]", err);
-      setUploadError(err.message || "Erreur lors de la lecture du fichier.");
+      setUploadError(getSafeActionErrorMessage(err));
     } finally {
       setIsReading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -871,6 +898,15 @@ export default function AttendancesPage() {
   };
 
   const handleDownloadTemplate = async () => {
+    if (!canUseImportTools) {
+      toast({
+        variant: "destructive",
+        title: "Action indisponible",
+        description: canCreate ? "Cette fonction nécessite l’accès au répertoire des employés." : "Vous ne disposez pas de l’autorisation nécessaire pour effectuer cette action.",
+      });
+      return;
+    }
+
     if (!employees || employees.length === 0) {
       alert("Aucun employé actif trouvé.");
       return;
@@ -908,6 +944,14 @@ export default function AttendancesPage() {
   };
 
   const handleImportClick = () => {
+    if (!canUseImportTools) {
+      toast({
+        variant: "destructive",
+        title: "Action indisponible",
+        description: canCreate ? "Cette fonction nécessite l’accès au répertoire des employés." : "Vous ne disposez pas de l’autorisation nécessaire pour effectuer cette action.",
+      });
+      return;
+    }
     if (!previewRows.length) return;
     if (previewStats.error > 0) {
        toast({ variant: "destructive", title: "Action bloquée", description: "Veuillez corriger les erreurs avant d'importer." });
@@ -917,7 +961,7 @@ export default function AttendancesPage() {
   };
 
   const handleExecuteImport = async (strategy: "fail" | "skip" | "overwrite" = "fail") => {
-    if (!user || !entityId || !previewRows.length) return;
+    if (!user || !entityId || !previewRows.length || !canUseImportTools) return;
     setIsImporting(true);
     try {
       await executeAttendanceImport({
@@ -953,7 +997,7 @@ export default function AttendancesPage() {
       setIsImportConfirmOpen(false);
       setActiveTab("registry");
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur d'importation", description: err.message });
+      toast({ variant: "destructive", title: "Erreur d'importation", description: getSafeActionErrorMessage(err) });
     } finally {
       setIsImporting(false);
     }
@@ -962,7 +1006,7 @@ export default function AttendancesPage() {
   const handleValidateSingle = async (attendance: AttendanceRecord) => {
     if (!user || !entityId || !canValidate) return;
     
-    const blockReason = getValidationBlockReason(attendance, holidaysMap, timeOffRequests);
+    const blockReason = getValidationBlockReason(attendance, holidaysMap, timeOffRequests, canUseLeaveReconciliation);
     if (blockReason) {
       toast({
         variant: "destructive",
@@ -981,7 +1025,7 @@ export default function AttendancesPage() {
       });
       toast({ title: "Présence validée" });
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
+      toast({ variant: "destructive", title: "Erreur", description: getSafeActionErrorMessage(err) });
     } finally {
       setIsValidating(false);
     }
@@ -990,17 +1034,18 @@ export default function AttendancesPage() {
   const handleAttemptBulkValidation = () => {
     if (!user || !entityId || !canValidate || draftIdsToValidate.length === 0) return;
 
-    const blockedRecords = filteredRegistry
+    const validationPlan = filteredRegistry
       .filter(a => a.status === 'draft_imported')
-      .map(a => ({ id: a.id, reason: getValidationBlockReason(a, holidaysMap, timeOffRequests) }))
-      .filter(item => item.reason !== null);
+      .map(a => ({ id: a.id, reason: getValidationBlockReason(a, holidaysMap, timeOffRequests, canUseLeaveReconciliation) }));
+    const blockedRecords = validationPlan.filter(item => item.reason !== null);
+    const eligibleIds = validationPlan.filter(item => item.reason === null).map(item => item.id);
 
     if (blockedRecords.length > 0) {
       const counts: Record<string, number> = {};
       blockedRecords.forEach(item => {
         counts[item.reason!] = (counts[item.reason!] || 0) + 1;
       });
-      setValidationBlockSummary({ total: blockedRecords.length, reasons: counts });
+      setValidationBlockSummary({ total: blockedRecords.length, reasons: counts, eligibleIds });
       return;
     }
 
@@ -1008,18 +1053,20 @@ export default function AttendancesPage() {
   };
 
   const handleValidateBulk = async () => {
-    if (!user || !entityId || !canValidate || draftIdsToValidate.length === 0) return;
+    const idsToValidate = validationBlockSummary?.eligibleIds ?? draftIdsToValidate;
+    if (!user || !entityId || !canValidate || idsToValidate.length === 0) return;
     setIsValidating(true);
     try {
       await validateAttendanceRecords({
         entityId,
-        attendanceIds: draftIdsToValidate,
+        attendanceIds: idsToValidate,
         actorUid: user.uid
       });
-      toast({ title: "Validation terminée", description: `${draftIdsToValidate.length} enregistrements ont été validés.` });
+      toast({ title: "Validation terminée", description: `${idsToValidate.length} enregistrements ont été validés.` });
       setIsValidationConfirmOpen(false);
+      setValidationBlockSummary(null);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
+      toast({ variant: "destructive", title: "Erreur", description: getSafeActionErrorMessage(err) });
     } finally {
       setIsValidating(false);
     }
@@ -1140,7 +1187,13 @@ export default function AttendancesPage() {
                             <div className="space-y-2"><Label className="text-[10px] uppercase font-black">Date de début</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-xl" /></div>
                         )}
                       </div>
-                      <Button onClick={handleDownloadTemplate} disabled={isDownloading} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
+                      {canCreate && !canReadEmployees && (
+                        <Alert className="rounded-xl bg-orange-50 border-orange-100 text-orange-800">
+                          <AlertCircle className="w-4 h-4" />
+                          <AlertDescription className="text-xs font-bold">Cette fonction nécessite l’accès au répertoire des employés.</AlertDescription>
+                        </Alert>
+                      )}
+                      <Button onClick={handleDownloadTemplate} disabled={isDownloading || !canUseImportTools} className="w-full h-12 rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
                         {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Générer le modèle
                       </Button>
                   </CardContent>
@@ -1153,8 +1206,8 @@ export default function AttendancesPage() {
                       </CardTitle>
                   </CardHeader>
                   <CardContent className="p-8 space-y-4">
-                      <div className={cn("border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer", isReading ? "bg-slate-50 opacity-50" : "bg-slate-50/30 hover:bg-white hover:border-accent/40")}>
-                        <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+                      <div className={cn("border-2 border-dashed rounded-2xl p-10 transition-all relative flex flex-col items-center justify-center gap-2 text-center", isReading || !canUseImportTools ? "bg-slate-50 opacity-50 cursor-not-allowed" : "bg-slate-50/30 hover:bg-white hover:border-accent/40 cursor-pointer")}>
+                        <input type="file" ref={fileInputRef} accept=".xlsx" onChange={handleFileChange} disabled={isReading || !canUseImportTools} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full disabled:cursor-not-allowed" />
                         {isReading ? <Loader2 className="w-8 h-8 animate-spin text-accent" /> : <Layout className="w-8 h-8 text-accent/30" />}
                         <p className="text-xs font-bold text-slate-600">Cliquer pour importer le fichier rempli</p>
                         <p className="text-[10px] text-muted-foreground uppercase font-black">.xlsx uniquement</p>
@@ -1202,8 +1255,12 @@ export default function AttendancesPage() {
                                               <span className="font-bold text-slate-800 text-xs">{row.employeeName}</span>
                                               <span className="text-[10px] text-muted-foreground">
                                                 Matricule: <span className="font-mono uppercase">{row.employeeCode || "Non renseigné"}</span>
-                                                {" · "}
-                                                Codice fiscale: <span className="font-mono uppercase">{employeesMapByCode.get(row.employeeCode)?.taxCode || "Non renseigné"}</span>
+                                                {canReadEmployees && (
+                                                  <>
+                                                    {" · "}
+                                                    Codice fiscale: <span className="font-mono uppercase">{employeesMapByCode.get(row.employeeCode)?.taxCode || "Non renseigné"}</span>
+                                                  </>
+                                                )}
                                               </span>
                                           </div>
                                         </TableCell>
@@ -1268,6 +1325,18 @@ export default function AttendancesPage() {
                     <Button onClick={handleAttemptBulkValidation} className="h-11 rounded-xl font-bold bg-green-600 hover:bg-green-700 text-white gap-2 shadow-lg"><CheckSquare className="w-4 h-4" /> Valider les brouillons filtrés</Button>
                   )}
                </div>
+               {canValidate && !canReadLeaveRequests && (
+                  <Alert className="rounded-xl bg-slate-50 border-slate-200 text-slate-700">
+                    <Info className="w-4 h-4" />
+                    <AlertDescription className="text-xs font-bold">Réconciliation avec les congés indisponible avec vos autorisations. Les présences sans dépendance congés restent validables.</AlertDescription>
+                  </Alert>
+               )}
+               {canReadAttendances && !canReadLeaveRequests && !canValidate && (
+                  <Alert className="rounded-xl bg-slate-50 border-slate-200 text-slate-700">
+                    <Info className="w-4 h-4" />
+                    <AlertDescription className="text-xs font-bold">Réconciliation avec les congés indisponible avec vos autorisations.</AlertDescription>
+                  </Alert>
+               )}
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4">
                   <SummaryStat label="Employés" value={groupedEmployeeData.length} color="indigo" />
                   <SummaryStat label="Lignes" value={registryStats.total} color="blue" />
@@ -1309,8 +1378,12 @@ export default function AttendancesPage() {
                                        <div className="flex items-center gap-2 mt-1">
                                           <span className="text-[10px] text-muted-foreground bg-slate-100 px-1.5 py-0.5 rounded">
                                             Matricule: <span className="font-mono uppercase">{group.employeeCode || "Non renseigné"}</span>
-                                            {" · "}
-                                            Codice fiscale: <span className="font-mono uppercase">{group.taxCode || "Non renseigné"}</span>
+                                            {canReadEmployees && (
+                                              <>
+                                                {" · "}
+                                                Codice fiscale: <span className="font-mono uppercase">{group.taxCode || "Non renseigné"}</span>
+                                              </>
+                                            )}
                                           </span>
                                           {group.departmentName && (
                                             <>
@@ -1385,7 +1458,7 @@ export default function AttendancesPage() {
                                              const request = a.matchingRequest as TimeOffRequest | undefined;
                                              const isJustified = request && request.status === 'approved';
                                              
-                                             const blockReason = getValidationBlockReason(a, holidaysMap, timeOffRequests);
+                                             const blockReason = getValidationBlockReason(a, holidaysMap, timeOffRequests, canUseLeaveReconciliation);
 
                                              return (
                                              <TableRow key={a.id} className="hover:bg-white transition-colors">
@@ -1428,6 +1501,10 @@ export default function AttendancesPage() {
                                                       ) : blockReason ? (
                                                         <Badge variant="destructive" className={cn("text-[8px] font-black uppercase border-none h-4 px-1.5", (blockReason === "Demande en attente" || blockReason === "Absence à analyser") ? "bg-orange-500 animate-pulse" : "bg-red-600")}>
                                                            {blockReason}
+                                                        </Badge>
+                                                      ) : a.absenceCode && !isWorked ? (
+                                                        <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[8px] font-black uppercase h-4 px-1.5">
+                                                          {a.absenceCode}
                                                         </Badge>
                                                       ) : (
                                                          <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", a.status === 'draft_imported' ? "bg-slate-100 text-slate-500" : "bg-green-50 text-green-700 border-green-200")}>
@@ -1644,10 +1721,24 @@ export default function AttendancesPage() {
                     ))}
                  </div>
               </div>
+              {validationBlockSummary?.eligibleIds && validationBlockSummary.eligibleIds.length > 0 && (
+                <Alert className="rounded-2xl bg-green-50 border-green-100 text-green-800">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <AlertDescription className="text-xs font-bold">
+                    {validationBlockSummary.eligibleIds.length} ligne(s) sans dépendance congés peuvent être validées maintenant.
+                  </AlertDescription>
+                </Alert>
+              )}
            </div>
 
-           <AlertDialogFooter>
-              <AlertDialogAction onClick={() => setValidationBlockSummary(null)} className="rounded-xl font-black w-full">Compris</AlertDialogAction>
+           <AlertDialogFooter className="gap-3">
+              <AlertDialogCancel onClick={() => setValidationBlockSummary(null)} disabled={isValidating} className="rounded-xl font-bold">Fermer</AlertDialogCancel>
+              {validationBlockSummary?.eligibleIds && validationBlockSummary.eligibleIds.length > 0 && (
+                <AlertDialogAction onClick={(e) => { e.preventDefault(); handleValidateBulk(); }} disabled={isValidating} className="bg-green-600 hover:bg-green-700 font-black rounded-xl px-6 shadow-lg">
+                  {isValidating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+                  Valider les lignes éligibles
+                </AlertDialogAction>
+              )}
            </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
