@@ -21,7 +21,7 @@ import {
   updateCustomRoleAction,
   type CustomRoleManagementCustomRole,
   type CustomRoleManagementDataResult,
-  type CustomRoleManagementEntity,
+  type CustomRoleManagementLegacyRole,
   type CustomRoleManagementPermission,
   type CustomRoleManagementSystemRole,
 } from "@/app/actions/custom-role-actions";
@@ -66,10 +66,6 @@ const emptyForm: RoleFormState = {
   permissions: [],
 };
 
-function entityLabel(entity: CustomRoleManagementEntity): string {
-  return entity.name || entity.legalName || entity.entityId;
-}
-
 function safeError(result: { error?: string; code?: string }): string {
   return result.error || result.code || "Action impossible.";
 }
@@ -78,7 +74,6 @@ export default function SuperAdminRolesCatalogPage() {
   const { user } = useUser();
   const { toast } = useToast();
   const [data, setData] = useState<CustomRoleManagementDataResult | null>(null);
-  const [selectedEntityId, setSelectedEntityId] = useState("");
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,13 +81,13 @@ export default function SuperAdminRolesCatalogPage() {
   const [permissionSearch, setPermissionSearch] = useState("");
   const [deactivateTarget, setDeactivateTarget] = useState<CustomRoleManagementCustomRole | null>(null);
 
-  const loadData = async (entityId = selectedEntityId) => {
+  const loadData = async () => {
     if (!user) return;
     setLoading(true);
     setError(null);
     try {
       const idToken = await user.getIdToken();
-      const result = await listCustomRoleManagementDataAction({ idToken, entityId: entityId || undefined });
+      const result = await listCustomRoleManagementDataAction({ idToken });
       if (!result.success) {
         setError(safeError(result));
         setData(null);
@@ -110,12 +105,11 @@ export default function SuperAdminRolesCatalogPage() {
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, selectedEntityId]);
+  }, [user]);
 
-  const entities = data?.entities || [];
-  const selectedEntity = entities.find((entity) => entity.entityId === selectedEntityId);
   const systemRoles = data?.systemRoles || [];
   const customRoles = data?.customRoles || [];
+  const legacyRoles = data?.legacyRoles || [];
   const permissions = data?.permissions || [];
 
   const activeEntityPermissions = useMemo(
@@ -199,7 +193,7 @@ export default function SuperAdminRolesCatalogPage() {
 
   const handleSubmitForm = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!user || !form || !selectedEntityId) return;
+    if (!user || !form) return;
 
     setActionLoading(true);
     try {
@@ -207,7 +201,6 @@ export default function SuperAdminRolesCatalogPage() {
       const result = form.mode === "create"
         ? await createCustomRoleAction({
           idToken,
-          entityId: selectedEntityId,
           name: form.name,
           label: form.label,
           description: form.description,
@@ -216,7 +209,6 @@ export default function SuperAdminRolesCatalogPage() {
         : form.mode === "clone"
           ? await cloneSystemRoleAction({
             idToken,
-            entityId: selectedEntityId,
             sourceRoleId: form.sourceRoleId || "",
             name: form.name,
             label: form.label,
@@ -224,7 +216,6 @@ export default function SuperAdminRolesCatalogPage() {
           })
           : await updateCustomRoleAction({
             idToken,
-            entityId: selectedEntityId,
             customRoleId: form.customRoleId || "",
             name: form.name,
             label: form.label,
@@ -234,7 +225,7 @@ export default function SuperAdminRolesCatalogPage() {
 
       if (showMutationResult(result, form.mode === "edit" ? "Rôle personnalisé mis à jour" : form.mode === "clone" ? "Rôle système cloné" : "Rôle personnalisé créé")) {
         setForm(null);
-        await loadData(selectedEntityId);
+        await loadData();
       }
     } finally {
       setActionLoading(false);
@@ -242,18 +233,17 @@ export default function SuperAdminRolesCatalogPage() {
   };
 
   const handleDeactivate = async () => {
-    if (!user || !selectedEntityId || !deactivateTarget) return;
+    if (!user || !deactivateTarget) return;
     setActionLoading(true);
     try {
       const idToken = await user.getIdToken();
       const result = await deactivateCustomRoleAction({
         idToken,
-        entityId: selectedEntityId,
         customRoleId: deactivateTarget.roleId,
       });
       if (showMutationResult(result, result.alreadyInactive ? "Rôle déjà inactif" : "Rôle personnalisé désactivé")) {
         setDeactivateTarget(null);
-        await loadData(selectedEntityId);
+        await loadData();
       }
     } finally {
       setActionLoading(false);
@@ -274,7 +264,7 @@ export default function SuperAdminRolesCatalogPage() {
           </div>
           <h1 className="text-3xl md:text-4xl font-headline font-bold text-primary">Rôles</h1>
           <p className="max-w-3xl text-muted-foreground">
-            Gestion des rôles personnalisés par entité. Les rôles prédéfinis restent protégés, non modifiables et prêts à l'emploi.
+            Les rôles personnalisés sont des modèles globaux réutilisables. Ils deviennent effectifs uniquement après affectation à un membership, dont les permissions restent spécifiques à son entité.
           </p>
         </div>
       </header>
@@ -287,6 +277,14 @@ export default function SuperAdminRolesCatalogPage() {
         </Alert>
       )}
 
+      {data?.legacyInventoryWarning && (
+        <Alert className="rounded-2xl">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Inventaire legacy partiel</AlertTitle>
+          <AlertDescription>{data.legacyInventoryWarning}</AlertDescription>
+        </Alert>
+      )}
+
       {loading ? (
         <RolesManagementLoadingState />
       ) : (
@@ -295,50 +293,29 @@ export default function SuperAdminRolesCatalogPage() {
 
           <Card className="rounded-2xl border-primary/10">
             <CardHeader className="space-y-3">
-              <CardTitle className="text-primary">Rôles personnalisés</CardTitle>
-              <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Entité</label>
-                  <select
-                    value={selectedEntityId}
-                    onChange={(event) => {
-                      setSelectedEntityId(event.target.value);
-                      setForm(null);
-                      setDeactivateTarget(null);
-                    }}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">Sélectionner une entité</option>
-                    {entities.map((entity) => (
-                      <option key={entity.entityId} value={entity.entityId}>
-                        {entityLabel(entity)} ({entity.status})
-                      </option>
-                    ))}
-                  </select>
-                  {selectedEntity && (
-                    <p className="text-xs text-muted-foreground">
-                      ID technique: <span className="font-mono">{selectedEntity.entityId}</span>
-                    </p>
-                  )}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-primary">Rôles personnalisés globaux</CardTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Ces modèles ne portent aucune propriété d’entité. L’accès reste limité par le membership où ils seront affectés.
+                  </p>
                 </div>
-                <Button type="button" onClick={openCreateForm} disabled={!selectedEntityId || actionLoading} className="gap-2">
+                <Button type="button" onClick={openCreateForm} disabled={actionLoading} className="gap-2">
                   <Plus className="h-4 w-4" />
                   Créer un rôle
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              {!selectedEntityId ? (
-                <EmptyState title="Aucune entité sélectionnée" description="Choisissez une entité pour charger ses rôles personnalisés." />
-              ) : customRoles.length === 0 ? (
-                <EmptyState title="Aucun rôle personnalisé" description="Cette entité ne contient pas encore de rôle personnalisé." />
+              {customRoles.length === 0 ? (
+                <EmptyState title="Aucun rôle personnalisé global" description="Aucun modèle global n’a encore été créé." />
               ) : (
                 <CustomRolesTable roles={customRoles} onEdit={openEditForm} onDeactivate={setDeactivateTarget} actionLoading={actionLoading} />
               )}
             </CardContent>
           </Card>
 
-          {form && selectedEntityId && (
+          {form && (
             <RoleFormCard
               actionLoading={actionLoading}
               form={form}
@@ -347,11 +324,12 @@ export default function SuperAdminRolesCatalogPage() {
               onSubmit={handleSubmitForm}
               permissionGroups={permissionGroups}
               permissionSearch={permissionSearch}
-              selectedEntity={selectedEntity}
               setPermissionSearch={setPermissionSearch}
               togglePermission={togglePermission}
             />
           )}
+
+          <LegacyRolesSection roles={legacyRoles} />
         </>
       )}
 
@@ -360,7 +338,7 @@ export default function SuperAdminRolesCatalogPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Désactiver le rôle personnalisé</AlertDialogTitle>
             <AlertDialogDescription>
-              Le rôle restera visible mais ne pourra plus être modifié dans cette phase. Les affectations existantes ne sont pas modifiées.
+              Le rôle restera visible comme modèle global inactif. Il ne sera pas supprimé et aucune affectation existante ne sera modifiée dans cette phase.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -479,7 +457,6 @@ function RoleFormCard(props: {
   onSubmit: (event: React.FormEvent) => void;
   permissionGroups: [string, CustomRoleManagementPermission[]][];
   permissionSearch: string;
-  selectedEntity?: CustomRoleManagementEntity;
   setPermissionSearch: (value: string) => void;
   togglePermission: (code: string) => void;
 }) {
@@ -490,11 +467,9 @@ function RoleFormCard(props: {
     <Card className="rounded-2xl border-primary/20 shadow-sm">
       <CardHeader>
         <CardTitle className="text-primary">{title}</CardTitle>
-        {props.selectedEntity && (
-          <p className="text-sm text-muted-foreground">
-            Entité: {entityLabel(props.selectedEntity)} <span className="font-mono text-xs">({props.selectedEntity.entityId})</span>
-          </p>
-        )}
+        <p className="text-sm text-muted-foreground">
+          Ce modèle global pourra être affecté plus tard à des memberships actifs, sans porter lui-même de propriété d’entité.
+        </p>
       </CardHeader>
       <CardContent>
         <form onSubmit={props.onSubmit} className="space-y-6">
@@ -512,7 +487,7 @@ function RoleFormCard(props: {
               <Copy className="h-4 w-4" />
               <AlertTitle>Permissions copiées depuis le rôle source</AlertTitle>
               <AlertDescription>
-                Le serveur validera toutes les permissions du rôle prédéfini avant de créer la copie. Les permissions plateforme sont rejetées.
+                Le serveur validera toutes les permissions du rôle prédéfini avant de créer le modèle global. Les permissions plateforme sont rejetées.
               </AlertDescription>
             </Alert>
           ) : (
@@ -586,6 +561,58 @@ function PermissionSelector({ form, permissionGroups, permissionSearch, setPermi
       </div>
       <p className="text-sm font-semibold text-muted-foreground">{form.permissions.length} permissions sélectionnées</p>
     </div>
+  );
+}
+
+function LegacyRolesSection({ roles }: { roles: CustomRoleManagementLegacyRole[] }) {
+  return (
+    <Card className="rounded-2xl border-amber-200 bg-amber-50/40">
+      <CardHeader>
+        <CardTitle className="text-primary">Rôles hérités à migrer</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Inventaire read-only des anciens rôles stockés sous les entités. Aucune action n’est disponible dans cette phase.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {roles.length === 0 ? (
+          <EmptyState title="Aucun rôle hérité détecté" description="Aucun ancien rôle personnalisé d’entité n’a été trouvé dans la limite d’inventaire." />
+        ) : (
+          <div className="overflow-x-auto rounded-2xl border bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th className="p-3">Rôle hérité</th>
+                  <th className="p-3">Entité source</th>
+                  <th className="p-3">Permissions</th>
+                  <th className="p-3">Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roles.map((role) => (
+                  <tr key={`${role.sourceEntityId}_${role.legacyRoleId}`} className="border-t align-top">
+                    <td className="p-3">
+                      <p className="font-bold text-primary">{role.label || role.name || role.legacyRoleId}</p>
+                      <p className="font-mono text-xs text-muted-foreground">{role.legacyRoleId}</p>
+                      {role.name && <p className="text-xs text-muted-foreground">{role.name}</p>}
+                    </td>
+                    <td className="p-3">
+                      <p className="font-semibold">{role.sourceEntityName}</p>
+                      <p className="font-mono text-xs text-muted-foreground">{role.sourceEntityId}</p>
+                    </td>
+                    <td className="p-3 font-semibold">{role.permissionCount}</td>
+                    <td className="p-3">
+                      <Badge variant="outline" className="rounded-full border-amber-200 bg-amber-100 text-amber-800">
+                        Legacy — à migrer
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

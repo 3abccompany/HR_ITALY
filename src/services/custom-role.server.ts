@@ -15,6 +15,7 @@ export type CustomRoleValidationErrorCode =
   | "invalid-role-label"
   | "invalid-permission"
   | "unknown-permission"
+  | "duplicate-role-name"
   | "platform-permission-forbidden"
   | "system-role-protected"
   | "cross-entity-role"
@@ -58,11 +59,11 @@ export interface NormalizedCustomRoleInput {
 
 export interface ValidatedCustomRoleDocument {
   roleId: string;
-  entityId: string;
   name: string;
   label: string;
   description: string;
   permissions: string[];
+  status: "active" | "inactive";
   version?: number;
 }
 
@@ -249,14 +250,12 @@ export async function normalizeAndValidateCustomRoleInput(input: CustomRoleInput
 }
 
 export function validateCustomRoleDocument(params: {
-  entityId: string;
   roleId: string;
   roleData: unknown;
 }): ValidatedCustomRoleDocument {
-  const requestedEntityId = toTrimmedString(params.entityId);
   const roleId = toTrimmedString(params.roleId);
 
-  if (!requestedEntityId || !roleId || !isRecord(params.roleData)) {
+  if (!roleId || !isRecord(params.roleData)) {
     reject("custom-role-invalid", "Rôle personnalisé invalide.");
   }
 
@@ -264,8 +263,21 @@ export function validateCustomRoleDocument(params: {
     reject("system-role-protected", "Ce rôle système est protégé.");
   }
 
-  const entityId = toTrimmedString(params.roleData.entityId);
-  if (entityId !== requestedEntityId) {
+  if (
+    params.roleData.kind !== "custom" ||
+    params.roleData.scope !== "entity" ||
+    params.roleData.isSystem === true ||
+    params.roleData.isLocked === true
+  ) {
+    reject("custom-role-invalid", "Role personnalise invalide.");
+  }
+
+  if (
+    params.roleData.kind !== "custom" ||
+    params.roleData.scope !== "entity" ||
+    params.roleData.isSystem === true ||
+    params.roleData.isLocked === true
+  ) {
     reject("cross-entity-role", "Rôle personnalisé hors entité.");
   }
 
@@ -277,22 +289,30 @@ export function validateCustomRoleDocument(params: {
     reject("custom-role-invalid", "Snapshot de permissions invalide.");
   }
 
+  if (params.roleData.status !== "active" && params.roleData.status !== "inactive") {
+    reject("custom-role-invalid", "Statut du rÃ´le personnalisÃ© invalide.");
+  }
+
+  const permissions = params.roleData.permissions.filter((permission): permission is string => typeof permission === "string");
+  if (permissions.length !== params.roleData.permissions.length || permissions.some((permission) => permission.startsWith("platform."))) {
+    reject("platform-permission-forbidden", "Permissions du rÃ´le personnalisÃ© invalides.");
+  }
+
   return {
     roleId,
-    entityId,
     name: toTrimmedString(params.roleData.name),
     label: toTrimmedString(params.roleData.label),
     description: toTrimmedString(params.roleData.description),
-    permissions: params.roleData.permissions.filter((permission): permission is string => typeof permission === "string"),
+    permissions,
+    status: params.roleData.status,
     version: typeof params.roleData.version === "number" ? params.roleData.version : undefined,
   };
 }
 
-export async function loadAndValidateCustomRole(entityId: string, customRoleId: string): Promise<ValidatedCustomRoleDocument> {
-  const normalizedEntityId = toTrimmedString(entityId);
+export async function loadAndValidateCustomRole(customRoleId: string): Promise<ValidatedCustomRoleDocument> {
   const normalizedRoleId = toTrimmedString(customRoleId);
 
-  if (!normalizedEntityId || !normalizedRoleId) {
+  if (!normalizedRoleId) {
     reject("custom-role-invalid", "Rôle personnalisé invalide.");
   }
 
@@ -304,20 +324,16 @@ export async function loadAndValidateCustomRole(entityId: string, customRoleId: 
     reject("custom-role-invalid", "Service administrateur indisponible.");
   }
 
-  const roleSnapshot = await adminDb
-    .collection("entities")
-    .doc(normalizedEntityId)
-    .collection("roles")
-    .doc(normalizedRoleId)
-    .get();
+  const roleSnapshot = await adminDb.collection("roles").doc(normalizedRoleId).get();
 
   if (!roleSnapshot.exists) {
     reject("custom-role-invalid", "Rôle personnalisé introuvable.");
   }
 
-  return validateCustomRoleDocument({
-    entityId: normalizedEntityId,
+  const role = validateCustomRoleDocument({
     roleId: normalizedRoleId,
     roleData: roleSnapshot.data(),
   });
+  await validateEntityScopedPermissions(role.permissions);
+  return role;
 }

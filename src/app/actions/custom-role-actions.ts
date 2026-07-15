@@ -9,7 +9,6 @@ import {
   CustomRoleValidationError,
   isProtectedSystemRoleId,
   normalizeAndValidateCustomRoleInput,
-  validateActiveEntity,
   validateCustomRoleDocument,
   validateEntityScopedPermissions,
   type CustomRoleInput,
@@ -29,6 +28,7 @@ type CustomRoleActionCode =
   | "invalid-role-label"
   | "invalid-permission"
   | "unknown-permission"
+  | "duplicate-role-name"
   | "platform-permission-forbidden"
   | "cross-entity-role"
   | "custom-role-invalid"
@@ -41,13 +41,6 @@ type CustomRoleActionResult = {
   auditWarning?: string;
   error?: string;
   code?: CustomRoleActionCode;
-};
-
-export type CustomRoleManagementEntity = {
-  entityId: string;
-  name: string;
-  legalName: string;
-  status: string;
 };
 
 export type CustomRoleManagementPermission = {
@@ -70,7 +63,6 @@ export type CustomRoleManagementSystemRole = {
 
 export type CustomRoleManagementCustomRole = {
   roleId: string;
-  entityId: string;
   name: string;
   label: string;
   description: string;
@@ -81,19 +73,28 @@ export type CustomRoleManagementCustomRole = {
   version?: number;
 };
 
+export type CustomRoleManagementLegacyRole = {
+  legacyRoleId: string;
+  sourceEntityId: string;
+  sourceEntityName: string;
+  name: string;
+  label: string;
+  permissionCount: number;
+};
+
 export type CustomRoleManagementDataResult = {
   success: boolean;
-  entities?: CustomRoleManagementEntity[];
   systemRoles?: CustomRoleManagementSystemRole[];
   permissions?: CustomRoleManagementPermission[];
   customRoles?: CustomRoleManagementCustomRole[];
+  legacyRoles?: CustomRoleManagementLegacyRole[];
+  legacyInventoryWarning?: string;
   error?: string;
   code?: CustomRoleActionCode;
 };
 
 type CreateCustomRoleParams = {
   idToken: string;
-  entityId: string;
   name: unknown;
   label: unknown;
   description?: unknown;
@@ -102,7 +103,6 @@ type CreateCustomRoleParams = {
 
 type CloneSystemRoleParams = {
   idToken: string;
-  entityId: string;
   sourceRoleId: string;
   name?: unknown;
   label?: unknown;
@@ -111,7 +111,6 @@ type CloneSystemRoleParams = {
 
 type UpdateCustomRoleParams = {
   idToken: string;
-  entityId: string;
   customRoleId: string;
   name: unknown;
   label: unknown;
@@ -121,13 +120,11 @@ type UpdateCustomRoleParams = {
 
 type DeactivateCustomRoleParams = {
   idToken: string;
-  entityId: string;
   customRoleId: string;
 };
 
 type ListCustomRoleManagementDataParams = {
   idToken: string;
-  entityId?: string;
 };
 
 type MutatedRoleResult = {
@@ -141,9 +138,14 @@ type MutatedRoleResult = {
 };
 
 const editableCustomRoleFields = ["name", "label", "description", "permissions"] as const;
+const legacyInventoryLimit = 100;
 
 function safeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeRoleNameForUniqueness(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function actionError(code: CustomRoleActionCode, message: string): CustomRoleActionResult {
@@ -189,14 +191,17 @@ function normalizePermissionDocument(code: string, data: FirebaseFirestore.Docum
   };
 }
 
-function normalizeCustomRoleForManagement(roleId: string, data: FirebaseFirestore.DocumentData): CustomRoleManagementCustomRole {
+function normalizeCustomRoleForManagement(roleId: string, data: FirebaseFirestore.DocumentData): CustomRoleManagementCustomRole | null {
+  if (data.kind !== "custom" || data.scope !== "entity" || data.isSystem === true || data.isLocked === true) {
+    return null;
+  }
+
   const permissions = Array.isArray(data.permissions)
     ? data.permissions.filter((permission): permission is string => typeof permission === "string")
     : [];
 
   return {
     roleId,
-    entityId: safeString(data.entityId),
     name: safeString(data.name),
     label: safeString(data.label) || roleId,
     description: safeString(data.description),
@@ -208,27 +213,83 @@ function normalizeCustomRoleForManagement(roleId: string, data: FirebaseFirestor
   };
 }
 
+function normalizeLegacyRoleForManagement(
+  legacyRoleId: string,
+  sourceEntityId: string,
+  sourceEntityName: string,
+  data: FirebaseFirestore.DocumentData
+): CustomRoleManagementLegacyRole | null {
+  if (data.kind !== "custom") return null;
+  const permissions = Array.isArray(data.permissions)
+    ? data.permissions.filter((permission): permission is string => typeof permission === "string")
+    : [];
+
+  return {
+    legacyRoleId,
+    sourceEntityId,
+    sourceEntityName,
+    name: safeString(data.name),
+    label: safeString(data.label) || legacyRoleId,
+    permissionCount: permissions.length,
+  };
+}
+
+async function assertUniqueActiveCustomRoleName(db: ReturnType<typeof ensureAdminDb>, name: string, excludingRoleId?: string) {
+  const normalizedName = normalizeRoleNameForUniqueness(name);
+  const snapshot = await db.collection("roles").where("kind", "==", "custom").where("status", "==", "active").get();
+  const duplicate = snapshot.docs.find((document) => {
+    if (excludingRoleId && document.id === excludingRoleId) return false;
+    return normalizeRoleNameForUniqueness(safeString(document.data().name)) === normalizedName;
+  });
+
+  if (duplicate) {
+    throw new CustomRoleValidationError("duplicate-role-name", "Un rôle personnalisé actif utilise déjà ce nom.");
+  }
+}
+
+async function loadLegacyInventory(db: ReturnType<typeof ensureAdminDb>): Promise<{
+  legacyRoles: CustomRoleManagementLegacyRole[];
+  warning?: string;
+}> {
+  const legacyRoles: CustomRoleManagementLegacyRole[] = [];
+  try {
+    const entitiesSnapshot = await db.collection("entities").get();
+    for (const entityDocument of entitiesSnapshot.docs) {
+      if (legacyRoles.length >= legacyInventoryLimit) break;
+
+      const entity = entityDocument.data();
+      const sourceEntityId = safeString(entity.entityId) || entityDocument.id;
+      const sourceEntityName = safeString(entity.name) || safeString(entity.nomEntreprise) || sourceEntityId;
+      const remaining = legacyInventoryLimit - legacyRoles.length;
+      const rolesSnapshot = await entityDocument.ref.collection("roles").limit(remaining).get();
+
+      rolesSnapshot.docs.forEach((roleDocument) => {
+        const legacyRole = normalizeLegacyRoleForManagement(roleDocument.id, sourceEntityId, sourceEntityName, roleDocument.data());
+        if (legacyRole) legacyRoles.push(legacyRole);
+      });
+    }
+
+    return {
+      legacyRoles: legacyRoles.sort((left, right) => left.sourceEntityName.localeCompare(right.sourceEntityName) || left.label.localeCompare(right.label)),
+    };
+  } catch {
+    return {
+      legacyRoles,
+      warning: "L’inventaire des rôles hérités n’a pas pu être chargé.",
+    };
+  }
+}
+
 export async function listCustomRoleManagementDataAction(params: ListCustomRoleManagementDataParams): Promise<CustomRoleManagementDataResult> {
   try {
     const db = ensureAdminDb();
     await authorizeActiveSuperAdmin(params.idToken);
 
-    const [entitiesSnapshot, runtimePermissionsSnapshot] = await Promise.all([
-      db.collection("entities").get(),
+    const [runtimePermissionsSnapshot, runtimeRolesSnapshot, legacyInventory] = await Promise.all([
       db.collection("permissions").get(),
+      db.collection("roles").get(),
+      loadLegacyInventory(db),
     ]);
-
-    const entities = entitiesSnapshot.docs
-      .map((document) => {
-        const data = document.data();
-        return {
-          entityId: safeString(data.entityId) || document.id,
-          name: safeString(data.name) || safeString(data.nomEntreprise) || document.id,
-          legalName: safeString(data.legalName) || safeString(data.raisonSociale),
-          status: safeString(data.status) || "inactive",
-        };
-      })
-      .sort((left, right) => left.name.localeCompare(right.name));
 
     const runtimePermissionMap = new Map<string, FirebaseFirestore.DocumentData>();
     runtimePermissionsSnapshot.docs.forEach((document) => runtimePermissionMap.set(document.id, document.data()));
@@ -252,25 +313,18 @@ export async function listCustomRoleManagementDataAction(params: ListCustomRoleM
       status: "active" as const,
     }));
 
-    let customRoles: CustomRoleManagementCustomRole[] = [];
-    const selectedEntityId = safeString(params.entityId);
-    if (selectedEntityId) {
-      if (!entities.some((entity) => entity.entityId === selectedEntityId)) {
-        throw new CustomRoleValidationError("entity-not-found", "Entité introuvable.");
-      }
-      const customRolesSnapshot = await db.collection("entities").doc(selectedEntityId).collection("roles").get();
-      customRoles = customRolesSnapshot.docs
-        .map((document) => normalizeCustomRoleForManagement(document.id, document.data()))
-        .filter((role) => role.entityId === selectedEntityId)
-        .sort((left, right) => left.label.localeCompare(right.label));
-    }
+    const customRoles = runtimeRolesSnapshot.docs
+      .map((document) => normalizeCustomRoleForManagement(document.id, document.data()))
+      .filter((role): role is CustomRoleManagementCustomRole => !!role)
+      .sort((left, right) => left.label.localeCompare(right.label));
 
     return {
       success: true,
-      entities,
       systemRoles,
       permissions,
       customRoles,
+      legacyRoles: legacyInventory.legacyRoles,
+      legacyInventoryWarning: legacyInventory.warning,
     };
   } catch (error) {
     return mapError(error);
@@ -279,8 +333,7 @@ export async function listCustomRoleManagementDataAction(params: ListCustomRoleM
 
 async function auditMutation(params: {
   actorUid: string;
-  entityId: string;
-  action: "entityRole.created" | "entityRole.cloned" | "entityRole.updated" | "entityRole.deactivated";
+  action: "globalEntityRole.created" | "globalEntityRole.cloned" | "globalEntityRole.updated" | "globalEntityRole.deactivated";
   roleId: string;
   sourceRoleId?: string;
   changedFields?: string[];
@@ -291,7 +344,6 @@ async function auditMutation(params: {
   try {
     await createTrustedAuditLog({
       actorUid: params.actorUid,
-      entityId: params.entityId,
       action: params.action,
       resourceType: "entityRole",
       resourceId: params.roleId,
@@ -309,7 +361,7 @@ async function auditMutation(params: {
     return {
       success: true,
       roleId: params.roleId,
-      auditWarning: "Le rôle personnalisé a été modifié, mais le journal d'audit serveur n'a pas pu être écrit.",
+      auditWarning: "Le rôle personnalisé a été modifié, mais le journal d’audit serveur n’a pas pu être écrit.",
     };
   }
 }
@@ -329,28 +381,22 @@ function changedFieldsFrom(before: Record<string, unknown>, after: Pick<CustomRo
   return changedFields.filter((field) => editableCustomRoleFields.includes(field as (typeof editableCustomRoleFields)[number]));
 }
 
-async function authorizeAndValidateEntity(idToken: string, entityId: string) {
-  const authContext = await authorizeActiveSuperAdmin(idToken);
-  const entityContext = await validateActiveEntity(entityId);
-  return { ...authContext, ...entityContext };
-}
-
 export async function createCustomRoleAction(params: CreateCustomRoleParams): Promise<CustomRoleActionResult> {
   try {
     const db = ensureAdminDb();
-    const context = await authorizeAndValidateEntity(params.idToken, params.entityId);
+    const context = await authorizeActiveSuperAdmin(params.idToken);
     const normalized = await normalizeAndValidateCustomRoleInput({
       name: params.name,
       label: params.label,
       description: params.description,
       permissions: params.permissions,
     });
+    await assertUniqueActiveCustomRoleName(db, normalized.name);
 
-    const roleRef = db.collection("entities").doc(context.entityId).collection("roles").doc();
+    const roleRef = db.collection("roles").doc();
     const now = FieldValue.serverTimestamp();
     const roleData = {
       roleId: roleRef.id,
-      entityId: context.entityId,
       name: normalized.name,
       label: normalized.label,
       description: normalized.description,
@@ -371,8 +417,7 @@ export async function createCustomRoleAction(params: CreateCustomRoleParams): Pr
 
     const auditResult = await auditMutation({
       actorUid: context.actorUid,
-      entityId: context.entityId,
-      action: "entityRole.created",
+      action: "globalEntityRole.created",
       roleId: roleRef.id,
       changedFields: ["name", "label", "description", "permissions"],
       permissionCount: normalized.permissions.length,
@@ -388,7 +433,7 @@ export async function createCustomRoleAction(params: CreateCustomRoleParams): Pr
 export async function cloneSystemRoleAction(params: CloneSystemRoleParams): Promise<CustomRoleActionResult> {
   try {
     const db = ensureAdminDb();
-    const context = await authorizeAndValidateEntity(params.idToken, params.entityId);
+    const context = await authorizeActiveSuperAdmin(params.idToken);
     const sourceRoleId = safeString(params.sourceRoleId);
 
     if (!sourceRoleId || sourceRoleId === "superAdmin" || !isProtectedSystemRoleId(sourceRoleId)) {
@@ -412,13 +457,13 @@ export async function cloneSystemRoleAction(params: CloneSystemRoleParams): Prom
       permissions,
       sourceRoleId,
     });
+    await assertUniqueActiveCustomRoleName(db, normalized.name);
 
-    const roleRef = db.collection("entities").doc(context.entityId).collection("roles").doc();
+    const roleRef = db.collection("roles").doc();
     const now = FieldValue.serverTimestamp();
 
     await roleRef.set({
       roleId: roleRef.id,
-      entityId: context.entityId,
       name: normalized.name,
       label: normalized.label,
       description: normalized.description,
@@ -438,8 +483,7 @@ export async function cloneSystemRoleAction(params: CloneSystemRoleParams): Prom
 
     const auditResult = await auditMutation({
       actorUid: context.actorUid,
-      entityId: context.entityId,
-      action: "entityRole.cloned",
+      action: "globalEntityRole.cloned",
       roleId: roleRef.id,
       sourceRoleId,
       changedFields: ["name", "label", "description", "permissions"],
@@ -456,7 +500,7 @@ export async function cloneSystemRoleAction(params: CloneSystemRoleParams): Prom
 export async function updateCustomRoleAction(params: UpdateCustomRoleParams): Promise<CustomRoleActionResult> {
   try {
     const db = ensureAdminDb();
-    const context = await authorizeAndValidateEntity(params.idToken, params.entityId);
+    const context = await authorizeActiveSuperAdmin(params.idToken);
     const customRoleId = safeString(params.customRoleId);
     if (!customRoleId) return actionError("role-not-found", "Rôle personnalisé introuvable.");
 
@@ -466,8 +510,9 @@ export async function updateCustomRoleAction(params: UpdateCustomRoleParams): Pr
       description: params.description,
       permissions: params.permissions,
     });
+    await assertUniqueActiveCustomRoleName(db, normalized.name, customRoleId);
 
-    const roleRef = db.collection("entities").doc(context.entityId).collection("roles").doc(customRoleId);
+    const roleRef = db.collection("roles").doc(customRoleId);
     const mutation = await db.runTransaction(async (transaction): Promise<MutatedRoleResult> => {
       const roleSnapshot = await transaction.get(roleRef);
       if (!roleSnapshot.exists) {
@@ -475,13 +520,12 @@ export async function updateCustomRoleAction(params: UpdateCustomRoleParams): Pr
       }
 
       const currentRole = validateCustomRoleDocument({
-        entityId: context.entityId,
         roleId: customRoleId,
         roleData: roleSnapshot.data(),
       });
       const currentData = roleSnapshot.data() || {};
 
-      if (currentData.status !== "active") {
+      if (currentRole.status !== "active") {
         throw new Error("role-inactive: Rôle personnalisé inactif.");
       }
 
@@ -510,8 +554,7 @@ export async function updateCustomRoleAction(params: UpdateCustomRoleParams): Pr
 
     const auditResult = await auditMutation({
       actorUid: context.actorUid,
-      entityId: context.entityId,
-      action: "entityRole.updated",
+      action: "globalEntityRole.updated",
       roleId: mutation.roleId,
       changedFields: mutation.changedFields,
       permissionCount: mutation.permissionCount,
@@ -528,11 +571,11 @@ export async function updateCustomRoleAction(params: UpdateCustomRoleParams): Pr
 export async function deactivateCustomRoleAction(params: DeactivateCustomRoleParams): Promise<CustomRoleActionResult> {
   try {
     const db = ensureAdminDb();
-    const context = await authorizeAndValidateEntity(params.idToken, params.entityId);
+    const context = await authorizeActiveSuperAdmin(params.idToken);
     const customRoleId = safeString(params.customRoleId);
     if (!customRoleId) return actionError("role-not-found", "Rôle personnalisé introuvable.");
 
-    const roleRef = db.collection("entities").doc(context.entityId).collection("roles").doc(customRoleId);
+    const roleRef = db.collection("roles").doc(customRoleId);
     const mutation = await db.runTransaction(async (transaction): Promise<MutatedRoleResult> => {
       const roleSnapshot = await transaction.get(roleRef);
       if (!roleSnapshot.exists) {
@@ -540,13 +583,11 @@ export async function deactivateCustomRoleAction(params: DeactivateCustomRolePar
       }
 
       const currentRole = validateCustomRoleDocument({
-        entityId: context.entityId,
         roleId: customRoleId,
         roleData: roleSnapshot.data(),
       });
-      const currentData = roleSnapshot.data() || {};
 
-      if (currentData.status === "inactive") {
+      if (currentRole.status === "inactive") {
         return {
           roleId: customRoleId,
           previousVersion: currentRole.version || 1,
@@ -556,7 +597,7 @@ export async function deactivateCustomRoleAction(params: DeactivateCustomRolePar
         };
       }
 
-      if (currentData.status !== "active") {
+      if (currentRole.status !== "active") {
         throw new Error("role-inactive: Rôle personnalisé inactif.");
       }
 
@@ -587,8 +628,7 @@ export async function deactivateCustomRoleAction(params: DeactivateCustomRolePar
 
     const auditResult = await auditMutation({
       actorUid: context.actorUid,
-      entityId: context.entityId,
-      action: "entityRole.deactivated",
+      action: "globalEntityRole.deactivated",
       roleId: mutation.roleId,
       changedFields: mutation.changedFields,
       permissionCount: mutation.permissionCount,
