@@ -95,6 +95,10 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import {
+  getAttendanceAbsenceSummariesAction,
+  type AttendanceAbsenceSummary,
+} from "@/app/actions/attendance-absence-summary-actions";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { 
   AlertDialog, 
@@ -305,10 +309,39 @@ const getSafeActionErrorMessage = (err: any) => {
   return err?.message || "Une erreur inattendue est survenue.";
 };
 
+const getAbsenceResolutionLabel = (summary: AttendanceAbsenceSummary) => {
+  const typeLabel = summary.type ? TIME_OFF_TYPE_LABELS[summary.type] || summary.type : null;
+  if (summary.resolutionStatus === "justified") {
+    return typeLabel ? `Absence justifiée · ${typeLabel}` : "Absence justifiée";
+  }
+  if (summary.resolutionStatus === "unjustified") {
+    return "Absence injustifiée confirmée";
+  }
+  if (summary.resolutionStatus === "rejected") {
+    return typeLabel ? `Demande refusée · ${typeLabel}` : "Demande refusée";
+  }
+  return typeLabel ? `Demande en attente · ${typeLabel}` : "Absence à analyser";
+};
+
+const getStoredAbsenceSummary = (attendance: AttendanceRecord): AttendanceAbsenceSummary | null => {
+  const snapshot = attendance.absenceResolution;
+  if (!snapshot) return null;
+
+  if (snapshot.status === "justified" || snapshot.status === "rejected" || snapshot.status === "unjustified" || snapshot.status === "unresolved") {
+    return {
+      attendanceId: attendance.attendanceId || attendance.id,
+      resolutionStatus: snapshot.status,
+      type: snapshot.type || null,
+    };
+  }
+
+  return null;
+};
+
 export default function AttendancesPage() {
   const params = useParams();
   const entityId = params.entityId as string;
-  const { db } = useFirebase();
+  const { db, auth } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
@@ -352,6 +385,8 @@ export default function AttendancesPage() {
     reasons: Record<string, number>;
     eligibleIds?: string[];
   } | null>(null);
+  const [absenceSummaries, setAbsenceSummaries] = useState<AttendanceAbsenceSummary[]>([]);
+  const [absenceSummaryError, setAbsenceSummaryError] = useState<string | null>(null);
 
   const canReadAttendances = hasPermission("attendances.read");
   const canRead = canReadAttendances;
@@ -362,6 +397,8 @@ export default function AttendancesPage() {
   const canValidate = hasPermission("attendances.validate");
   const canUseImportTools = canCreate && canReadEmployees;
   const canUseLeaveReconciliation = canReadAttendances && canReadLeaveRequests;
+  const periodStart = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`;
+  const periodEnd = format(endOfMonth(new Date(selectedYear, selectedMonth - 1, 1)), "yyyy-MM-dd");
 
   // --- Collection Queries ---
   const empQuery = useMemo(() => 
@@ -397,6 +434,63 @@ export default function AttendancesPage() {
   const { data: registryBatches, loading: loadingBatches } = useCollection<AttendanceImportBatch>(batchesQuery, "attendances.batches");
   const { data: holidays } = useCollection<Holiday>(holidaysQuery, "attendances.holidays");
   const { data: timeOffRequests } = useCollection<TimeOffRequest>(timeOffRequestsQuery, "attendances.timeOffRequests");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAbsenceSummaries() {
+      if (!auth || !user || !entityId || !canReadAttendances || membershipLoading) {
+        setAbsenceSummaries([]);
+        setAbsenceSummaryError(null);
+        return;
+      }
+
+      try {
+        setAbsenceSummaryError(null);
+        const idToken = await auth.currentUser?.getIdToken();
+        if (!idToken) {
+          if (!cancelled) {
+            setAbsenceSummaries([]);
+            setAbsenceSummaryError("Résumé des absences temporairement indisponible.");
+          }
+          return;
+        }
+
+        const result = await getAttendanceAbsenceSummariesAction({
+          idToken,
+          entityId,
+          dateFrom: periodStart,
+          dateTo: periodEnd,
+        });
+
+        if (cancelled) return;
+
+        if (result.success) {
+          setAbsenceSummaries(result.summaries || []);
+        } else {
+          setAbsenceSummaries([]);
+          setAbsenceSummaryError(result.error || "Résumé des absences temporairement indisponible.");
+        }
+      } catch {
+        if (!cancelled) {
+          setAbsenceSummaries([]);
+          setAbsenceSummaryError("Résumé des absences temporairement indisponible.");
+        }
+      }
+    }
+
+    loadAbsenceSummaries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, user, entityId, canReadAttendances, membershipLoading, periodStart, periodEnd]);
+
+  const absenceSummaryMap = useMemo(() => {
+    const map = new Map<string, AttendanceAbsenceSummary>();
+    absenceSummaries.forEach((summary) => map.set(summary.attendanceId, summary));
+    return map;
+  }, [absenceSummaries]);
 
   const employeesMapByCode = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -460,12 +554,14 @@ export default function AttendancesPage() {
         if (!match) return false;
       }
 
-      if (registryFilters.absenceOnly && !a.absenceCode) return false;
+      const attendanceKey = a.attendanceId || a.id;
+      const effectiveAbsenceSummary = getStoredAbsenceSummary(a) || absenceSummaryMap.get(attendanceKey);
+      if (registryFilters.absenceOnly && !a.absenceCode && !effectiveAbsenceSummary) return false;
       if (registryFilters.anomalyOnly && !a.anomalyFlag) return false;
 
       return true;
     });
-  }, [canReadEmployees, employeesMapByCode, registryAttendances, selectedMonth, selectedYear, registryFilters]);
+  }, [absenceSummaryMap, canReadEmployees, employeesMapByCode, registryAttendances, selectedMonth, selectedYear, registryFilters]);
 
   const groupedEmployeeData = useMemo(() => {
     const groups = new Map<string, GroupedEmployeeAttendance>();
@@ -483,6 +579,9 @@ export default function AttendancesPage() {
             return (priority[req1.status] || 99) - (priority[req2.status] || 99);
           })[0]
         : undefined;
+
+      const attendanceKey = a.attendanceId || a.id;
+      const effectiveAbsenceSummary = getStoredAbsenceSummary(a) || absenceSummaryMap.get(attendanceKey);
 
       if (!groups.has(key)) {
         groups.set(key, {
@@ -505,7 +604,7 @@ export default function AttendancesPage() {
       }
 
       const group = groups.get(key)!;
-      const enrichedRecord = { ...a, matchingRequest };
+      const enrichedRecord = { ...a, matchingRequest, absenceSummary: effectiveAbsenceSummary };
       group.records.push(enrichedRecord);
       
       group.totalHours += a.validatedHours || 0;
@@ -513,9 +612,9 @@ export default function AttendancesPage() {
       group.nightHours += a.nightHours || 0;
       group.overtimeHours += a.overtimeHours || 0;
       
-      if (a.absenceCode) group.absenceCount++;
+      if (a.absenceCode || effectiveAbsenceSummary) group.absenceCount++;
       
-      const isJustified = matchingRequest && matchingRequest.status === 'approved';
+      const isJustified = (matchingRequest && matchingRequest.status === 'approved') || effectiveAbsenceSummary?.resolutionStatus === "justified";
       const isAbsenceCandidate = a.validatedHours === 0 && !a.absenceCode && !isRegHoliday && a.anomalyMessages?.includes("Absence à analyser");
       
       const shouldCountAsAnomaly = a.anomalyFlag && (!isRegHoliday || isAbsenceCandidate) && !isJustified;
@@ -540,7 +639,7 @@ export default function AttendancesPage() {
     });
 
     return sortedGroups;
-  }, [canReadEmployees, canUseLeaveReconciliation, filteredRegistry, dateSortDirection, holidaysMap, timeOffRequests, employeesMapByCode]);
+  }, [absenceSummaryMap, canReadEmployees, canUseLeaveReconciliation, filteredRegistry, dateSortDirection, holidaysMap, timeOffRequests, employeesMapByCode]);
 
   const registryStats = useMemo(() => {
     const stats = {
@@ -551,7 +650,7 @@ export default function AttendancesPage() {
       dayHours: 0,
       nightHours: 0,
       overtimeHours: 0,
-      absences: filteredRegistry.filter(a => !!a.absenceCode).length,
+      absences: filteredRegistry.filter(a => !!a.absenceCode || !!getStoredAbsenceSummary(a) || !!absenceSummaryMap.get(a.attendanceId || a.id)).length,
       anomalies: 0
     };
     
@@ -574,14 +673,15 @@ export default function AttendancesPage() {
           })[0]
         : undefined;
         
-      const isJustified = matchingRequest && matchingRequest.status === 'approved';
+      const effectiveAbsenceSummary = getStoredAbsenceSummary(a) || absenceSummaryMap.get(a.attendanceId || a.id);
+      const isJustified = (matchingRequest && matchingRequest.status === 'approved') || effectiveAbsenceSummary?.resolutionStatus === "justified";
 
       if (a.anomalyFlag && (!isRegHoliday || isAbsenceCandidate) && !isJustified) {
         stats.anomalies++;
       }
     });
     return stats;
-  }, [canUseLeaveReconciliation, filteredRegistry, holidaysMap, timeOffRequests]);
+  }, [absenceSummaryMap, canUseLeaveReconciliation, filteredRegistry, holidaysMap, timeOffRequests]);
 
   const draftIdsToValidate = useMemo(() => 
     filteredRegistry.filter(a => a.status === 'draft_imported').map(a => a.id),
@@ -1337,6 +1437,12 @@ export default function AttendancesPage() {
                     <AlertDescription className="text-xs font-bold">Réconciliation avec les congés indisponible avec vos autorisations.</AlertDescription>
                   </Alert>
                )}
+               {absenceSummaryError && (
+                  <Alert className="rounded-xl bg-orange-50 border-orange-100 text-orange-800">
+                    <AlertCircle className="w-4 h-4" />
+                    <AlertDescription className="text-xs font-bold">{absenceSummaryError}</AlertDescription>
+                  </Alert>
+               )}
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4">
                   <SummaryStat label="Employés" value={groupedEmployeeData.length} color="indigo" />
                   <SummaryStat label="Lignes" value={registryStats.total} color="blue" />
@@ -1457,6 +1563,7 @@ export default function AttendancesPage() {
                                              
                                              const request = a.matchingRequest as TimeOffRequest | undefined;
                                              const isJustified = request && request.status === 'approved';
+                                             const effectiveAbsenceSummary = a.absenceSummary as AttendanceAbsenceSummary | null | undefined;
                                              
                                              const blockReason = getValidationBlockReason(a, holidaysMap, timeOffRequests, canUseLeaveReconciliation);
 
@@ -1487,6 +1594,10 @@ export default function AttendancesPage() {
                                                                Jour férié: {regHolidayName}
                                                             </Badge>
                                                          )
+                                                      ) : effectiveAbsenceSummary && !isWorked ? (
+                                                        <Badge variant="outline" className={cn("text-[8px] font-black uppercase h-4 px-1.5", effectiveAbsenceSummary.resolutionStatus === "rejected" ? "bg-red-50 text-red-700 border-red-100" : effectiveAbsenceSummary.resolutionStatus === "unresolved" ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-green-50 text-green-700 border-green-200")}>
+                                                          {getAbsenceResolutionLabel(effectiveAbsenceSummary)}
+                                                        </Badge>
                                                       ) : isJustified && !isWorked ? (
                                                         <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[8px] font-black uppercase gap-1">
                                                           {request.requestType === 'unjustified_absence' 
