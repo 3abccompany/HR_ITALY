@@ -29,6 +29,13 @@ const MAX_DETAIL_KEYS = 30;
 const MAX_STRING_LENGTH = 500;
 const MAX_ARRAY_ITEMS = 20;
 
+function sanitizePermissionCount(value: unknown, path: string[]): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new Error(`AUDIT_PERMISSION_COUNT_INVALID: ${path.join(".") || "permissionCount"}`);
+  }
+  return value;
+}
+
 function sanitizeAuditValue(value: unknown, path: string[], depth: number): unknown {
   if (depth > MAX_DETAIL_DEPTH) {
     throw new Error(`AUDIT_DETAILS_TOO_DEEP: ${path.join(".") || "details"}`);
@@ -66,6 +73,9 @@ function sanitizeAuditValue(value: unknown, path: string[], depth: number): unkn
 
     return Object.fromEntries(
       entries.map(([key, nestedValue]) => {
+        if (key === "permissionCount") {
+          return [key, sanitizePermissionCount(nestedValue, [...path, key])];
+        }
         if (SENSITIVE_DETAIL_KEY.test(key)) {
           throw new Error(`AUDIT_SENSITIVE_DETAIL_REJECTED: ${[...path, key].join(".")}`);
         }
