@@ -124,6 +124,8 @@ const initialAccrualForm = {
   manualUsefulDays: 22
 };
 
+const EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE = "Cette fonction nécessite l’accès au répertoire des employés.";
+
 const initialFilters = {
   search: "",
   status: "all",
@@ -225,6 +227,8 @@ export default function TimeOffManagementPage() {
   const [isUploading, setIsUploading] = useState(false);
 
   const canRead = hasPermission("leaveRequests.read");
+  const canReadLeaveRequests = canRead;
+  const canReadEmployees = hasPermission("employees.read");
   const canCreate = hasPermission("leaveRequests.create");
   const canUpdate = hasPermission("leaveRequests.update");
   const canApprove = hasPermission("leaveRequests.approve");
@@ -236,9 +240,9 @@ export default function TimeOffManagementPage() {
   }, [db, entityId, canRead]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !canReadLeaveRequests || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, canReadLeaveRequests, canReadEmployees]);
 
   const balancesQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
@@ -262,19 +266,19 @@ export default function TimeOffManagementPage() {
   }, [employees]);
 
   const activeEmployees = useMemo(() => {
-    if (!employees) return [];
+    if (!canReadEmployees || !employees) return [];
     return employees.filter(e => {
       const s = String(e.status || '').toLowerCase();
       return s === 'active' || s === 'actif' || s === 'active_contract';
     });
-  }, [employees]);
+  }, [canReadEmployees, employees]);
 
   const balances = useMemo(() => rawBalances.map(normalizeBalance), [rawBalances]);
 
   // Real-time Schedule Resolution for UI Feedback
   useEffect(() => {
     const isRolOrExFest = formData.requestType === "rol_permission" || formData.requestType === "ex_holiday_permission";
-    if (isFormOpen && isRolOrExFest && formData.employeeId && formData.startDate && db) {
+    if (isFormOpen && canReadEmployees && isRolOrExFest && formData.employeeId && formData.startDate && db) {
        setLoadingSchedule(true);
        resolveWorkSchedule(db, entityId, formData.employeeId, formData.startDate)
          .then(setResolvedSchedule)
@@ -283,7 +287,7 @@ export default function TimeOffManagementPage() {
     } else {
        setResolvedSchedule(null);
     }
-  }, [formData.employeeId, formData.startDate, formData.requestType, isFormOpen, db, entityId]);
+  }, [canReadEmployees, formData.employeeId, formData.startDate, formData.requestType, isFormOpen, db, entityId]);
 
   // Derived filter options with type safety
   const uniqueDepartments = useMemo(() => 
@@ -305,8 +309,8 @@ export default function TimeOffManagementPage() {
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const matches = 
-          r.employeeName.toLowerCase().includes(term) ||
-          emp?.employeeCode?.toLowerCase().includes(term) ||
+          (r.employeeName || "Employé non renseigné").toLowerCase().includes(term) ||
+          (canReadEmployees && emp?.employeeCode?.toLowerCase().includes(term)) ||
           r.reason?.toLowerCase().includes(term);
         if (!matches) return false;
       }
@@ -329,8 +333,8 @@ export default function TimeOffManagementPage() {
       }
 
       // 6. Organisation
-      if (filters.department !== "all" && emp?.departmentName !== filters.department) return false;
-      if (filters.worksite !== "all" && emp?.worksiteName !== filters.worksite) return false;
+      if (canReadEmployees && filters.department !== "all" && emp?.departmentName !== filters.department) return false;
+      if (canReadEmployees && filters.worksite !== "all" && emp?.worksiteName !== filters.worksite) return false;
 
       // 7. Accrual Impact (Blocking maturation)
       if (filters.blocksAccrual) {
@@ -365,7 +369,7 @@ export default function TimeOffManagementPage() {
 
       return true;
     });
-  }, [requests, filters, employeesMap]);
+  }, [requests, filters, employeesMap, canReadEmployees]);
 
   // Initial load from URL
   useEffect(() => {
@@ -669,17 +673,34 @@ export default function TimeOffManagementPage() {
         </div>
         <div className="flex gap-3">
           {canUpdate && (
-            <Button onClick={() => setIsAccrualModalOpen(true)} variant="outline" className="gap-2 rounded-xl font-bold border-accent text-accent hover:bg-accent/5">
+            <Button
+              onClick={() => canReadEmployees && setIsAccrualModalOpen(true)}
+              disabled={!canReadEmployees}
+              title={!canReadEmployees ? EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE : undefined}
+              variant="outline"
+              className="gap-2 rounded-xl font-bold border-accent text-accent hover:bg-accent/5"
+            >
               <RefreshCw className="w-4 h-4" /> Calculer maturation
             </Button>
           )}
           {canUpdate && (
-            <Button onClick={() => setIsBalanceModalOpen(true)} variant="outline" className="gap-2 rounded-xl font-bold border-dashed">
+            <Button
+              onClick={() => canReadEmployees && setIsBalanceModalOpen(true)}
+              disabled={!canReadEmployees}
+              title={!canReadEmployees ? EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE : undefined}
+              variant="outline"
+              className="gap-2 rounded-xl font-bold border-dashed"
+            >
               <Calculator className="w-4 h-4" /> Gérer les soldes
             </Button>
           )}
           {canCreate && (
-            <Button onClick={() => setIsFormOpen(true)} className="gap-2 shadow-lg shadow-primary/10 rounded-xl font-bold">
+            <Button
+              onClick={() => canReadEmployees && setIsFormOpen(true)}
+              disabled={!canReadEmployees}
+              title={!canReadEmployees ? EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE : undefined}
+              className="gap-2 shadow-lg shadow-primary/10 rounded-xl font-bold"
+            >
               <Plus className="w-4 h-4" /> Nouvelle demande
             </Button>
           )}
@@ -775,26 +796,37 @@ export default function TimeOffManagementPage() {
                    <Card className="rounded-[1.5rem] border-primary/10 bg-slate-50/50 shadow-sm">
                       <CardContent className="p-6">
                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
-                            <div className="space-y-2">
-                               <Label className="text-[10px] font-black uppercase text-muted-foreground">Département</Label>
-                               <Select value={filters.department} onValueChange={(v) => handleUpdateFilter('department', v)}>
-                                  <SelectTrigger className="bg-white"><SelectValue placeholder="Tous..." /></SelectTrigger>
-                                  <SelectContent>
-                                     <SelectItem value="all">Tous les services</SelectItem>
-                                     {uniqueDepartments.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                                  </SelectContent>
-                               </Select>
-                            </div>
-                            <div className="space-y-2">
-                               <Label className="text-[10px] font-black uppercase text-muted-foreground">Site / Localisation</Label>
-                               <Select value={filters.worksite} onValueChange={(v) => handleUpdateFilter('worksite', v)}>
-                                  <SelectTrigger className="bg-white"><SelectValue placeholder="Tous..." /></SelectTrigger>
-                                  <SelectContent>
-                                     <SelectItem value="all">Tous les sites</SelectItem>
-                                     {uniqueWorksites.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
-                                  </SelectContent>
-                               </Select>
-                            </div>
+                            {canReadEmployees ? (
+                              <>
+                                <div className="space-y-2">
+                                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Département</Label>
+                                   <Select value={filters.department} onValueChange={(v) => handleUpdateFilter('department', v)}>
+                                      <SelectTrigger className="bg-white"><SelectValue placeholder="Tous..." /></SelectTrigger>
+                                      <SelectContent>
+                                         <SelectItem value="all">Tous les services</SelectItem>
+                                         {uniqueDepartments.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                                      </SelectContent>
+                                   </Select>
+                                </div>
+                                <div className="space-y-2">
+                                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Site / Localisation</Label>
+                                   <Select value={filters.worksite} onValueChange={(v) => handleUpdateFilter('worksite', v)}>
+                                      <SelectTrigger className="bg-white"><SelectValue placeholder="Tous..." /></SelectTrigger>
+                                      <SelectContent>
+                                         <SelectItem value="all">Tous les sites</SelectItem>
+                                         {uniqueWorksites.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
+                                      </SelectContent>
+                                   </Select>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="sm:col-span-2 md:col-span-2">
+                                <Alert className="rounded-2xl bg-amber-50 border-amber-100 text-amber-900">
+                                  <InfoIcon className="w-4 h-4" />
+                                  <AlertDescription className="text-xs font-bold">{EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE}</AlertDescription>
+                                </Alert>
+                              </div>
+                            )}
                             <div className="space-y-2">
                                <Label className="text-[10px] font-black uppercase text-muted-foreground">Source</Label>
                                <Select value={filters.source} onValueChange={(v) => handleUpdateFilter('source', v)}>
@@ -912,10 +944,10 @@ export default function TimeOffManagementPage() {
                         <div className="flex items-center gap-3">
                           <div className="bg-primary/5 p-2 rounded-lg text-primary"><User className="w-4 h-4" /></div>
                           <div>
-                            <p className="font-bold text-slate-900">{r.employeeName}</p>
+                            <p className="font-bold text-slate-900">{r.employeeName || "Employé non renseigné"}</p>
                             <div className="flex items-center gap-2 mt-0.5">
                                <p className="text-[9px] text-muted-foreground uppercase font-black tracking-tighter">Source: {r.source === 'hr_created' ? 'RH' : 'Employé'}</p>
-                               {emp?.departmentName && (
+                               {canReadEmployees && emp?.departmentName && (
                                  <>
                                    <span className="text-slate-200 text-[8px]">•</span>
                                    <p className="text-[9px] text-primary/60 font-bold uppercase tracking-tighter">{emp.departmentName}</p>
@@ -1185,7 +1217,7 @@ export default function TimeOffManagementPage() {
                      <TableRow><TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic text-xs">Aucun solde initialisé.</TableCell></TableRow>
                    ) : (
                      balances?.map(b => {
-                        const empName = activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || b.employeeId;
+                        const empName = canReadEmployees ? activeEmployees.find(e => e.employeeId === b.employeeId)?.displayName || "Employé non renseigné" : "Employé non renseigné";
                         return (
                        <React.Fragment key={`${b.employeeId}_${b.year}`}>
                          {/* Paid Leave Row */}
@@ -1214,7 +1246,7 @@ export default function TimeOffManagementPage() {
                             <TableCell><Badge className="bg-primary text-white font-black">{b.counters?.paid_leave.remaining.toFixed(2)}j</Badge></TableCell>
                             <TableCell rowSpan={3} className="text-right pr-6 bg-slate-50/30 align-top py-4">
                                <div className="flex flex-col gap-2 items-end">
-                                 <Button variant="ghost" size="icon" onClick={() => {
+                                 <Button variant="ghost" size="icon" disabled={!canReadEmployees} title={!canReadEmployees ? EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE : undefined} onClick={() => {
                                    setBalanceForm({
                                      employeeId: b.employeeId,
                                      year: b.year,
@@ -1384,15 +1416,22 @@ export default function TimeOffManagementPage() {
 
                 <div className="space-y-2">
                    <Label className="text-[10px] font-black uppercase">Collaborateur (Optionnel)</Label>
-                   <Select value={accrualForm.employeeId} onValueChange={(v) => setAccrualForm(p => ({...p, employeeId: v}))}>
-                      <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Tous les actifs" /></SelectTrigger>
-                      <SelectContent>
-                         <SelectItem value="all">Calcul groupé (Tous les actifs)</SelectItem>
-                         {activeEmployees.map(e => (
-                           <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>
-                         ))}
-                      </SelectContent>
-                   </Select>
+                   {canReadEmployees ? (
+                     <Select value={accrualForm.employeeId} onValueChange={(v) => setAccrualForm(p => ({...p, employeeId: v}))}>
+                        <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Tous les actifs" /></SelectTrigger>
+                        <SelectContent>
+                           <SelectItem value="all">Calcul groupé (Tous les actifs)</SelectItem>
+                           {activeEmployees.map(e => (
+                             <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>
+                           ))}
+                        </SelectContent>
+                     </Select>
+                   ) : (
+                     <Alert className="rounded-2xl bg-amber-50 border-amber-100 text-amber-900">
+                       <InfoIcon className="w-4 h-4" />
+                       <AlertDescription className="text-xs font-bold">{EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE}</AlertDescription>
+                     </Alert>
+                   )}
                 </div>
 
                 <Separator />
@@ -1423,7 +1462,7 @@ export default function TimeOffManagementPage() {
 
            <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
               <Button type="button" variant="ghost" onClick={() => setIsAccrualModalOpen(false)} disabled={loading}>Annuler</Button>
-              <Button form="accrual-form" type="submit" disabled={loading} className="rounded-xl font-black px-8">
+              <Button form="accrual-form" type="submit" disabled={loading || !canReadEmployees} className="rounded-xl font-black px-8">
                  {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Lancer le calcul
               </Button>
            </DialogFooter>
@@ -1442,19 +1481,26 @@ export default function TimeOffManagementPage() {
             <form id="balance-form" onSubmit={handleUpdateBalance} className="space-y-6 pb-8">
                <div className="grid grid-cols-2 gap-4">
                  <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
-                    <Select value={balanceForm.employeeId} onValueChange={(v) => setBalanceForm(p => ({...p, employeeId: v}))}>
-                      <SelectTrigger className="h-11 rounded-xl">
-                          <SelectValue placeholder="Sélectionner..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                          {activeEmployees.map(e => (
-                            <SelectItem key={e.employeeId} value={e.employeeId}>
-                              {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
+                    {canReadEmployees ? (
+                      <Select value={balanceForm.employeeId} onValueChange={(v) => setBalanceForm(p => ({...p, employeeId: v}))}>
+                        <SelectTrigger className="h-11 rounded-xl">
+                            <SelectValue placeholder="Sélectionner..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {activeEmployees.map(e => (
+                              <SelectItem key={e.employeeId} value={e.employeeId}>
+                                {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Alert className="rounded-2xl bg-amber-50 border-amber-100 text-amber-900">
+                        <InfoIcon className="w-4 h-4" />
+                        <AlertDescription className="text-xs font-bold">{EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE}</AlertDescription>
+                      </Alert>
+                    )}
                  </div>
                  <div className="space-y-2">
                     <Label className="text-[10px] font-black uppercase text-muted-foreground">Année</Label>
@@ -1527,7 +1573,7 @@ export default function TimeOffManagementPage() {
 
           <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
             <Button type="button" variant="ghost" onClick={() => setIsBalanceModalOpen(false)} disabled={loading}>Annuler</Button>
-            <Button form="balance-form" type="submit" disabled={loading || !balanceForm.employeeId} className="rounded-xl font-black px-8">
+            <Button form="balance-form" type="submit" disabled={loading || !canReadEmployees || !balanceForm.employeeId} className="rounded-xl font-black px-8">
                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />} Enregistrer
             </Button>
           </DialogFooter>
@@ -1546,18 +1592,25 @@ export default function TimeOffManagementPage() {
             <form id="request-form" onSubmit={handleSave} className="space-y-6 pb-8">
                <div className="space-y-2">
                   <Label className="text-[10px] font-black uppercase text-muted-foreground">Collaborateur</Label>
-                  <Select value={formData.employeeId} onValueChange={(v) => setFormData(p => ({...p, employeeId: v}))}>
-                    <SelectTrigger className="h-11 rounded-xl">
-                      <SelectValue placeholder="Sélectionner un employé actif..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeEmployees.map(e => (
-                        <SelectItem key={e.employeeId} value={e.employeeId}>
-                          {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''} {e.jobTitle ? `— ${e.jobTitle}` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {canReadEmployees ? (
+                    <Select value={formData.employeeId} onValueChange={(v) => setFormData(p => ({...p, employeeId: v}))}>
+                      <SelectTrigger className="h-11 rounded-xl">
+                        <SelectValue placeholder="Sélectionner un employé actif..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeEmployees.map(e => (
+                          <SelectItem key={e.employeeId} value={e.employeeId}>
+                            {e.displayName} {e.employeeCode ? `— ${e.employeeCode}` : ''} {e.jobTitle ? `— ${e.jobTitle}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Alert className="rounded-2xl bg-amber-50 border-amber-100 text-amber-900">
+                      <InfoIcon className="w-4 h-4" />
+                      <AlertDescription className="text-xs font-bold">{EMPLOYEE_DIRECTORY_REQUIRED_MESSAGE}</AlertDescription>
+                    </Alert>
+                  )}
                </div>
 
                <div className="grid grid-cols-2 gap-4">
@@ -1754,7 +1807,7 @@ export default function TimeOffManagementPage() {
 
           <DialogFooter className="p-8 border-t bg-slate-50 shrink-0 flex justify-end gap-3">
              <Button type="button" variant="ghost" onClick={() => setIsFormOpen(false)} disabled={loading}>Annuler</Button>
-             <Button form="request-form" type="submit" disabled={loading || !isFormValid()} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
+             <Button form="request-form" type="submit" disabled={loading || !canReadEmployees || !isFormValid()} className="rounded-xl font-black px-8 shadow-lg shadow-primary/10">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                 Enregistrer la demande
              </Button>
@@ -1770,7 +1823,7 @@ export default function TimeOffManagementPage() {
                 <Paperclip className="w-6 h-6" /> Ajouter un justificatif
               </DialogTitle>
               <DialogDescription>
-                 Joindre un document officiel pour {uploadingRequest?.employeeName}.
+                 Joindre un document officiel pour {uploadingRequest?.employeeName || "Employé non renseigné"}.
               </DialogDescription>
            </DialogHeader>
            
