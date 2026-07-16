@@ -30,7 +30,7 @@ import {
 import { MealTicketMonthlySummary } from "@/types/meal-ticket";
 import { KilometerReimbursementMonthlySummary } from "@/types/kilometer-reimbursement";
 import { Employee } from "@/types/employee";
-import { calculateAndSaveMonthlyPayroll } from "@/services/payroll.service";
+import { calculateMonthlyPayrollAction } from "@/app/actions/payroll-calculation-actions";
 import { useToast } from "@/hooks/use-toast";
 import {
   getPayrollEmployeeSummariesAction,
@@ -250,22 +250,42 @@ export default function PayrollSynthesisPage() {
   }, [calculations, search, employeesMap, employeeSummaryMap, canReadEmployees]);
 
   const handleCalculate = async () => {
-    if (!db || !user || !entityId) return;
+    if (!user || !entityId || !canCalculate) return;
     setCalculating(true);
     setCalcSummary(null);
 
     try {
-      const result = await calculateAndSaveMonthlyPayroll(
-        db,
+      const idToken = await user.getIdToken(true);
+      const result = await calculateMonthlyPayrollAction({
+        idToken,
         entityId,
-        selectedYear,
-        selectedMonth,
-        user.uid
-      );
-      setCalcSummary(result);
-      toast({ title: "Calcul terminé", description: `${result.totalEmployees} dossiers traités.` });
+        year: selectedYear,
+        month: selectedMonth,
+      });
+
+      if (!result.success) {
+        toast({
+          variant: "destructive",
+          title: "Erreur de calcul",
+          description: result.error || "Le calcul de synthèse économique n'a pas pu être finalisé.",
+        });
+        return;
+      }
+
+      setCalcSummary({
+        totalEmployees: result.totalEmployees || 0,
+        savedCount: result.savedCount || 0,
+        skippedCount: result.skippedCount || 0,
+        failedCount: result.failedCount || 0,
+        warningsCount: result.warningsCount || 0,
+      });
+      toast({ title: "Calcul terminé", description: `${result.totalEmployees || 0} dossiers traités.` });
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur de calcul", description: err.message });
+      toast({
+        variant: "destructive",
+        title: "Erreur de calcul",
+        description: err?.message || "Le calcul de synthèse économique n'a pas pu être finalisé.",
+      });
     } finally {
       setCalculating(false);
     }
@@ -591,22 +611,22 @@ export default function PayrollSynthesisPage() {
            </DialogHeader>
            
            <div className="py-6 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                 <SummaryBox label="Total employés" value={calcSummary?.totalEmployees} color="slate" />
-                 <SummaryBox label="Records créés" value={calcSummary?.createdCount} color="green" />
-                 <SummaryBox label="Records mis à jour" value={calcSummary?.updatedCount} color="blue" />
-                 <SummaryBox label="Ignorés (Verrouillés)" value={calcSummary?.skippedCount} color="orange" />
-              </div>
+               <div className="grid grid-cols-2 gap-4">
+                  <SummaryBox label="Total employés" value={calcSummary?.totalEmployees} color="slate" />
+                  <SummaryBox label="Records enregistrés" value={calcSummary?.savedCount} color="green" />
+                  <SummaryBox label="Échecs" value={calcSummary?.failedCount} color="blue" />
+                  <SummaryBox label="Ignorés (Verrouillés)" value={calcSummary?.skippedCount} color="orange" />
+               </div>
 
-              {calcSummary?.blockingWarningsCount > 0 && (
-                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
-                   <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                   <div>
-                      <p className="text-xs font-bold text-red-800 uppercase">Attention : Anomalies bloquantes</p>
-                      <p className="text-[11px] text-red-700 font-medium">{calcSummary.blockingWarningsCount} dossier(s) sont restés en "Brouillon" car des données contractuelles (taux horaire ou base mensuelle) sont manquantes.</p>
-                   </div>
-                </div>
-              )}
+               {calcSummary?.failedCount > 0 && (
+                 <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                       <p className="text-xs font-bold text-red-800 uppercase">Attention : échecs de calcul</p>
+                       <p className="text-[11px] text-red-700 font-medium">{calcSummary.failedCount} dossier(s) n'ont pas pu être finalisés. Les autres dossiers valides restent enregistrés.</p>
+                    </div>
+                 </div>
+               )}
            </div>
 
            <DialogFooter>
