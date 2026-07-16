@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "crypto";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { calculateTrustedMonthlyPayroll } from "@/services/payroll-calculation.server";
 
@@ -61,7 +62,50 @@ class PayrollCalculationActionError extends Error {
   }
 }
 
-function toActionError(error: unknown): CalculateMonthlyPayrollActionResult {
+function sanitizeDiagnosticText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  return value
+    .replace(/https?:\/\/\S+/gi, "[url-redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[jwt-redacted]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email-redacted]")
+    .replace(/\/documents\/[^)\s]+/gi, "/documents/[redacted]")
+    .slice(0, 300);
+}
+
+function getSanitizedErrorDiagnostics(error: unknown) {
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const code = typeof candidate?.code === "string" || typeof candidate?.code === "number"
+    ? String(candidate.code).slice(0, 80)
+    : undefined;
+
+  return {
+    errorName: sanitizeDiagnosticText(candidate?.name) || "UnknownError",
+    errorCode: code,
+    errorMessage: sanitizeDiagnosticText(candidate?.message) || "No sanitized message available.",
+  };
+}
+
+function logUnknownPayrollActionError(input: {
+  traceId: string;
+  stage: string;
+  phase: "before-writes" | "during-writes" | "after-writes" | "unknown";
+  error: unknown;
+}) {
+  console.error("[payroll-calculation-runtime]", {
+    traceId: input.traceId,
+    stage: input.stage,
+    phase: input.phase,
+    ...getSanitizedErrorDiagnostics(input.error),
+  });
+}
+
+function wasRuntimeLogged(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { __payrollRuntimeLogged?: unknown }).__payrollRuntimeLogged === true;
+}
+
+function toActionError(error: unknown, traceId: string, stage: string): CalculateMonthlyPayrollActionResult {
   if (error instanceof PayrollCalculationActionError) {
     return errorResult(error.code, error.message);
   }
@@ -71,6 +115,15 @@ function toActionError(error: unknown): CalculateMonthlyPayrollActionResult {
       "calculation-failed",
       "Le calcul n'a pu être finalisé pour aucun collaborateur éligible."
     );
+  }
+
+  if (!wasRuntimeLogged(error)) {
+    logUnknownPayrollActionError({
+      traceId,
+      stage,
+      phase: "unknown",
+      error,
+    });
   }
 
   return errorResult("calculation-failed", "Calcul de synthèse économique temporairement indisponible.");
@@ -107,36 +160,47 @@ function normalizeInput(params: unknown): CalculateMonthlyPayrollActionInput {
   return { idToken, entityId, year: rawYear as number, month: rawMonth as number };
 }
 
-async function authorizePayrollCalculation(params: CalculateMonthlyPayrollActionInput) {
+async function authorizePayrollCalculation(
+  params: CalculateMonthlyPayrollActionInput,
+  setStage: (stage: string) => void
+) {
+  setStage("admin-service-availability");
   if (!adminDb || !adminAuth) {
     throw new PayrollCalculationActionError("calculation-service-unavailable", "Service indisponible.");
   }
 
+  setStage("token-verification");
   const decodedToken = await adminAuth.verifyIdToken(params.idToken);
   const uid = decodedToken.uid;
 
+  setStage("active-user-read");
   const userSnapshot = await adminDb.collection("users").doc(uid).get();
   if (!userSnapshot.exists || userSnapshot.data()?.status !== "active") {
     throw new PayrollCalculationActionError("inactive-user", "Utilisateur inactif.");
   }
 
+  setStage("super-admin-detection");
   if (userSnapshot.data()?.platformRole === "superAdmin") {
+    setStage("entity-read");
     const entitySnapshot = await adminDb.collection("entities").doc(params.entityId).get();
     if (!entitySnapshot.exists) {
       throw new PayrollCalculationActionError("entity-not-found", "Entité introuvable.");
     }
+    setStage("entity-validation");
     if (entitySnapshot.data()?.status !== "active") {
       throw new PayrollCalculationActionError("entity-inactive", "Entité inactive.");
     }
     return { uid, entityId: params.entityId };
   }
 
+  setStage("membership-read");
   const membershipSnapshot = await adminDb.collection("memberships").doc(`${uid}_${params.entityId}`).get();
   if (!membershipSnapshot.exists) {
     throw new PayrollCalculationActionError("forbidden", "Action non autorisée.");
   }
 
   const membership = membershipSnapshot.data() || {};
+  setStage("membership-authorization");
   if (membership.status !== "active") {
     throw new PayrollCalculationActionError("forbidden", "Action non autorisée.");
   }
@@ -156,7 +220,9 @@ async function authorizePayrollCalculation(params: CalculateMonthlyPayrollAction
     );
   }
 
+  setStage("entity-read");
   const entitySnapshot = await adminDb.collection("entities").doc(params.entityId).get();
+  setStage("entity-validation");
   if (!entitySnapshot.exists || entitySnapshot.data()?.status !== "active") {
     throw new PayrollCalculationActionError("forbidden", "Action non autorisée.");
   }
@@ -167,15 +233,22 @@ async function authorizePayrollCalculation(params: CalculateMonthlyPayrollAction
 export async function calculateMonthlyPayrollAction(
   params: CalculateMonthlyPayrollActionInput
 ): Promise<CalculateMonthlyPayrollActionResult> {
+  const traceId = randomUUID();
+  let stage = "action-input-validation";
+
   try {
     const input = normalizeInput(params);
-    const { uid, entityId } = await authorizePayrollCalculation(input);
+    const { uid, entityId } = await authorizePayrollCalculation(input, (nextStage) => {
+      stage = nextStage;
+    });
 
+    stage = "trusted-calculation-call";
     const result = await calculateTrustedMonthlyPayroll({
       entityId,
       year: input.year,
       month: input.month,
       actorUid: uid,
+      diagnosticTraceId: traceId,
     });
 
     return {
@@ -183,6 +256,6 @@ export async function calculateMonthlyPayrollAction(
       ...result,
     };
   } catch (error) {
-    return toActionError(error);
+    return toActionError(error, traceId, stage);
   }
 }

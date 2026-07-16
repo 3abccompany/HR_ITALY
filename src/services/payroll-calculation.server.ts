@@ -28,6 +28,7 @@ import { createTrustedAuditLog } from "./audit.server";
 
 const RELIABLE_ATTENDANCE_STATUSES = ["validated", "corrected", "locked"];
 const MAX_BATCH_WRITES = 450;
+type PayrollRuntimePhase = "before-writes" | "during-writes" | "after-writes" | "unknown";
 
 export type TrustedPayrollCalculationResult = {
   year: number;
@@ -38,6 +39,58 @@ export type TrustedPayrollCalculationResult = {
   failedCount: number;
   warningsCount: number;
 };
+
+function sanitizeDiagnosticText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  return value
+    .replace(/https?:\/\/\S+/gi, "[url-redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[jwt-redacted]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email-redacted]")
+    .replace(/\/documents\/[^)\s]+/gi, "/documents/[redacted]")
+    .slice(0, 300);
+}
+
+function getSanitizedErrorDiagnostics(error: unknown) {
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const code = typeof candidate?.code === "string" || typeof candidate?.code === "number"
+    ? String(candidate.code).slice(0, 80)
+    : undefined;
+
+  return {
+    errorName: sanitizeDiagnosticText(candidate?.name) || "UnknownError",
+    errorCode: code,
+    errorMessage: sanitizeDiagnosticText(candidate?.message) || "No sanitized message available.",
+  };
+}
+
+function logPayrollRuntimeFailure(input: {
+  traceId?: string;
+  stage: string;
+  phase: PayrollRuntimePhase;
+  error: unknown;
+}) {
+  console.error("[payroll-calculation-runtime]", {
+    traceId: input.traceId || "not-provided",
+    stage: input.stage,
+    phase: input.phase,
+    ...getSanitizedErrorDiagnostics(input.error),
+  });
+}
+
+function markRuntimeLogged(error: unknown) {
+  if (typeof error === "object" && error !== null) {
+    try {
+      Object.defineProperty(error, "__payrollRuntimeLogged", {
+        value: true,
+        configurable: true,
+      });
+    } catch {
+      // Ignore marker failures; diagnostics must never affect calculation behavior.
+    }
+  }
+}
 
 function getAdminDatabase(): Firestore {
   if (!adminDb) {
@@ -176,7 +229,11 @@ async function resolveWorkScheduleAdmin(
       ccnlId,
     };
   } catch (err: any) {
-    console.error("[TrustedPayroll:WorkScheduleResolver] Error:", err?.message);
+    logPayrollRuntimeFailure({
+      stage: "work-schedule-resolution",
+      phase: "before-writes",
+      error: err,
+    });
     return {
       expectedDailyHours: null,
       source: "missing_schedule",
@@ -475,157 +532,204 @@ export async function calculateTrustedMonthlyPayroll(params: {
   year: number;
   month: number;
   actorUid: string;
+  diagnosticTraceId?: string;
 }): Promise<TrustedPayrollCalculationResult> {
-  const db = getAdminDatabase();
-  const { entityId, year, month, actorUid } = params;
-  const { startDateIso, endDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
-
-  const hSnap = await db
-    .collection("entities")
-    .doc(entityId)
-    .collection("holidays")
-    .where("date", ">=", startDateIso)
-    .where("date", "<=", endDateIso)
-    .get();
-
-  const holidaysMap = new Map<string, string>();
-  hSnap.docs.forEach(d => {
-    const h = d.data();
-    if (h.status === "active") {
-      holidaysMap.set(h.date, h.name);
-    }
-  });
-
-  const aggregations = await aggregateMonthlyAttendanceAdmin(db, entityId, year, month, holidaysMap);
-  const allWarnings = await buildPrePayrollReconciliationAdmin(db, entityId, year, month, aggregations);
-
-  const finalCalculations: PayrollCalculation[] = [];
-  let failedCount = 0;
-
-  for (const empId of Object.keys(aggregations)) {
-    try {
-      const agg = aggregations[empId];
-      const rate = await resolvePayrollRateSnapshotAdmin(db, entityId, empId, year, month);
-      const empWarnings = allWarnings.filter(w => w.employeeId === empId);
-      const paidHolidayHours =
-        rate.payCalculationMode === "actual_worked_hours"
-          ? await resolvePaidHolidayHoursForActualWorkedModeAdmin(
-              db,
-              entityId,
-              empId,
-              Array.from(holidaysMap.keys())
-            )
-          : 0;
-
-      const threshold = rate.expectedWeeklyHours;
-
-      if (!threshold) {
-        empWarnings.push({
-          code: "missing_weekly_schedule",
-          severity: "warning",
-          employeeId: empId,
-          message: "Seuil hebdomadaire non détecté. Réconciliation SUP bloquée.",
-        });
-        agg.overtimeHours = 0;
-        agg.weeklyBreakdown = [];
-      } else {
-        const attSnap = await db
-          .collection("entities")
-          .doc(entityId)
-          .collection("attendances")
-          .where("employeeId", "==", empId)
-          .where("attendanceDate", ">=", startDateIso)
-          .where("attendanceDate", "<", nextMonthStartDateIso)
-          .get();
-
-        const records = attSnap.docs
-          .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
-          .filter(r => RELIABLE_ATTENDANCE_STATUSES.includes(r.status));
-
-        const reconciliation = await reconcileWeeklyOvertime(records, threshold, holidaysMap);
-
-        agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
-        agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
-        agg.overtimeDayHours = reconciliation.overtimeDayHours;
-        agg.overtimeNightHours = reconciliation.overtimeNightHours;
-        agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
-        agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
-        agg.sundayWorkedHours = reconciliation.sundayWorkedHours;
-        agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
-      }
-
-      const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings, {
-        paidHolidayHours,
-      });
-
-      finalCalculations.push({
-        id: `${empId}_${year}_${month}`,
-        entityId,
-        employeeId: empId,
-        year,
-        month,
-        status: "calculated",
-        attendanceAggregation: agg,
-        rateSnapshot: rate,
-        reconciliationWarnings: empWarnings,
-        ...econ,
-        sourceAttendanceIds: agg.sourceAttendanceIds,
-        calculatedAt: new Date(),
-        calculatedBy: actorUid,
-        createdAt: new Date(),
-        createdBy: actorUid,
-        updatedAt: new Date(),
-        updatedBy: actorUid,
-      });
-    } catch (err: any) {
-      failedCount++;
-      console.error(`[TrustedPayroll:Isolation] Calculation failed for one employee:`, err?.message);
-    }
-  }
-
-  const saveResults = await saveMonthlyPayrollCalculationsAdmin(db, entityId, finalCalculations, actorUid);
-  const warningsCount = finalCalculations.reduce(
-    (total, calculation) => total + calculation.reconciliationWarnings.length,
-    0
-  );
+  let stage = "calculation-initialization";
+  let phase: PayrollRuntimePhase = "before-writes";
 
   try {
-    await createTrustedAuditLog({
-      actorUid,
-      entityId,
-      action: "payroll.calculated",
-      resourceType: "payrollCalculation",
-      resourceId: `${year}_${month}`,
-      details: {
-        year,
-        month,
-        employeesCalculated: finalCalculations.length,
-        calculationsSaved: saveResults.savedCount,
-        warningsCount,
-        failedCount,
-        totalGrossEconomicAmount: roundMoney(
-          finalCalculations.reduce(
-            (total, calculation) => total + calculation.grossEconomicTotal,
-            0
-          )
-        ),
-      },
+    const db = getAdminDatabase();
+    const { entityId, year, month, actorUid } = params;
+
+    stage = "month-range-resolution";
+    const { startDateIso, endDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
+
+    stage = "holidays-query";
+    const hSnap = await db
+      .collection("entities")
+      .doc(entityId)
+      .collection("holidays")
+      .where("date", ">=", startDateIso)
+      .where("date", "<=", endDateIso)
+      .get();
+
+    const holidaysMap = new Map<string, string>();
+    hSnap.docs.forEach(d => {
+      const h = d.data();
+      if (h.status === "active") {
+        holidaysMap.set(h.date, h.name);
+      }
     });
-  } catch (auditError) {
-    console.warn("[TrustedPayroll] Failed to write payroll calculation audit log:", auditError);
-  }
 
-  if (Object.keys(aggregations).length > 0 && finalCalculations.length === 0) {
-    throw new Error("PAYROLL_CALCULATION_ALL_EMPLOYEES_FAILED");
-  }
+    stage = "attendance-month-query";
+    const aggregations = await aggregateMonthlyAttendanceAdmin(db, entityId, year, month, holidaysMap);
 
-  return {
-    year,
-    month,
-    totalEmployees: Object.keys(aggregations).length,
-    savedCount: saveResults.savedCount,
-    skippedCount: saveResults.skippedCount,
-    failedCount,
-    warningsCount,
-  };
+    stage = "time-off-query";
+    const allWarnings = await buildPrePayrollReconciliationAdmin(db, entityId, year, month, aggregations);
+
+    const finalCalculations: PayrollCalculation[] = [];
+    let failedCount = 0;
+
+    stage = "employee-calculation-loop";
+    for (const empId of Object.keys(aggregations)) {
+      try {
+        const agg = aggregations[empId];
+        stage = "payroll-parameters-query";
+        const rate = await resolvePayrollRateSnapshotAdmin(db, entityId, empId, year, month);
+        const empWarnings = allWarnings.filter(w => w.employeeId === empId);
+        const paidHolidayHours =
+          rate.payCalculationMode === "actual_worked_hours"
+            ? await resolvePaidHolidayHoursForActualWorkedModeAdmin(
+                db,
+                entityId,
+                empId,
+                Array.from(holidaysMap.keys())
+              )
+            : 0;
+
+        const threshold = rate.expectedWeeklyHours;
+
+        if (!threshold) {
+          empWarnings.push({
+            code: "missing_weekly_schedule",
+            severity: "warning",
+            employeeId: empId,
+            message: "Seuil hebdomadaire non détecté. Réconciliation SUP bloquée.",
+          });
+          agg.overtimeHours = 0;
+          agg.weeklyBreakdown = [];
+        } else {
+          stage = "weekly-attendance-query";
+          const attSnap = await db
+            .collection("entities")
+            .doc(entityId)
+            .collection("attendances")
+            .where("employeeId", "==", empId)
+            .where("attendanceDate", ">=", startDateIso)
+            .where("attendanceDate", "<", nextMonthStartDateIso)
+            .get();
+
+          const records = attSnap.docs
+            .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
+            .filter(r => RELIABLE_ATTENDANCE_STATUSES.includes(r.status));
+
+          stage = "weekly-overtime-reconciliation";
+          const reconciliation = await reconcileWeeklyOvertime(records, threshold, holidaysMap);
+
+          agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
+          agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
+          agg.overtimeDayHours = reconciliation.overtimeDayHours;
+          agg.overtimeNightHours = reconciliation.overtimeNightHours;
+          agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
+          agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
+          agg.sundayWorkedHours = reconciliation.sundayWorkedHours;
+          agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
+        }
+
+        stage = "economic-calculation";
+        const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings, {
+          paidHolidayHours,
+        });
+
+        stage = "payroll-document-preparation";
+        finalCalculations.push({
+          id: `${empId}_${year}_${month}`,
+          entityId,
+          employeeId: empId,
+          year,
+          month,
+          status: "calculated",
+          attendanceAggregation: agg,
+          rateSnapshot: rate,
+          reconciliationWarnings: empWarnings,
+          ...econ,
+          sourceAttendanceIds: agg.sourceAttendanceIds,
+          calculatedAt: new Date(),
+          calculatedBy: actorUid,
+          createdAt: new Date(),
+          createdBy: actorUid,
+          updatedAt: new Date(),
+          updatedBy: actorUid,
+        });
+      } catch (err: any) {
+        failedCount++;
+        logPayrollRuntimeFailure({
+          traceId: params.diagnosticTraceId,
+          stage,
+          phase,
+          error: err,
+        });
+      }
+    }
+
+    stage = "payroll-batch-write";
+    phase = "during-writes";
+    const saveResults = await saveMonthlyPayrollCalculationsAdmin(db, entityId, finalCalculations, actorUid);
+    phase = "after-writes";
+
+    const warningsCount = finalCalculations.reduce(
+      (total, calculation) => total + calculation.reconciliationWarnings.length,
+      0
+    );
+
+    stage = "trusted-audit";
+    try {
+      await createTrustedAuditLog({
+        actorUid,
+        entityId,
+        action: "payroll.calculated",
+        resourceType: "payrollCalculation",
+        resourceId: `${year}_${month}`,
+        details: {
+          year,
+          month,
+          employeesCalculated: finalCalculations.length,
+          calculationsSaved: saveResults.savedCount,
+          warningsCount,
+          failedCount,
+          totalGrossEconomicAmount: roundMoney(
+            finalCalculations.reduce(
+              (total, calculation) => total + calculation.grossEconomicTotal,
+              0
+            )
+          ),
+        },
+      });
+    } catch (auditError) {
+      logPayrollRuntimeFailure({
+        traceId: params.diagnosticTraceId,
+        stage,
+        phase,
+        error: auditError,
+      });
+    }
+
+    stage = "calculation-complete";
+    if (Object.keys(aggregations).length > 0 && finalCalculations.length === 0) {
+      throw new Error("PAYROLL_CALCULATION_ALL_EMPLOYEES_FAILED");
+    }
+
+    return {
+      year,
+      month,
+      totalEmployees: Object.keys(aggregations).length,
+      savedCount: saveResults.savedCount,
+      skippedCount: saveResults.skippedCount,
+      failedCount,
+      warningsCount,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "PAYROLL_CALCULATION_ALL_EMPLOYEES_FAILED") {
+      throw error;
+    }
+
+    logPayrollRuntimeFailure({
+      traceId: params.diagnosticTraceId,
+      stage,
+      phase,
+      error,
+    });
+    markRuntimeLogged(error);
+    throw error;
+  }
 }
