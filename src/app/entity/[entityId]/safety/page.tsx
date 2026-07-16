@@ -72,20 +72,33 @@ export default function SafetyDpiRegistryPage() {
   const [isUploading, setIsUploading] = useState(false);
 
   // Queries
-  const canRead = hasPermission("safety.read");
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
+  const canReadSafety = hasPermission("safety.read");
+  const canCreateSafety = hasPermission("safety.create");
+  const canUpdateSafety = hasPermission("safety.update");
+  const canReadEmployees = hasPermission("employees.read");
+  const canReadDocuments = hasPermission("documents.read");
+  const canUploadDocuments = hasPermission("documents.upload");
+  const canAttachExistingReport = canUpdateSafety && canUploadDocuments;
   
   const assignmentsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadSafety) return null;
     return query(collection(db, `entities/${entityId}/safetyDpiAssignments`), orderBy("deliveryDate", "desc")) as Query<SafetyDpiAssignment>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadSafety]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadSafety || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadSafety, canReadEmployees]);
 
   const { data: assignments, loading: loadingAssignments } = useCollection<SafetyDpiAssignment>(assignmentsQuery, "safety-dpi.registry");
-  const { data: employees } = useCollection<Employee>(employeesQuery, "safety-dpi.employees_lookup");
+  const { data: employees, loading: loadingEmployees, error: employeesError } = useCollection<Employee>(employeesQuery, "safety-dpi.employees_lookup");
+
+  const employeeDirectorySuccessfullyLoaded =
+    canReadEmployees &&
+    !!employeesQuery &&
+    !loadingEmployees &&
+    !employeesError;
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -108,7 +121,8 @@ export default function SafetyDpiRegistryPage() {
 
     return assignments.filter(a => {
       const emp = employeesMap.get(a.employeeId);
-      const searchTarget = `${a.dpiName} ${a.riskType} ${emp?.displayName || ""} ${emp?.employeeCode || ""}`.toLowerCase();
+      const liveEmployeeSearch = canReadEmployees ? `${emp?.displayName || ""} ${emp?.employeeCode || ""}` : "";
+      const searchTarget = `${a.dpiName} ${a.riskType} ${a.employeeName || ""} ${liveEmployeeSearch}`.toLowerCase();
       
       if (filters.search && !searchTarget.includes(filters.search.toLowerCase())) return false;
       if (filters.status !== "all" && a.status !== filters.status) return false;
@@ -123,7 +137,7 @@ export default function SafetyDpiRegistryPage() {
 
       return true;
     });
-  }, [assignments, filters, employeesMap]);
+  }, [assignments, filters, employeesMap, canReadEmployees]);
 
   const uniqueRiskTypes = useMemo(() => {
     const set = new Set<string>();
@@ -133,7 +147,7 @@ export default function SafetyDpiRegistryPage() {
 
   // Handlers
   const handleViewPV = async (docId: string) => {
-    if (!db || !entityId || !docId) return;
+    if (!db || !entityId || !docId || !canReadDocuments) return;
     setViewingDocId(docId);
     try {
       const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, docId));
@@ -153,6 +167,16 @@ export default function SafetyDpiRegistryPage() {
   const handleExecuteUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !uploadingRequest || !uploadFile) return;
+    if (!canAttachExistingReport) {
+      toast({
+        variant: "destructive",
+        title: "Action indisponible",
+        description: "L’ajout d’un PV nécessite l’autorisation de charger des documents.",
+      });
+      setUploadFile(null);
+      setUploadingRequest(null);
+      return;
+    }
 
     setIsUploading(true);
     try {
@@ -187,7 +211,7 @@ export default function SafetyDpiRegistryPage() {
   };
 
   const handleUpdateStatus = async (id: string, nextStatus: any) => {
-    if (!user) return;
+    if (!user || !canUpdateSafety) return;
     setLoading(true);
     try {
       await updateDpiAssignment(entityId, id, { status: nextStatus }, user.uid);
@@ -200,7 +224,7 @@ export default function SafetyDpiRegistryPage() {
   };
 
   const handleArchive = async (id: string) => {
-    if (!user) return;
+    if (!user || !canUpdateSafety) return;
     setLoading(true);
     try {
       await archiveDpiAssignment(entityId, id, user.uid);
@@ -221,10 +245,25 @@ export default function SafetyDpiRegistryPage() {
           <h1 className="text-3xl font-black text-primary tracking-tight">Sécurité / EPI-DPI</h1>
           <p className="text-muted-foreground text-sm font-medium">Suivi des équipements de protection individuelle remis au personnel.</p>
         </div>
-        {hasPermission("safety.create") && (
-          <Button onClick={() => { setEditingId(null); setIsDialogVisible(true); }} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
-            <Plus className="w-4 h-4" /> Remettre un EPI
-          </Button>
+        {canCreateSafety && (
+          <div className="flex flex-col items-start md:items-end gap-2">
+            <Button
+              onClick={() => {
+                if (!canReadEmployees) return;
+                setEditingId(null);
+                setIsDialogVisible(true);
+              }}
+              disabled={!canReadEmployees}
+              className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold"
+            >
+              <Plus className="w-4 h-4" /> Remettre un EPI
+            </Button>
+            {!canReadEmployees && (
+              <p className="max-w-xs text-[10px] font-medium text-muted-foreground text-left md:text-right">
+                La remise d’un EPI nécessite l’autorisation de consulter les employés.
+              </p>
+            )}
+          </div>
         )}
       </header>
 
@@ -311,6 +350,13 @@ export default function SafetyDpiRegistryPage() {
               ) : (
                 filteredAssignments.map((a) => {
                   const emp = employeesMap.get(a.employeeId);
+                  const employeeName =
+                    emp?.displayName ||
+                    a.employeeName ||
+                    (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
+                  const employeeCode =
+                    emp?.employeeCode ||
+                    (employeeDirectorySuccessfullyLoaded ? a.employeeId.slice(0, 8) : "—");
                   const replacementDate = parseISO(a.plannedReplacementDate);
                   const today = startOfDay(new Date());
                   const isSoonVal = isUpcoming(a.plannedReplacementDate);
@@ -320,8 +366,8 @@ export default function SafetyDpiRegistryPage() {
                     <TableRow key={a.assignmentId} className="hover:bg-muted/50 transition-colors">
                       <TableCell className="pl-6 py-4">
                         <div className="flex flex-col">
-                           <span className="font-bold text-slate-900">{emp?.displayName || a.employeeName || "Employé inconnu"}</span>
-                           <span className="text-[10px] text-muted-foreground uppercase font-mono">{emp?.employeeCode || a.employeeId.slice(0, 8)}</span>
+                           <span className="font-bold text-slate-900">{employeeName}</span>
+                           <span className="text-[10px] text-muted-foreground uppercase font-mono">{employeeCode}</span>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -346,18 +392,24 @@ export default function SafetyDpiRegistryPage() {
                       </TableCell>
                       <TableCell>
                          {a.reportDocumentId ? (
-                            <button 
-                              onClick={() => handleViewPV(a.reportDocumentId!)} 
-                              disabled={!!viewingDocId}
-                              className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase hover:underline group"
-                            >
-                               <FileCheck className="w-3.5 h-3.5" /> Joint
-                               {viewingDocId === a.reportDocumentId ? (
-                                 <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />
-                               ) : (
-                                 <Eye className="w-2.5 h-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
-                               )}
-                            </button>
+                            canReadDocuments ? (
+                              <button
+                                onClick={() => handleViewPV(a.reportDocumentId!)}
+                                disabled={!!viewingDocId}
+                                className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase hover:underline group"
+                              >
+                                 <FileCheck className="w-3.5 h-3.5" /> Joint
+                                 {viewingDocId === a.reportDocumentId ? (
+                                   <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />
+                                 ) : (
+                                   <Eye className="w-2.5 h-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                 )}
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase">
+                                <FileCheck className="w-3.5 h-3.5 opacity-30" /> Joint
+                              </div>
+                            )
                          ) : (
                             <span className="text-[9px] text-muted-foreground font-medium uppercase italic opacity-40">Non joint</span>
                          )}
@@ -371,34 +423,38 @@ export default function SafetyDpiRegistryPage() {
                                <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-48">
-                               {a.reportDocumentId && (
+                               {a.reportDocumentId && canReadDocuments && (
                                  <DropdownMenuItem onClick={() => handleViewPV(a.reportDocumentId!)} className="gap-2 font-bold text-primary">
                                     <Eye className="w-4 h-4" /> Voir le PV
                                  </DropdownMenuItem>
                                )}
-                               {!a.reportDocumentId && (
+                               {!a.reportDocumentId && canAttachExistingReport && (
                                  <DropdownMenuItem onClick={() => setUploadingRequest(a)} className="gap-2 font-bold text-primary">
                                     <Upload className="w-4 h-4" /> Joindre PV
                                  </DropdownMenuItem>
                                )}
-                               <DropdownMenuItem onClick={() => { setEditingId(a.assignmentId); setIsDialogVisible(true); }} className="gap-2">
-                                  <Edit className="w-4 h-4" /> Modifier
-                               </DropdownMenuItem>
-                               <DropdownMenuSeparator />
-                               {a.status === 'assigned' && (
+                               {canUpdateSafety && (
                                  <>
-                                   <DropdownMenuItem onClick={() => handleUpdateStatus(a.assignmentId, 'replaced')} className="gap-2 text-green-600 font-bold">
-                                      <RefreshCcw className="w-4 h-4" /> Marquer remplacé
+                                   <DropdownMenuItem onClick={() => { setEditingId(a.assignmentId); setIsDialogVisible(true); }} className="gap-2">
+                                      <Edit className="w-4 h-4" /> Modifier
                                    </DropdownMenuItem>
-                                   <DropdownMenuItem onClick={() => handleUpdateStatus(a.assignmentId, 'returned')} className="gap-2">
-                                      <ArrowUpRight className="w-4 h-4" /> Marquer retourné
+                                   <DropdownMenuSeparator />
+                                   {a.status === 'assigned' && (
+                                     <>
+                                       <DropdownMenuItem onClick={() => handleUpdateStatus(a.assignmentId, 'replaced')} className="gap-2 text-green-600 font-bold">
+                                          <RefreshCcw className="w-4 h-4" /> Marquer remplacé
+                                       </DropdownMenuItem>
+                                       <DropdownMenuItem onClick={() => handleUpdateStatus(a.assignmentId, 'returned')} className="gap-2">
+                                          <ArrowUpRight className="w-4 h-4" /> Marquer retourné
+                                       </DropdownMenuItem>
+                                     </>
+                                   )}
+                                   <DropdownMenuSeparator />
+                                   <DropdownMenuItem onClick={() => handleArchive(a.assignmentId)} className="gap-2 text-destructive">
+                                      <Archive className="w-4 h-4" /> Archiver
                                    </DropdownMenuItem>
                                  </>
                                )}
-                               <DropdownMenuSeparator />
-                               <DropdownMenuItem onClick={() => handleArchive(a.assignmentId)} className="gap-2 text-destructive">
-                                  <Archive className="w-4 h-4" /> Archiver
-                               </DropdownMenuItem>
                             </DropdownMenuContent>
                          </DropdownMenu>
                       </TableCell>
@@ -417,10 +473,19 @@ export default function SafetyDpiRegistryPage() {
         entityId={entityId}
         assignmentId={editingId}
         employees={activeEmployees}
+        canCreateSafety={canCreateSafety}
+        canUpdateSafety={canUpdateSafety}
+        canReadDocuments={canReadDocuments}
+        canUploadDocuments={canUploadDocuments}
       />
 
       {/* Late Attachment Dialog */}
-      <Dialog open={!!uploadingRequest} onOpenChange={(open) => !open && setUploadingRequest(null)}>
+      <Dialog open={!!uploadingRequest && canAttachExistingReport} onOpenChange={(open) => {
+        if (!open) {
+          setUploadingRequest(null);
+          setUploadFile(null);
+        }
+      }}>
         <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
@@ -438,11 +503,16 @@ export default function SafetyDpiRegistryPage() {
                   uploadFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
                 )}>
                    <input 
-                     type="file" 
-                     accept=".pdf,.png,.jpg,.jpeg" 
-                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                     onChange={(e) => {
-                       const file = e.target.files?.[0];
+                     type="file"
+                      accept=".pdf,.png,.jpg,.jpeg"
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      onChange={(e) => {
+                        if (!canAttachExistingReport) {
+                          e.target.value = "";
+                          setUploadFile(null);
+                          return;
+                        }
+                        const file = e.target.files?.[0];
                        if (file && file.size > 10 * 1024 * 1024) {
                          toast({ variant: "destructive", title: "Fichier trop volumineux", description: "La taille max est de 10 Mo." });
                          e.target.value = "";
@@ -471,7 +541,7 @@ export default function SafetyDpiRegistryPage() {
                 <Button type="button" variant="ghost" onClick={() => setUploadingRequest(null)} disabled={isUploading}>Annuler</Button>
                 <Button 
                   type="submit" 
-                  disabled={isUploading || !uploadFile}
+                  disabled={isUploading || !uploadFile || !canAttachExistingReport}
                   className="rounded-xl px-8 font-black shadow-lg"
                 >
                   {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
