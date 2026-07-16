@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   collection,
@@ -56,6 +56,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import {
+  getPayrollEmployeeSummariesAction,
+  type PayrollEmployeeSummary,
+} from "@/app/actions/payroll-employee-summary-actions";
 
 const getFiniteNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -318,9 +322,15 @@ export default function PayrollCalculationDetailPage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const calculationId = params.calculationId as string;
-  const { db } = useFirebase();
+  const { db, auth } = useFirebase();
   const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
+  const [employeeSummary, setEmployeeSummary] = useState<PayrollEmployeeSummary | null>(null);
+  const [loadingEmployeeSummary, setLoadingEmployeeSummary] = useState(false);
   const canRead = hasPermission("payroll.read");
+  const canReadEmployees = hasPermission("employees.read");
+  const canReadContracts = hasPermission("contracts.read");
+  const canReadAttendances = hasPermission("attendances.read");
+  const canReadHolidays = hasPermission("holidays.read");
   const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
   const canReadReimbursements =
     hasPermission("reimbursements.read") ||
@@ -348,27 +358,65 @@ export default function PayrollCalculationDetailPage() {
 
   const employeeRef = useMemo(
     () =>
-      db && entityId && calculation?.employeeId && canRead
+      db && entityId && calculation?.employeeId && canRead && canReadEmployees
         ? (doc(
             db,
             `entities/${entityId}/employees`,
             calculation.employeeId
           ) as DocumentReference<Employee>)
         : null,
-    [db, entityId, calculation?.employeeId, canRead]
+    [db, entityId, calculation?.employeeId, canRead, canReadEmployees]
   );
   const { data: employee } = useDoc<Employee>(employeeRef, "payroll.calculation-employee");
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEmployeeSummary() {
+      if (!canRead || canReadEmployees || !auth?.currentUser || !entityId || !calculationId || !calculation) {
+        if (!cancelled) {
+          setEmployeeSummary(null);
+          setLoadingEmployeeSummary(false);
+        }
+        return;
+      }
+
+      setLoadingEmployeeSummary(true);
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const result = await getPayrollEmployeeSummariesAction({
+          idToken,
+          entityId,
+          calculationIds: [calculationId],
+        });
+
+        if (cancelled) return;
+
+        setEmployeeSummary(result.success ? result.summaries?.[0] || null : null);
+      } catch {
+        if (!cancelled) setEmployeeSummary(null);
+      } finally {
+        if (!cancelled) setLoadingEmployeeSummary(false);
+      }
+    }
+
+    loadEmployeeSummary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, calculation, calculationId, canRead, canReadEmployees, entityId]);
+
   const contractRef = useMemo(
     () =>
-      db && entityId && calculation?.rateSnapshot?.contractId && canRead
+      db && entityId && calculation?.rateSnapshot?.contractId && canRead && canReadContracts
         ? (doc(
             db,
             `entities/${entityId}/contracts`,
             calculation.rateSnapshot.contractId
           ) as DocumentReference<Contract>)
         : null,
-    [db, entityId, calculation?.rateSnapshot?.contractId, canRead]
+    [db, entityId, calculation?.rateSnapshot?.contractId, canRead, canReadContracts]
   );
   const { data: contract } = useDoc<Contract>(contractRef, "payroll.calculation-contract");
 
@@ -423,14 +471,14 @@ export default function PayrollCalculationDetailPage() {
 
   const holidaysQuery = useMemo(
     () =>
-      db && entityId && period && canRead
+      db && entityId && period && canRead && canReadHolidays
         ? (query(
             collection(db, `entities/${entityId}/holidays`),
             where("date", ">=", period.start),
             where("date", "<=", period.end)
           ) as Query<Holiday>)
         : null,
-    [db, entityId, period, canRead]
+    [db, entityId, period, canRead, canReadHolidays]
   );
   const { data: monthlyHolidays } = useCollection<Holiday>(
     holidaysQuery,
@@ -439,7 +487,7 @@ export default function PayrollCalculationDetailPage() {
 
   const attendanceQuery = useMemo(
     () =>
-      db && entityId && calculation?.employeeId && period && canRead
+      db && entityId && calculation?.employeeId && period && canRead && canReadAttendances
         ? (query(
             collection(db, `entities/${entityId}/attendances`),
             where("employeeId", "==", calculation.employeeId),
@@ -447,7 +495,7 @@ export default function PayrollCalculationDetailPage() {
             where("attendanceDate", "<=", period.end)
           ) as Query<AttendanceRecord>)
         : null,
-    [db, entityId, calculation?.employeeId, period, canRead]
+    [db, entityId, calculation?.employeeId, period, canRead, canReadAttendances]
   );
   const { data: monthlyAttendance } = useCollection<AttendanceRecord>(
     attendanceQuery,
@@ -576,10 +624,14 @@ export default function PayrollCalculationDetailPage() {
     (week): week is PayrollWeeklyBreakdown => week !== null && typeof week === "object"
   );
   const extras = calculation.bonusValue ?? 0;
-  const activeHolidays = monthlyHolidays.filter((holiday) => holiday.status === "active");
+  const canUseLiveHolidayReconciliation = canReadAttendances && canReadHolidays;
+  const activeHolidays = canReadHolidays
+    ? monthlyHolidays.filter((holiday) => holiday.status === "active")
+    : [];
   const holidaysByDate = new Map(activeHolidays.map((holiday) => [holiday.date, holiday]));
   const reliableAttendanceStatuses = new Set(["validated", "corrected", "locked"]);
-  const inferredHolidayRows = monthlyAttendance
+  const inferredHolidayRows = canUseLiveHolidayReconciliation
+    ? monthlyAttendance
     .filter((attendance) => {
       const isHoliday =
         attendance.holidayFlag === true || holidaysByDate.has(attendance.attendanceDate);
@@ -597,11 +649,12 @@ export default function PayrollCalculationDetailPage() {
         name: attendance.holidayName || holiday?.name || "Jour férié",
         workedHours: attendance.holidayWorkedHours ?? attendance.validatedHours ?? 0,
       };
-    });
+    })
+    : [];
   const holidayRows =
     inferredHolidayRows.length > 0
       ? inferredHolidayRows
-      : aggregation.holidayWorkedHours > 0 && activeHolidays.length === 1
+      : canUseLiveHolidayReconciliation && aggregation.holidayWorkedHours > 0 && activeHolidays.length === 1
         ? [
             {
               date: activeHolidays[0].date,
@@ -610,6 +663,19 @@ export default function PayrollCalculationDetailPage() {
             },
           ]
         : [];
+  const employeeDisplayName = canReadEmployees
+    ? employee
+      ? `${employee.firstName || ""} ${employee.lastName || ""}`.trim() || employee.displayName
+      : canReadContracts
+        ? contract?.employeeDisplayName || "Collaborateur non renseigné"
+        : "Collaborateur non renseigné"
+    : employeeSummary?.displayName ||
+      (loadingEmployeeSummary ? "Chargement collaborateur..." : "Collaborateur non renseigné");
+  const employeeCode = canReadEmployees
+    ? employee?.employeeCode ||
+      (canReadContracts ? contract?.employeeCode : null) ||
+      "Non renseigné"
+    : employeeSummary?.employeeCode || "Non renseigné";
   const contractSummary = contract
     ? [
         contract.contractType,
@@ -618,10 +684,17 @@ export default function PayrollCalculationDetailPage() {
       ]
         .filter(Boolean)
         .join(" • ")
-    : "Non renseigné";
-  const ccnlLabel = ccnl?.name || contract?.ccnlName || "Non renseigné";
+    : canReadContracts && rate.contractId
+      ? "Contrat non trouvé"
+      : rate.contractId
+        ? "Détail contrat indisponible avec vos autorisations"
+        : "Non renseigné";
+  const ccnlLabel = ccnl?.name || (canReadContracts ? contract?.ccnlName : null) || rate.ccnlId || "Non renseigné";
   const livelloLabel =
-    [level?.levelCode || contract?.levelCode || rate.levelCode, level?.label || contract?.levelLabel]
+    [
+      level?.levelCode || (canReadContracts ? contract?.levelCode : null) || rate.levelCode,
+      level?.label || (canReadContracts ? contract?.levelLabel : null),
+    ]
       .filter(Boolean)
       .join(" — ") || "Non renseigné";
 
@@ -646,18 +719,17 @@ export default function PayrollCalculationDetailPage() {
                 Synthèse économique / Pré-paie brute
               </p>
               <h1 className="mt-1 text-3xl font-black tracking-tight text-primary">
-                {employee
-                  ? `${employee.firstName || ""} ${employee.lastName || ""}`.trim() ||
-                    employee.displayName
-                  : contract?.employeeDisplayName || "Collaborateur non renseigné"}
+                {employeeDisplayName}
               </h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="rounded-lg">
-                  Matricule {employee?.employeeCode || contract?.employeeCode || "Non renseigné"}
+                  Matricule {employeeCode}
                 </Badge>
-                <Badge variant="outline" className="rounded-lg">
-                  Codice fiscale {employee?.taxCode || contract?.taxCode || "Non renseigné"}
-                </Badge>
+                {canReadEmployees && (
+                  <Badge variant="outline" className="rounded-lg">
+                    Codice fiscale {employee?.taxCode || "Non renseigné"}
+                  </Badge>
+                )}
                 <Badge variant="outline" className="gap-1.5 rounded-lg">
                   <CalendarDays className="h-3.5 w-3.5" />
                   {String(calculation.month).padStart(2, "0")}/{calculation.year}
@@ -762,7 +834,17 @@ export default function PayrollCalculationDetailPage() {
           </div>
         </CardHeader>
         <CardContent className="p-6">
-          {holidayRows.length === 0 ? (
+          {!canUseLiveHolidayReconciliation ? (
+            <div className="rounded-2xl border border-dashed border-emerald-200 bg-white/70 p-6">
+              <p className="font-bold text-emerald-950">
+                Détail de réconciliation férié indisponible avec vos autorisations.
+              </p>
+              <p className="mt-1 text-sm text-emerald-800/70">
+                Le calcul enregistré conserve {hours(aggregation.holidayWorkedHours)} de
+                travail férié pour un montant de {euro(calculation.holidayWorkedValue)}.
+              </p>
+            </div>
+          ) : holidayRows.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-emerald-200 bg-white/70 p-6">
               <p className="font-bold text-emerald-950">
                 Aucun détail nominatif de jour férié disponible.
