@@ -99,7 +99,7 @@ export default function MealTicketsPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
+  const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
 
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -108,9 +108,23 @@ export default function MealTicketsPage() {
   const [confirmingMonth, setConfirmingMonth] = useState(false);
   const [selectedSummary, setSelectedSummary] = useState<MealTicketMonthlySummary | null>(null);
 
-  const canRead = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
-  const canManage = hasPermission("mealTickets.manage");
-  const canConfirm = hasPermission("mealTickets.calculate") || hasPermission("mealTickets.manage");
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
+  const canManageMealTickets = hasPermission("mealTickets.manage");
+  const canCalculateMealTickets = hasPermission("mealTickets.calculate") || hasPermission("mealTickets.manage");
+  const canReadEmployees = hasPermission("employees.read");
+  const canReadAttendances = hasPermission("attendances.read");
+  const canReadLeaveRequests = hasPermission("leaveRequests.read");
+  const canReadHolidays = hasPermission("holidays.read");
+  const canUseMealTicketCalculation =
+    canCalculateMealTickets &&
+    canReadEmployees &&
+    canReadAttendances &&
+    canReadLeaveRequests &&
+    canReadHolidays;
   const { startDate, endDate } = useMemo(
     () => getMealTicketMonthRange(selectedYear, selectedMonth),
     [selectedYear, selectedMonth]
@@ -122,56 +136,56 @@ export default function MealTicketsPage() {
   }, []);
 
   const policiesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadMealTickets) return null;
     return query(collection(db, `entities/${entityId}/mealTicketPolicies`)) as Query<MealTicketPolicy>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadMealTickets]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadMealTickets || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadMealTickets, canReadEmployees]);
 
   const attendanceQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadMealTickets || !canCalculateMealTickets || !canReadAttendances) return null;
     return query(
       collection(db, `entities/${entityId}/attendances`),
       where("attendanceDate", ">=", startDate),
       where("attendanceDate", "<=", endDate),
       orderBy("attendanceDate", "asc")
     ) as Query<AttendanceRecord>;
-  }, [db, entityId, canRead, startDate, endDate]);
+  }, [db, entityId, permissionsReady, canReadMealTickets, canCalculateMealTickets, canReadAttendances, startDate, endDate]);
 
   const timeOffQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadMealTickets || !canCalculateMealTickets || !canReadLeaveRequests) return null;
     return query(collection(db, `entities/${entityId}/timeOffRequests`), where("status", "==", "approved")) as Query<TimeOffRequest>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadMealTickets, canCalculateMealTickets, canReadLeaveRequests]);
 
   const holidaysQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadMealTickets || !canCalculateMealTickets || !canReadHolidays) return null;
     return query(
       collection(db, `entities/${entityId}/holidays`),
       where("date", ">=", startDate),
       where("date", "<=", endDate),
       orderBy("date", "asc")
     ) as Query<Holiday>;
-  }, [db, entityId, canRead, startDate, endDate]);
+  }, [db, entityId, permissionsReady, canReadMealTickets, canCalculateMealTickets, canReadHolidays, startDate, endDate]);
 
   const confirmedSummariesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadMealTickets) return null;
     return query(
       collection(db, `entities/${entityId}/mealTicketMonthlySummaries`),
       where("year", "==", selectedYear),
       where("month", "==", selectedMonth),
       where("status", "==", "confirmed")
     ) as Query<MealTicketMonthlySummary>;
-  }, [db, entityId, canRead, selectedMonth, selectedYear]);
+  }, [db, entityId, permissionsReady, canReadMealTickets, selectedMonth, selectedYear]);
 
   const { data: policies, loading: loadingPolicies } = useCollection<MealTicketPolicy>(policiesQuery, "meal-tickets.policies");
-  const { data: employees, loading: loadingEmployees } = useCollection<Employee>(employeesQuery, "meal-tickets.employees");
+  const { data: employees, loading: loadingEmployees, error: employeesError } = useCollection<Employee>(employeesQuery, "meal-tickets.employees");
   const { data: attendanceRecords, loading: loadingAttendance } = useCollection<AttendanceRecord>(attendanceQuery, "meal-tickets.attendance");
   const { data: timeOffRequests } = useCollection<TimeOffRequest>(timeOffQuery, "meal-tickets.time-off");
   const { data: holidays } = useCollection<Holiday>(holidaysQuery, "meal-tickets.holidays");
-  const { data: confirmedSummaries, loading: loadingConfirmedSummaries } = useCollection<MealTicketMonthlySummary>(
+  const { data: confirmedSummaries } = useCollection<MealTicketMonthlySummary>(
     confirmedSummariesQuery,
     "meal-tickets.confirmed-summaries"
   );
@@ -221,7 +235,14 @@ export default function MealTicketsPage() {
     return map;
   }, [employees]);
 
+  const employeeDirectorySuccessfullyLoaded =
+    canReadEmployees &&
+    !!employeesQuery &&
+    !loadingEmployees &&
+    !employeesError;
+
   const summaries = useMemo(() => {
+    if (!canUseMealTicketCalculation) return [];
     return activeEmployees.map((employee) => {
       const policy = resolveMealTicketPolicyFromList(policies || [], employee.employeeId, employee.activeContractId, {
         year: selectedYear,
@@ -242,7 +263,7 @@ export default function MealTicketsPage() {
         generatedBy: user?.uid,
       });
     });
-  }, [activeEmployees, attendanceRecords, endDate, entityId, holidays, policies, selectedMonth, selectedYear, startDate, timeOffRequests, user?.uid]);
+  }, [activeEmployees, attendanceRecords, canUseMealTicketCalculation, endDate, entityId, holidays, policies, selectedMonth, selectedYear, startDate, timeOffRequests, user?.uid]);
 
   const totals = useMemo(() => {
     return summaries.reduce(
@@ -305,7 +326,7 @@ export default function MealTicketsPage() {
   };
 
   const handleConfirmMonth = async () => {
-    if (!entityId || !user || summaries.length === 0) return;
+    if (!entityId || !user || summaries.length === 0 || !canUseMealTicketCalculation) return;
 
     setConfirmingMonth(true);
     try {
@@ -329,7 +350,7 @@ export default function MealTicketsPage() {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
 
-  if (!canRead) {
+  if (!canReadMealTickets) {
     return (
       <div className="p-8">
         <Alert variant="destructive" className="rounded-3xl">
@@ -341,7 +362,7 @@ export default function MealTicketsPage() {
     );
   }
 
-  const loadingPreview = loadingPolicies || loadingEmployees || loadingAttendance || loadingConfirmedSummaries;
+  const loadingPreview = canUseMealTicketCalculation && (loadingPolicies || loadingEmployees || loadingAttendance);
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 pb-24">
@@ -387,10 +408,10 @@ export default function MealTicketsPage() {
             </SelectContent>
           </Select>
 
-          {canConfirm && (
+          {canCalculateMealTickets && (
             <Button
               onClick={handleConfirmMonth}
-              disabled={confirmingMonth || loadingPreview || summaries.length === 0}
+              disabled={!canUseMealTicketCalculation || confirmingMonth || loadingPreview || summaries.length === 0}
               className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10"
             >
               {confirmingMonth ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -399,6 +420,16 @@ export default function MealTicketsPage() {
           )}
         </div>
       </header>
+
+      {canCalculateMealTickets && !canUseMealTicketCalculation && (
+        <Alert className="rounded-3xl border-amber-200 bg-amber-50 text-amber-900">
+          <Info className="h-4 w-4 text-amber-700" />
+          <AlertTitle>Preview buoni pasto indisponible</AlertTitle>
+          <AlertDescription>
+            Le calcul mensuel nécessite les autorisations de consulter les employés, les présences, les congés et les jours fériés.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <SummaryCard title="Jours éligibles" value={totals.eligibleDays.toLocaleString("fr-FR")} icon={CheckCircle2} color="emerald" />
@@ -452,7 +483,7 @@ export default function MealTicketsPage() {
                 min="0"
                 value={policyForm.valuePerTicket}
                 onChange={(event) => setPolicyForm((prev) => ({ ...prev, valuePerTicket: Number(event.target.value) }))}
-                disabled={!canManage}
+                disabled={!canManageMealTickets}
                 className="rounded-xl"
               />
             </Field>
@@ -464,7 +495,7 @@ export default function MealTicketsPage() {
                 min="0"
                 value={policyForm.minimumWorkedHoursForEligibility}
                 onChange={(event) => setPolicyForm((prev) => ({ ...prev, minimumWorkedHoursForEligibility: Number(event.target.value) }))}
-                disabled={!canManage}
+                disabled={!canManageMealTickets}
                 className="rounded-xl"
               />
             </Field>
@@ -474,7 +505,7 @@ export default function MealTicketsPage() {
                 type="date"
                 value={policyForm.effectiveFrom}
                 onChange={(event) => setPolicyForm((prev) => ({ ...prev, effectiveFrom: event.target.value }))}
-                disabled={!canManage}
+                disabled={!canManageMealTickets}
                 className="rounded-xl"
               />
             </Field>
@@ -484,7 +515,7 @@ export default function MealTicketsPage() {
                 type="date"
                 value={policyForm.effectiveTo}
                 onChange={(event) => setPolicyForm((prev) => ({ ...prev, effectiveTo: event.target.value }))}
-                disabled={!canManage}
+                disabled={!canManageMealTickets}
                 className="rounded-xl"
               />
             </Field>
@@ -492,19 +523,19 @@ export default function MealTicketsPage() {
             <ToggleRow
               label="Inclure les jours fériés travaillés"
               checked={policyForm.includeHolidayWorkedDays}
-              disabled={!canManage}
+              disabled={!canManageMealTickets}
               onCheckedChange={(checked) => setPolicyForm((prev) => ({ ...prev, includeHolidayWorkedDays: checked }))}
             />
             <ToggleRow
               label="Exclure les congés"
               checked={policyForm.excludeLeaveDays}
-              disabled={!canManage}
+              disabled={!canManageMealTickets}
               onCheckedChange={(checked) => setPolicyForm((prev) => ({ ...prev, excludeLeaveDays: checked }))}
             />
             <ToggleRow
               label="Exclure les absences"
               checked={policyForm.excludeAbsenceDays}
-              disabled={!canManage}
+              disabled={!canManageMealTickets}
               onCheckedChange={(checked) => setPolicyForm((prev) => ({ ...prev, excludeAbsenceDays: checked }))}
             />
 
@@ -512,7 +543,7 @@ export default function MealTicketsPage() {
               <Select
                 value={policyForm.status}
                 onValueChange={(value: MealTicketPolicy["status"]) => setPolicyForm((prev) => ({ ...prev, status: value }))}
-                disabled={!canManage}
+                disabled={!canManageMealTickets}
               >
                 <SelectTrigger className="rounded-xl">
                   <SelectValue />
@@ -524,7 +555,7 @@ export default function MealTicketsPage() {
               </Select>
             </Field>
 
-            {canManage && (
+            {canManageMealTickets && (
               <div className="md:col-span-2 xl:col-span-4 flex justify-end">
                 <Button type="submit" disabled={savingPolicy} className="rounded-xl font-black gap-2 shadow-lg shadow-primary/10">
                   {savingPolicy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -624,7 +655,13 @@ export default function MealTicketsPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          {loadingPreview ? (
+          {!canUseMealTicketCalculation ? (
+            <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+              <Info className="w-8 h-8" />
+              <p className="text-sm font-bold">Preview indisponible avec les autorisations actuelles.</p>
+              <p className="text-xs">Les politiques et les synthèses confirmées restent consultables.</p>
+            </div>
+          ) : loadingPreview ? (
             <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted-foreground">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
               <p className="text-sm font-bold">Préparation de la preview...</p>
@@ -650,10 +687,11 @@ export default function MealTicketsPage() {
               <TableBody>
                 {summaries.map((summary) => {
                   const employee = employeesMap.get(summary.employeeId);
+                  const employeeName = employee?.displayName || summary.employeeName || (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
                   return (
                   <TableRow key={summary.id} className="hover:bg-slate-50/60">
                     <TableCell>
-                      <div className="font-black text-primary">{summary.employeeName || "Employé"}</div>
+                      <div className="font-black text-primary">{employeeName}</div>
                       <div className="text-[11px] text-muted-foreground">
                         Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "Non renseigné"}</span>
                         {" · "}
