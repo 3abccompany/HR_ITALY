@@ -140,7 +140,7 @@ export default function KilometerReimbursementsPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
+  const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
 
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -150,13 +150,21 @@ export default function KilometerReimbursementsPage() {
   const [savingItem, setSavingItem] = useState(false);
   const [confirmingMonth, setConfirmingMonth] = useState(false);
 
-  const canRead =
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canManageReimbursements = hasPermission("reimbursements.manage");
+  const canApproveReimbursements = hasPermission("reimbursements.approve") || hasPermission("reimbursements.manage");
+  const canExportReimbursements = hasPermission("reimbursements.export");
+  const canReadReimbursements =
     hasPermission("reimbursements.read") ||
-    hasPermission("reimbursements.manage") ||
-    hasPermission("reimbursements.approve") ||
-    hasPermission("reimbursements.export");
-  const canManage = hasPermission("reimbursements.manage");
-  const canApprove = hasPermission("reimbursements.approve") || hasPermission("reimbursements.manage");
+    canManageReimbursements ||
+    canApproveReimbursements ||
+    canExportReimbursements;
+  const canReadEmployees = hasPermission("employees.read");
+  const canUseKilometerEmployeeSelector = canManageReimbursements && canReadEmployees;
+  const canConfirmKilometerMonth = canApproveReimbursements && canReadEmployees;
 
   const { startDate, endDate } = useMemo(
     () => getKilometerReimbursementMonthRange(selectedYear, selectedMonth),
@@ -173,39 +181,39 @@ export default function KilometerReimbursementsPage() {
   }, []);
 
   const policiesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReimbursements) return null;
     return query(collection(db, `entities/${entityId}/kilometerReimbursementPolicies`)) as Query<KilometerReimbursementPolicy>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadReimbursements]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReimbursements || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadReimbursements, canReadEmployees]);
 
   const itemsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReimbursements) return null;
     return query(
       collection(db, `entities/${entityId}/kilometerReimbursements`),
       where("year", "==", selectedYear),
       where("month", "==", selectedMonth)
     ) as Query<KilometerReimbursement>;
-  }, [db, entityId, canRead, selectedMonth, selectedYear]);
+  }, [db, entityId, permissionsReady, canReadReimbursements, selectedMonth, selectedYear]);
 
   const confirmedSummariesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReimbursements) return null;
     return query(
       collection(db, `entities/${entityId}/kilometerReimbursementMonthlySummaries`),
       where("year", "==", selectedYear),
       where("month", "==", selectedMonth),
       where("status", "==", "confirmed")
     ) as Query<KilometerReimbursementMonthlySummary>;
-  }, [db, entityId, canRead, selectedMonth, selectedYear]);
+  }, [db, entityId, permissionsReady, canReadReimbursements, selectedMonth, selectedYear]);
 
   const { data: policies, loading: loadingPolicies } = useCollection<KilometerReimbursementPolicy>(
     policiesQuery,
     "kilometer-reimbursements.policies"
   );
-  const { data: employees, loading: loadingEmployees } = useCollection<Employee>(
+  const { data: employees, loading: loadingEmployees, error: employeesError } = useCollection<Employee>(
     employeesQuery,
     "kilometer-reimbursements.employees"
   );
@@ -230,6 +238,12 @@ export default function KilometerReimbursementsPage() {
     return map;
   }, [employees]);
 
+  const employeeDirectorySuccessfullyLoaded =
+    canReadEmployees &&
+    !!employeesQuery &&
+    !loadingEmployees &&
+    !employeesError;
+
   const policyHistory = useMemo(() => {
     return (policies || [])
       .filter((policy) => policy.scope === "entity")
@@ -252,6 +266,7 @@ export default function KilometerReimbursementsPage() {
   }, [items]);
 
   const previewSummaries = useMemo(() => {
+    if (!canReadEmployees) return [];
     return calculateKilometerReimbursementMonthlyPreview({
       entityId,
       employees: activeEmployees,
@@ -260,7 +275,7 @@ export default function KilometerReimbursementsPage() {
       month: selectedMonth,
       generatedBy: user?.uid,
     }).filter((summary) => summary.itemCount > 0);
-  }, [activeEmployees, entityId, items, selectedMonth, selectedYear, user?.uid]);
+  }, [activeEmployees, canReadEmployees, entityId, items, selectedMonth, selectedYear, user?.uid]);
 
   const confirmedTotals = useMemo(() => {
     return (confirmedSummaries || []).reduce(
@@ -320,7 +335,7 @@ export default function KilometerReimbursementsPage() {
   const isTripDateInSelectedMonth =
     !!itemForm.tripDate && itemForm.tripDate >= startDate && itemForm.tripDate <= endDate;
   const canSaveItem =
-    canManage &&
+    canUseKilometerEmployeeSelector &&
     !savingItem &&
     !!selectedEmployee &&
     !!resolvedPolicyForItem &&
@@ -330,7 +345,7 @@ export default function KilometerReimbursementsPage() {
     !!itemForm.origin &&
     !!itemForm.destination &&
     !!itemForm.reason;
-  const isLoading = membershipLoading || loadingPolicies || loadingEmployees || loadingItems;
+  const isLoading = membershipLoading || loadingPolicies || loadingItems;
 
   useEffect(() => {
     setPolicyForm((prev) => ({
@@ -399,6 +414,14 @@ export default function KilometerReimbursementsPage() {
   }
 
   async function handleSaveItem() {
+    if (!canUseKilometerEmployeeSelector) {
+      toast({
+        title: "Création indisponible",
+        description: "La création d’un remboursement kilométrique nécessite l’autorisation de consulter les employés.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!user?.uid || !selectedEmployee) return;
     if (!isTripDateInSelectedMonth) {
       toast({
@@ -483,6 +506,7 @@ export default function KilometerReimbursementsPage() {
   }
 
   async function handleConfirmMonth() {
+    if (!canConfirmKilometerMonth) return;
     if (!user?.uid) return;
     const summariesToConfirm = previewSummaries.filter((summary) => summary.itemCount > 0);
     if (summariesToConfirm.length === 0) {
@@ -520,7 +544,7 @@ export default function KilometerReimbursementsPage() {
     );
   }
 
-  if (!canRead) {
+  if (!canReadReimbursements) {
     return (
       <div className="p-8">
         <Alert variant="destructive" className="rounded-3xl">
@@ -698,7 +722,7 @@ export default function KilometerReimbursementsPage() {
             <Button
               className="w-full rounded-xl"
               onClick={handleSavePolicy}
-              disabled={!canManage || savingPolicy}
+              disabled={!canManageReimbursements || savingPolicy}
             >
               {savingPolicy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               Enregistrer une nouvelle politique
@@ -772,6 +796,15 @@ export default function KilometerReimbursementsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {canManageReimbursements && !canReadEmployees && (
+            <Alert className="rounded-2xl border-amber-200 bg-amber-50 text-amber-900">
+              <Info className="h-4 w-4 text-amber-700" />
+              <AlertTitle>Création indisponible</AlertTitle>
+              <AlertDescription>
+                La création d’un remboursement kilométrique nécessite l’autorisation de consulter les employés.
+              </AlertDescription>
+            </Alert>
+          )}
           {!isTripDateInSelectedMonth && (
             <Alert className="rounded-2xl border-amber-200 bg-amber-50 text-amber-900">
               <AlertTriangle className="h-4 w-4 text-amber-700" />
@@ -795,6 +828,7 @@ export default function KilometerReimbursementsPage() {
               <Label>Collaborateur</Label>
               <Select
                 value={itemForm.employeeId}
+                disabled={!canUseKilometerEmployeeSelector}
                 onValueChange={(employeeId) => {
                   const employee = activeEmployees.find((item) => item.employeeId === employeeId);
                   const year = Number(itemForm.tripDate.slice(0, 4));
@@ -932,14 +966,15 @@ export default function KilometerReimbursementsPage() {
                 ) : (
                   sortedItems.map((item) => {
                     const employee = employeesMap.get(item.employeeId);
+                    const employeeName = item.employeeName || employee?.displayName || (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
                     return (
                     <TableRow key={item.id}>
                       <TableCell>
-                        <p className="font-bold">{item.employeeName || employee?.displayName || "Collaborateur"}</p>
+                        <p className="font-bold">{employeeName}</p>
                         <p className="text-[11px] text-muted-foreground">
-                          Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "Non renseigné"}</span>
+                          Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "—"}</span>
                           {" · "}
-                          Codice fiscale: <span className="font-mono uppercase">{employee?.taxCode || "Non renseigné"}</span>
+                          Codice fiscale: <span className="font-mono uppercase">{employee?.taxCode || "—"}</span>
                         </p>
                       </TableCell>
                       <TableCell>{item.tripDate ? format(parseISO(item.tripDate), "dd/MM/yyyy", { locale: fr }) : "—"}</TableCell>
@@ -957,40 +992,42 @@ export default function KilometerReimbursementsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
-                          {canManage && item.status === "draft" && (
+                          {canManageReimbursements && item.status === "draft" && (
                             <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => setItemForm({
-                                  id: item.id || "",
-                                  employeeId: item.employeeId,
-                                  tripDate: item.tripDate,
-                                  origin: item.origin,
-                                  destination: item.destination,
-                                  reason: item.reason,
-                                  kilometers: item.kilometers,
-                                  ratePerKm: item.ratePerKm,
-                                  policyId: item.policyId || "",
-                                  vehicleInfo: item.vehicleInfo || "",
-                                  notes: item.notes || "",
-                                  status: item.status,
-                                })}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
+                              {canReadEmployees && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => setItemForm({
+                                    id: item.id || "",
+                                    employeeId: item.employeeId,
+                                    tripDate: item.tripDate,
+                                    origin: item.origin,
+                                    destination: item.destination,
+                                    reason: item.reason,
+                                    kilometers: item.kilometers,
+                                    ratePerKm: item.ratePerKm,
+                                    policyId: item.policyId || "",
+                                    vehicleInfo: item.vehicleInfo || "",
+                                    notes: item.notes || "",
+                                    status: item.status,
+                                  })}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              )}
                               <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600" onClick={() => handleDelete(item)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </>
                           )}
-                          {canApprove && item.status !== "approved" && item.status !== "confirmed" && item.status !== "exported" && (
+                          {canApproveReimbursements && item.status !== "approved" && item.status !== "confirmed" && item.status !== "exported" && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-700" onClick={() => handleStatus(item, "approved")}>
                               <CheckCircle2 className="h-4 w-4" />
                             </Button>
                           )}
-                          {canApprove && item.status !== "rejected" && item.status !== "confirmed" && item.status !== "exported" && (
+                          {canApproveReimbursements && item.status !== "rejected" && item.status !== "confirmed" && item.status !== "exported" && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600" onClick={() => handleStatus(item, "rejected")}>
                               <XCircle className="h-4 w-4" />
                             </Button>
@@ -1016,7 +1053,7 @@ export default function KilometerReimbursementsPage() {
           <Button
             className="rounded-xl"
             onClick={handleConfirmMonth}
-            disabled={!canApprove || confirmingMonth || previewSummaries.length === 0}
+            disabled={!canConfirmKilometerMonth || confirmingMonth || previewSummaries.length === 0}
           >
             {confirmingMonth ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
             Confirmer le mois
@@ -1057,14 +1094,15 @@ export default function KilometerReimbursementsPage() {
                     (confirmed) => confirmed.employeeId === summary.employeeId
                   );
                   const employee = employeesMap.get(summary.employeeId);
+                  const employeeName = summary.employeeName || employee?.displayName || (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
                   return (
                     <TableRow key={summary.employeeId}>
                       <TableCell>
-                        <p className="font-bold">{summary.employeeName || employee?.displayName || "Collaborateur"}</p>
+                        <p className="font-bold">{employeeName}</p>
                         <p className="text-[11px] text-muted-foreground">
-                          Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "Non renseigné"}</span>
+                          Matricule: <span className="font-mono uppercase">{employee?.employeeCode || "—"}</span>
                           {" · "}
-                          Codice fiscale: <span className="font-mono uppercase">{employee?.taxCode || "Non renseigné"}</span>
+                          Codice fiscale: <span className="font-mono uppercase">{employee?.taxCode || "—"}</span>
                         </p>
                       </TableCell>
                       <TableCell className="text-right">{summary.itemCount}</TableCell>
