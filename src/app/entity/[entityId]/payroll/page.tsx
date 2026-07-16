@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { 
   Euro, Calculator, Loader2, Calendar, 
@@ -32,6 +32,10 @@ import { KilometerReimbursementMonthlySummary } from "@/types/kilometer-reimburs
 import { Employee } from "@/types/employee";
 import { calculateAndSaveMonthlyPayroll } from "@/services/payroll.service";
 import { useToast } from "@/hooks/use-toast";
+import {
+  getPayrollEmployeeSummariesAction,
+  type PayrollEmployeeSummary,
+} from "@/app/actions/payroll-employee-summary-actions";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, 
   DialogFooter, DialogDescription 
@@ -91,7 +95,7 @@ const formatHours = (value?: number | null) =>
 export default function PayrollSynthesisPage() {
   const params = useParams();
   const entityId = params.entityId as string;
-  const { db } = useFirebase();
+  const { db, auth } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
@@ -100,6 +104,8 @@ export default function PayrollSynthesisPage() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [search, setSearch] = useState("");
+  const [employeeSummaries, setEmployeeSummaries] = useState<PayrollEmployeeSummary[]>([]);
+  const [loadingEmployeeSummaries, setLoadingEmployeeSummaries] = useState(false);
 
   // Processing State
   const [calculating, setCalculating] = useState(false);
@@ -107,6 +113,7 @@ export default function PayrollSynthesisPage() {
 
   // Queries
   const canRead = hasPermission("payroll.read");
+  const canReadEmployees = hasPermission("employees.read");
   const canCalculate = hasPermission("payroll.calculate") || hasPermission("payroll.write");
   const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
   const canReadReimbursements =
@@ -125,9 +132,9 @@ export default function PayrollSynthesisPage() {
   }, [db, entityId, canRead, selectedYear, selectedMonth]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !canRead || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, canRead, canReadEmployees]);
 
   const mealTicketSummariesQuery = useMemo(() => {
     if (!db || !entityId || !canReadMealTickets) return null;
@@ -160,11 +167,58 @@ export default function PayrollSynthesisPage() {
     "payroll.kilometer-reimbursement-summaries"
   );
 
+  const calculationIds = useMemo(
+    () => (calculations || []).map((calculation) => calculation.id).filter(Boolean).slice(0, 100),
+    [calculations]
+  );
+  const calculationIdsKey = calculationIds.join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEmployeeSummaries() {
+      if (!canRead || canReadEmployees || !auth?.currentUser || !entityId || calculationIds.length === 0) {
+        if (!cancelled) setEmployeeSummaries([]);
+        return;
+      }
+
+      setLoadingEmployeeSummaries(true);
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const result = await getPayrollEmployeeSummariesAction({
+          idToken,
+          entityId,
+          calculationIds,
+        });
+
+        if (cancelled) return;
+
+        setEmployeeSummaries(result.success ? result.summaries || [] : []);
+      } catch {
+        if (!cancelled) setEmployeeSummaries([]);
+      } finally {
+        if (!cancelled) setLoadingEmployeeSummaries(false);
+      }
+    }
+
+    loadEmployeeSummaries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, calculationIdsKey, canRead, canReadEmployees, entityId]);
+
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
     employees?.forEach(e => map.set(e.employeeId, e));
     return map;
   }, [employees]);
+
+  const employeeSummaryMap = useMemo(() => {
+    const map = new Map<string, PayrollEmployeeSummary>();
+    employeeSummaries.forEach((summary) => map.set(summary.calculationId, summary));
+    return map;
+  }, [employeeSummaries]);
 
   const mealTicketSummaryMap = useMemo(() => {
     const map = new Map<string, MealTicketMonthlySummary>();
@@ -184,13 +238,16 @@ export default function PayrollSynthesisPage() {
     const term = search.toLowerCase();
     return calculations.filter(c => {
       const emp = employeesMap.get(c.employeeId);
+      const summary = employeeSummaryMap.get(c.id);
       return (
-        emp?.displayName.toLowerCase().includes(term) ||
-        emp?.employeeCode?.toLowerCase().includes(term) ||
-        emp?.taxCode?.toLowerCase().includes(term)
+        (canReadEmployees && emp?.displayName.toLowerCase().includes(term)) ||
+        (canReadEmployees && emp?.employeeCode?.toLowerCase().includes(term)) ||
+        (canReadEmployees && emp?.taxCode?.toLowerCase().includes(term)) ||
+        (!canReadEmployees && summary?.displayName.toLowerCase().includes(term)) ||
+        (!canReadEmployees && summary?.employeeCode?.toLowerCase().includes(term))
       );
     });
-  }, [calculations, search, employeesMap]);
+  }, [calculations, search, employeesMap, employeeSummaryMap, canReadEmployees]);
 
   const handleCalculate = async () => {
     if (!db || !user || !entityId) return;
@@ -299,7 +356,11 @@ export default function PayrollSynthesisPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input 
                 className="pl-10 h-11 rounded-xl bg-white border-primary/10" 
-                placeholder="Rechercher un employé, matricule ou codice fiscale..."
+                placeholder={
+                  canReadEmployees
+                    ? "Rechercher un employé, matricule ou codice fiscale..."
+                    : "Rechercher un collaborateur ou matricule..."
+                }
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -340,6 +401,16 @@ export default function PayrollSynthesisPage() {
                 ) : (
                   filteredCalculations.map((c) => {
                     const emp = employeesMap.get(c.employeeId);
+                    const employeeSummary = employeeSummaryMap.get(c.id);
+                    const employeeName = canReadEmployees
+                      ? emp?.displayName || "Inconnu"
+                      : employeeSummary?.displayName ||
+                        (loadingEmployeeSummaries
+                          ? "Chargement collaborateur..."
+                          : "Collaborateur non renseigné");
+                    const employeeCode = canReadEmployees
+                      ? emp?.employeeCode || "Non renseigné"
+                      : employeeSummary?.employeeCode || "Non renseigné";
                     const mealTicketSummary = mealTicketSummaryMap.get(c.employeeId);
                     const mealTicketsBenefit =
                       mealTicketSummary?.status === "confirmed"
@@ -370,11 +441,15 @@ export default function PayrollSynthesisPage() {
                            <div className="flex items-center gap-3">
                               <div className="bg-primary/5 p-2 rounded-lg text-primary shrink-0"><User className="w-4 h-4" /></div>
                               <div className="min-w-0">
-                                 <p className="font-bold text-slate-900 text-sm truncate">{emp?.displayName || "Inconnu"}</p>
+                                 <p className="font-bold text-slate-900 text-sm truncate">{employeeName}</p>
                                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                                   Matricule: <span className="font-mono uppercase">{emp?.employeeCode || "Non renseigné"}</span>
-                                   {" · "}
-                                   Codice fiscale: <span className="font-mono uppercase">{emp?.taxCode || "Non renseigné"}</span>
+                                   Matricule: <span className="font-mono uppercase">{employeeCode}</span>
+                                   {canReadEmployees && (
+                                     <>
+                                       {" · "}
+                                       Codice fiscale: <span className="font-mono uppercase">{emp?.taxCode || "Non renseigné"}</span>
+                                     </>
+                                   )}
                                  </p>
                               </div>
                            </div>
