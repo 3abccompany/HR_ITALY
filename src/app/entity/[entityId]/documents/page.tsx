@@ -184,6 +184,7 @@ export default function DocumentsRegistryPage() {
 
   // Permissions
   const canRead = hasPermission("documents.read");
+  const canReadEmployees = hasPermission("employees.read");
   const canUpload = hasPermission("documents.upload");
   const canArchive = hasPermission("documents.archive");
 
@@ -194,12 +195,13 @@ export default function DocumentsRegistryPage() {
   }, [db, entityId, canRead, permissionsReady]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead || !permissionsReady) return null;
+    if (!db || !entityId || !canRead || !canReadEmployees || !permissionsReady) return null;
     return query(collection(db, `entities/${entityId}/employees`), orderBy("displayName", "asc")) as Query<Employee>;
-  }, [db, entityId, canRead, permissionsReady]);
+  }, [db, entityId, canRead, canReadEmployees, permissionsReady]);
 
   const { data: documents, loading: loadingDocs } = useCollection<HRDocument>(docsQuery, "documents.registry");
-  const { data: employees } = useCollection<Employee>(employeesQuery, "documents.employees_lookup");
+  const { data: employees, loading: loadingEmployees, error: employeesError } = useCollection<Employee>(employeesQuery, "documents.employees_lookup");
+  const employeeDirectorySuccessfullyLoaded = canReadEmployees && !!employeesQuery && !loadingEmployees && !employeesError;
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -237,7 +239,7 @@ export default function DocumentsRegistryPage() {
         doc.employeeDisplayName ||
         emp?.displayName ||
         (emp ? `${emp.firstName} ${emp.lastName}` : null) ||
-        (key === "none" ? "Documents non liés à un employé" : "Employé inconnu");
+        (key === "none" ? "Documents non liés à un employé" : employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
   
       if (!groups.has(key)) {
         groups.set(key, {
@@ -255,7 +257,7 @@ export default function DocumentsRegistryPage() {
       if (b.employeeId === "none") return -1;
       return a.employeeName.localeCompare(b.employeeName, "fr");
     });
-  }, [filteredDocs, employeesMap]);
+  }, [filteredDocs, employeesMap, employeeDirectorySuccessfullyLoaded]);
 
   const docsByType = useMemo(() => {
     const groups: Record<string, HRDocument[]> = {};
@@ -358,7 +360,7 @@ export default function DocumentsRegistryPage() {
 
     setUploading(true);
     try {
-      const employee = uploadForm.employeeId !== "none" ? employees?.find(e => e.employeeId === uploadForm.employeeId) : null;
+      const employee = canReadEmployees && uploadForm.employeeId !== "none" ? employees?.find(e => e.employeeId === uploadForm.employeeId) : null;
       
       const metadata: Partial<HRDocument> = {
         title: uploadForm.title,
@@ -683,16 +685,25 @@ export default function DocumentsRegistryPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black text-muted-foreground">Lier à un employé (Optionnel)</Label>
-                <Select value={uploadForm.employeeId} onValueChange={(v) => setUploadForm(p => ({...p, employeeId: v}))}>
-                  <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder="Sél. collaborateur" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">--- Aucun ---</SelectItem>
-                    {employees?.map(e => <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
+              {canReadEmployees ? (
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black text-muted-foreground">Lier à un employé (Optionnel)</Label>
+                  <Select value={uploadForm.employeeId} onValueChange={(v) => setUploadForm(p => ({...p, employeeId: v}))}>
+                    <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder="Sél. collaborateur" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">--- Aucun ---</SelectItem>
+                      {employees?.map(e => <SelectItem key={e.employeeId} value={e.employeeId}>{e.displayName}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black text-muted-foreground">Lien employé</Label>
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-bold text-muted-foreground">
+                    Sélection collaborateur disponible avec l'accès employés.
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase font-black text-muted-foreground">Date d'expiration</Label>
                 <Input type="date" value={uploadForm.expiresAt} onChange={(e) => setUploadForm(p => ({...p, expiresAt: e.target.value}))} className="rounded-xl h-11" />
