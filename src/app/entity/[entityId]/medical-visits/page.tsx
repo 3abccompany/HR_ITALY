@@ -82,20 +82,33 @@ export default function MedicalVisitsRegistryPage() {
   const [isUploading, setIsUploading] = useState(false);
 
   // Queries
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
   const canRead = hasPermission("medicalVisits.read");
+  const canCreate = hasPermission("medicalVisits.create");
+  const canUpdateMedicalVisits = hasPermission("medicalVisits.update");
+  const canReadEmployees = hasPermission("employees.read");
+  const canReadDocuments = hasPermission("documents.read");
+  const canUploadDocuments = hasPermission("documents.upload");
+  const canAttachCertificate = canUpdateMedicalVisits && canUploadDocuments;
   
   const visitsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canRead) return null;
     return query(collection(db, `entities/${entityId}/medicalVisits`), orderBy("visitDate", "desc")) as Query<MedicalVisit>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canRead]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canRead || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canRead, canReadEmployees]);
 
   const { data: visits, loading: loadingVisits } = useCollection<MedicalVisit>(visitsQuery, "medical-visits.registry");
-  const { data: employees, loading: loadingEmployees } = useCollection<Employee>(employeesQuery, "medical-visits.employees_lookup");
+  const { data: employees, loading: loadingEmployees, error: employeesError } = useCollection<Employee>(employeesQuery, "medical-visits.employees_lookup");
+
+  const employeeDirectorySuccessfullyLoaded =
+    canReadEmployees &&
+    !!employeesQuery &&
+    !loadingEmployees &&
+    !employeesError;
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -154,7 +167,7 @@ export default function MedicalVisitsRegistryPage() {
   };
 
   const handleViewCertificate = async (docId: string) => {
-    if (!db || !entityId || !docId) return;
+    if (!db || !entityId || !docId || !canReadDocuments) return;
     setViewingDocId(docId);
     try {
       const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, docId));
@@ -174,6 +187,16 @@ export default function MedicalVisitsRegistryPage() {
   const handleExecuteUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !uploadingRequest || !uploadFile) return;
+    if (!canAttachCertificate) {
+      toast({
+        variant: "destructive",
+        title: "Action indisponible",
+        description: "L’ajout d’un certificat médical nécessite l’autorisation de charger des documents.",
+      });
+      setUploadFile(null);
+      setUploadingRequest(null);
+      return;
+    }
 
     setIsUploading(true);
     try {
@@ -229,10 +252,26 @@ export default function MedicalVisitsRegistryPage() {
           <h1 className="text-3xl font-black text-primary tracking-tight">Visites médicales / Sorveglianza sanitaria</h1>
           <p className="text-muted-foreground text-sm font-medium">Gestion des visites médicales et de l'aptitude au travail.</p>
         </div>
-        {hasPermission("medicalVisits.create") && (
-          <Button onClick={() => { setEditingId(null); setIsResultMode(false); setIsDialogVisible(true); }} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
-            <Plus className="w-4 h-4" /> Nouvelle visite
-          </Button>
+        {canCreate && (
+          <div className="flex flex-col items-start md:items-end gap-2">
+            <Button
+              onClick={() => {
+                if (!canReadEmployees) return;
+                setEditingId(null);
+                setIsResultMode(false);
+                setIsDialogVisible(true);
+              }}
+              disabled={!canReadEmployees}
+              className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold"
+            >
+              <Plus className="w-4 h-4" /> Nouvelle visite
+            </Button>
+            {!canReadEmployees && (
+              <p className="max-w-xs text-[10px] font-medium text-muted-foreground text-left md:text-right">
+                La création d’une visite médicale nécessite l’autorisation de consulter les employés.
+              </p>
+            )}
+          </div>
         )}
       </header>
 
@@ -322,6 +361,8 @@ export default function MedicalVisitsRegistryPage() {
               ) : (
                 filteredVisits.map((v) => {
                   const emp = employeesMap.get(v.employeeId);
+                  const collaboratorName = emp?.displayName || (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
+                  const collaboratorCode = emp?.employeeCode || (employeeDirectorySuccessfullyLoaded ? v.employeeId.slice(0, 8) : "—");
                   const visitDate = parseISO(v.visitDate);
                   const isPast = isBefore(visitDate, startOfDay(new Date()));
                   const isMissingResult = isPast && v.fitnessStatus === 'pending_result' && v.status !== 'cancelled' && v.status !== 'archived';
@@ -330,8 +371,8 @@ export default function MedicalVisitsRegistryPage() {
                     <TableRow key={v.id} className="hover:bg-muted/50 transition-colors">
                       <TableCell className="pl-6">
                         <div className="flex flex-col">
-                           <span className="font-bold text-slate-900">{emp?.displayName || "Employé inconnu"}</span>
-                           <span className="text-[10px] text-muted-foreground uppercase font-mono">{emp?.employeeCode || v.employeeId.slice(0, 8)}</span>
+                           <span className="font-bold text-slate-900">{collaboratorName}</span>
+                           <span className="text-[10px] text-muted-foreground uppercase font-mono">{collaboratorCode}</span>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -350,19 +391,25 @@ export default function MedicalVisitsRegistryPage() {
                       </TableCell>
                       <TableCell>
                          {v.documentId ? (
-                           <button 
-                             onClick={() => handleViewCertificate(v.documentId!)} 
-                             disabled={!!viewingDocId}
-                             className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase hover:underline disabled:opacity-50 group"
-                           >
-                             <FileCheck className="w-3.5 h-3.5" /> 
-                             Certificat joint
-                             {viewingDocId === v.documentId ? (
-                               <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />
-                             ) : (
-                               <Eye className="w-2.5 h-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
-                             )}
-                           </button>
+                           canReadDocuments ? (
+                             <button
+                               onClick={() => handleViewCertificate(v.documentId!)}
+                               disabled={!!viewingDocId}
+                               className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase hover:underline disabled:opacity-50 group"
+                             >
+                               <FileCheck className="w-3.5 h-3.5" />
+                               Certificat joint
+                               {viewingDocId === v.documentId ? (
+                                 <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />
+                               ) : (
+                                 <Eye className="w-2.5 h-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                               )}
+                             </button>
+                           ) : (
+                             <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase">
+                               <FileCheck className="w-3.5 h-3.5 opacity-30" /> Certificat joint
+                             </div>
+                           )
                          ) : (
                            <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase">
                              <Paperclip className="w-3.5 h-3.5 opacity-30" /> Non joint
@@ -394,12 +441,12 @@ export default function MedicalVisitsRegistryPage() {
                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                            </DropdownMenuTrigger>
                            <DropdownMenuContent align="end" className="w-48">
-                              {v.documentId && (
+                              {v.documentId && canReadDocuments && (
                                 <DropdownMenuItem onClick={() => handleViewCertificate(v.documentId!)} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
                                   <Eye className="w-4 h-4" /> Voir certificat
                                 </DropdownMenuItem>
                               )}
-                              {!v.documentId && !isMissingResult && v.fitnessStatus !== 'pending_result' && (
+                              {!v.documentId && !isMissingResult && v.fitnessStatus !== 'pending_result' && canAttachCertificate && (
                                 <DropdownMenuItem onClick={() => setUploadingRequest(v)} className="gap-2 font-bold text-primary">
                                    <Upload className="w-4 h-4" /> Joindre certificat
                                 </DropdownMenuItem>
@@ -441,10 +488,18 @@ export default function MedicalVisitsRegistryPage() {
         visitId={editingId}
         resultMode={isResultMode}
         employees={activeEmployees}
+        canUpdateMedicalVisits={canUpdateMedicalVisits}
+        canReadDocuments={canReadDocuments}
+        canUploadDocuments={canUploadDocuments}
       />
 
       {/* Late Attachment Dialog */}
-      <Dialog open={!!uploadingRequest} onOpenChange={(open) => !open && setUploadingRequest(null)}>
+      <Dialog open={!!uploadingRequest && canAttachCertificate} onOpenChange={(open) => {
+        if (!open) {
+          setUploadingRequest(null);
+          setUploadFile(null);
+        }
+      }}>
         <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
@@ -466,6 +521,11 @@ export default function MedicalVisitsRegistryPage() {
                      accept=".pdf,.png,.jpg,.jpeg" 
                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                      onChange={(e) => {
+                       if (!canAttachCertificate) {
+                         e.target.value = "";
+                         setUploadFile(null);
+                         return;
+                       }
                        const file = e.target.files?.[0];
                        if (file && file.size > 10 * 1024 * 1024) {
                          toast({ variant: "destructive", title: "Fichier trop volumineux", description: "La taille max est de 10 Mo." });
@@ -495,7 +555,7 @@ export default function MedicalVisitsRegistryPage() {
                 <Button type="button" variant="ghost" onClick={() => setUploadingRequest(null)} disabled={isUploading}>Annuler</Button>
                 <Button 
                   type="submit" 
-                  disabled={isUploading || !uploadFile}
+                  disabled={isUploading || !uploadFile || !canAttachCertificate}
                   className="rounded-xl px-8 font-black shadow-lg"
                 >
                   {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
