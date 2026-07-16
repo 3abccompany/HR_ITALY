@@ -70,6 +70,8 @@ function sanitizeDiagnosticText(value: unknown): string | undefined {
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[jwt-redacted]")
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email-redacted]")
+    .replace(/\b(?:entities|users|memberships|employees|contracts|attendances|timeOffRequests|holidays|payrollCalculations|payrollParameters|ccnls)\/[^\s),;]+/gi, "[path-redacted]")
+    .replace(/\b[A-Za-z0-9_-]{24,}\b/g, "[identifier-redacted]")
     .replace(/\/documents\/[^)\s]+/gi, "/documents/[redacted]")
     .slice(0, 300);
 }
@@ -89,23 +91,15 @@ function getSanitizedErrorDiagnostics(error: unknown) {
 
 function logUnknownPayrollActionError(input: {
   traceId: string;
-  stage: string;
-  phase: "before-writes" | "during-writes" | "after-writes" | "unknown";
   error: unknown;
 }) {
   console.error("[payroll-calculation-runtime]", {
     traceId: input.traceId,
-    stage: input.stage,
-    phase: input.phase,
     ...getSanitizedErrorDiagnostics(input.error),
   });
 }
 
-function wasRuntimeLogged(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as { __payrollRuntimeLogged?: unknown }).__payrollRuntimeLogged === true;
-}
-
-function toActionError(error: unknown, traceId: string, stage: string): CalculateMonthlyPayrollActionResult {
+function toActionError(error: unknown, traceId: string): CalculateMonthlyPayrollActionResult {
   if (error instanceof PayrollCalculationActionError) {
     return errorResult(error.code, error.message);
   }
@@ -117,14 +111,7 @@ function toActionError(error: unknown, traceId: string, stage: string): Calculat
     );
   }
 
-  if (!wasRuntimeLogged(error)) {
-    logUnknownPayrollActionError({
-      traceId,
-      stage,
-      phase: "unknown",
-      error,
-    });
-  }
+  logUnknownPayrollActionError({ traceId, error });
 
   return errorResult("calculation-failed", "Calcul de synthèse économique temporairement indisponible.");
 }
@@ -160,47 +147,36 @@ function normalizeInput(params: unknown): CalculateMonthlyPayrollActionInput {
   return { idToken, entityId, year: rawYear as number, month: rawMonth as number };
 }
 
-async function authorizePayrollCalculation(
-  params: CalculateMonthlyPayrollActionInput,
-  setStage: (stage: string) => void
-) {
-  setStage("admin-service-availability");
+async function authorizePayrollCalculation(params: CalculateMonthlyPayrollActionInput) {
   if (!adminDb || !adminAuth) {
     throw new PayrollCalculationActionError("calculation-service-unavailable", "Service indisponible.");
   }
 
-  setStage("token-verification");
   const decodedToken = await adminAuth.verifyIdToken(params.idToken);
   const uid = decodedToken.uid;
 
-  setStage("active-user-read");
   const userSnapshot = await adminDb.collection("users").doc(uid).get();
   if (!userSnapshot.exists || userSnapshot.data()?.status !== "active") {
     throw new PayrollCalculationActionError("inactive-user", "Utilisateur inactif.");
   }
 
-  setStage("super-admin-detection");
   if (userSnapshot.data()?.platformRole === "superAdmin") {
-    setStage("entity-read");
     const entitySnapshot = await adminDb.collection("entities").doc(params.entityId).get();
     if (!entitySnapshot.exists) {
       throw new PayrollCalculationActionError("entity-not-found", "Entité introuvable.");
     }
-    setStage("entity-validation");
     if (entitySnapshot.data()?.status !== "active") {
       throw new PayrollCalculationActionError("entity-inactive", "Entité inactive.");
     }
     return { uid, entityId: params.entityId };
   }
 
-  setStage("membership-read");
   const membershipSnapshot = await adminDb.collection("memberships").doc(`${uid}_${params.entityId}`).get();
   if (!membershipSnapshot.exists) {
     throw new PayrollCalculationActionError("forbidden", "Action non autorisée.");
   }
 
   const membership = membershipSnapshot.data() || {};
-  setStage("membership-authorization");
   if (membership.status !== "active") {
     throw new PayrollCalculationActionError("forbidden", "Action non autorisée.");
   }
@@ -220,9 +196,7 @@ async function authorizePayrollCalculation(
     );
   }
 
-  setStage("entity-read");
   const entitySnapshot = await adminDb.collection("entities").doc(params.entityId).get();
-  setStage("entity-validation");
   if (!entitySnapshot.exists || entitySnapshot.data()?.status !== "active") {
     throw new PayrollCalculationActionError("forbidden", "Action non autorisée.");
   }
@@ -234,21 +208,16 @@ export async function calculateMonthlyPayrollAction(
   params: CalculateMonthlyPayrollActionInput
 ): Promise<CalculateMonthlyPayrollActionResult> {
   const traceId = randomUUID();
-  let stage = "action-input-validation";
 
   try {
     const input = normalizeInput(params);
-    const { uid, entityId } = await authorizePayrollCalculation(input, (nextStage) => {
-      stage = nextStage;
-    });
+    const { uid, entityId } = await authorizePayrollCalculation(input);
 
-    stage = "trusted-calculation-call";
     const result = await calculateTrustedMonthlyPayroll({
       entityId,
       year: input.year,
       month: input.month,
       actorUid: uid,
-      diagnosticTraceId: traceId,
     });
 
     return {
@@ -256,6 +225,6 @@ export async function calculateMonthlyPayrollAction(
       ...result,
     };
   } catch (error) {
-    return toActionError(error, traceId, stage);
+    return toActionError(error, traceId);
   }
 }
