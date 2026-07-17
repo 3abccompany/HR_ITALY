@@ -67,6 +67,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   const { db } = useFirebase();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
   
   const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
@@ -80,42 +81,48 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
   });
 
   // Permissions check for queries
-  const canReadProfiles = !membershipLoading && !!membership && hasPermission("jobProfiles.read");
-  const canModifyProfiles = !membershipLoading && !!membership && (hasPermission("jobProfiles.create") || hasPermission("jobProfiles.update"));
+  const canReadJobProfiles = hasPermission("jobProfiles.read");
+  const canCreateJobProfiles = hasPermission("jobProfiles.create");
+  const canUpdateJobProfiles = hasPermission("jobProfiles.update");
+  const canReadDepartments = hasPermission("departments.read");
+  const canReadJobTitles = hasPermission("jobTitles.read");
+  const canReadJobProfileCatalog = hasPermission("jobProfileCatalog.read");
+  const canSubmitJobProfile = isEditing ? canUpdateJobProfiles : canCreateJobProfiles;
+  const hasRequiredCreationReferences = canReadDepartments && canReadJobTitles;
 
   // Masters
   const deptsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadProfiles) return null;
+    if (!db || !entityId || !permissionsReady || !canReadDepartments) return null;
     return query(collection(db, `entities/${entityId}/departments`), orderBy("name", "asc")) as Query<Department>;
-  }, [db, entityId, canReadProfiles]);
+  }, [db, entityId, permissionsReady, canReadDepartments]);
 
   const jobsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadProfiles) return null;
+    if (!db || !entityId || !permissionsReady || !canReadJobTitles) return null;
     return query(collection(db, `entities/${entityId}/jobTitles`), orderBy("title", "asc")) as Query<JobTitle>;
-  }, [db, entityId, canReadProfiles]);
+  }, [db, entityId, permissionsReady, canReadJobTitles]);
 
   const catalogQuery = useMemo(() => {
-    if (!db || !entityId || !canReadProfiles) return null;
+    if (!db || !entityId || !permissionsReady || !canReadJobProfileCatalog) return null;
     return query(collection(db, `entities/${entityId}/jobProfileCatalogItems`), orderBy("label", "asc")) as Query<JobProfileCatalogItem>;
-  }, [db, entityId, canReadProfiles]);
+  }, [db, entityId, permissionsReady, canReadJobProfileCatalog]);
 
   // Added missing profiles query for activeProfiles logic
   const profilesQuery = useMemo(() => {
-    if (!db || !entityId || !canReadProfiles) return null;
+    if (!db || !entityId || !permissionsReady || !canReadJobProfiles) return null;
     return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc")) as Query<JobProfile>;
-  }, [db, entityId, canReadProfiles]);
+  }, [db, entityId, permissionsReady, canReadJobProfiles]);
 
   // CCNL / Levels
   const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId || (!canReadProfiles && !canModifyProfiles)) return null;
+    if (!db || !entityId || !permissionsReady || (!canReadJobProfiles && !canSubmitJobProfile)) return null;
     return query(collection(db, `entities/${entityId}/ccnls`), where("status", "==", "active")) as Query<CCNL>;
-  }, [db, entityId, canReadProfiles, canModifyProfiles]);
+  }, [db, entityId, permissionsReady, canReadJobProfiles, canSubmitJobProfile]);
 
   const levelsQuery = useMemo(() => {
-    const isReady = !!db && !!entityId && !!formData.defaultCcnlId && formData.defaultCcnlId !== "none_clear" && (canReadProfiles || canModifyProfiles);
+    const isReady = !!db && !!entityId && permissionsReady && !!formData.defaultCcnlId && formData.defaultCcnlId !== "none_clear" && (canReadJobProfiles || canSubmitJobProfile);
     if (!isReady) return null;
     return query(collection(db, `entities/${entityId}/ccnls/${formData.defaultCcnlId}/levels`), where("status", "==", "active")) as Query<CCNLLevel>;
-  }, [db, entityId, formData.defaultCcnlId, canReadProfiles, canModifyProfiles]);
+  }, [db, entityId, permissionsReady, formData.defaultCcnlId, canReadJobProfiles, canSubmitJobProfile]);
 
   const { data: departments } = useCollection<Department>(deptsQuery);
   const { data: jobTitles } = useCollection<JobTitle>(jobsQuery);
@@ -216,7 +223,12 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userId || !entityId) return;
+    if (!userId || !entityId || !permissionsReady || !canSubmitJobProfile) return;
+
+    if (!isEditing && !hasRequiredCreationReferences) {
+      toast({ variant: "destructive", title: "Accès incomplet", description: "La création d’une fiche de poste nécessite l’accès aux départements et aux intitulés de poste." });
+      return;
+    }
 
     if (formData.defaultLevelId !== "none_clear" && formData.defaultCcnlId === "none_clear") {
       toast({ variant: "destructive", title: "Configuration invalide", description: "Veuillez sélectionner un CCNL avant de choisir un niveau." });
@@ -238,10 +250,10 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
       const payload = {
         ...formData,
         entityName: entityName,
-        departmentName: dept?.name || "N/A",
-        jobTitleName: title?.title || "N/A",
-        directSupervisorJobTitleName: supervisor?.title || "N/A",
-        collaboratorJobTitleNames: collaborators?.map(c => c.title) || []
+        departmentName: dept?.name || initialData?.departmentName || "N/A",
+        jobTitleName: title?.title || initialData?.jobTitleName || "N/A",
+        directSupervisorJobTitleName: supervisor?.title || initialData?.directSupervisorJobTitleName || "N/A",
+        collaboratorJobTitleNames: collaborators?.map(c => c.title) || initialData?.collaboratorJobTitleNames || []
       };
 
       if (isEditing && initialData) {
@@ -304,7 +316,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
           <Button variant="outline" type="button" onClick={() => router.back()} disabled={loading}>
             Annuler
           </Button>
-          <Button type="submit" disabled={loading || !formData.jobTitleId || !formData.departmentId}>
+          <Button type="submit" disabled={loading || !formData.jobTitleId || !formData.departmentId || (!isEditing && !hasRequiredCreationReferences)}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
             {isEditing ? "Mettre à jour (Nouvelle Version)" : "Créer la fiche de poste"}
           </Button>
@@ -321,6 +333,11 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {!isEditing && !hasRequiredCreationReferences && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-900">
+                  La création d’une fiche de poste nécessite l’accès aux départements et aux intitulés de poste.
+                </div>
+              )}
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Entreprise</Label>
                 <Input value={entityName} readOnly className="bg-secondary/20" />
@@ -336,6 +353,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                   onValueChange={(v: string) => {
                     setFormData(p => ({...p, departmentId: v, jobTitleId: ""}));
                   }}
+                  disabled={!canReadDepartments}
                 >
                   <SelectTrigger><SelectValue placeholder="Choisir..." /></SelectTrigger>
                   <SelectContent>
@@ -355,7 +373,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                 <Select 
                   value={formData.jobTitleId} 
                   onValueChange={(v: string) => setFormData(p => ({...p, jobTitleId: v}))}
-                  disabled={!formData.departmentId}
+                  disabled={!formData.departmentId || !canReadJobTitles}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={formData.departmentId ? "Choisir..." : "Sélectionner un département d'abord"} />
@@ -493,7 +511,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Supérieur hiérarchique direct (N+1)</Label>
-                <Select value={formData.directSupervisorJobTitleId} onValueChange={(v: string) => setFormData(p => ({...p, directSupervisorJobTitleId: v}))}>
+                <Select value={formData.directSupervisorJobTitleId} onValueChange={(v: string) => setFormData(p => ({...p, directSupervisorJobTitleId: v}))} disabled={!canReadJobTitles}>
                   <SelectTrigger><SelectValue placeholder="Choisir le poste du N+1" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Aucun</SelectItem>
@@ -510,6 +528,7 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                         id={`collab-${j.jobTitleId}`} 
                         checked={formData.collaboratorJobTitleIds.includes(j.jobTitleId)}
                         onCheckedChange={() => toggleArrayItem('collaboratorJobTitleIds', j.jobTitleId)}
+                        disabled={!canReadJobTitles}
                       />
                       <label htmlFor={`collab-${j.jobTitleId}`} className="text-xs font-medium cursor-pointer truncate">{j.title}</label>
                     </div>

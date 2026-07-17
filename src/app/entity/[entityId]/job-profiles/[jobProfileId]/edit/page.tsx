@@ -17,18 +17,18 @@ export default function EditJobProfilePage() {
   const jobProfileId = params.jobProfileId as string;
   const { db } = useFirebase();
   const { user } = useUser();
-  const { entity, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { entity, loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
+  const canUpdate = hasPermission("jobProfiles.update");
 
   const profileRef = useMemo(() => {
-    if (!db || !entityId || !jobProfileId) return null;
+    if (!db || !entityId || !jobProfileId || !permissionsReady || !canUpdate) return null;
     return doc(db, `entities/${entityId}/jobProfiles`, jobProfileId) as DocumentReference<JobProfile>;
-  }, [db, entityId, jobProfileId]);
+  }, [db, entityId, jobProfileId, permissionsReady, canUpdate]);
 
   const { data: profile, loading: loadingProfile } = useDoc<JobProfile>(profileRef);
 
-  const canUpdate = hasPermission("jobProfiles.update");
-
-  if (membershipLoading || loadingProfile) {
+  if (membershipLoading || (permissionsReady && canUpdate && loadingProfile)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -36,7 +36,7 @@ export default function EditJobProfilePage() {
     );
   }
 
-  if (!canUpdate) {
+  if (!permissionsReady || !canUpdate) {
     return (
       <div className="p-8">
         <Card className="bg-destructive/5 border-destructive/20">

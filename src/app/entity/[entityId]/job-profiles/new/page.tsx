@@ -14,7 +14,8 @@ export default function NewJobProfilePage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const { user } = useUser();
-  const { entity, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { entity, loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
 
   const canCreate = hasPermission("jobProfiles.create");
 
@@ -26,7 +27,7 @@ export default function NewJobProfilePage() {
     );
   }
 
-  if (!canCreate) {
+  if (!permissionsReady || !canCreate) {
     return (
       <div className="p-8">
         <Card className="bg-destructive/5 border-destructive/20">
