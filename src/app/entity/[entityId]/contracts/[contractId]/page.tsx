@@ -243,6 +243,10 @@ export default function ContractDetailPage() {
   const auth = useAuth();
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
+  const canReadContracts = hasPermission("contracts.read");
+  const canReadEmployees = hasPermission("employees.read");
+  const canReadPersons = hasPermission("persons.read");
 
   const [processing, setProcessing] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -308,18 +312,19 @@ export default function ContractDetailPage() {
   const [terminationFile, setTerminationFile] = useState<File | null>(null);
 
   // 1. Core Data
-  const contractRef = useMemo(() => 
-    db && entityId && contractId ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
-  [db, entityId, contractId]);
+  const contractRef = useMemo(() => {
+    if (!db || !entityId || !contractId || !permissionsReady || !canReadContracts) return null;
+    return doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>;
+  }, [db, entityId, contractId, permissionsReady, canReadContracts]);
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
 
   const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId || !hasPermission("settings.read")) return null;
+    if (!db || !entityId || !permissionsReady || !canReadContracts || !hasPermission("settings.read")) return null;
     return query(
       collection(db, `entities/${entityId}/ccnls`),
       where("status", "==", "active")
     ) as Query<CCNL>;
-  }, [db, entityId, hasPermission]);
+  }, [db, entityId, permissionsReady, canReadContracts, hasPermission]);
   const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
 
   const isRenewalOverlap = useMemo(() => {
@@ -332,25 +337,25 @@ export default function ContractDetailPage() {
   // 2. Registry Documents
   const canReadDocs = hasPermission("documents.read");
   const docsQuery = useMemo(() => {
-    if (!db || !entityId || !contractId || !canReadDocs) return null;
+    if (!db || !entityId || !contractId || !permissionsReady || !canReadContracts || !canReadDocs) return null;
     return query(
       collection(db, `entities/${entityId}/documents`), 
       where("contractId", "==", contractId)
     ) as Query<HRDocument>;
-  }, [db, entityId, contractId, canReadDocs]);
+  }, [db, entityId, contractId, permissionsReady, canReadContracts, canReadDocs]);
 
   const { data: contractDocs } = useCollection<HRDocument>(docsQuery);
 
   // 3. Compliance Query (Proroga Tracking)
   const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
   const cpiQuery = useMemo(() => {
-    if (!db || !entityId || !contractId || !isRenewalContract || !hasPermission("employmentRequests.read")) return null;
+    if (!db || !entityId || !contractId || !permissionsReady || !canReadContracts || !isRenewalContract || !hasPermission("employmentRequests.read")) return null;
     return query(
       collection(db, `entities/${entityId}/employmentRequests`),
       where("contractId", "==", contractId),
       limit(1)
     ) as Query<EmploymentRequest>;
-  }, [db, entityId, contractId, isRenewalContract, hasPermission]);
+  }, [db, entityId, contractId, permissionsReady, canReadContracts, isRenewalContract, hasPermission]);
 
   const { data: cpiItems } = useCollection<EmploymentRequest>(cpiQuery);
   const renewalCpi = cpiItems?.find((item) => item.type === "unilav_proroga" || item.type === "unilav_trasformazione");
@@ -395,24 +400,28 @@ export default function ContractDetailPage() {
   }, [contractDocs]);
 
   // 4. Source Documents for fallbacks
-  const employeeRef = useMemo(() => 
-    db && contract?.employeeId ? doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee> : null,
-  [db, entityId, contract?.employeeId]);
+  const employeeRef = useMemo(() => {
+    if (!db || !entityId || !contract?.employeeId || !permissionsReady || !canReadContracts || !canReadEmployees) return null;
+    return doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee>;
+  }, [db, entityId, contract?.employeeId, permissionsReady, canReadContracts, canReadEmployees]);
   const { data: employee } = useDoc<Employee>(employeeRef);
 
-  const personRef = useMemo(() => 
-    db && entityId && contract?.personId ? (doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person>) : null,
-  [db, entityId, contract?.personId]);
+  const personRef = useMemo(() => {
+    if (!db || !entityId || !contract?.personId || !permissionsReady || !canReadContracts || !canReadPersons) return null;
+    return doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person>;
+  }, [db, entityId, contract?.personId, permissionsReady, canReadContracts, canReadPersons]);
   const { data: person } = useDoc<Person>(personRef);
 
-  const offerRef = useMemo(() => 
-    db && entityId && contract?.sourceOfferId ? doc(db, `entities/${entityId}/employmentOffers`, contract.sourceOfferId) as DocumentReference<EmploymentOffer> : null,
-  [db, entityId, contract?.sourceOfferId]);
+  const offerRef = useMemo(() => {
+    if (!db || !entityId || !contract?.sourceOfferId || !permissionsReady || !canReadContracts) return null;
+    return doc(db, `entities/${entityId}/employmentOffers`, contract.sourceOfferId) as DocumentReference<EmploymentOffer>;
+  }, [db, entityId, contract?.sourceOfferId, permissionsReady, canReadContracts]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
-  const communicationsQuery = useMemo(() => 
-    db && contract?.sourceOfferId ? query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", contract.sourceOfferId)) as Query<any> : null,
-  [db, entityId, contract?.sourceOfferId]);
+  const communicationsQuery = useMemo(() => {
+    if (!db || !entityId || !contract?.sourceOfferId || !permissionsReady || !canReadContracts) return null;
+    return query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", contract.sourceOfferId)) as Query<any>;
+  }, [db, entityId, contract?.sourceOfferId, permissionsReady, canReadContracts]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   const mandatoryCommunication = communications?.find(c => c.type === "UNILAV_ASSUNZIONE");
 
@@ -607,7 +616,7 @@ export default function ContractDetailPage() {
       companyAddressSnapshot: getEffectiveValue('companyAddressSnapshot', companyAddress),
       legalRepresentativeName: getEffectiveValue('legalRepresentativeName', entity?.referentEntreprise),
       
-      employeeDisplayName: getEffectiveValue('employeeDisplayName', employee?.displayName || person?.displayName),
+      employeeDisplayName: getEffectiveValue('employeeDisplayName', employee?.displayName || person?.displayName || "Collaborateur non renseigné"),
       employeeCode: getEffectiveValue('employeeCode', employee?.employeeCode),
       taxCode: getEffectiveValue('taxCode', employee?.taxCode || person?.codiceFiscale),
       employeeAddressSnapshot: getEffectiveValue('employeeAddressSnapshot', employeeAddress),
