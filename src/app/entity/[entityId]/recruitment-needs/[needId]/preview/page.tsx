@@ -25,19 +25,25 @@ export default function RecruitmentNeedPreviewPage() {
   const entityId = params.entityId as string;
   const needId = params.needId as string;
   const { db } = useFirebase();
-  const { hasPermission, loading: membershipLoading } = useActiveMembership(entityId);
+  const { hasPermission, membership, loading: membershipLoading } = useActiveMembership(entityId);
+
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canRead = hasPermission("recruitmentNeeds.read");
 
   const needRef = useMemo(() => {
-    if (!db || !entityId || !needId) return null;
+    if (!db || !entityId || !needId || !permissionsReady || !canRead) return null;
     return doc(db, `entities/${entityId}/recruitmentNeeds`, needId) as DocumentReference<RecruitmentNeed>;
-  }, [db, entityId, needId]);
+  }, [db, entityId, needId, permissionsReady, canRead]);
 
   const { data: need, loading } = useDoc<RecruitmentNeed>(needRef);
 
   const canUpdate = hasPermission("recruitmentNeeds.update");
   const canCreateForm = hasPermission("applicationForms.create");
 
-  if (loading || membershipLoading) {
+  if (membershipLoading || (permissionsReady && canRead && loading)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -45,7 +51,7 @@ export default function RecruitmentNeedPreviewPage() {
     );
   }
 
-  if (!need) {
+  if (!permissionsReady || !canRead || !need) {
     return (
       <div className="p-8 text-center max-w-md mx-auto mt-20">
         <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />

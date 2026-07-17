@@ -94,7 +94,7 @@ export default function RecruitmentNeedsPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
 
   // State
   const [loading, setLoading] = useState(false);
@@ -105,18 +105,25 @@ export default function RecruitmentNeedsPage() {
   const [pagination, setPagination] = useState({ page: 1, pageSize: 25 });
 
   // Permissions
-  const canRead = hasPermission("recruitmentNeeds.read");
-  const canCreate = hasPermission("recruitmentNeeds.create");
-  const canUpdate = hasPermission("recruitmentNeeds.update");
-  const canCancel = hasPermission("recruitmentNeeds.cancel");
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadRecruitmentNeeds = hasPermission("recruitmentNeeds.read");
+  const canCreateRecruitmentNeeds = hasPermission("recruitmentNeeds.create");
+  const canUpdateRecruitmentNeeds = hasPermission("recruitmentNeeds.update");
+  const canCancelRecruitmentNeeds = hasPermission("recruitmentNeeds.cancel");
   const canCreateForm = hasPermission("applicationForms.create");
+  const canRead = canReadRecruitmentNeeds;
+  const canUpdate = canUpdateRecruitmentNeeds;
+  const canCancel = canCancelRecruitmentNeeds;
 
   // Queries
   const needsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadRecruitmentNeeds) return null;
     // Hardened: Removed Firestore-side orderBy to ensure visibility of records missing createdAt
     return query(collection(db, `entities/${entityId}/recruitmentNeeds`));
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadRecruitmentNeeds]);
 
   const { data: needs, loading: loadingNeeds } = useCollection<RecruitmentNeed>(needsQuery);
 
@@ -271,9 +278,11 @@ export default function RecruitmentNeedsPage() {
           <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Besoins RH</h1>
           <p className="text-muted-foreground text-sm">Ouverture de postes, planification et offres d'emploi.</p>
         </div>
-        {canCreate && (
-          <Button onClick={() => router.push(`/entity/${entityId}/recruitment-needs/new`)} className="gap-2 shadow-lg shadow-primary/10">
-            <Plus className="w-4 h-4" /> Nouveau besoin RH
+        {permissionsReady && canCreateRecruitmentNeeds && (
+          <Button asChild className="gap-2 shadow-lg shadow-primary/10">
+            <a href={`/entity/${entityId}/recruitment-needs/new`}>
+              <Plus className="w-4 h-4" /> Nouveau besoin RH
+            </a>
           </Button>
         )}
       </div>

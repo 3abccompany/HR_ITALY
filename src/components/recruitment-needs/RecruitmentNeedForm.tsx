@@ -74,21 +74,27 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
   const [loadingRequester, setLoadingRequester] = useState(false);
 
   // Queries
-  const canReadProfiles = !membershipLoading && !!membership && hasPermission("jobProfiles.read");
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadJobProfiles = hasPermission("jobProfiles.read");
+  const canReadWorksites = hasPermission("worksites.read");
+  const canCreateRecruitmentNeeds = hasPermission("recruitmentNeeds.create");
+  const canUpdateRecruitmentNeeds = hasPermission("recruitmentNeeds.update");
   const profilesQuery = useMemo(() => {
-    if (!db || !entityId || !canReadProfiles) return null;
+    if (!db || !entityId || !permissionsReady || !canReadJobProfiles) return null;
     return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc"));
-  }, [db, entityId, canReadProfiles]);
+  }, [db, entityId, permissionsReady, canReadJobProfiles]);
 
-  const canReadWorksites = !membershipLoading && !!membership && hasPermission("worksites.read");
   const worksitesQuery = useMemo(() => {
-    if (!db || !entityId || !canReadWorksites) return null;
+    if (!db || !entityId || !permissionsReady || !canReadWorksites) return null;
     return query(
       collection(db, `entities/${entityId}/worksites`), 
       where("status", "==", "active"),
       orderBy("name", "asc")
     );
-  }, [db, entityId, canReadWorksites]);
+  }, [db, entityId, permissionsReady, canReadWorksites]);
 
   const { data: jobProfiles } = useCollection<JobProfile>(profilesQuery);
   const { data: worksites, loading: loadingWorksites } = useCollection<Worksite>(worksitesQuery);
@@ -133,18 +139,20 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
     const profile = activeProfiles.find(p => p.jobProfileId === profileId);
     if (!profile || !db) return;
 
-    setLoadingRequester(true);
-    let requesterName = profile.createdBy; // Fallback
+    let requesterName = "Demandeur non renseigné";
 
-    try {
-      const userSnap = await getDoc(doc(db, "users", profile.createdBy));
-      if (userSnap.exists()) {
-        requesterName = userSnap.data().displayName || userSnap.data().email;
+    if (profile.createdBy === userId) {
+      setLoadingRequester(true);
+      try {
+        const userSnap = await getDoc(doc(db, "users", profile.createdBy));
+        if (userSnap.exists()) {
+          requesterName = userSnap.data().displayName || userSnap.data().email || requesterName;
+        }
+      } catch (e) {
+        console.warn("Failed to fetch requester name", e);
+      } finally {
+        setLoadingRequester(false);
       }
-    } catch (e) {
-      console.warn("Failed to fetch requester name", e);
-    } finally {
-      setLoadingRequester(false);
     }
 
     setFormData(prev => ({
@@ -178,6 +186,21 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
     e.preventDefault();
     if (!userId || !entityId) return;
 
+    if (!permissionsReady) {
+      toast({ variant: "destructive", title: "Accès indisponible", description: "Veuillez attendre la validation de votre accès à cette entité." });
+      return;
+    }
+
+    if (!isEditing && (!canCreateRecruitmentNeeds || !canReadJobProfiles || !canReadWorksites)) {
+      toast({ variant: "destructive", title: "Accès insuffisant", description: "La création d’un besoin RH nécessite l’accès aux fiches de poste et aux sites de travail." });
+      return;
+    }
+
+    if (isEditing && !canUpdateRecruitmentNeeds) {
+      toast({ variant: "destructive", title: "Accès insuffisant", description: "Vous n'avez pas la permission de modifier les besoins RH." });
+      return;
+    }
+
     if (formData.requestedHeadcount < 1) {
       toast({ variant: "destructive", title: "Erreur", description: "Le nombre de personnes doit être supérieur à 0." });
       return;
@@ -190,7 +213,18 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
 
     setLoading(true);
     try {
-      const profile = activeProfiles.find(p => p.jobProfileId === formData.jobProfileId);
+      const profile = activeProfiles.find(p => p.jobProfileId === formData.jobProfileId) || (
+        isEditing && initialData && formData.jobProfileId === initialData.jobProfileId
+          ? {
+              jobProfileId: initialData.jobProfileId,
+              jobTitleName: initialData.jobTitleName,
+              versionLabel: initialData.jobProfileVersion || "",
+              departmentId: initialData.departmentId,
+              departmentName: initialData.departmentName,
+              jobTitleId: initialData.jobTitleId,
+            } as JobProfile
+          : undefined
+      );
       if (!profile) throw new Error("Veuillez sélectionner une fiche de poste valide.");
 
       const payload = {
@@ -241,7 +275,16 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
           <Button variant="outline" type="button" onClick={() => router.back()} disabled={loading}>
             Annuler
           </Button>
-          <Button type="submit" disabled={loading || !formData.jobProfileId}>
+          <Button
+            type="submit"
+            disabled={
+              loading ||
+              !permissionsReady ||
+              !formData.jobProfileId ||
+              (!isEditing && (!canCreateRecruitmentNeeds || !canReadJobProfiles || !canReadWorksites)) ||
+              (isEditing && !canUpdateRecruitmentNeeds)
+            }
+          >
             {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
             {isEditing ? "Enregistrer les modifications" : "Ouvrir le besoin RH"}
           </Button>
@@ -260,11 +303,13 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
             <CardContent className="space-y-4 pt-6">
                <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Fiche de Poste de Référence</Label>
-                <Select value={formData.jobProfileId} onValueChange={handleProfileChange}>
-                  <SelectTrigger><SelectValue placeholder={!canReadProfiles ? "Accès refusé" : "Sélectionner une fiche active"} /></SelectTrigger>
+                <Select value={formData.jobProfileId} onValueChange={handleProfileChange} disabled={!canReadJobProfiles}>
+                  <SelectTrigger><SelectValue placeholder={!canReadJobProfiles ? "Accès indisponible" : "Sélectionner une fiche active"} /></SelectTrigger>
                   <SelectContent>
-                    {!canReadProfiles ? (
-                      <div className="p-4 text-center text-xs text-destructive">Permission requise : jobProfiles.read</div>
+                    {!canReadJobProfiles ? (
+                      <div className="p-4 text-center text-xs text-muted-foreground">
+                        La création d’un besoin RH nécessite l’accès aux fiches de poste et aux sites de travail.
+                      </div>
                     ) : (
                       activeProfiles.map(p => (
                         <SelectItem key={p.jobProfileId} value={p.jobProfileId}>
