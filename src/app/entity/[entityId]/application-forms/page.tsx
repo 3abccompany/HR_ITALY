@@ -113,7 +113,7 @@ export default function ApplicationFormsPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   // State
   const [loading, setLoading] = useState(false);
@@ -121,17 +121,21 @@ export default function ApplicationFormsPage() {
   const [actionPending, setActionPending] = useState<{ id: string, action: 'publish' | 'close' | 'archive' } | null>(null);
 
   // Permissions
-  const canRead = hasPermission("applicationForms.read");
-  const canCreate = hasPermission("applicationForms.create");
-  const canUpdate = hasPermission("applicationForms.update");
-  const canPublish = hasPermission("applicationForms.publish");
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadApplicationForms = hasPermission("applicationForms.read");
+  const canCreateApplicationForms = hasPermission("applicationForms.create");
+  const canUpdateApplicationForms = hasPermission("applicationForms.update");
+  const canPublishApplicationForms = hasPermission("applicationForms.publish");
 
   // Queries
   const formsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadApplicationForms) return null;
     // Hardening: Removed Firestore-side orderBy to ensure all records are visible
     return query(collection(db, `entities/${entityId}/applicationForms`));
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadApplicationForms]);
 
   const { data: forms, loading: loadingForms } = useCollection<ApplicationForm>(formsQuery);
 
@@ -238,6 +242,9 @@ export default function ApplicationFormsPage() {
 
   const executeAction = async () => {
     if (!actionPending || !user) return;
+    if (!permissionsReady) return;
+    if (actionPending.action === 'publish' && !canPublishApplicationForms) return;
+    if ((actionPending.action === 'close' || actionPending.action === 'archive') && !canUpdateApplicationForms) return;
     setLoading(true);
     try {
       if (actionPending.action === 'publish') {
@@ -277,9 +284,11 @@ export default function ApplicationFormsPage() {
           <h1 className="text-3xl font-headline font-bold text-primary">Formulaires de candidature</h1>
           <p className="text-muted-foreground text-sm">Gestion des formulaires de capture candidats.</p>
         </div>
-        {canCreate && (
-          <Button onClick={() => router.push(`/entity/${entityId}/application-forms/new`)} className="gap-2 shadow-lg shadow-primary/10">
-            <Plus className="w-4 h-4" /> Nouveau formulaire
+        {permissionsReady && canCreateApplicationForms && (
+          <Button asChild className="gap-2 shadow-lg shadow-primary/10">
+            <a href={`/entity/${entityId}/application-forms/new`}>
+              <Plus className="w-4 h-4" /> Nouveau formulaire
+            </a>
           </Button>
         )}
       </div>
@@ -451,8 +460,8 @@ export default function ApplicationFormsPage() {
                   <FormsTable 
                     forms={formsInGroup} 
                     entityId={entityId} 
-                    canUpdate={canUpdate} 
-                    canPublish={canPublish}
+                    canUpdate={canUpdateApplicationForms}
+                    canPublish={canPublishApplicationForms}
                     onAction={(id, action) => setActionPending({ id, action })}
                     onCopy={copyPublicLink}
                     onOpen={openPublicForm}
@@ -467,8 +476,8 @@ export default function ApplicationFormsPage() {
           <FormsTable 
             forms={filteredForms} 
             entityId={entityId} 
-            canUpdate={canUpdate} 
-            canPublish={canPublish}
+            canUpdate={canUpdateApplicationForms}
+            canPublish={canPublishApplicationForms}
             onAction={(id, action) => setActionPending({ id, action })}
             onCopy={copyPublicLink}
             onOpen={openPublicForm}

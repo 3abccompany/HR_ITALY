@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useFirebase, useDoc } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
+import { useActiveMembership } from "@/hooks/use-active-membership";
 import { ApplicationForm } from "@/types/application-form";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -25,14 +26,37 @@ export default function ApplicationFormPreviewPage() {
   const formId = params.formId as string;
   
   const { db } = useFirebase();
+  const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadApplicationForms = hasPermission("applicationForms.read");
 
   const formRef = useMemo(() => 
-    db && entityId && formId ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
-  [db, entityId, formId]);
+    db && entityId && formId && permissionsReady && canReadApplicationForms ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
+  [db, entityId, formId, permissionsReady, canReadApplicationForms]);
 
   const { data: form, loading } = useDoc<ApplicationForm>(formRef);
 
-  if (loading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (membershipLoading || loading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+
+  if (!permissionsReady || !canReadApplicationForms) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <Card className="bg-destructive/5 border-destructive/20">
+          <CardContent className="flex flex-col items-center py-12 text-center">
+            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
+            <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
+            <p className="text-muted-foreground">
+              Vous n'avez pas la permission de consulter ce formulaire.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!form) return <div className="p-8 text-center">Formulaire introuvable.</div>;
 

@@ -90,11 +90,18 @@ export default function EditApplicationFormPage() {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadApplicationForms = hasPermission("applicationForms.read");
+  const canUpdateApplicationForms = hasPermission("applicationForms.update");
 
   const formRef = useMemo(() => 
-    db && entityId && formId ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
-  [db, entityId, formId]);
+    db && entityId && formId && permissionsReady && canReadApplicationForms && canUpdateApplicationForms ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
+  [db, entityId, formId, permissionsReady, canReadApplicationForms, canUpdateApplicationForms]);
 
   const { data: form, loading: loadingForm } = useDoc<ApplicationForm>(formRef);
 
@@ -122,7 +129,7 @@ export default function EditApplicationFormPage() {
   }, [form]);
 
   const handleSave = async () => {
-    if (!user || !entityId || !formId) return;
+    if (!user || !entityId || !formId || !permissionsReady || !canUpdateApplicationForms) return;
     setSaving(true);
     
     try {
@@ -247,6 +254,21 @@ export default function EditApplicationFormPage() {
   };
 
   if (membershipLoading || loadingForm) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (!permissionsReady || !canReadApplicationForms || !canUpdateApplicationForms) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <Card className="bg-destructive/5 border-destructive/20">
+          <CardContent className="flex flex-col items-center py-12 text-center">
+            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
+            <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
+            <p className="text-muted-foreground">
+              Vous n'avez pas la permission de modifier ce formulaire.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
   if (!form) return <div className="p-8 text-center">Formulaire introuvable.</div>;
 
   const isRequiredIdentity = (key: string) => 
