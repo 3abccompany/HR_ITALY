@@ -440,4 +440,3 @@ function CatalogLoadingState() {
     </div>
   );
 }
-

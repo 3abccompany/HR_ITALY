@@ -49,4 +49,3 @@ export interface SuperAdminHealthReport {
   summary: SuperAdminHealthSummary;
   isEmptyPlatform: boolean;
 }
-

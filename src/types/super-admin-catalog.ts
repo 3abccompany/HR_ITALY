@@ -70,4 +70,3 @@ export interface SuperAdminCatalogReport {
   modules: string[];
   isEmptyRuntimeCatalog: boolean;
 }
-

@@ -317,4 +317,3 @@ export function subscribeSuperAdminCatalogReport(
 
   return cleanup;
 }
-
