@@ -377,7 +377,8 @@ export default function ReportsPage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
-  const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
+  const { hasPermission, loading: membershipLoading, entity, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
 
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -408,66 +409,66 @@ export default function ReportsPage() {
   );
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadEmployees) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canReadReports, canReadEmployees]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadEmployees]);
 
   const payrollQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadPayroll) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadPayroll) return null;
     return query(
       collection(db, `entities/${entityId}/payrollCalculations`),
       where("year", "==", selectedYear),
       where("month", "==", selectedMonth)
     ) as Query<PayrollCalculation>;
-  }, [db, entityId, canReadReports, canReadPayroll, selectedYear, selectedMonth]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadPayroll, selectedYear, selectedMonth]);
 
   const mealTicketQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadMealTickets) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadMealTickets) return null;
     return query(
       collection(db, `entities/${entityId}/mealTicketMonthlySummaries`),
       where("year", "==", selectedYear),
       where("month", "==", selectedMonth),
       where("status", "==", "confirmed")
     ) as Query<MealTicketMonthlySummary>;
-  }, [db, entityId, canReadReports, canReadMealTickets, selectedYear, selectedMonth]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadMealTickets, selectedYear, selectedMonth]);
 
   const kilometerQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadReimbursements) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadReimbursements) return null;
     return query(
       collection(db, `entities/${entityId}/kilometerReimbursementMonthlySummaries`),
       where("year", "==", selectedYear),
       where("month", "==", selectedMonth),
       where("status", "==", "confirmed")
     ) as Query<KilometerReimbursementMonthlySummary>;
-  }, [db, entityId, canReadReports, canReadReimbursements, selectedYear, selectedMonth]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadReimbursements, selectedYear, selectedMonth]);
 
   const attendanceQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadAttendances) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadAttendances) return null;
     return query(
       collection(db, `entities/${entityId}/attendances`),
       where("attendanceDate", ">=", startDate),
       where("attendanceDate", "<=", endDate)
     ) as Query<AttendanceRecord>;
-  }, [db, entityId, canReadReports, canReadAttendances, startDate, endDate]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadAttendances, startDate, endDate]);
 
   const contractsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadContracts) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadContracts) return null;
     return query(
       collection(db, `entities/${entityId}/contracts`),
       where("startDate", ">=", startDate),
       where("startDate", "<=", endDate)
     ) as Query<Contract>;
-  }, [db, entityId, canReadReports, canReadContracts, startDate, endDate]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadContracts, startDate, endDate]);
 
   const employmentRequestsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadEmploymentRequests) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadEmploymentRequests) return null;
     return query(collection(db, `entities/${entityId}/employmentRequests`)) as Query<EmploymentRequest>;
-  }, [db, entityId, canReadReports, canReadEmploymentRequests]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadEmploymentRequests]);
 
   const mandatoryCommunicationsQuery = useMemo(() => {
-    if (!db || !entityId || !canReadReports || !canReadEmploymentRequests) return null;
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadEmploymentRequests) return null;
     return query(collection(db, `entities/${entityId}/mandatoryCommunications`)) as Query<MandatoryCommunication>;
-  }, [db, entityId, canReadReports, canReadEmploymentRequests]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadEmploymentRequests]);
 
   const { data: employees, loading: loadingEmployees } = useCollection<Employee>(
     employeesQuery,
