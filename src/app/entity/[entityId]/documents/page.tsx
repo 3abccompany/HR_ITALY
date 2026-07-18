@@ -59,7 +59,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Employee } from "@/types/employee";
 import { Separator } from "@/components/ui/separator";
 import React from "react";
-import Link from "next/link";
 
 interface Filters {
   search: string;
@@ -1149,9 +1148,9 @@ function DocRow({
          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {isContractDoc && doc.contractId && (
               <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
-                 <Link href={`/entity/${entityId}/contracts/${doc.contractId}`}>
-                    <Briefcase className="w-4 h-4" />
-                 </Link>
+                 <a href={`/entity/${entityId}/contracts/${doc.contractId}`}>
+                   <Briefcase className="w-4 h-4" />
+                 </a>
               </Button>
             )}
             {isRenewable && onReplace && (

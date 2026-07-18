@@ -1010,7 +1010,7 @@ export default function TimeOffManagementPage() {
                          </div>
                       </TableCell>
                       <TableCell className="text-right pr-6">
-                         <DropdownMenu>
+                         <DropdownMenu modal={false}>
                             <DropdownMenuTrigger asChild>
                                <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                             </DropdownMenuTrigger>

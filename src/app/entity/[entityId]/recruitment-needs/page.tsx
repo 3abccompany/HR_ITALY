@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Plus, Search, Edit, PowerOff, Loader2, 
   Calendar, Building2, MapPin, Users,
@@ -21,6 +21,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { cancelRecruitmentNeed, archiveRecruitmentNeed } from "@/services/recruitment-need.service";
 import { RecruitmentNeed, RecruitmentNeedStatus } from "@/types/recruitment-need";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -89,11 +90,11 @@ function parseSafeDate(val: any): Date | null {
 
 export default function RecruitmentNeedsPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
 
   // State
@@ -241,6 +242,7 @@ export default function RecruitmentNeedsPage() {
 
   const executeStatusChange = async () => {
     if (!statusChange || !user) return;
+    if (!tryStartSubmission()) return;
     setLoading(true);
     try {
       if (statusChange.action === 'cancel') {
@@ -250,7 +252,9 @@ export default function RecruitmentNeedsPage() {
         await archiveRecruitmentNeed(entityId, statusChange.id, user.uid);
         toast({ title: "Besoin archivé" });
       }
+      resetSubmission();
     } catch (err: any) {
+      resetSubmission();
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
@@ -479,45 +483,28 @@ export default function RecruitmentNeedsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <DropdownMenu>
+                        <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem 
-                              onSelect={() => {
-                                // CRITICAL: Wrap navigation in setTimeout to allow Radix UI 
-                                // to close the menu before the page unmounts.
-                                setTimeout(() => {
-                                  router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/preview`);
-                                }, 0);
-                              }}
-                              className="gap-2 text-primary font-semibold"
-                            >
-                              <Eye className="w-4 h-4" /> Consulter
+                            <DropdownMenuItem asChild className="gap-2 text-primary font-semibold">
+                              <a href={`/entity/${entityId}/recruitment-needs/${n.needId}/preview`}>
+                                <Eye className="w-4 h-4" /> Consulter
+                              </a>
                             </DropdownMenuItem>
                             {canCreateForm && ["open", "partially_fulfilled"].includes(n.status) && (
-                              <DropdownMenuItem 
-                                onSelect={() => {
-                                  setTimeout(() => {
-                                    router.push(`/entity/${entityId}/application-forms/new?recruitmentNeedId=${n.needId}`);
-                                  }, 0);
-                                }}
-                                className="gap-2 font-bold text-accent"
-                              >
-                                <FileCode className="w-4 h-4" /> Créer formulaire
+                              <DropdownMenuItem asChild className="gap-2 font-bold text-accent">
+                                <a href={`/entity/${entityId}/application-forms/new?recruitmentNeedId=${n.needId}`}>
+                                  <FileCode className="w-4 h-4" /> Créer formulaire
+                                </a>
                               </DropdownMenuItem>
                             )}
                             {canUpdate && (
-                              <DropdownMenuItem 
-                                onSelect={() => {
-                                  setTimeout(() => {
-                                    router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/edit`);
-                                  }, 0);
-                                }}
-                                className="gap-2"
-                              >
-                                <Edit className="w-4 h-4" /> Modifier
+                              <DropdownMenuItem asChild className="gap-2">
+                                <a href={`/entity/${entityId}/recruitment-needs/${n.needId}/edit`}>
+                                  <Edit className="w-4 h-4" /> Modifier
+                                </a>
                               </DropdownMenuItem>
                             )}
                             {canCancel && !["cancelled", "archived", "fulfilled"].includes(n.status) && (

@@ -330,7 +330,7 @@ export default function DepartmentsManagementPage() {
                         {deptJobs.length} postes
                      </span>
                      
-                     <DropdownMenu>
+                     <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                            <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>
@@ -338,9 +338,7 @@ export default function DepartmentsManagementPage() {
                            {canUpdateDepts && (
                              <DropdownMenuItem 
                                onSelect={() => {
-                                 setTimeout(() => {
-                                   handleEditDept(dept);
-                                 }, 0);
+                                 handleEditDept(dept);
                                }} 
                                className="gap-2"
                              >
@@ -350,10 +348,8 @@ export default function DepartmentsManagementPage() {
                            {canCreateJobs && dept.status === 'active' && (
                              <DropdownMenuItem 
                                onSelect={() => { 
-                                 setTimeout(() => {
-                                   setActiveDeptId(dept.departmentId); 
-                                   setIsJobFormVisible(true);
-                                 }, 0);
+                                 setActiveDeptId(dept.departmentId);
+                                 setIsJobFormVisible(true);
                                }} 
                                className="gap-2 font-semibold text-primary"
                              >
@@ -364,9 +360,7 @@ export default function DepartmentsManagementPage() {
                              dept.status === 'active' ? (
                                <DropdownMenuItem 
                                  onSelect={() => {
-                                   setTimeout(() => {
-                                     setStatusChange({ id: dept.departmentId, type: 'dept', action: 'disable' });
-                                   }, 0);
+                                   setStatusChange({ id: dept.departmentId, type: 'dept', action: 'disable' });
                                  }} 
                                  className="gap-2 text-destructive"
                                >
@@ -375,9 +369,7 @@ export default function DepartmentsManagementPage() {
                              ) : (
                                <DropdownMenuItem 
                                  onSelect={() => {
-                                   setTimeout(() => {
-                                     setStatusChange({ id: dept.departmentId, type: 'dept', action: 'reactivate' });
-                                   }, 0);
+                                   setStatusChange({ id: dept.departmentId, type: 'dept', action: 'reactivate' });
                                  }} 
                                  className="gap-2 text-green-600"
                                >
@@ -418,7 +410,7 @@ export default function DepartmentsManagementPage() {
                                   <p className="text-[10px] text-muted-foreground line-clamp-2">{job.description || "Pas de description"}</p>
                                 </div>
 
-                                <DropdownMenu>
+                                <DropdownMenu modal={false}>
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100"><MoreVertical className="w-3 h-3" /></Button>
                                   </DropdownMenuTrigger>
@@ -426,9 +418,7 @@ export default function DepartmentsManagementPage() {
                                     {canUpdateJobs && (
                                       <DropdownMenuItem 
                                         onSelect={() => {
-                                          setTimeout(() => {
-                                            handleEditJob(job);
-                                          }, 0);
+                                          handleEditJob(job);
                                         }} 
                                         className="gap-2 text-xs"
                                       >
@@ -439,9 +429,7 @@ export default function DepartmentsManagementPage() {
                                       job.status === 'active' ? (
                                         <DropdownMenuItem 
                                           onSelect={() => {
-                                            setTimeout(() => {
-                                              setStatusChange({ id: job.jobTitleId, type: 'job', action: 'disable' });
-                                            }, 0);
+                                            setStatusChange({ id: job.jobTitleId, type: 'job', action: 'disable' });
                                           }} 
                                           className="gap-2 text-xs text-destructive"
                                         >
@@ -450,9 +438,7 @@ export default function DepartmentsManagementPage() {
                                       ) : (
                                         <DropdownMenuItem 
                                           onSelect={() => {
-                                            setTimeout(() => {
-                                              setStatusChange({ id: job.jobTitleId, type: 'job', action: 'reactivate' });
-                                            }, 0);
+                                            setStatusChange({ id: job.jobTitleId, type: 'job', action: 'reactivate' });
                                           }} 
                                           className="gap-2 text-xs text-green-600"
                                         >

@@ -262,7 +262,7 @@ export default function WorksitesManagementPage() {
                       {getStatusBadge(w.status)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
+                      <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>

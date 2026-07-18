@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Notification, NotificationCategory } from "@/types/notification";
 import { markNotificationAsRead, markAllNotificationsAsRead } from "@/services/notification.service";
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -40,7 +40,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 export function NotificationBell() {
   const params = useParams();
   const entityId = params.entityId as string;
-  const router = useRouter();
   const { db } = useFirebase();
   const { user } = useUser();
   const { membership, loading: membershipLoading } = useActiveMembership(entityId);
@@ -125,12 +124,8 @@ export function NotificationBell() {
   const handleNotificationClick = async (notification: Notification) => {
     await markNotificationAsRead(entityId, notification.id);
     if (notification.actionUrl) {
-      // CRITICAL: Close the menu PORTAL before navigation to prevent 
-      // the Radix UI body lock (pointer-events: none) from leaking
       setOpen(false);
-      setTimeout(() => {
-        router.push(notification.actionUrl!);
-      }, 0);
+      window.location.assign(notification.actionUrl);
     }
   };
 
@@ -204,9 +199,7 @@ export function NotificationBell() {
           className="w-full h-11 rounded-none text-[10px] font-black uppercase tracking-[0.2em] text-primary hover:bg-primary/5"
           onClick={() => {
             setOpen(false);
-            setTimeout(() => {
-              router.push(`/entity/${entityId}/notifications`);
-            }, 0);
+            window.location.assign(`/entity/${entityId}/notifications`);
           }}
         >
           Voir tout l'historique

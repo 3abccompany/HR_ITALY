@@ -636,12 +636,12 @@ export default function PersonsManagementPage() {
                       </TableCell>
                       <TableCell className="text-right pr-6" onClick={(e) => e.stopPropagation()}>
                         {canUpdate && (
-                          <DropdownMenu>
+                          <DropdownMenu modal={false}>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onSelect={() => setTimeout(() => handleEdit(p), 0)} className="gap-2">
+                              <DropdownMenuItem onSelect={() => handleEdit(p)} className="gap-2">
                                 <Edit className="w-4 h-4" /> Modifier
                               </DropdownMenuItem>
                               {p.status === 'active' ? (

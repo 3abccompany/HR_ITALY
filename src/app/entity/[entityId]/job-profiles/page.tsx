@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   FileBadge, Plus, Search, Edit, PowerOff, RefreshCcw, 
   Loader2, Calendar as CalendarIcon, Building2, Eye,
@@ -90,7 +90,6 @@ function formatDateDisplay(val: any): string {
 
 export default function JobProfilesManagementPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
@@ -171,7 +170,7 @@ export default function JobProfilesManagementPage() {
   };
 
   const executeStatusChange = async () => {
-    if (!statusChange || !user) return;
+    if (!statusChange || !user || !permissionsReady || !canUpdateJobProfiles) return;
     setLoading(true);
     try {
       if (statusChange.action === 'disable') {
@@ -409,16 +408,15 @@ export default function JobProfilesManagementPage() {
                       {getStatusBadge(p.status)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
+                      <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
                           <DropdownMenuItem 
                             onSelect={() => {
-                              setTimeout(() => {
-                                router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`);
-                              }, 0);
+                              if (!permissionsReady || !canReadJobProfiles) return;
+                              window.location.assign(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`);
                             }} 
                             className="gap-2 text-primary font-bold"
                           >
@@ -429,20 +427,25 @@ export default function JobProfilesManagementPage() {
                             <>
                               <DropdownMenuItem 
                                 onSelect={() => {
-                                  setTimeout(() => {
-                                    router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/edit`);
-                                  }, 0);
+                                  if (!permissionsReady || !canUpdateJobProfiles) return;
+                                  window.location.assign(`/entity/${entityId}/job-profiles/${p.jobProfileId}/edit`);
                                 }} 
                                 className="gap-2"
                               >
                                 <Edit className="w-4 h-4" /> Modifier
                               </DropdownMenuItem>
                               {p.status === 'active' ? (
-                                <DropdownMenuItem onSelect={() => setStatusChange({ id: p.jobProfileId, action: 'disable' })} className="gap-2 text-destructive">
+                                <DropdownMenuItem onSelect={() => {
+                                  if (!permissionsReady || !canUpdateJobProfiles) return;
+                                  setStatusChange({ id: p.jobProfileId, action: 'disable' });
+                                }} className="gap-2 text-destructive">
                                   <PowerOff className="w-4 h-4" /> Désactiver
                                 </DropdownMenuItem>
                               ) : (
-                                <DropdownMenuItem onSelect={() => setStatusChange({ id: p.jobProfileId, action: 'reactivate' })} className="gap-2 text-green-600">
+                                <DropdownMenuItem onSelect={() => {
+                                  if (!permissionsReady || !canUpdateJobProfiles) return;
+                                  setStatusChange({ id: p.jobProfileId, action: 'reactivate' });
+                                }} className="gap-2 text-green-600">
                                   <RefreshCcw className="w-4 h-4" /> Réactiver
                                 </DropdownMenuItem>
                               )}

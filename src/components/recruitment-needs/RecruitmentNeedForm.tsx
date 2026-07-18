@@ -1,8 +1,7 @@
 
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { 
   Loader2, ShieldCheck, ArrowLeft, Building2, Briefcase, 
   MapPin, Calendar, FileText, Info, UserCircle, Plus
@@ -64,7 +63,6 @@ const initialForm = {
 };
 
 export function RecruitmentNeedForm({ entityId, entityName, userId, initialData, isEditing = false }: RecruitmentNeedFormProps) {
-  const router = useRouter();
   const { db } = useFirebase();
   const { toast } = useToast();
   const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
@@ -72,6 +70,7 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
   const [formData, setFormData] = useState(initialForm);
   const [loading, setLoading] = useState(false);
   const [loadingRequester, setLoadingRequester] = useState(false);
+  const submissionStartedRef = useRef(false);
 
   // Queries
   const permissionsReady =
@@ -184,6 +183,10 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submissionStartedRef.current) {
+      return;
+    }
+
     if (!userId || !entityId) return;
 
     if (!permissionsReady) {
@@ -211,6 +214,7 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
       return;
     }
 
+    submissionStartedRef.current = true;
     setLoading(true);
     try {
       const profile = activeProfiles.find(p => p.jobProfileId === formData.jobProfileId) || (
@@ -246,11 +250,12 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
         await createRecruitmentNeed(entityId, payload, userId);
         toast({ title: "Besoin créé", description: "La demande de recrutement a été ouverte." });
       }
-      router.push(`/entity/${entityId}/recruitment-needs`);
+      window.location.assign(`/entity/${entityId}/recruitment-needs`);
+      return;
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      submissionStartedRef.current = false;
       setLoading(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -259,8 +264,10 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
       {/* Header */}
       <div className="flex items-center justify-between sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" type="button" onClick={() => router.back()}>
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" type="button" asChild>
+            <a href={`/entity/${entityId}/recruitment-needs`} aria-label="Retour aux besoins RH">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div>
             <h1 className="text-2xl font-black text-primary">
@@ -272,9 +279,15 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" type="button" onClick={() => router.back()} disabled={loading}>
-            Annuler
-          </Button>
+          {loading ? (
+            <Button variant="outline" type="button" disabled>
+              Annuler
+            </Button>
+          ) : (
+            <Button variant="outline" type="button" asChild>
+              <a href={`/entity/${entityId}/recruitment-needs`}>Annuler</a>
+            </Button>
+          )}
           <Button
             type="submit"
             disabled={
@@ -427,7 +440,7 @@ export function RecruitmentNeedForm({ entityId, entityName, userId, initialData,
                               <p className="text-xs text-muted-foreground mb-2">Aucun site actif disponible.</p>
                               {hasPermission("worksites.create") && (
                                 <Button variant="outline" size="sm" asChild>
-                                  <Link href={`/entity/${entityId}/worksites`}>Créer un site</Link>
+                                  <a href={`/entity/${entityId}/worksites`}>Créer un site</a>
                                 </Button>
                               )}
                             </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Send, Search, Eye, Loader2, 
   Filter, X, ListFilter, Calendar, 
@@ -45,7 +45,6 @@ const TYPE_LABELS: Record<string, string> = {
 
 export default function EmploymentRequestsRegistryPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
@@ -184,9 +183,11 @@ export default function EmploymentRequestsRegistryPage() {
                          variant="ghost" 
                          size="sm" 
                          className="h-8 gap-2 font-bold"
-                         onClick={() => router.push(`/entity/${entityId}/employment-requests/${r.id}`)}
+                         asChild
                        >
-                          <Eye className="w-4 h-4" />
+                          <a href={`/entity/${entityId}/employment-requests/${r.id}`} aria-label="Ouvrir le dossier">
+                            <Eye className="w-4 h-4" />
+                          </a>
                        </Button>
                     </TableCell>
                   </TableRow>

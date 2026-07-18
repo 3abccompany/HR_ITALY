@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   ArrowLeft, Printer, Download, FileBadge, 
   Calendar, Building2, UserCircle, Users, Loader2,
@@ -13,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useFirebase, useDoc } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
 import { JobProfile } from "@/types/job-profile";
+import { useActiveMembership } from "@/hooks/use-active-membership";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -25,21 +26,27 @@ import { JobProfilePdfTemplate } from "@/components/job-profiles/JobProfilePdfTe
  */
 export default function JobProfilePreviewPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const jobProfileId = params.jobProfileId as string;
   const { db } = useFirebase();
+  const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const [isClient, setIsClient] = useState(false);
+
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadJobProfiles = hasPermission("jobProfiles.read");
 
   useEffect(() => {
     setIsClient(true);
   }, []);
 
   const profileRef = useMemo(() => {
-    if (!db || !entityId || !jobProfileId) return null;
+    if (!db || !entityId || !jobProfileId || !permissionsReady || !canReadJobProfiles) return null;
     return doc(db, `entities/${entityId}/jobProfiles`, jobProfileId) as DocumentReference<JobProfile>;
-  }, [db, entityId, jobProfileId]);
+  }, [db, entityId, jobProfileId, permissionsReady, canReadJobProfiles]);
 
   const { data: profile, loading } = useDoc<JobProfile>(profileRef);
 
@@ -69,10 +76,25 @@ export default function JobProfilePreviewPage() {
     });
   };
 
-  if (loading) {
+  if (membershipLoading || loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!permissionsReady || !canReadJobProfiles) {
+    return (
+      <div className="p-8 text-center mt-20">
+        <div className="bg-destructive/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+           <Info className="w-8 h-8 text-destructive" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">Accès refusé.</h2>
+        <p className="text-muted-foreground mt-2">Vous n'avez pas la permission de consulter les fiches de poste.</p>
+        <Button variant="link" asChild className="mt-4">
+          <a href={`/entity/${entityId}/job-profiles`}>Retour au registre</a>
+        </Button>
       </div>
     );
   }
@@ -84,7 +106,9 @@ export default function JobProfilePreviewPage() {
            <Info className="w-8 h-8 text-destructive" />
         </div>
         <h2 className="text-xl font-bold text-slate-900">Document introuvable.</h2>
-        <Button variant="link" onClick={() => router.back()} className="mt-4">Retour au registre</Button>
+        <Button variant="link" asChild className="mt-4">
+          <a href={`/entity/${entityId}/job-profiles`}>Retour au registre</a>
+        </Button>
       </div>
     );
   }
@@ -97,8 +121,10 @@ export default function JobProfilePreviewPage() {
       {/* Action Bar - Hidden on print */}
       <header className="sticky top-0 z-50 h-16 bg-white/80 backdrop-blur border-b px-8 flex items-center justify-between print:hidden">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" asChild className="rounded-full">
+            <a href={`/entity/${entityId}/job-profiles`} aria-label="Retour aux fiches de poste">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-2">

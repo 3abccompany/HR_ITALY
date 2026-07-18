@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   ArrowLeft, Edit, FileText, Calendar, Building2, 
   MapPin, Users, Loader2, Briefcase, Info, 
@@ -21,7 +21,6 @@ import { Separator } from "@/components/ui/separator";
 
 export default function RecruitmentNeedPreviewPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const needId = params.needId as string;
   const { db } = useFirebase();
@@ -57,7 +56,9 @@ export default function RecruitmentNeedPreviewPage() {
         <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
         <h2 className="text-xl font-bold mb-2">Besoin introuvable</h2>
         <p className="text-muted-foreground mb-6">Le document demandé n'existe pas ou vous n'avez pas les droits d'accès.</p>
-        <Button onClick={() => router.back()}>Retour à la liste</Button>
+        <Button asChild>
+          <a href={`/entity/${entityId}/recruitment-needs`}>Retour à la liste</a>
+        </Button>
       </div>
     );
   }
@@ -96,8 +97,10 @@ export default function RecruitmentNeedPreviewPage() {
       {/* Header Bar */}
       <header className="sticky top-0 z-50 h-16 bg-white/80 backdrop-blur border-b px-8 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2">
-            <ArrowLeft className="w-4 h-4" /> Retour
+          <Button variant="ghost" size="sm" asChild className="gap-2">
+            <a href={`/entity/${entityId}/recruitment-needs`}>
+              <ArrowLeft className="w-4 h-4" /> Retour
+            </a>
           </Button>
           <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-2">
@@ -113,14 +116,18 @@ export default function RecruitmentNeedPreviewPage() {
                variant="outline" 
                size="sm" 
                className="gap-2 text-accent border-accent/20 hover:bg-accent/10"
-               onClick={() => router.push(`/entity/${entityId}/application-forms/new?recruitmentNeedId=${needId}`)}
+               asChild
              >
-               <FileCode className="w-4 h-4" /> Créer formulaire de candidature
+               <a href={`/entity/${entityId}/application-forms/new?recruitmentNeedId=${needId}`}>
+                 <FileCode className="w-4 h-4" /> Créer formulaire de candidature
+               </a>
              </Button>
           )}
           {canUpdate && (need.status === 'open' || need.status === 'partially_fulfilled') && (
-            <Button size="sm" onClick={() => router.push(`/entity/${entityId}/recruitment-needs/${needId}/edit`)} className="gap-2">
-              <Edit className="w-4 h-4" /> Modifier le besoin
+            <Button size="sm" asChild className="gap-2">
+              <a href={`/entity/${entityId}/recruitment-needs/${needId}/edit`}>
+                <Edit className="w-4 h-4" /> Modifier le besoin
+              </a>
             </Button>
           )}
         </div>

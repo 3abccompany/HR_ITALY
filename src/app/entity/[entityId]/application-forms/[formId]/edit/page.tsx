@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, Save, 
   Settings, LayoutDashboard, Plus, Trash2,
@@ -22,6 +22,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { ApplicationForm, ApplicationFormField, ApplicationFormFieldType } from "@/types/application-form";
 import { updateApplicationForm } from "@/services/application-form.service";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { 
@@ -83,13 +84,13 @@ function sanitizePayload<T>(obj: T): T {
 
 export default function EditApplicationFormPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const formId = params.formId as string;
   
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const permissionsReady =
@@ -130,6 +131,7 @@ export default function EditApplicationFormPage() {
 
   const handleSave = async () => {
     if (!user || !entityId || !formId || !permissionsReady || !canUpdateApplicationForms) return;
+    if (!tryStartSubmission()) return;
     setSaving(true);
     
     try {
@@ -145,12 +147,12 @@ export default function EditApplicationFormPage() {
       await updateApplicationForm(entityId, formId, cleanData, user.uid);
       toast({ title: "Configuration enregistrée" });
       // SUCCESS NAVIGATION: Return to the list page
-      router.push(`/entity/${entityId}/application-forms`);
+      window.location.assign(`/entity/${entityId}/application-forms`);
     } catch (err: any) {
+      resetSubmission();
+      setSaving(false);
       console.error("Save error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -278,8 +280,10 @@ export default function EditApplicationFormPage() {
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <div className="flex items-center justify-between mb-8 sticky top-0 bg-background/80 backdrop-blur py-4 z-40 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/application-forms`)}>
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" asChild>
+            <a href={`/entity/${entityId}/application-forms`} aria-label="Retour aux formulaires">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div>
             <h1 className="text-2xl font-black text-primary truncate max-w-md">{formData.title}</h1>
@@ -287,8 +291,10 @@ export default function EditApplicationFormPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => router.push(`/entity/${entityId}/application-forms/${formId}/preview`)} className="gap-2">
-            <Eye className="w-4 h-4" /> Aperçu
+          <Button variant="outline" asChild className="gap-2">
+            <a href={`/entity/${entityId}/application-forms/${formId}/preview`}>
+              <Eye className="w-4 h-4" /> Aperçu
+            </a>
           </Button>
           <Button onClick={handleSave} disabled={saving} className="gap-2 px-8">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -308,11 +314,11 @@ export default function EditApplicationFormPage() {
             <CardContent className="pt-6 space-y-6">
               <div className="space-y-2">
                 <Label htmlFor="title">Titre interne / Affichage public</Label>
-                <Input id="title" value={formData.title} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} />
+                <Input id="title" value={formData.title ?? ""} onChange={(e) => setFormData(p => ({...p, title: e.target.value}))} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Texte de l'annonce / Description</Label>
-                <Textarea id="description" value={formData.description} onChange={(e) => setFormData(p => ({...p, description: e.target.value}))} className="min-h-[150px]" />
+                <Textarea id="description" value={formData.description ?? ""} onChange={(e) => setFormData(p => ({...p, description: e.target.value}))} className="min-h-[150px]" />
               </div>
             </CardContent>
           </Card>
@@ -525,8 +531,10 @@ export default function EditApplicationFormPage() {
              <p className="text-[10px] text-muted-foreground leading-relaxed">
                Une fois publié, le formulaire sera accessible publiquement via une URL unique. Les modifications après publication doivent être faites avec prudence.
              </p>
-             <Button variant="outline" className="w-full bg-white text-xs font-bold" onClick={() => router.push(`/entity/${entityId}/application-forms/${formId}/preview`)}>
-               Voir le rendu candidat
+             <Button variant="outline" className="w-full bg-white text-xs font-bold" asChild>
+               <a href={`/entity/${entityId}/application-forms/${formId}/preview`}>
+                 Voir le rendu candidat
+               </a>
              </Button>
           </div>
         </div>

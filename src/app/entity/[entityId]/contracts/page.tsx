@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Search, FileText, Loader2, Eye, 
   Filter, X, ListFilter, Briefcase, 
@@ -86,7 +86,6 @@ const isIndefiniteContractType = (contractType?: string | null) => {
 
 export default function ContractsRegistryPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
@@ -445,10 +444,12 @@ export default function ContractsRegistryPage() {
                           variant="outline" 
                           size="sm" 
                           className="h-8 gap-2 rounded-xl font-bold bg-white shadow-sm hover:bg-primary/5 transition-all"
-                          onClick={() => router.push(`/entity/${entityId}/contracts/${c.contractId}`)}
+                          asChild
                         >
+                          <a href={`/entity/${entityId}/contracts/${c.contractId}`}>
                           <Eye className="w-3.5 h-3.5 text-primary" />
                           Détails
+                          </a>
                         </Button>
                       </TableCell>
                     </TableRow>

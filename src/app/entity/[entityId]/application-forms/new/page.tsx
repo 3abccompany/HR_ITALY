@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { 
   Loader2, ShieldCheck, ArrowLeft, Briefcase, 
   Info, FileCode, Search, AlertCircle
@@ -14,19 +14,20 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { createApplicationForm } from "@/services/application-form.service";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 
 export default function NewApplicationFormPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const preselectedNeedId = searchParams.get("recruitmentNeedId");
   
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const [selectedNeedId, setSelectedNeedId] = useState<string>(preselectedNeedId || "");
@@ -82,16 +83,17 @@ export default function NewApplicationFormPage() {
 
   const handleCreate = async () => {
     if (!user || !entityId || !permissionsReady || !canCreateApplicationForms || !canReadRecruitmentNeeds || !selectedNeed) return;
+    if (!tryStartSubmission()) return;
 
     setLoading(true);
     try {
       const formId = await createApplicationForm(entityId, selectedNeed, user.uid);
       toast({ title: "Formulaire initialisé", description: "Brouillon créé avec les champs standards." });
-      router.push(`/entity/${entityId}/application-forms/${formId}/edit`);
+      window.location.assign(`/entity/${entityId}/application-forms/${formId}/edit`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setLoading(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -116,8 +118,10 @@ export default function NewApplicationFormPage() {
   return (
     <div className="p-8 max-w-4xl mx-auto pb-24">
       <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" asChild>
+          <a href={`/entity/${entityId}/application-forms`} aria-label="Retour aux formulaires">
+            <ArrowLeft className="w-5 h-5" />
+          </a>
         </Button>
         <div>
           <h1 className="text-3xl font-headline font-bold text-primary">Nouveau formulaire</h1>

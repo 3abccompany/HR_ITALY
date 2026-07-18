@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, UserCheck, 
   Briefcase, Building2, FileSignature,
@@ -63,7 +63,6 @@ import { SafetyDpiAssignment, SAFETY_DPI_STATUS_LABELS } from "@/types/safety-dp
 import { getDocumentDownloadUrl } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { format, isBefore, addDays, startOfDay, differenceInDays, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -266,7 +265,6 @@ function getSafetyDeadlineBadge(assignment: SafetyDpiAssignment) {
 
 export default function Employee360HubPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params?.entityId as string;
   const employeeId = params?.employeeId as string;
   
@@ -580,7 +578,9 @@ export default function Employee360HubPage() {
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><User className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Employé introuvable</h2>
-        <Button onClick={() => router.push(`/entity/${entityId}/employees`)} className="mt-8">Retour au registre</Button>
+        <Button asChild className="mt-8">
+          <a href={`/entity/${entityId}/employees`}>Retour au registre</a>
+        </Button>
       </div>
     );
   }
@@ -594,7 +594,7 @@ export default function Employee360HubPage() {
         <Button
           type="button"
           variant="ghost"
-          onClick={() => router.push(`/entity/${entityId}/employees`)}
+          onClick={() => window.location.assign(`/entity/${entityId}/employees`)}
           className="gap-2 rounded-xl font-bold text-primary hover:bg-primary/5"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -806,9 +806,9 @@ export default function Employee360HubPage() {
                                    </p>
                                 </div>
                                 <Button asChild variant="outline" className="w-full bg-white/10 border-white/20 hover:bg-white/20 text-white font-bold rounded-xl gap-2">
-                                   <Link href={`/entity/${entityId}/contracts/${activeContract.contractId}`}>
+                                    <a href={`/entity/${entityId}/contracts/${activeContract.contractId}`}>
                                       <Eye className="w-4 h-4" /> Voir document complet
-                                   </Link>
+                                    </a>
                                 </Button>
                              </div>
                           </div>
@@ -852,7 +852,7 @@ export default function Employee360HubPage() {
                                   </TableCell>
                                   <TableCell className="text-right">
                                      <Button variant="ghost" size="sm" asChild className="h-8 rounded-lg font-bold">
-                                        <Link href={`/entity/${entityId}/contracts/${c.contractId}`}>Détails</Link>
+                                        <a href={`/entity/${entityId}/contracts/${c.contractId}`}>Détails</a>
                                      </Button>
                                   </TableCell>
                                </TableRow>
@@ -914,7 +914,7 @@ export default function Employee360HubPage() {
                                 <DetailMini label="Type contrat" value={offer.contractType} />
                                 <DetailMini label="RAL initiale" value={`€ ${offer.proposedGrossAnnual?.toLocaleString('fr-FR')}`} />
                                 <Button variant="outline" size="sm" asChild className="col-span-full h-9 rounded-xl font-bold bg-white mt-2">
-                                   <Link href={`/entity/${entityId}/employment-offers/${offer.offerId}`}>Voir proposition source</Link>
+                                   <a href={`/entity/${entityId}/employment-offers/${offer.offerId}`}>Voir proposition source</a>
                                 </Button>
                              </div>
                           </div>
@@ -987,9 +987,9 @@ export default function Employee360HubPage() {
                              )}
 
                              <Button asChild variant="outline" className="w-full h-11 rounded-xl font-bold border-dashed border-2 gap-2 hover:bg-slate-50">
-                                <Link href={`/entity/${entityId}/employment-requests/${cpi.id}`}>
+                                 <a href={`/entity/${entityId}/employment-requests/${cpi.id}`}>
                                    Accéder au dossier CPI <ChevronRight className="w-4 h-4" />
-                                </Link>
+                                 </a>
                              </Button>
                           </div>
                         </>
@@ -1088,9 +1088,9 @@ export default function Employee360HubPage() {
                       </div>
                    </div>
                    <Button variant="ghost" size="sm" asChild className="mt-6 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
-                      <Link href={`/entity/${entityId}/medical-visits?search=${encodeURIComponent(employee.displayName)}`}>
+                      <a href={`/entity/${entityId}/medical-visits?search=${encodeURIComponent(employee.displayName)}`}>
                          Dossier complet <ChevronRight className="w-4 h-4" />
-                      </Link>
+                      </a>
                    </Button>
                 </Card>
               ) : (
@@ -1102,7 +1102,7 @@ export default function Employee360HubPage() {
                    </div>
                    {hasPermission("medicalVisits.create") && (
                      <Button variant="outline" size="sm" asChild className="h-7 rounded-lg text-[9px] font-black uppercase bg-white">
-                        <Link href={`/entity/${entityId}/medical-visits`}>Planifier</Link>
+                        <a href={`/entity/${entityId}/medical-visits`}>Planifier</a>
                      </Button>
                    )}
                 </Card>
@@ -1146,9 +1146,9 @@ export default function Employee360HubPage() {
                       )}
                    </div>
                    <Button variant="ghost" size="sm" asChild className="mt-6 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
-                      <Link href={`/entity/${entityId}/training?search=${encodeURIComponent(employee.displayName)}`}>
+                      <a href={`/entity/${entityId}/training?search=${encodeURIComponent(employee.displayName)}`}>
                          Dossier formations <ChevronRight className="w-4 h-4" />
-                      </Link>
+                      </a>
                    </Button>
                 </Card>
               ) : (
@@ -1160,7 +1160,7 @@ export default function Employee360HubPage() {
                    </div>
                    {hasPermission("training.create") && (
                      <Button variant="outline" size="sm" asChild className="h-7 rounded-lg text-[9px] font-black uppercase bg-white">
-                        <Link href={`/entity/${entityId}/training`}>Ajouter</Link>
+                        <a href={`/entity/${entityId}/training`}>Ajouter</a>
                      </Button>
                    )}
                 </Card>
@@ -1206,9 +1206,9 @@ export default function Employee360HubPage() {
                       </div>
                    </div>
                    <Button variant="ghost" size="sm" asChild className="mt-6 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
-                      <Link href={`/entity/${entityId}/safety?search=${encodeURIComponent(employee.displayName)}`}>
+                      <a href={`/entity/${entityId}/safety?search=${encodeURIComponent(employee.displayName)}`}>
                          Dossier EPI/DPI <ChevronRight className="w-4 h-4" />
-                      </Link>
+                      </a>
                    </Button>
                 </Card>
               ) : (
@@ -1220,7 +1220,7 @@ export default function Employee360HubPage() {
                    </div>
                    {hasPermission("safety.create") && (
                      <Button variant="outline" size="sm" asChild className="h-7 rounded-lg text-[9px] font-black uppercase bg-white">
-                        <Link href={`/entity/${entityId}/safety`}>Assigner</Link>
+                        <a href={`/entity/${entityId}/safety`}>Assigner</a>
                      </Button>
                    )}
                 </Card>
@@ -1456,9 +1456,9 @@ function DocumentsTable({ docs, loadingId, onOpen, employee }: { docs: HRDocumen
                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       {isContractDoc && d.contractId && (
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" asChild title="Gérer le contrat">
-                           <Link href={`/entity/${entityId}/contracts/${d.contractId}`}>
+                           <a href={`/entity/${entityId}/contracts/${d.contractId}`}>
                               <Briefcase className="w-4 h-4" />
-                           </Link>
+                           </a>
                         </Button>
                       )}
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => onOpen(d.storagePath, d.id)} disabled={!!loadingId} title="Ouvrir">

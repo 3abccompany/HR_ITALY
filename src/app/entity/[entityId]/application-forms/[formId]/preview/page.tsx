@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   ArrowLeft, Building2, MapPin, Briefcase, 
   Loader2, Upload, AlertCircle, Send, Globe
@@ -21,7 +21,6 @@ import { Separator } from "@/components/ui/separator";
 
 export default function ApplicationFormPreviewPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const formId = params.formId as string;
   
@@ -67,8 +66,10 @@ export default function ApplicationFormPreviewPage() {
       {/* Admin Header */}
       <header className="sticky top-0 z-50 h-16 bg-white/80 backdrop-blur border-b px-8 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2">
-            <ArrowLeft className="w-4 h-4" /> Retour à l'édition
+          <Button variant="ghost" size="sm" asChild className="gap-2">
+            <a href={`/entity/${entityId}/application-forms/${formId}/edit`}>
+              <ArrowLeft className="w-4 h-4" /> Retour à l'édition
+            </a>
           </Button>
           <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-2 text-primary font-bold text-sm uppercase tracking-tight">

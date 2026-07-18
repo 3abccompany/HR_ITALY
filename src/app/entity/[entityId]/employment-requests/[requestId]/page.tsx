@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, Clock, 
   Briefcase, Building2, User, Info, 
@@ -86,7 +86,6 @@ import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } fr
 
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params?.entityId as string;
   const requestId = params?.requestId as string;
   
@@ -506,7 +505,9 @@ Cordiali saluti,`;
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Dossier introuvable</h2>
-        <Button onClick={() => router.push(`/entity/${entityId}/employment-requests`)} className="mt-8">Retour au registre</Button>
+        <Button asChild className="mt-8">
+          <a href={`/entity/${entityId}/employment-requests`}>Retour au registre</a>
+        </Button>
       </div>
     );
   }
@@ -515,8 +516,10 @@ Cordiali saluti,`;
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" asChild className="rounded-full">
+            <a href={`/entity/${entityId}/employment-requests`} aria-label="Retour au registre">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div>
             <div className="flex items-center gap-3">

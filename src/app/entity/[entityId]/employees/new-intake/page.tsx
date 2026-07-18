@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, Building2, MapPin, 
   Calendar, Briefcase, ShieldCheck, Search, AlertCircle,
@@ -23,6 +23,7 @@ import { Worksite } from "@/types/worksite";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { JobProfile } from "@/types/job-profile";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -81,12 +82,12 @@ function calculateGrossAnnual(grossMonthly: unknown, monthlyPayments: unknown) {
 
 export default function EmployeeIntakePage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const [formData, setFormData] = useState(initialForm);
@@ -297,6 +298,7 @@ export default function EmployeeIntakePage() {
       return;
     }
 
+    if (!tryStartSubmission()) return;
     setLoading(true);
     try {
       const grossMonthly = toSafeNumber(formData.grossMonthly);
@@ -322,11 +324,11 @@ export default function EmployeeIntakePage() {
 
       await executeEmployeeIntake(entityId, payload, user.uid);
       toast({ title: "Importation réussie", description: "L'employé et son contrat actif ont été créés." });
-      router.push(`/entity/${entityId}/employees`);
+      window.location.assign(`/entity/${entityId}/employees`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setLoading(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -349,8 +351,10 @@ export default function EmployeeIntakePage() {
   return (
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" type="button" onClick={() => router.back()} className="rounded-full">
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" type="button" asChild className="rounded-full">
+          <a href={`/entity/${entityId}/employees`} aria-label="Retour aux employés">
+            <ArrowLeft className="w-5 h-5" />
+          </a>
         </Button>
         <div>
           <h1 className="text-3xl font-black text-primary tracking-tight">Reprise employé existant</h1>
@@ -649,7 +653,13 @@ export default function EmployeeIntakePage() {
              </Alert>
            )}
            <div className="flex justify-end gap-3">
-              <Button type="button" variant="ghost" onClick={() => router.back()} disabled={loading}>Annuler</Button>
+              {loading ? (
+                <Button type="button" variant="ghost" disabled>Annuler</Button>
+              ) : (
+                <Button type="button" variant="ghost" asChild>
+                  <a href={`/entity/${entityId}/employees`}>Annuler</a>
+                </Button>
+              )}
               <Button type="submit" disabled={loading || !formData.ccnlId || !formData.levelId} className="h-14 px-12 rounded-2xl font-black shadow-xl shadow-primary/20 gap-2">
                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                  Intégrer le collaborateur

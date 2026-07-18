@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Plus, Search, Edit, Eye, Archive, 
   Loader2, CheckCircle2, XCircle, Clock, 
@@ -24,6 +24,7 @@ import {
   archiveApplicationForm 
 } from "@/services/application-form.service";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -108,11 +109,11 @@ function formatDateDisplay(val: any): string {
 
 export default function ApplicationFormsPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   // State
@@ -245,6 +246,7 @@ export default function ApplicationFormsPage() {
     if (!permissionsReady) return;
     if (actionPending.action === 'publish' && !canPublishApplicationForms) return;
     if ((actionPending.action === 'close' || actionPending.action === 'archive') && !canUpdateApplicationForms) return;
+    if (!tryStartSubmission()) return;
     setLoading(true);
     try {
       if (actionPending.action === 'publish') {
@@ -257,7 +259,9 @@ export default function ApplicationFormsPage() {
         await archiveApplicationForm(entityId, actionPending.id, user.uid);
         toast({ title: "Formulaire archivé" });
       }
+      resetSubmission();
     } catch (err: any) {
+      resetSubmission();
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
@@ -465,7 +469,6 @@ export default function ApplicationFormsPage() {
                     onAction={(id, action) => setActionPending({ id, action })}
                     onCopy={copyPublicLink}
                     onOpen={openPublicForm}
-                    router={router}
                   />
                 </div>
               );
@@ -481,7 +484,6 @@ export default function ApplicationFormsPage() {
             onAction={(id, action) => setActionPending({ id, action })}
             onCopy={copyPublicLink}
             onOpen={openPublicForm}
-            router={router}
           />
         )}
       </div>
@@ -515,8 +517,7 @@ function FormsTable({
   canPublish, 
   onAction, 
   onCopy, 
-  onOpen,
-  router 
+  onOpen
 }: { 
   forms: ApplicationForm[], 
   entityId: string, 
@@ -524,8 +525,7 @@ function FormsTable({
   canPublish: boolean,
   onAction: (id: string, action: 'publish' | 'close' | 'archive') => void,
   onCopy: (slug: string) => void,
-  onOpen: (slug: string) => void,
-  router: any
+  onOpen: (slug: string) => void
 }) {
   return (
     <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5">
@@ -598,46 +598,50 @@ function FormsTable({
                 </div>
               </TableCell>
               <TableCell className="text-right">
-                <DropdownMenu>
+                <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => setTimeout(() => router.push(`/entity/${entityId}/application-forms/${f.formId}/preview`), 0)} className="gap-2">
-                      <Eye className="w-4 h-4" /> Aperçu HR
+                    <DropdownMenuItem asChild className="gap-2">
+                      <a href={`/entity/${entityId}/application-forms/${f.formId}/preview`}>
+                        <Eye className="w-4 h-4" /> Aperçu HR
+                      </a>
                     </DropdownMenuItem>
                     
                     {f.publicSlug && (
                       <>
-                        <DropdownMenuItem onSelect={() => setTimeout(() => onOpen(f.publicSlug), 0)} className="gap-2 text-accent font-bold">
+                        <DropdownMenuItem onSelect={() => onOpen(f.publicSlug)} className="gap-2 text-accent font-bold">
                           <ExternalLink className="w-4 h-4" /> Ouvrir le formulaire
                         </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => setTimeout(() => onCopy(f.publicSlug), 0)} className="gap-2">
+                        <DropdownMenuItem onSelect={() => onCopy(f.publicSlug)} className="gap-2">
                           <Copy className="w-4 h-4" /> Copier le lien public
                         </DropdownMenuItem>
                       </>
                     )}
 
                     {canUpdate && (f.status === 'draft' || f.status === 'published') && (
-                      <DropdownMenuItem onSelect={() => setTimeout(() => router.push(`/entity/${entityId}/application-forms/${f.formId}/edit`), 0)} className="gap-2">
-                        <Edit className="w-4 h-4" /> Configurer
+                      <DropdownMenuItem asChild className="gap-2">
+                        <a href={`/entity/${entityId}/application-forms/${f.formId}/edit`}>
+                          <Edit className="w-4 h-4" /> Configurer
+                        </a>
                       </DropdownMenuItem>
                     )}
                     
                     <DropdownMenuSeparator />
 
                     {canPublish && f.status === 'draft' && (
-                      <DropdownMenuItem onSelect={() => setTimeout(() => onAction(f.formId, 'publish'), 0)} className="gap-2 text-green-600 font-bold">
+                      <DropdownMenuItem onSelect={() => onAction(f.formId, 'publish')} className="gap-2 text-green-600 font-bold">
                         <Globe className="w-4 h-4" /> Publier l'offre
                       </DropdownMenuItem>
                     )}
                     {canUpdate && f.status === 'published' && (
-                      <DropdownMenuItem onSelect={() => setTimeout(() => onAction(f.formId, 'close'), 0)} className="gap-2 text-orange-600">
+                      <DropdownMenuItem onSelect={() => onAction(f.formId, 'close')} className="gap-2 text-orange-600">
                         <XCircle className="w-4 h-4" /> Fermer l'offre
                       </DropdownMenuItem>
                     )}
                     {canUpdate && f.status !== 'archived' && (
-                      <DropdownMenuItem onSelect={() => setTimeout(() => onAction(f.formId, 'archive'), 0)} className="gap-2 text-muted-foreground">
+                      <DropdownMenuItem onSelect={() => onAction(f.formId, 'archive')} className="gap-2 text-muted-foreground">
                         <Archive className="w-4 h-4" /> Archiver
                       </DropdownMenuItem>
                     )}

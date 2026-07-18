@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   FileText, Search, Edit, Eye, XCircle, 
   Loader2, Calendar as CalendarIcon, User, 
@@ -108,7 +108,6 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function EmploymentOffersListPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
@@ -417,7 +416,7 @@ export default function EmploymentOffersListPage() {
                 </TableRow>
               ) : (
                 paginatedOffers.map((o) => (
-                  <TableRow key={o.offerId} className="hover:bg-muted/50 transition-colors group cursor-pointer" onClick={() => router.push(`/entity/${entityId}/employment-offers/${o.offerId}`)}>
+                  <TableRow key={o.offerId} className="hover:bg-muted/50 transition-colors group cursor-pointer" onClick={() => window.location.assign(`/entity/${entityId}/employment-offers/${o.offerId}`)}>
                     <TableCell>
                       <div className="font-bold text-primary">{o.candidateDisplayName || "N/A"}</div>
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase mt-1">
@@ -454,16 +453,20 @@ export default function EmploymentOffersListPage() {
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => router.push(`/entity/${entityId}/employment-offers/${o.offerId}`)}>
-                           <Eye className="w-4 h-4" />
+                        <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+                           <a href={`/entity/${entityId}/employment-offers/${o.offerId}`} aria-label="Ouvrir la proposition">
+                             <Eye className="w-4 h-4" />
+                           </a>
                         </Button>
-                        <DropdownMenu>
+                        <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/employment-offers/${o.offerId}`)} className="gap-2">
-                               <Edit className="w-4 h-4" /> Modifier / Consulter
+                            <DropdownMenuItem asChild className="gap-2">
+                               <a href={`/entity/${entityId}/employment-offers/${o.offerId}`}>
+                                 <Edit className="w-4 h-4" /> Modifier / Consulter
+                               </a>
                             </DropdownMenuItem>
                             {canUpdate && !["cancelled", "accepted", "declined"].includes(o.status) && (
                               <DropdownMenuItem onClick={() => setCancellingId(o.offerId)} className="gap-2 text-destructive">

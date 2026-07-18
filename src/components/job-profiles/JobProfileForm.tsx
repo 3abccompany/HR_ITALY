@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { 
   Plus, Loader2, X, ShieldCheck, ArrowLeft, Building2, Briefcase, 
   Scale, Clock, Euro
@@ -22,6 +21,7 @@ import { Department, JobTitle } from "@/types/organization";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveMembership } from "@/hooks/use-active-membership";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import Link from "next/link";
 
 interface JobProfileFormProps {
@@ -40,7 +40,47 @@ const CONTRACT_TYPES = [
   "Altro"
 ];
 
-const initialForm = {
+interface JobProfileFormData {
+  issueDate: string;
+  departmentId: string;
+  jobTitleId: string;
+  directSupervisorJobTitleId: string;
+  collaboratorJobTitleIds: string[];
+  missionsAndResponsibilities: string[];
+  objectives: string[];
+  initialAndProfessionalTraining: string[];
+  professionalExperience: string[];
+  softSkills: string[];
+  notes: string;
+  defaultCcnlId: string;
+  defaultCcnlName: string;
+  defaultLevelId: string;
+  defaultLevelCode: string;
+  defaultLevelLabel: string;
+  defaultContractType: string;
+  defaultWeeklyHours?: number;
+  defaultMonthlyPayments?: number;
+  defaultMinimumGrossMonthly?: number;
+  defaultMinimumGrossHourly?: number;
+}
+
+type RelationshipDirtyState = {
+  departmentId: boolean;
+  jobTitleId: boolean;
+  directSupervisorJobTitleId: boolean;
+  collaboratorJobTitleIds: boolean;
+};
+
+const cleanRelationshipDirty: RelationshipDirtyState = {
+  departmentId: false,
+  jobTitleId: false,
+  directSupervisorJobTitleId: false,
+  collaboratorJobTitleIds: false,
+};
+
+const copyStringArray = (value?: string[]) => Array.isArray(value) ? [...value] : [];
+
+const initialForm: JobProfileFormData = {
   issueDate: new Date().toISOString().split('T')[0],
   departmentId: "",
   jobTitleId: "",
@@ -62,14 +102,54 @@ const initialForm = {
   defaultWeeklyHours: undefined as number | undefined,
 };
 
+function toJobProfileFormData(data?: JobProfile): JobProfileFormData {
+  if (!data) {
+    return {
+      ...initialForm,
+      collaboratorJobTitleIds: [],
+      missionsAndResponsibilities: [],
+      objectives: [],
+      initialAndProfessionalTraining: [],
+      professionalExperience: [],
+      softSkills: [],
+    };
+  }
+
+  return {
+    issueDate: data.issueDate ?? initialForm.issueDate,
+    departmentId: data.departmentId ?? "",
+    jobTitleId: data.jobTitleId ?? "",
+    directSupervisorJobTitleId: data.directSupervisorJobTitleId ?? "",
+    collaboratorJobTitleIds: copyStringArray(data.collaboratorJobTitleIds),
+    missionsAndResponsibilities: copyStringArray(data.missionsAndResponsibilities),
+    objectives: copyStringArray(data.objectives),
+    initialAndProfessionalTraining: copyStringArray(data.initialAndProfessionalTraining),
+    professionalExperience: copyStringArray(data.professionalExperience),
+    softSkills: copyStringArray(data.softSkills),
+    notes: data.notes ?? "",
+    defaultCcnlId: data.defaultCcnlId ?? "none_clear",
+    defaultCcnlName: data.defaultCcnlName ?? "",
+    defaultLevelId: data.defaultLevelId ?? "none_clear",
+    defaultLevelCode: data.defaultLevelCode ?? "",
+    defaultLevelLabel: data.defaultLevelLabel ?? "",
+    defaultContractType: data.defaultContractType ?? "",
+    defaultWeeklyHours: data.defaultWeeklyHours,
+    defaultMonthlyPayments: data.defaultMonthlyPayments,
+    defaultMinimumGrossMonthly: data.defaultMinimumGrossMonthly,
+    defaultMinimumGrossHourly: data.defaultMinimumGrossHourly,
+  };
+}
+
 export function JobProfileForm({ entityId, entityName, userId, initialData, isEditing = false }: JobProfileFormProps) {
-  const router = useRouter();
   const { db } = useFirebase();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
   const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
   
-  const [formData, setFormData] = useState(initialForm);
+  const [formData, setFormData] = useState<JobProfileFormData>(() => toJobProfileFormData(initialData));
+  const [relationshipDirty, setRelationshipDirty] = useState<RelationshipDirtyState>(cleanRelationshipDirty);
+  const loadedProfileIdRef = useRef(initialData?.jobProfileId ?? null);
   const [loading, setLoading] = useState(false);
   const [loadingRequester, setLoadingRequester] = useState(false);
   const [newCatalogLabels, setNewCatalogLabels] = useState<Record<CatalogItemType, string>>({
@@ -139,6 +219,47 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
     return activeJobTitles.filter(j => j.departmentId === formData.departmentId);
   }, [activeJobTitles, formData.departmentId]);
 
+  const persistedCollaboratorNameById = useMemo(() => {
+    const names = new Map<string, string>();
+    initialData?.collaboratorJobTitleIds?.forEach((id, index) => {
+      const name = initialData.collaboratorJobTitleNames?.[index];
+      if (name) names.set(id, name);
+    });
+    return names;
+  }, [initialData?.collaboratorJobTitleIds, initialData?.collaboratorJobTitleNames]);
+
+  const departmentOptionExists = activeDepartments.some(d => d.departmentId === formData.departmentId);
+  const jobTitleOptionExists = filteredJobTitlesForDept.some(j => j.jobTitleId === formData.jobTitleId);
+  const supervisorOptionExists = activeJobTitles.some(j => j.jobTitleId === formData.directSupervisorJobTitleId);
+
+  const departmentFallbackLabel =
+    initialData?.departmentId === formData.departmentId ? initialData.departmentName || "Département enregistré" : "Département enregistré";
+  const jobTitleFallbackLabel =
+    initialData?.jobTitleId === formData.jobTitleId ? initialData.jobTitleName || "Intitulé enregistré" : "Intitulé enregistré";
+  const supervisorFallbackLabel =
+    initialData?.directSupervisorJobTitleId === formData.directSupervisorJobTitleId
+      ? initialData.directSupervisorJobTitleName || "Intitulé enregistré"
+      : "Intitulé enregistré";
+
+  const collaboratorOptions = useMemo(() => {
+    const byId = new Map<string, JobTitle & { persistedFallback?: boolean }>();
+    activeJobTitles.forEach(j => byId.set(j.jobTitleId, j));
+    formData.collaboratorJobTitleIds.forEach(id => {
+      if (!byId.has(id)) {
+        byId.set(id, {
+          jobTitleId: id,
+          title: persistedCollaboratorNameById.get(id) || "Intitulé enregistré",
+          departmentId: "",
+          departmentName: "Enregistré",
+          status: "active",
+          entityId,
+          persistedFallback: true,
+        } as JobTitle & { persistedFallback?: boolean });
+      }
+    });
+    return Array.from(byId.values());
+  }, [activeJobTitles, entityId, formData.collaboratorJobTitleIds, persistedCollaboratorNameById]);
+
   // Handle prefill for weekly hours and snapshot values
   const handleCcnlChange = (ccnlId: string) => {
     if (ccnlId === "none_clear") {
@@ -197,29 +318,42 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
 
   // Load initial data for editing
   useEffect(() => {
-    if (initialData) {
-      setFormData({
-        issueDate: initialData.issueDate,
-        departmentId: initialData.departmentId,
-        jobTitleId: initialData.jobTitleId,
-        directSupervisorJobTitleId: initialData.directSupervisorJobTitleId || "",
-        collaboratorJobTitleIds: initialData.collaboratorJobTitleIds || [],
-        missionsAndResponsibilities: initialData.missionsAndResponsibilities || [],
-        objectives: initialData.objectives || [],
-        initialAndProfessionalTraining: initialData.initialAndProfessionalTraining || [],
-        professionalExperience: initialData.professionalExperience || [],
-        softSkills: initialData.softSkills || [],
-        notes: initialData.notes || "",
-        defaultCcnlId: initialData.defaultCcnlId || "none_clear",
-        defaultCcnlName: initialData.defaultCcnlName || "",
-        defaultLevelId: initialData.defaultLevelId || "none_clear",
-        defaultLevelCode: initialData.defaultLevelCode || "",
-        defaultLevelLabel: initialData.defaultLevelLabel || "",
-        defaultContractType: initialData.defaultContractType || "",
-        defaultWeeklyHours: initialData.defaultWeeklyHours,
-      });
-    }
+    const nextProfileId = initialData?.jobProfileId ?? null;
+    if (loadedProfileIdRef.current === nextProfileId) return;
+
+    loadedProfileIdRef.current = nextProfileId;
+    setFormData(toJobProfileFormData(initialData));
+    setRelationshipDirty(cleanRelationshipDirty);
   }, [initialData]);
+
+  const handleDepartmentChange = (departmentId: string) => {
+    setFormData(p => {
+      if (p.departmentId === departmentId) return p;
+      return { ...p, departmentId, jobTitleId: "" };
+    });
+    setRelationshipDirty(p => ({ ...p, departmentId: true, jobTitleId: true }));
+  };
+
+  const handleJobTitleChange = (jobTitleId: string) => {
+    setFormData(p => ({ ...p, jobTitleId }));
+    setRelationshipDirty(p => ({ ...p, jobTitleId: true }));
+  };
+
+  const handleSupervisorChange = (directSupervisorJobTitleId: string) => {
+    setFormData(p => ({ ...p, directSupervisorJobTitleId: directSupervisorJobTitleId === "none" ? "" : directSupervisorJobTitleId }));
+    setRelationshipDirty(p => ({ ...p, directSupervisorJobTitleId: true }));
+  };
+
+  const toggleCollaboratorJobTitle = (jobTitleId: string) => {
+    setRelationshipDirty(p => ({ ...p, collaboratorJobTitleIds: true }));
+    setFormData(prev => {
+      const current = prev.collaboratorJobTitleIds;
+      if (current.includes(jobTitleId)) {
+        return { ...prev, collaboratorJobTitleIds: current.filter(i => i !== jobTitleId) };
+      }
+      return { ...prev, collaboratorJobTitleIds: [...current, jobTitleId] };
+    });
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -240,20 +374,37 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
       return;
     }
 
+    if (!tryStartSubmission()) return;
     setLoading(true);
     try {
       const dept = departments?.find(d => d.departmentId === formData.departmentId);
       const title = jobTitles?.find(j => j.jobTitleId === formData.jobTitleId);
       const supervisor = jobTitles?.find(j => j.jobTitleId === formData.directSupervisorJobTitleId);
-      const collaborators = jobTitles?.filter(j => formData.collaboratorJobTitleIds.includes(j.jobTitleId));
+      const collaboratorJobTitleNames = formData.collaboratorJobTitleIds
+        .map(id => jobTitles?.find(j => j.jobTitleId === id)?.title || persistedCollaboratorNameById.get(id))
+        .filter((name): name is string => !!name);
+      const departmentName =
+        dept?.name ||
+        (!relationshipDirty.departmentId && initialData?.departmentId === formData.departmentId ? initialData.departmentName : undefined) ||
+        "N/A";
+      const jobTitleName =
+        title?.title ||
+        (!relationshipDirty.jobTitleId && initialData?.jobTitleId === formData.jobTitleId ? initialData.jobTitleName : undefined) ||
+        "N/A";
+      const directSupervisorJobTitleName =
+        supervisor?.title ||
+        (!relationshipDirty.directSupervisorJobTitleId && initialData?.directSupervisorJobTitleId === formData.directSupervisorJobTitleId ? initialData.directSupervisorJobTitleName : undefined) ||
+        "N/A";
 
       const payload = {
         ...formData,
         entityName: entityName,
-        departmentName: dept?.name || initialData?.departmentName || "N/A",
-        jobTitleName: title?.title || initialData?.jobTitleName || "N/A",
-        directSupervisorJobTitleName: supervisor?.title || initialData?.directSupervisorJobTitleName || "N/A",
-        collaboratorJobTitleNames: collaborators?.map(c => c.title) || initialData?.collaboratorJobTitleNames || []
+        departmentName,
+        jobTitleName,
+        directSupervisorJobTitleName,
+        collaboratorJobTitleNames: collaboratorJobTitleNames.length > 0 || relationshipDirty.collaboratorJobTitleIds
+          ? collaboratorJobTitleNames
+          : copyStringArray(initialData?.collaboratorJobTitleNames)
       };
 
       if (isEditing && initialData) {
@@ -263,11 +414,11 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
         await createJobProfile(entityId, payload, userId);
         toast({ title: "Fiche créée", description: "La fiche de poste a été enregistrée." });
       }
-      router.push(`/entity/${entityId}/job-profiles`);
+      window.location.assign(`/entity/${entityId}/job-profiles`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setLoading(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -300,8 +451,10 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
       {/* Header Actions */}
       <div className="flex items-center justify-between sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" type="button" onClick={() => router.back()}>
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" type="button" asChild>
+            <a href={`/entity/${entityId}/job-profiles`} aria-label="Retour aux fiches de poste">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div>
             <h1 className="text-2xl font-black text-primary">
@@ -313,9 +466,17 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" type="button" onClick={() => router.back()} disabled={loading}>
-            Annuler
-          </Button>
+          {loading ? (
+            <Button variant="outline" type="button" disabled>
+              Annuler
+            </Button>
+          ) : (
+            <Button variant="outline" type="button" asChild>
+              <a href={`/entity/${entityId}/job-profiles`}>
+                Annuler
+              </a>
+            </Button>
+          )}
           <Button type="submit" disabled={loading || !formData.jobTitleId || !formData.departmentId || (!isEditing && !hasRequiredCreationReferences)}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
             {isEditing ? "Mettre à jour (Nouvelle Version)" : "Créer la fiche de poste"}
@@ -350,13 +511,16 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Département</Label>
                 <Select 
                   value={formData.departmentId} 
-                  onValueChange={(v: string) => {
-                    setFormData(p => ({...p, departmentId: v, jobTitleId: ""}));
-                  }}
+                  onValueChange={handleDepartmentChange}
                   disabled={!canReadDepartments}
                 >
                   <SelectTrigger><SelectValue placeholder="Choisir..." /></SelectTrigger>
                   <SelectContent>
+                    {formData.departmentId && !departmentOptionExists && (
+                      <SelectItem value={formData.departmentId}>
+                        {departmentFallbackLabel} (enregistré)
+                      </SelectItem>
+                    )}
                     {activeDepartments.map(d => <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -372,14 +536,19 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
                 </Label>
                 <Select 
                   value={formData.jobTitleId} 
-                  onValueChange={(v: string) => setFormData(p => ({...p, jobTitleId: v}))}
+                  onValueChange={handleJobTitleChange}
                   disabled={!formData.departmentId || !canReadJobTitles}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={formData.departmentId ? "Choisir..." : "Sélectionner un département d'abord"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {formData.departmentId && filteredJobTitlesForDept.length === 0 ? (
+                    {formData.jobTitleId && !jobTitleOptionExists && (
+                      <SelectItem value={formData.jobTitleId}>
+                        {jobTitleFallbackLabel} (enregistré)
+                      </SelectItem>
+                    )}
+                    {formData.departmentId && filteredJobTitlesForDept.length === 0 && !formData.jobTitleId ? (
                       <div className="p-4 text-center text-xs text-muted-foreground">
                         Aucun intitulé de poste actif pour ce département.
                       </div>
@@ -511,10 +680,15 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Supérieur hiérarchique direct (N+1)</Label>
-                <Select value={formData.directSupervisorJobTitleId} onValueChange={(v: string) => setFormData(p => ({...p, directSupervisorJobTitleId: v}))} disabled={!canReadJobTitles}>
+                <Select value={formData.directSupervisorJobTitleId || "none"} onValueChange={handleSupervisorChange} disabled={!canReadJobTitles}>
                   <SelectTrigger><SelectValue placeholder="Choisir le poste du N+1" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Aucun</SelectItem>
+                    {formData.directSupervisorJobTitleId && !supervisorOptionExists && (
+                      <SelectItem value={formData.directSupervisorJobTitleId}>
+                        {supervisorFallbackLabel} (enregistré)
+                      </SelectItem>
+                    )}
                     {activeJobTitles.map(j => <SelectItem key={j.jobTitleId} value={j.jobTitleId}>{j.title} ({j.departmentName})</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -522,18 +696,20 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
               <div className="space-y-2">
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">Collaborateurs directs</Label>
                 <div className="border rounded-md p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[200px] overflow-y-auto bg-secondary/5">
-                  {activeJobTitles.map(j => (
+                  {collaboratorOptions.map(j => (
                     <div key={j.jobTitleId} className="flex items-center gap-2">
                       <Checkbox 
                         id={`collab-${j.jobTitleId}`} 
                         checked={formData.collaboratorJobTitleIds.includes(j.jobTitleId)}
-                        onCheckedChange={() => toggleArrayItem('collaboratorJobTitleIds', j.jobTitleId)}
+                        onCheckedChange={() => toggleCollaboratorJobTitle(j.jobTitleId)}
                         disabled={!canReadJobTitles}
                       />
-                      <label htmlFor={`collab-${j.jobTitleId}`} className="text-xs font-medium cursor-pointer truncate">{j.title}</label>
+                      <label htmlFor={`collab-${j.jobTitleId}`} className="text-xs font-medium cursor-pointer truncate">
+                        {j.title}{j.persistedFallback ? " (enregistré)" : ""}
+                      </label>
                     </div>
                   ))}
-                  {activeJobTitles.length === 0 && <p className="text-xs text-muted-foreground italic col-span-full">Aucun poste disponible.</p>}
+                  {collaboratorOptions.length === 0 && <p className="text-xs text-muted-foreground italic col-span-full">Aucun poste disponible.</p>}
                 </div>
               </div>
             </CardContent>

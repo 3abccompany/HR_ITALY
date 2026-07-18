@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, 
   Briefcase, Building2, FileSignature,
@@ -40,7 +40,7 @@ import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { getDocumentDownloadUrl, uploadHRDocument } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
-import Link from "next/link";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { cn } from "@/lib/utils";
 import { 
   sendContractToSignature, 
@@ -234,7 +234,6 @@ function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = 
 
 export default function ContractDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params?.entityId as string;
   const contractId = params?.contractId as string;
   
@@ -242,6 +241,7 @@ export default function ContractDetailPage() {
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
   const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
   const canReadContracts = hasPermission("contracts.read");
@@ -955,6 +955,7 @@ export default function ContractDetailPage() {
       return;
     }
 
+    if (!tryStartSubmission()) return;
     setProcessing(true);
     try {
       const result = await prepareContractRenewalAction(entityId, contractId, {
@@ -979,11 +980,11 @@ export default function ContractDetailPage() {
 
       toast({ title: "Brouillon de renouvellement créé" });
       setIsRenewalModalOpen(false);
-      router.push(`/entity/${entityId}/contracts/${result.newContractId}`);
+      window.location.assign(`/entity/${entityId}/contracts/${result.newContractId}`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setProcessing(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -1122,7 +1123,9 @@ export default function ContractDetailPage() {
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Contrat introuvable</h2>
-        <Button onClick={() => router.push(`/entity/${entityId}/contracts`)} className="mt-8">Retour au registre</Button>
+        <Button asChild className="mt-8">
+          <a href={`/entity/${entityId}/contracts`}>Retour au registre</a>
+        </Button>
       </div>
     );
   }
@@ -1133,8 +1136,10 @@ export default function ContractDetailPage() {
     <div className="p-8 max-w-6xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/contracts`)} className="rounded-full">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" asChild className="rounded-full">
+            <a href={`/entity/${entityId}/contracts`} aria-label="Retour aux contrats">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div>
             <div className="flex items-center gap-3">
@@ -1164,7 +1169,7 @@ export default function ContractDetailPage() {
                   </Button>
                 )}
                 
-                <DropdownMenu>
+                <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                      <Button variant="outline" size="icon" className="rounded-xl"><MoreVertical className="w-4 h-4" /></Button>
                   </DropdownMenuTrigger>
@@ -1753,9 +1758,9 @@ export default function ContractDetailPage() {
                      <p className="text-xs font-mono font-bold text-slate-800 truncate">{renewalCpi.protocolCode || "Non enregistré"}</p>
                   </div>
                   <Button asChild variant="secondary" className="w-full h-9 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 text-xs gap-2">
-                     <Link href={`/entity/${entityId}/employment-requests/${renewalCpi.id}`}>
+                     <a href={`/entity/${entityId}/employment-requests/${renewalCpi.id}`}>
                         Voir le dossier CPI <ChevronRight className="w-3.5 h-3.5" />
-                     </Link>
+                     </a>
                   </Button>
                </CardContent>
             </Card>
