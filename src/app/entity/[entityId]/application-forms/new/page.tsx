@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { 
   Loader2, ShieldCheck, ArrowLeft, Briefcase, 
   Info, FileCode, Search, AlertCircle
@@ -14,20 +14,21 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { RecruitmentNeed } from "@/types/recruitment-need";
 import { createApplicationForm } from "@/services/application-form.service";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 
 export default function NewApplicationFormPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const preselectedNeedId = searchParams.get("recruitmentNeedId");
   
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
+  const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const [selectedNeedId, setSelectedNeedId] = useState<string>(preselectedNeedId || "");
   const [loading, setLoading] = useState(false);
@@ -37,12 +38,16 @@ export default function NewApplicationFormPage() {
   const [loadingNeeds, setLoadingNeeds] = useState(false);
   const [needsError, setNeedsError] = useState<string | null>(null);
 
-  const canCreate = hasPermission("applicationForms.create");
-  const canReadNeeds = hasPermission("recruitmentNeeds.read");
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canCreateApplicationForms = hasPermission("applicationForms.create");
+  const canReadRecruitmentNeeds = hasPermission("recruitmentNeeds.read");
 
   useEffect(() => {
     async function fetchNeeds() {
-      if (!db || !entityId || !canReadNeeds) return;
+      if (!db || !entityId || !permissionsReady || !canCreateApplicationForms || !canReadRecruitmentNeeds) return;
       
       setLoadingNeeds(true);
       setNeedsError(null);
@@ -66,7 +71,7 @@ export default function NewApplicationFormPage() {
     }
 
     fetchNeeds();
-  }, [db, entityId, canReadNeeds]);
+  }, [db, entityId, permissionsReady, canCreateApplicationForms, canReadRecruitmentNeeds]);
 
   const selectedNeed = useMemo(() => 
     needs?.find(n => n.needId === selectedNeedId), 
@@ -77,23 +82,24 @@ export default function NewApplicationFormPage() {
   }, [preselectedNeedId]);
 
   const handleCreate = async () => {
-    if (!user || !entityId || !selectedNeed) return;
+    if (!user || !entityId || !permissionsReady || !canCreateApplicationForms || !canReadRecruitmentNeeds || !selectedNeed) return;
+    if (!tryStartSubmission()) return;
 
     setLoading(true);
     try {
       const formId = await createApplicationForm(entityId, selectedNeed, user.uid);
       toast({ title: "Formulaire initialisé", description: "Brouillon créé avec les champs standards." });
-      router.push(`/entity/${entityId}/application-forms/${formId}/edit`);
+      window.location.assign(`/entity/${entityId}/application-forms/${formId}/edit`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setLoading(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
-  if (!canCreate || !canReadNeeds) {
+  if (!permissionsReady || !canCreateApplicationForms) {
     return (
       <div className="p-8 max-w-4xl mx-auto">
         <Card className="bg-destructive/5 border-destructive/20">
@@ -101,7 +107,7 @@ export default function NewApplicationFormPage() {
             <AlertCircle className="w-12 h-12 text-destructive mb-4" />
             <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
             <p className="text-muted-foreground">
-              {!canCreate ? "Vous n'avez pas la permission de créer des formulaires." : "Vous n'avez pas la permission de consulter les besoins RH source."}
+              Vous n'avez pas la permission de créer des formulaires.
             </p>
           </CardContent>
         </Card>
@@ -112,8 +118,10 @@ export default function NewApplicationFormPage() {
   return (
     <div className="p-8 max-w-4xl mx-auto pb-24">
       <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" asChild>
+          <a href={`/entity/${entityId}/application-forms`} aria-label="Retour aux formulaires">
+            <ArrowLeft className="w-5 h-5" />
+          </a>
         </Button>
         <div>
           <h1 className="text-3xl font-headline font-bold text-primary">Nouveau formulaire</h1>
@@ -136,11 +144,18 @@ export default function NewApplicationFormPage() {
               </div>
             )}
 
+            {!canReadRecruitmentNeeds && (
+              <div className="bg-amber-50 text-amber-800 p-3 rounded-md text-sm flex items-center gap-2 border border-amber-200">
+                <AlertCircle className="w-4 h-4" />
+                La création d’un formulaire nécessite l’accès aux besoins RH.
+              </div>
+            )}
+
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase text-muted-foreground">Besoin RH source</label>
-              <Select value={selectedNeedId} onValueChange={setSelectedNeedId}>
+              <Select value={selectedNeedId} onValueChange={setSelectedNeedId} disabled={!canReadRecruitmentNeeds}>
                 <SelectTrigger className="h-12">
-                  <SelectValue placeholder={loadingNeeds ? "Chargement des besoins..." : "Choisir un besoin ouvert"} />
+                  <SelectValue placeholder={!canReadRecruitmentNeeds ? "Besoins RH indisponibles" : loadingNeeds ? "Chargement des besoins..." : "Choisir un besoin ouvert"} />
                 </SelectTrigger>
                 <SelectContent>
                   {needs?.map(n => (
@@ -188,7 +203,7 @@ export default function NewApplicationFormPage() {
             <div className="pt-4 flex justify-end">
               <Button 
                 onClick={handleCreate} 
-                disabled={loading || !selectedNeedId}
+                disabled={loading || !canReadRecruitmentNeeds || !selectedNeedId}
                 className="gap-2 h-12 px-8"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCode className="w-4 h-4" />}

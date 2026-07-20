@@ -1,4 +1,5 @@
 import { FieldValue } from "firebase/firestore";
+import type { TimeOffRequestType } from "./time-off";
 
 export type AttendanceStatus = 
   | "draft_imported" 
@@ -10,6 +11,31 @@ export type AttendanceStatus =
   | "archived";
 
 export type AttendanceSource = "manual" | "excel_import";
+
+export type AttendanceAbsenceResolutionStatus =
+  | "unresolved"
+  | "justified"
+  | "rejected"
+  | "unjustified"
+  | "imported"
+  | "manual";
+
+export type AttendanceAbsenceResolutionSource =
+  | "attendance_import"
+  | "attendance_manual"
+  | "time_off_request"
+  | "migration"
+  | "system_reconciliation";
+
+export interface AttendanceAbsenceResolutionSnapshot {
+  status: AttendanceAbsenceResolutionStatus;
+  source: AttendanceAbsenceResolutionSource;
+  snapshotVersion: number;
+  type?: TimeOffRequestType | null;
+  code?: string | null;
+  sourceRequestId?: string | null;
+  resolvedAt?: Date | null;
+}
 
 export type PunchType = "AM" | "PM" | "OT";
 
@@ -54,6 +80,7 @@ export interface AttendanceRecord {
   holidayFlag: boolean;
   holidayName?: string | null;
   absenceCode?: string | null;
+  absenceResolution?: AttendanceAbsenceResolutionSnapshot | null;
   
   // Audit & Anomalies
   anomalyFlag: boolean;

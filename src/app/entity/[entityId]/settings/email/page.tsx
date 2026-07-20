@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Mail, Save, ShieldCheck, AlertCircle, Info, Loader2, 
   Server, User, CheckCircle2, Settings2, Lock, ArrowLeft, Clock,
@@ -30,7 +30,6 @@ import { cn } from "@/lib/utils";
 
 export default function EntityEmailSettingsPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { user } = useUser();
   const { toast } = useToast();
@@ -172,8 +171,10 @@ export default function EntityEmailSettingsPage() {
     <div className="p-8 max-w-4xl mx-auto pb-32 space-y-8">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" asChild className="rounded-full">
+            <a href={`/entity/${entityId}/settings`} aria-label="Retour aux paramètres">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div>
             <h1 className="text-3xl font-black text-primary tracking-tight">Paramètres Email</h1>

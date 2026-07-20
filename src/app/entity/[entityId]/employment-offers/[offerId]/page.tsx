@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, 
   Briefcase, Building2, FileSignature,
@@ -38,7 +38,7 @@ import { EmploymentOffer, EmploymentOfferStatus } from "@/types/employment-offer
 import { PreHireDossier, PreHireDocument, PreHireDocumentStatus } from "@/types/pre-hire-dossier";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
-import Link from "next/link";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { cn } from "@/lib/utils";
 import { 
   updateEmploymentOffer, 
@@ -90,7 +90,6 @@ import { fr } from "date-fns/locale";
  */
 export default function EditEmploymentOfferPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params?.entityId as string;
   const offerId = params?.offerId as string;
   
@@ -98,6 +97,7 @@ export default function EditEmploymentOfferPage() {
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
 
   const offerRef = useMemo(() => 
@@ -452,7 +452,7 @@ export default function EditEmploymentOfferPage() {
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Proposition introuvable</h2>
         <Button asChild variant="outline" className="mt-8 rounded-xl">
-           <Link href={`/entity/${entityId}/employment-offers`}>Retour au registre</Link>
+           <a href={`/entity/${entityId}/employment-offers`}>Retour au registre</a>
         </Button>
       </div>
     );
@@ -464,8 +464,10 @@ export default function EditEmploymentOfferPage() {
       <div className="space-y-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/employment-offers`)} className="rounded-full">
-              <ArrowLeft className="w-5 h-5" />
+            <Button variant="ghost" size="icon" asChild className="rounded-full">
+              <a href={`/entity/${entityId}/employment-offers`} aria-label="Retour aux propositions">
+                <ArrowLeft className="w-5 h-5" />
+              </a>
             </Button>
             <div>
               <div className="flex items-center gap-3">
@@ -796,11 +798,13 @@ export default function EditEmploymentOfferPage() {
                     <p className="text-sm text-slate-600">
                       Gérez les déclarations obligatoires auprès des autorités compétentes.
                     </p>
-                    <Button asChild variant="outline" className="w-full h-11 rounded-xl font-bold border-dashed border-2 gap-2 hover:bg-slate-50">
-                       <Link href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
-                          Gérer le dossier CPI <ChevronRight className="w-4 h-4" />
-                       </Link>
-                    </Button>
+                    {canReadCPI && (
+                      <Button asChild variant="outline" className="w-full h-11 rounded-xl font-bold border-dashed border-2 gap-2 hover:bg-slate-50">
+                         <a href={`/entity/${entityId}/employment-requests/unilav_${offerId}`}>
+                            Gérer le dossier CPI <ChevronRight className="w-4 h-4" />
+                         </a>
+                      </Button>
+                    )}
                 </CardContent>
               </Card>
             </>
@@ -992,12 +996,13 @@ export default function EditEmploymentOfferPage() {
 
   async function handlePrepareOffer(forceNew = false) {
     if (!user || !offer || !entityId) return;
+    if (!tryStartSubmission()) return;
     setProcessing(true);
     try {
       const activeOffer = await getActiveOfferForCandidate(entityId, offer.candidateId);
       if (activeOffer) {
         toast({ title: "Proposition active", description: "Une proposition est déjà en cours pour ce candidat." });
-        router.push(`/entity/${entityId}/employment-offers/${activeOffer.offerId}`);
+        window.location.assign(`/entity/${entityId}/employment-offers/${activeOffer.offerId}`);
         return;
       }
 
@@ -1005,6 +1010,7 @@ export default function EditEmploymentOfferPage() {
         const latestOffer = await getLatestOfferForCandidate(entityId, offer.candidateId);
         if (latestOffer) {
           setRevisionDialogOpen(true);
+          resetSubmission();
           setProcessing(false);
           return;
         }
@@ -1054,11 +1060,11 @@ export default function EditEmploymentOfferPage() {
 
       toast({ title: "Proposition initialisée", description: "Brouillon prêt pour édition." });
       setRevisionDialogOpen(false);
-      router.push(`/entity/${entityId}/employment-offers/${newOfferId}`);
+      window.location.assign(`/entity/${entityId}/employment-offers/${newOfferId}`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setProcessing(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   }
 }

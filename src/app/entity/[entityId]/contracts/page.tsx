@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Search, FileText, Loader2, Eye, 
   Filter, X, ListFilter, Briefcase, 
@@ -77,9 +77,15 @@ const getNumberLikeField = (source: unknown, keys: string[]): number | null => {
   return null;
 };
 
+const isIndefiniteContractType = (contractType?: string | null) => {
+  const normalized = (contractType || "").toLowerCase();
+  return ["tempo indeterminato", "cdi", "indeterminato"].some((label) =>
+    normalized.includes(label)
+  );
+};
+
 export default function ContractsRegistryPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
@@ -146,7 +152,7 @@ export default function ContractsRegistryPage() {
       if (c.status === 'active') acc.active++;
       if (c.status === 'pending_activation') acc.pending++;
       
-      const endDate = parseSafeDate(c.endDate);
+      const endDate = isIndefiniteContractType(c.contractType) ? null : parseSafeDate(c.endDate);
       if (c.status === 'active' && endDate && isBefore(endDate, thirtyDaysOut)) {
         acc.alert++;
       }
@@ -165,12 +171,13 @@ export default function ContractsRegistryPage() {
       const emp = employeesMap.get(c.employeeId);
       const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "");
       const code = c.employeeCode || (emp ? emp.employeeCode : "");
+      const taxCode = c.taxCode || emp?.taxCode || "";
 
       // 1. Search
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const searchTarget = [
-          displayName, code, c.contractId, c.contractType, 
+          displayName, code, taxCode, c.contractId, c.contractType,
           c.ccnlName, c.levelCode, c.status
         ].join(' ').toLowerCase();
         if (!searchTarget.includes(term)) return false;
@@ -187,7 +194,7 @@ export default function ContractsRegistryPage() {
 
       // 5. Expiry
       if (filters.expiry !== "all") {
-        const endDate = parseSafeDate(c.endDate);
+        const endDate = isIndefiniteContractType(c.contractType) ? null : parseSafeDate(c.endDate);
         if (c.status !== 'active' || !endDate) return false;
         
         if (filters.expiry === "overdue" && !isBefore(endDate, today)) return false;
@@ -201,7 +208,7 @@ export default function ContractsRegistryPage() {
     // 6. Weighted Sorting
     result.sort((a, b) => {
       const getWeight = (c: Contract) => {
-        const endDate = parseSafeDate(c.endDate);
+        const endDate = isIndefiniteContractType(c.contractType) ? null : parseSafeDate(c.endDate);
         if (c.status === 'active') {
           if (endDate && isBefore(endDate, today)) return 0; // Overdue Active
           if (endDate && isBefore(endDate, thirtyDaysOut)) return 1; // Soon Active
@@ -265,7 +272,7 @@ export default function ContractsRegistryPage() {
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input 
-                  placeholder="Nom, matricule, ID..." 
+                  placeholder="Nom, matricule, codice fiscale..."
                   className="h-10 pl-8 text-xs bg-background rounded-xl border-primary/10" 
                   value={filters.search}
                   onChange={(e) => updateFilter('search', e.target.value)}
@@ -374,17 +381,22 @@ export default function ContractsRegistryPage() {
                   const emp = employeesMap.get(c.employeeId);
                   const displayName = c.employeeDisplayName || (emp ? `${emp.firstName} ${emp.lastName}` : "Collaborateur inconnu");
                   const code = c.employeeCode || (emp ? emp.employeeCode : "N/A");
+                  const taxCode = c.taxCode || emp?.taxCode || "";
 
                   const monthlyRem = getNumberLikeField(c, ['proposedGrossMonthly', 'grossMonthly', 'grossMonthlySalary', 'monthlyGross', 'monthlySalary', 'salaryMonthly', 'remunerationMonthly']) || 0;
                   const annualRem = getNumberLikeField(c, ['proposedGrossAnnual', 'grossAnnual', 'grossAnnualSalary', 'annualGross', 'annualSalary', 'salaryAnnual', 'ral', 'ralAnnuel']) || 0;
+                  const isIndefinite = isIndefiniteContractType(c.contractType);
 
                   return (
                     <TableRow key={c.contractId} className="group hover:bg-muted/50 transition-colors">
                       <TableCell className="pl-6 py-4">
                         <div className="flex flex-col">
                            <span className="font-bold text-slate-900">{displayName}</span>
-                           <span className="text-[10px] font-mono text-muted-foreground uppercase bg-secondary/30 w-fit px-1 rounded mt-0.5">
-                              <Fingerprint className="w-2.5 h-2.5 inline mr-1" /> {code}
+                           <span className="text-[10px] text-muted-foreground bg-secondary/30 w-fit px-1 rounded mt-0.5">
+                              <Fingerprint className="w-2.5 h-2.5 inline mr-1" />
+                              Matricule: <span className="font-mono uppercase">{code || "Non renseigné"}</span>
+                              {" · "}
+                              Codice fiscale: <span className="font-mono uppercase">{taxCode || "Non renseigné"}</span>
                            </span>
                         </div>
                       </TableCell>
@@ -402,7 +414,11 @@ export default function ContractsRegistryPage() {
                            <div className="flex items-center gap-1.5 text-xs font-medium">
                              <CalendarIcon className="w-3 h-3 text-primary/40" /> {c.startDate || "N/A"}
                            </div>
-                           {c.endDate && (
+                           {isIndefinite ? (
+                             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                               <Info className="w-2.5 h-2.5" /> Durée indéterminée
+                             </div>
+                           ) : c.endDate && (
                              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                <ArrowUpRight className="w-2.5 h-2.5" /> Fin: {c.endDate}
                              </div>
@@ -428,10 +444,12 @@ export default function ContractsRegistryPage() {
                           variant="outline" 
                           size="sm" 
                           className="h-8 gap-2 rounded-xl font-bold bg-white shadow-sm hover:bg-primary/5 transition-all"
-                          onClick={() => router.push(`/entity/${entityId}/contracts/${c.contractId}`)}
+                          asChild
                         >
+                          <a href={`/entity/${entityId}/contracts/${c.contractId}`}>
                           <Eye className="w-3.5 h-3.5 text-primary" />
                           Détails
+                          </a>
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -563,6 +581,7 @@ function getStatusBadge(status: ContractStatus) {
 
 function getExpiryBadge(contract: Contract) {
   if (contract.status !== 'active') return null;
+  if (isIndefiniteContractType(contract.contractType)) return null;
   const endDate = parseSafeDate(contract.endDate);
   if (!endDate) return null;
   

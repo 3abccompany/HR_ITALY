@@ -10,8 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Send, AlertCircle, Upload, FileText, CheckCircle2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 
 interface PublicFormRendererProps {
   form: ApplicationForm;
@@ -25,8 +25,8 @@ const ALLOWED_TYPES = [
 ];
 
 export function PublicFormRenderer({ form }: PublicFormRendererProps) {
-  const router = useRouter();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [files, setFiles] = useState<Record<string, File>>({});
   const [loading, setLoading] = useState(false);
@@ -71,7 +71,6 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
   
     try {
@@ -91,6 +90,9 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         return;
       }
   
+      if (!tryStartSubmission()) return;
+      setLoading(true);
+
       const formData = new FormData();
   
       formData.append("publicSlug", publicSlug);
@@ -128,18 +130,20 @@ export function PublicFormRenderer({ form }: PublicFormRendererProps) {
         const debug = errObj?.debugMessage;
   
         setError({ message, debug });
+        resetSubmission();
+        setLoading(false);
         return;
       }
   
-      router.push(`/apply/${publicSlug}/success`);
+      window.location.assign(`/apply/${publicSlug}/success`);
     } catch (err: any) {
+      resetSubmission();
+      setLoading(false);
       console.error("Submission error:", err);
       setError({
         message: "Erreur technique de connexion. Veuillez réessayer.",
         debug: err?.message,
       });
-    } finally {
-      setLoading(false);
     }
   };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   FileBadge, Plus, Search, Edit, PowerOff, RefreshCcw, 
   Loader2, Calendar as CalendarIcon, Building2, Eye,
@@ -90,26 +90,26 @@ function formatDateDisplay(val: any): string {
 
 export default function JobProfilesManagementPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
 
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [visibleFilters, setVisibleFilters] = useState<string[]>(['department']);
   const [statusChange, setStatusChange] = useState<{ id: string, action: 'disable' | 'reactivate' } | null>(null);
 
-  const canRead = hasPermission("jobProfiles.read");
-  const canCreate = hasPermission("jobProfiles.create");
-  const canUpdate = hasPermission("jobProfiles.update");
+  const canReadJobProfiles = hasPermission("jobProfiles.read");
+  const canCreateJobProfiles = hasPermission("jobProfiles.create");
+  const canUpdateJobProfiles = hasPermission("jobProfiles.update");
 
   const profilesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadJobProfiles) return null;
     return query(collection(db, `entities/${entityId}/jobProfiles`), orderBy("updatedAt", "desc"));
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadJobProfiles]);
 
   const { data: profiles, loading: loadingProfiles } = useCollection<JobProfile>(profilesQuery);
 
@@ -170,7 +170,7 @@ export default function JobProfilesManagementPage() {
   };
 
   const executeStatusChange = async () => {
-    if (!statusChange || !user) return;
+    if (!statusChange || !user || !permissionsReady || !canUpdateJobProfiles) return;
     setLoading(true);
     try {
       if (statusChange.action === 'disable') {
@@ -198,7 +198,7 @@ export default function JobProfilesManagementPage() {
 
   if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
-  if (!canRead) {
+  if (!canReadJobProfiles) {
     return (
       <div className="p-8">
         <Card className="bg-destructive/5 border-destructive/20">
@@ -219,9 +219,11 @@ export default function JobProfilesManagementPage() {
           <h1 className="text-3xl font-headline font-bold text-primary tracking-tight">Gestion des fiches de postes</h1>
           <p className="text-muted-foreground text-sm">Référentiel documentaire des métiers et responsabilités.</p>
         </div>
-        {canCreate && (
-          <Button onClick={() => router.push(`/entity/${entityId}/job-profiles/new`)} className="gap-2 shadow-lg shadow-primary/10">
-            <Plus className="w-4 h-4" /> Nouvelle fiche
+        {permissionsReady && canCreateJobProfiles && (
+          <Button asChild className="gap-2 shadow-lg shadow-primary/10">
+            <a href={`/entity/${entityId}/job-profiles/new`}>
+              <Plus className="w-4 h-4" /> Nouvelle fiche
+            </a>
           </Button>
         )}
       </div>
@@ -406,40 +408,44 @@ export default function JobProfilesManagementPage() {
                       {getStatusBadge(p.status)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
+                      <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
                           <DropdownMenuItem 
                             onSelect={() => {
-                              setTimeout(() => {
-                                router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`);
-                              }, 0);
+                              if (!permissionsReady || !canReadJobProfiles) return;
+                              window.location.assign(`/entity/${entityId}/job-profiles/${p.jobProfileId}/preview`);
                             }} 
                             className="gap-2 text-primary font-bold"
                           >
                             <Eye className="w-4 h-4" /> Consulter / Imprimer
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          {canUpdate && (
+                          {canUpdateJobProfiles && (
                             <>
                               <DropdownMenuItem 
                                 onSelect={() => {
-                                  setTimeout(() => {
-                                    router.push(`/entity/${entityId}/job-profiles/${p.jobProfileId}/edit`);
-                                  }, 0);
+                                  if (!permissionsReady || !canUpdateJobProfiles) return;
+                                  window.location.assign(`/entity/${entityId}/job-profiles/${p.jobProfileId}/edit`);
                                 }} 
                                 className="gap-2"
                               >
                                 <Edit className="w-4 h-4" /> Modifier
                               </DropdownMenuItem>
                               {p.status === 'active' ? (
-                                <DropdownMenuItem onSelect={() => setStatusChange({ id: p.jobProfileId, action: 'disable' })} className="gap-2 text-destructive">
+                                <DropdownMenuItem onSelect={() => {
+                                  if (!permissionsReady || !canUpdateJobProfiles) return;
+                                  setStatusChange({ id: p.jobProfileId, action: 'disable' });
+                                }} className="gap-2 text-destructive">
                                   <PowerOff className="w-4 h-4" /> Désactiver
                                 </DropdownMenuItem>
                               ) : (
-                                <DropdownMenuItem onSelect={() => setStatusChange({ id: p.jobProfileId, action: 'reactivate' })} className="gap-2 text-green-600">
+                                <DropdownMenuItem onSelect={() => {
+                                  if (!permissionsReady || !canUpdateJobProfiles) return;
+                                  setStatusChange({ id: p.jobProfileId, action: 'reactivate' });
+                                }} className="gap-2 text-green-600">
                                   <RefreshCcw className="w-4 h-4" /> Réactiver
                                 </DropdownMenuItem>
                               )}

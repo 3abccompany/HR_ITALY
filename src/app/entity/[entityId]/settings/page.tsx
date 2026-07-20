@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Mail, Settings, ArrowRight, Info, ShieldCheck, 
   ChevronRight, Lock, Building2
@@ -12,7 +12,6 @@ import { Loader2 } from "lucide-react";
 
 export default function EntitySettingsPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { hasPermission, loading, entity } = useActiveMembership(entityId);
 
@@ -68,8 +67,10 @@ export default function EntitySettingsPage() {
                     Configurez le nom d’expéditeur, l’adresse email, le reply-to et les paramètres du serveur SMTP pour les communications de cette entité.
                  </p>
                  <div className="pt-4">
-                    <Button onClick={() => router.push(`/entity/${entityId}/settings/email`)} className="rounded-xl font-bold gap-2">
-                       <ShieldCheck className="w-4 h-4" /> Configurer
+                    <Button asChild className="rounded-xl font-bold gap-2">
+                       <a href={`/entity/${entityId}/settings/email`}>
+                         <ShieldCheck className="w-4 h-4" /> Configurer
+                       </a>
                     </Button>
                  </div>
               </CardContent>

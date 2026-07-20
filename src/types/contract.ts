@@ -1,6 +1,7 @@
 import { FieldValue } from "firebase/firestore";
 
 export type ContractStatus = "draft" | "pending_signature" | "pending_activation" | "active" | "suspended" | "terminated" | "archived" | "renewed" | "expired";
+export type ContractRenewalMode = "renew_cdd" | "convert_to_cdi" | "change_livello";
 
 export interface Contract {
   contractId: string;
@@ -59,6 +60,7 @@ export interface Contract {
   grossMonthly: number;
   grossAnnual: number;
   monthlyPayments?: number;
+  payCalculationMode?: "monthly" | "hourly" | "actual_worked_hours";
   overtimeNote?: string;
 
   // --- Compliance ---
@@ -106,6 +108,7 @@ export interface Contract {
   renewedByContractId?: string;
   pendingRenewalContractId?: string;
   renewalReason?: string;
+  renewalMode?: ContractRenewalMode;
   isRenewal?: boolean;
   renewalDraftCreatedAt?: Date | FieldValue;
   renewalDraftCreatedBy?: string;

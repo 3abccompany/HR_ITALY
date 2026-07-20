@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useMemo } from "react";
+import { useParams } from "next/navigation";
 import { 
   Plus, Edit, PowerOff, Loader2, ArrowLeft,
   ListTodo, Trash2, Info, Euro, Calendar, Clock,
@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { useFirebase, useCollection, useDoc, useUser, useAuth } from "@/firebase";
+import { useFirebase, useCollection, useDoc, useUser } from "@/firebase";
 import { collection, query, orderBy, doc } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { createCcnlLevel, updateCcnlLevel, archiveCcnlLevel } from "@/services/ccnl.service";
@@ -35,7 +35,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 // Use strings for numeric inputs in form state to allow empty values while typing
@@ -60,17 +59,21 @@ const initialLevelForm = {
 
 export default function CcnlLevelsPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const ccnlId = params.ccnlId as string;
   
   const { db } = useFirebase();
   const { user } = useUser();
-  const auth = useAuth();
   const { toast } = useToast();
-  const { loading: membershipLoading } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
+  const canReadSettings = hasPermission("settings.read");
+  const canManageSettings = hasPermission("settings.manage");
 
-  const ccnlRef = useMemo(() => doc(db!, `entities/${entityId}/ccnls`, ccnlId), [db, entityId, ccnlId]);
+  const ccnlRef = useMemo(() => {
+    if (!db || !entityId || !ccnlId || !permissionsReady || !canReadSettings) return null;
+    return doc(db, `entities/${entityId}/ccnls`, ccnlId);
+  }, [db, entityId, ccnlId, permissionsReady, canReadSettings]);
   const { data: ccnl, loading: loadingCcnl } = useDoc<CCNL>(ccnlRef as any);
 
   const [isLevelFormOpen, setIsLevelFormOpen] = useState(false);
@@ -80,9 +83,9 @@ export default function CcnlLevelsPage() {
   const [archivingId, setArchivingId] = useState<string | null>(null);
 
   const levelsQuery = useMemo(() => {
-    if (!db || !entityId || !ccnlId) return null;
+    if (!db || !entityId || !ccnlId || !permissionsReady || !canReadSettings) return null;
     return query(collection(db, `entities/${entityId}/ccnls/${ccnlId}/levels`), orderBy("levelCode", "asc"));
-  }, [db, entityId, ccnlId]);
+  }, [db, entityId, ccnlId, permissionsReady, canReadSettings]);
 
   const { data: levels, loading: loadingLevels } = useCollection<CCNLLevel>(levelsQuery);
 
@@ -93,6 +96,7 @@ export default function CcnlLevelsPage() {
   };
 
   const handleEdit = (l: CCNLLevel) => {
+    if (!canManageSettings) return;
     setFormData({
       levelCode: l.levelCode,
       label: l.label,
@@ -116,7 +120,7 @@ export default function CcnlLevelsPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !ccnl) return;
+    if (!user || !ccnl || !canManageSettings) return;
 
     const mStr = formData.minimumGrossMonthly.toString().trim().replace(',', '.');
     const hStr = formData.minimumGrossHourly.toString().trim().replace(',', '.');
@@ -160,7 +164,7 @@ export default function CcnlLevelsPage() {
   };
 
   const confirmArchive = async () => {
-    if (!archivingId || !user) return;
+    if (!archivingId || !user || !canManageSettings) return;
     setLoading(true);
     try {
       await archiveCcnlLevel(entityId, ccnlId, archivingId, user.uid);
@@ -173,18 +177,23 @@ export default function CcnlLevelsPage() {
     }
   };
 
-  if (membershipLoading || loadingCcnl) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
-  if (!ccnl) return <div className="p-8 text-center">CCNL introuvable.</div>;
+  if (membershipLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (!canReadSettings) return <div className="p-8 text-center">Accès refusé.</div>;
+  if (!loadingCcnl && !ccnl) return <div className="p-8 text-center">CCNL introuvable.</div>;
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-24">
       <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/ccnls`)}>
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" asChild>
+          <a href={`/entity/${entityId}/ccnls`} aria-label="Retour au référentiel CCNL">
+            <ArrowLeft className="w-5 h-5" />
+          </a>
         </Button>
         <div>
-          <h1 className="text-3xl font-headline font-bold text-primary">{ccnl.name}</h1>
-          <p className="text-muted-foreground text-sm uppercase font-bold tracking-widest">{ccnl.sector} — Grille des niveaux</p>
+          <h1 className="text-3xl font-headline font-bold text-primary">{loadingCcnl ? "Chargement du CCNL..." : ccnl?.name}</h1>
+          <p className="text-muted-foreground text-sm uppercase font-bold tracking-widest">
+            {loadingCcnl ? "Grille des niveaux" : `${ccnl?.sector} — Grille des niveaux`}
+          </p>
         </div>
       </div>
 
@@ -198,14 +207,14 @@ export default function CcnlLevelsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-4 text-sm">
-               <SummaryRow label="Code CNEL" value={ccnl.cnelCode} />
-               <SummaryRow label="Hebdo" value={`${ccnl.standardWeeklyHours}h`} />
-               <SummaryRow label="Mensualités" value={ccnl.monthlyPayments} />
-               <SummaryRow label="Diviseur" value={ccnl.hourlyDivisor} />
+               <SummaryRow label="Code CNEL" value={loadingCcnl ? "Chargement..." : ccnl?.cnelCode} />
+               <SummaryRow label="Hebdo" value={loadingCcnl ? "Chargement..." : `${ccnl?.standardWeeklyHours}h`} />
+               <SummaryRow label="Mensualités" value={loadingCcnl ? "Chargement..." : ccnl?.monthlyPayments} />
+               <SummaryRow label="Diviseur" value={loadingCcnl ? "Chargement..." : ccnl?.hourlyDivisor} />
                <Separator />
-               <SummaryRow label="Date d'effet" value={ccnl.effectiveFrom} />
+               <SummaryRow label="Date d'effet" value={loadingCcnl ? "Chargement..." : ccnl?.effectiveFrom} />
                <div className="pt-2">
-                 <Badge variant="outline" className="bg-white">{ccnl.status.toUpperCase()}</Badge>
+                 <Badge variant="outline" className="bg-white">{loadingCcnl ? "CHARGEMENT" : ccnl?.status.toUpperCase()}</Badge>
                </div>
             </CardContent>
           </Card>
@@ -217,9 +226,11 @@ export default function CcnlLevelsPage() {
             <h2 className="text-xl font-bold text-primary flex items-center gap-2">
               <ListTodo className="w-5 h-5" /> Niveaux de salaire
             </h2>
+            {canManageSettings && ccnl && (
             <Button onClick={() => setIsLevelFormOpen(true)} className="gap-2 h-9">
               <Plus className="w-4 h-4" /> Ajouter un niveau
             </Button>
+            )}
           </div>
 
           <Card className="overflow-hidden border-primary/10 shadow-lg">
@@ -265,8 +276,10 @@ export default function CcnlLevelsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(l)}><Edit className="w-3.5 h-3.5" /></Button>
-                          {l.status !== 'archived' && (
+                          {canManageSettings && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(l)}><Edit className="w-3.5 h-3.5" /></Button>
+                          )}
+                          {canManageSettings && l.status !== 'archived' && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setArchivingId(l.levelId)}><PowerOff className="w-3.5 h-3.5" /></Button>
                           )}
                         </div>

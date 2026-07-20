@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { updateCandidateStatus } from "@/services/candidate.service";
 import { createEmploymentOfferDraft, getActiveOfferForCandidate, getLatestOfferForCandidate } from "@/services/employment-offer.service";
 import { useToast } from "@/hooks/use-toast";
-import { useRouter } from "next/navigation";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { 
   Dialog, 
   DialogContent, 
@@ -76,9 +76,16 @@ const REVISION_REASONS = [
 export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate }: CandidateApplicationPanelProps) {
   const db = useFirestore();
   const auth = useAuth();
-  const router = useRouter();
   const { user } = useUser();
   const { toast } = useToast();
+  const {
+    tryStartSubmission: tryStartStatusChange,
+    resetSubmission: resetStatusChange,
+  } = useOneShotSubmission();
+  const {
+    tryStartSubmission: tryStartOfferPreparation,
+    resetSubmission: resetOfferPreparation,
+  } = useOneShotSubmission();
   
   const [loadingAction, setLoadingAction] = useState(false);
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
@@ -98,6 +105,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
 
   const handleStatusChange = async (nextStatus: CandidateStatus, reason?: string) => {
     if (!user || !candidate) return;
+    if (!tryStartStatusChange()) return;
     setLoadingAction(true);
     try {
       await updateCandidateStatus({
@@ -119,24 +127,28 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
 
       // UX Improvement: Direct redirect to interview planning if requested
       if (nextStatus === "interview_to_schedule") {
-        router.push(`/entity/${entityId}/interviews?candidateId=${candidate.candidateId}&action=schedule`);
+        window.location.assign(`/entity/${entityId}/interviews?candidateId=${candidate.candidateId}&action=schedule`);
+        return;
       }
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetStatusChange();
       setLoadingAction(false);
+    } catch (err: any) {
+      resetStatusChange();
+      setLoadingAction(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
   const handlePrepareOffer = async (forceNew = false) => {
     if (!user || !candidate || !entityId) return;
+    if (!tryStartOfferPreparation()) return;
     setLoadingAction(true);
     try {
       // 1. Check for active offer
       const activeOffer = await getActiveOfferForCandidate(entityId, candidate.candidateId);
       if (activeOffer) {
         toast({ title: "Proposition active", description: "Une proposition est déjà en cours pour ce candidat." });
-        router.push(`/entity/${entityId}/employment-offers/${activeOffer.offerId}`);
+        window.location.assign(`/entity/${entityId}/employment-offers/${activeOffer.offerId}`);
         return;
       }
 
@@ -146,6 +158,7 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
         if (latestOffer) {
           // Latest offer exists but is terminal (declined/expired/cancelled)
           setRevisionDialogOpen(true);
+          resetOfferPreparation();
           setLoadingAction(false);
           return;
         }
@@ -184,12 +197,12 @@ export function CandidateApplicationPanel({ entityId, candidate, onStatusUpdate 
 
       toast({ title: "Proposition initialisée", description: "Brouillon prêt pour édition." });
       setRevisionDialogOpen(false);
-      router.push(`/entity/${entityId}/employment-offers/${offerId}`);
+      window.location.assign(`/entity/${entityId}/employment-offers/${offerId}`);
     } catch (err: any) {
+      resetOfferPreparation();
+      setLoadingAction(false);
       console.error("Prepare offer error:", err);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
-      setLoadingAction(false);
     }
   };
 

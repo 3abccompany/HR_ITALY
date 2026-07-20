@@ -67,6 +67,7 @@ export default function TrainingsRegistryPage() {
   const { user } = useUser();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
 
   // UI State
   const [isDialogVisible, setIsDialogVisible] = useState(false);
@@ -83,19 +84,22 @@ export default function TrainingsRegistryPage() {
 
   // Queries
   const canRead = hasPermission("training.read");
+  const canReadEmployees = hasPermission("employees.read");
+  const canCreate = hasPermission("training.create");
   
   const trainingsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canRead) return null;
     return query(collection(db, `entities/${entityId}/trainings`), orderBy("updatedAt", "desc")) as Query<Training>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canRead]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canRead || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canRead, canReadEmployees]);
 
   const { data: trainings, loading: loadingTrainings } = useCollection<Training>(trainingsQuery, "trainings.registry");
-  const { data: employees, loading: loadingEmployees } = useCollection<Employee>(employeesQuery, "trainings.employees_lookup");
+  const { data: employees, loading: loadingEmployees, error: employeesError } = useCollection<Employee>(employeesQuery, "trainings.employees_lookup");
+  const employeeDirectorySuccessfullyLoaded = canReadEmployees && !!employeesQuery && !loadingEmployees && !employeesError;
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -228,10 +232,21 @@ export default function TrainingsRegistryPage() {
           <h1 className="text-3xl font-black text-primary tracking-tight">Registre des Formations</h1>
           <p className="text-muted-foreground text-sm font-medium">Gestion de la formation obligatoire et continue.</p>
         </div>
-        {hasPermission("training.create") && (
-          <Button onClick={() => { setEditingId(null); setIsResultMode(false); setIsDialogVisible(true); }} className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold">
-            <Plus className="w-4 h-4" /> Nouvelle formation
-          </Button>
+        {canCreate && (
+          <div className="flex flex-col items-start md:items-end gap-2">
+            <Button
+              onClick={() => { setEditingId(null); setIsResultMode(false); setIsDialogVisible(true); }}
+              disabled={!canReadEmployees}
+              className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold"
+            >
+              <Plus className="w-4 h-4" /> Nouvelle formation
+            </Button>
+            {!canReadEmployees && (
+              <p className="text-[10px] font-bold text-muted-foreground max-w-xs text-left md:text-right">
+                La création d’une formation nécessite l’autorisation de consulter les employés.
+              </p>
+            )}
+          </div>
         )}
       </header>
 
@@ -317,6 +332,8 @@ export default function TrainingsRegistryPage() {
               ) : (
                 filteredTrainings.map((t) => {
                   const emp = employeesMap.get(t.employeeId);
+                  const collaboratorName = emp?.displayName || (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
+                  const collaboratorCode = emp?.employeeCode || (employeeDirectorySuccessfullyLoaded ? t.employeeId.slice(0, 8) : "—");
                   const expiryDate = t.expiryDate ? parseISO(t.expiryDate) : null;
                   const today = startOfDay(new Date());
                   const isExpiredStatus = expiryDate && isBefore(expiryDate, today);
@@ -325,9 +342,9 @@ export default function TrainingsRegistryPage() {
                     <TableRow key={t.id} className="hover:bg-muted/50 transition-colors">
                       <TableCell className="pl-6">
                         <div className="flex flex-col">
-                           <span className="font-bold text-slate-900">{emp?.displayName || "Employé inconnu"}</span>
+                           <span className="font-bold text-slate-900">{collaboratorName}</span>
                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[10px] text-muted-foreground uppercase font-mono">{emp?.employeeCode || t.employeeId.slice(0, 8)}</span>
+                              <span className="text-[10px] text-muted-foreground uppercase font-mono">{collaboratorCode}</span>
                               {t.batchId && (
                                 <Badge variant="outline" className="text-[8px] h-3 px-1 border-primary/10 bg-primary/5 text-primary/60 font-black uppercase">Session</Badge>
                               )}
@@ -405,7 +422,7 @@ export default function TrainingsRegistryPage() {
                          {getStatusBadge(t.status)}
                       </TableCell>
                       <TableCell className="text-right pr-6">
-                        <DropdownMenu>
+                        <DropdownMenu modal={false}>
                            <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                            </DropdownMenuTrigger>

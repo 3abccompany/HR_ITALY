@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Plus, Search, Edit, PowerOff, Loader2, 
   Calendar, Building2, MapPin, Users,
@@ -21,6 +21,7 @@ import { useActiveMembership } from "@/hooks/use-active-membership";
 import { cancelRecruitmentNeed, archiveRecruitmentNeed } from "@/services/recruitment-need.service";
 import { RecruitmentNeed, RecruitmentNeedStatus } from "@/types/recruitment-need";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -89,12 +90,12 @@ function parseSafeDate(val: any): Date | null {
 
 export default function RecruitmentNeedsPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
 
   // State
   const [loading, setLoading] = useState(false);
@@ -105,18 +106,25 @@ export default function RecruitmentNeedsPage() {
   const [pagination, setPagination] = useState({ page: 1, pageSize: 25 });
 
   // Permissions
-  const canRead = hasPermission("recruitmentNeeds.read");
-  const canCreate = hasPermission("recruitmentNeeds.create");
-  const canUpdate = hasPermission("recruitmentNeeds.update");
-  const canCancel = hasPermission("recruitmentNeeds.cancel");
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadRecruitmentNeeds = hasPermission("recruitmentNeeds.read");
+  const canCreateRecruitmentNeeds = hasPermission("recruitmentNeeds.create");
+  const canUpdateRecruitmentNeeds = hasPermission("recruitmentNeeds.update");
+  const canCancelRecruitmentNeeds = hasPermission("recruitmentNeeds.cancel");
   const canCreateForm = hasPermission("applicationForms.create");
+  const canRead = canReadRecruitmentNeeds;
+  const canUpdate = canUpdateRecruitmentNeeds;
+  const canCancel = canCancelRecruitmentNeeds;
 
   // Queries
   const needsQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !permissionsReady || !canReadRecruitmentNeeds) return null;
     // Hardened: Removed Firestore-side orderBy to ensure visibility of records missing createdAt
     return query(collection(db, `entities/${entityId}/recruitmentNeeds`));
-  }, [db, entityId, canRead]);
+  }, [db, entityId, permissionsReady, canReadRecruitmentNeeds]);
 
   const { data: needs, loading: loadingNeeds } = useCollection<RecruitmentNeed>(needsQuery);
 
@@ -234,6 +242,7 @@ export default function RecruitmentNeedsPage() {
 
   const executeStatusChange = async () => {
     if (!statusChange || !user) return;
+    if (!tryStartSubmission()) return;
     setLoading(true);
     try {
       if (statusChange.action === 'cancel') {
@@ -243,7 +252,9 @@ export default function RecruitmentNeedsPage() {
         await archiveRecruitmentNeed(entityId, statusChange.id, user.uid);
         toast({ title: "Besoin archivé" });
       }
+      resetSubmission();
     } catch (err: any) {
+      resetSubmission();
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
       setLoading(false);
@@ -271,9 +282,11 @@ export default function RecruitmentNeedsPage() {
           <h1 className="text-3xl font-headline font-bold text-primary">Gestion des Besoins RH</h1>
           <p className="text-muted-foreground text-sm">Ouverture de postes, planification et offres d'emploi.</p>
         </div>
-        {canCreate && (
-          <Button onClick={() => router.push(`/entity/${entityId}/recruitment-needs/new`)} className="gap-2 shadow-lg shadow-primary/10">
-            <Plus className="w-4 h-4" /> Nouveau besoin RH
+        {permissionsReady && canCreateRecruitmentNeeds && (
+          <Button asChild className="gap-2 shadow-lg shadow-primary/10">
+            <a href={`/entity/${entityId}/recruitment-needs/new`}>
+              <Plus className="w-4 h-4" /> Nouveau besoin RH
+            </a>
           </Button>
         )}
       </div>
@@ -470,45 +483,28 @@ export default function RecruitmentNeedsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <DropdownMenu>
+                        <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem 
-                              onSelect={() => {
-                                // CRITICAL: Wrap navigation in setTimeout to allow Radix UI 
-                                // to close the menu before the page unmounts.
-                                setTimeout(() => {
-                                  router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/preview`);
-                                }, 0);
-                              }}
-                              className="gap-2 text-primary font-semibold"
-                            >
-                              <Eye className="w-4 h-4" /> Consulter
+                            <DropdownMenuItem asChild className="gap-2 text-primary font-semibold">
+                              <a href={`/entity/${entityId}/recruitment-needs/${n.needId}/preview`}>
+                                <Eye className="w-4 h-4" /> Consulter
+                              </a>
                             </DropdownMenuItem>
                             {canCreateForm && ["open", "partially_fulfilled"].includes(n.status) && (
-                              <DropdownMenuItem 
-                                onSelect={() => {
-                                  setTimeout(() => {
-                                    router.push(`/entity/${entityId}/application-forms/new?recruitmentNeedId=${n.needId}`);
-                                  }, 0);
-                                }}
-                                className="gap-2 font-bold text-accent"
-                              >
-                                <FileCode className="w-4 h-4" /> Créer formulaire
+                              <DropdownMenuItem asChild className="gap-2 font-bold text-accent">
+                                <a href={`/entity/${entityId}/application-forms/new?recruitmentNeedId=${n.needId}`}>
+                                  <FileCode className="w-4 h-4" /> Créer formulaire
+                                </a>
                               </DropdownMenuItem>
                             )}
                             {canUpdate && (
-                              <DropdownMenuItem 
-                                onSelect={() => {
-                                  setTimeout(() => {
-                                    router.push(`/entity/${entityId}/recruitment-needs/${n.needId}/edit`);
-                                  }, 0);
-                                }}
-                                className="gap-2"
-                              >
-                                <Edit className="w-4 h-4" /> Modifier
+                              <DropdownMenuItem asChild className="gap-2">
+                                <a href={`/entity/${entityId}/recruitment-needs/${n.needId}/edit`}>
+                                  <Edit className="w-4 h-4" /> Modifier
+                                </a>
                               </DropdownMenuItem>
                             )}
                             {canCancel && !["cancelled", "archived", "fulfilled"].includes(n.status) && (

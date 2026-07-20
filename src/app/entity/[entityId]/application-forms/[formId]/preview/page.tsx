@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   ArrowLeft, Building2, MapPin, Briefcase, 
   Loader2, Upload, AlertCircle, Send, Globe
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useFirebase, useDoc } from "@/firebase";
 import { doc, DocumentReference } from "firebase/firestore";
+import { useActiveMembership } from "@/hooks/use-active-membership";
 import { ApplicationForm } from "@/types/application-form";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -20,19 +21,41 @@ import { Separator } from "@/components/ui/separator";
 
 export default function ApplicationFormPreviewPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const formId = params.formId as string;
   
   const { db } = useFirebase();
+  const { membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canReadApplicationForms = hasPermission("applicationForms.read");
 
   const formRef = useMemo(() => 
-    db && entityId && formId ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
-  [db, entityId, formId]);
+    db && entityId && formId && permissionsReady && canReadApplicationForms ? (doc(db, `entities/${entityId}/applicationForms`, formId) as DocumentReference<ApplicationForm>) : null,
+  [db, entityId, formId, permissionsReady, canReadApplicationForms]);
 
   const { data: form, loading } = useDoc<ApplicationForm>(formRef);
 
-  if (loading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (membershipLoading || loading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+
+  if (!permissionsReady || !canReadApplicationForms) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <Card className="bg-destructive/5 border-destructive/20">
+          <CardContent className="flex flex-col items-center py-12 text-center">
+            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
+            <h2 className="text-xl font-bold text-primary mb-2">Accès Refusé</h2>
+            <p className="text-muted-foreground">
+              Vous n'avez pas la permission de consulter ce formulaire.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!form) return <div className="p-8 text-center">Formulaire introuvable.</div>;
 
@@ -43,8 +66,10 @@ export default function ApplicationFormPreviewPage() {
       {/* Admin Header */}
       <header className="sticky top-0 z-50 h-16 bg-white/80 backdrop-blur border-b px-8 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2">
-            <ArrowLeft className="w-4 h-4" /> Retour à l'édition
+          <Button variant="ghost" size="sm" asChild className="gap-2">
+            <a href={`/entity/${entityId}/application-forms/${formId}/edit`}>
+              <ArrowLeft className="w-4 h-4" /> Retour à l'édition
+            </a>
           </Button>
           <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-2 text-primary font-bold text-sm uppercase tracking-tight">

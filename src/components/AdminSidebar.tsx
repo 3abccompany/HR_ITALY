@@ -16,7 +16,8 @@ import {
   LogOut,
   Loader2,
   Database,
-  Lock
+  Lock,
+  ShieldAlert
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
@@ -62,38 +63,45 @@ const navItems = [
     isActive: true,
   },
   {
-    title: "Catalogue Permissions",
-    url: "/super-admin/permissions-seed",
-    icon: Database,
+    title: "Santé accès & permissions",
+    url: "/super-admin/security-health",
+    icon: ShieldAlert,
     isActive: true,
-    label: "Admin",
-  },
-  {
-    title: "Initialisation Rôles",
-    url: "/super-admin/roles-seed",
-    icon: Lock,
-    isActive: true,
-    label: "Admin",
+    label: "Read-only",
   },
   {
     title: "Rôles",
-    url: "#",
+    url: "/super-admin/roles",
     icon: ShieldCheck,
-    isActive: false,
-    label: "À venir",
+    isActive: true,
+    label: "Read-only",
   },
   {
     title: "Permissions",
-    url: "#",
+    url: "/super-admin/permissions",
     icon: Key,
-    isActive: false,
-    label: "À venir",
+    isActive: true,
+    label: "Read-only",
+  },
+  {
+    title: "Sync permissions",
+    url: "/super-admin/permissions-seed",
+    icon: Database,
+    isActive: true,
+    label: "Maintenance",
+  },
+  {
+    title: "Sync rôles",
+    url: "/super-admin/roles-seed",
+    icon: Lock,
+    isActive: true,
+    label: "Maintenance",
   },
   {
     title: "Audit",
-    url: "#",
+    url: "/super-admin/audit",
     icon: History,
-    isActive: false,
+    isActive: true,
     label: "À venir",
   },
   {

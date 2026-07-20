@@ -869,18 +869,18 @@ export default function InterviewsManagementPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <DropdownMenu>
+                            <DropdownMenu modal={false}>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 {canUpdate && (
-                                  <DropdownMenuItem onSelect={() => setTimeout(() => handleEdit(i), 0)} className="gap-2">
+                                  <DropdownMenuItem onSelect={() => handleEdit(i)} className="gap-2">
                                     <Edit className="w-4 h-4" /> Modifier
                                   </DropdownMenuItem>
                                 )}
                                 {canDecide && i.status !== 'inactive' && (
-                                  <DropdownMenuItem onSelect={() => setTimeout(() => handleOpenDecision(i), 0)} className="gap-2 font-bold text-primary">
+                                  <DropdownMenuItem onSelect={() => handleOpenDecision(i)} className="gap-2 font-bold text-primary">
                                     <CheckCircle2 className="w-4 h-4" /> Décision
                                   </DropdownMenuItem>
                                 )}

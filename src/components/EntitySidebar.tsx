@@ -1,14 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import Link from "next/link";
+import { collection, limit, query, where, type Query } from "firebase/firestore";
 import { 
   Building, 
   UserCircle, 
   ShieldCheck, 
-  ChevronRight, 
   LogOut, 
   ArrowLeftRight,
   Loader2
@@ -26,10 +25,14 @@ import {
   SidebarMenuButton,
   SidebarRail
 } from "@/components/ui/sidebar";
-import { entityMenu } from "@/config/menu";
+import { useCollection, useFirebase, useUser } from "@/firebase";
+import { entityMenu, type MenuItem } from "@/config/menu";
 import { logout } from "@/services/auth.service";
 import { useToast } from "@/hooks/use-toast";
+import type { Employee } from "@/types/employee";
 import { cn } from "@/lib/utils";
+
+const MY_SPACE_HREF = "my-space";
 
 export function EntitySidebar() {
   const params = useParams();
@@ -37,15 +40,67 @@ export function EntitySidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { toast } = useToast();
+  const { db } = useFirebase();
+  const { user } = useUser();
   const { membership, entity, loading, hasPermission } = useActiveMembership(entityId);
+  const [loadingHref, setLoadingHref] = useState<string | null>(null);
 
-  // UX Feedback state for immediate response on click
-  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const mySpaceItem = entityMenu.find((item) => item.href === MY_SPACE_HREF);
+  const businessMenuItems = entityMenu.filter((item) => item.href !== MY_SPACE_HREF);
+  const canReadSelfProfile = hasPermission("self.profile.read");
+  const linkedEmployeeQuery = db && entityId && user && canReadSelfProfile
+    ? (query(
+        collection(db, `entities/${entityId}/employees`),
+        where("userId", "==", user.uid),
+        limit(1)
+      ) as Query<Employee>)
+    : null;
+  const {
+    data: linkedEmployees,
+    loading: loadingLinkedEmployee,
+    error: linkedEmployeeError,
+  } = useCollection<Employee>(linkedEmployeeQuery, "sidebar.my-space-employee");
+  const hasLinkedEmployeeProfile = !!linkedEmployees?.[0];
+  const showMySpace =
+    !!mySpaceItem &&
+    canReadSelfProfile &&
+    !loadingLinkedEmployee &&
+    hasLinkedEmployeeProfile &&
+    !linkedEmployeeError;
 
-  // Clear pending state when navigation completes
   useEffect(() => {
-    setPendingHref(null);
+    if (linkedEmployeeError) {
+      console.warn("[EntitySidebar] Linked employee profile lookup failed", linkedEmployeeError);
+    }
+  }, [linkedEmployeeError]);
+
+  useEffect(() => {
+    setLoadingHref(null);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!loadingHref) return;
+
+    const timeout = window.setTimeout(() => {
+      setLoadingHref(null);
+    }, 3000);
+
+    return () => window.clearTimeout(timeout);
+  }, [loadingHref]);
+
+  const handleMenuAnchorClick = (event: MouseEvent<HTMLAnchorElement>, href: string) => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    setLoadingHref(href);
+  };
 
   const handleLogout = async () => {
     try {
@@ -68,6 +123,38 @@ export function EntitySidebar() {
 
   if (!membership || !entity) return null;
 
+  const renderNavigationLink = (item: MenuItem) => {
+    const href = `/entity/${entityId}/${item.href}`;
+    const isActive = pathname === href;
+    const isLoading = loadingHref === href && !isActive;
+    const Icon = item.icon;
+
+    return (
+      <SidebarMenuItem key={item.href}>
+        <a href={href}
+          title={item.label}
+          data-sidebar="menu-button"
+          data-active={isActive}
+          data-size="default"
+          onClick={(event) => handleMenuAnchorClick(event, href)}
+          className={cn(
+            "peer/menu-button flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-[width,height,padding]",
+            "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground",
+            "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
+            "group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0"
+          )}
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Icon className="w-4 h-4" aria-hidden="true" />
+          )}
+          <span>{item.label}</span>
+        </a>
+      </SidebarMenuItem>
+    );
+  };
+
   return (
     <Sidebar collapsible="icon" className="border-r">
       <SidebarHeader className="border-b h-16 flex flex-col justify-center px-4 gap-0.5">
@@ -87,35 +174,27 @@ export function EntitySidebar() {
           <SidebarGroupLabel>Navigation Métier</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {entityMenu.map((item) => {
+              {businessMenuItems.map((item) => {
                 const permissions = Array.isArray(item.permission) ? item.permission : [item.permission];
                 const isVisible = permissions.some(p => hasPermission(p));
                 if (!isVisible) return null;
-                
-                const href = `/entity/${entityId}/${item.href}`;
-                const isActive = pathname === href || pendingHref === href;
-                const isPending = pendingHref === href && pathname !== href;
 
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton 
-                      asChild 
-                      isActive={isActive} 
-                      tooltip={item.label}
-                      onClick={() => setPendingHref(href)}
-                      className={cn(isPending && "animate-pulse opacity-70")}
-                    >
-                      <Link href={href}>
-                        {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <item.icon className="w-4 h-4" />}
-                        <span>{item.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
+                return renderNavigationLink(item);
               })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {showMySpace && mySpaceItem && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Espace personnel</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {renderNavigationLink(mySpaceItem)}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="p-2 border-t space-y-1">

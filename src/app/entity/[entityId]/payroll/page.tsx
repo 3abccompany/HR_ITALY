@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { 
   Euro, Calculator, Loader2, Calendar, 
@@ -11,7 +11,7 @@ import {
   XCircle, ArrowDownCircle, ArrowUpCircle, Banknote, HelpCircle
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -27,9 +27,15 @@ import {
   PayrollCalculationStatus,
   PayrollReconciliationWarning 
 } from "@/types/payroll";
+import { MealTicketMonthlySummary } from "@/types/meal-ticket";
+import { KilometerReimbursementMonthlySummary } from "@/types/kilometer-reimbursement";
 import { Employee } from "@/types/employee";
-import { calculateAndSaveMonthlyPayroll } from "@/services/payroll.service";
+import { calculateMonthlyPayrollAction } from "@/app/actions/payroll-calculation-actions";
 import { useToast } from "@/hooks/use-toast";
+import {
+  getPayrollEmployeeSummariesAction,
+  type PayrollEmployeeSummary,
+} from "@/app/actions/payroll-employee-summary-actions";
 import { 
   Dialog, DialogContent, DialogHeader, DialogTitle, 
   DialogFooter, DialogDescription 
@@ -60,10 +66,36 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: "bg-red-50 text-red-700 border-red-200"
 };
 
+type PayrollMode = NonNullable<PayrollCalculation["rateSnapshot"]["payCalculationMode"]>;
+
+const MODE_LABELS: Record<PayrollMode, string> = {
+  monthly: "Mensualisé",
+  hourly: "Horaire historique",
+  actual_worked_hours: "Heures réellement travaillées",
+};
+
+const MODE_BADGE_STYLES: Record<PayrollMode, string> = {
+  monthly: "bg-indigo-50 text-indigo-700 border-indigo-100",
+  hourly: "bg-slate-100 text-slate-700 border-slate-200",
+  actual_worked_hours: "bg-teal-50 text-teal-700 border-teal-100",
+};
+
+const BASE_LABELS: Record<PayrollMode, string> = {
+  monthly: "Base mensuelle",
+  hourly: "Base horaire",
+  actual_worked_hours: "Base heures travaillées",
+};
+
+const formatEuro = (value?: number | null) =>
+  `€ ${(value ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 2 })}`;
+
+const formatHours = (value?: number | null) =>
+  `${(value ?? 0).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h`;
+
 export default function PayrollSynthesisPage() {
   const params = useParams();
   const entityId = params.entityId as string;
-  const { db } = useFirebase();
+  const { db, auth } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
   const { hasPermission, loading: membershipLoading, entity } = useActiveMembership(entityId);
@@ -72,6 +104,8 @@ export default function PayrollSynthesisPage() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [search, setSearch] = useState("");
+  const [employeeSummaries, setEmployeeSummaries] = useState<PayrollEmployeeSummary[]>([]);
+  const [loadingEmployeeSummaries, setLoadingEmployeeSummaries] = useState(false);
 
   // Processing State
   const [calculating, setCalculating] = useState(false);
@@ -79,7 +113,14 @@ export default function PayrollSynthesisPage() {
 
   // Queries
   const canRead = hasPermission("payroll.read");
+  const canReadEmployees = hasPermission("employees.read");
   const canCalculate = hasPermission("payroll.calculate") || hasPermission("payroll.write");
+  const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
+  const canReadReimbursements =
+    hasPermission("reimbursements.read") ||
+    hasPermission("reimbursements.manage") ||
+    hasPermission("reimbursements.approve") ||
+    hasPermission("reimbursements.export");
 
   const calculationsQuery = useMemo(() => {
     if (!db || !entityId || !canRead) return null;
@@ -91,12 +132,81 @@ export default function PayrollSynthesisPage() {
   }, [db, entityId, canRead, selectedYear, selectedMonth]);
 
   const employeesQuery = useMemo(() => {
-    if (!db || !entityId || !canRead) return null;
+    if (!db || !entityId || !canRead || !canReadEmployees) return null;
     return query(collection(db, `entities/${entityId}/employees`)) as Query<Employee>;
-  }, [db, entityId, canRead]);
+  }, [db, entityId, canRead, canReadEmployees]);
+
+  const mealTicketSummariesQuery = useMemo(() => {
+    if (!db || !entityId || !canReadMealTickets) return null;
+    return query(
+      collection(db, `entities/${entityId}/mealTicketMonthlySummaries`),
+      where("year", "==", selectedYear),
+      where("month", "==", selectedMonth),
+      where("status", "==", "confirmed")
+    ) as Query<MealTicketMonthlySummary>;
+  }, [db, entityId, canReadMealTickets, selectedYear, selectedMonth]);
+
+  const kilometerSummariesQuery = useMemo(() => {
+    if (!db || !entityId || !canReadReimbursements) return null;
+    return query(
+      collection(db, `entities/${entityId}/kilometerReimbursementMonthlySummaries`),
+      where("year", "==", selectedYear),
+      where("month", "==", selectedMonth),
+      where("status", "==", "confirmed")
+    ) as Query<KilometerReimbursementMonthlySummary>;
+  }, [db, entityId, canReadReimbursements, selectedYear, selectedMonth]);
 
   const { data: calculations, loading: loadingCalcs } = useCollection<PayrollCalculation>(calculationsQuery, "payroll.calculations");
   const { data: employees } = useCollection<Employee>(employeesQuery, "payroll.employees");
+  const { data: mealTicketSummaries } = useCollection<MealTicketMonthlySummary>(
+    mealTicketSummariesQuery,
+    "payroll.meal-ticket-summaries"
+  );
+  const { data: kilometerSummaries } = useCollection<KilometerReimbursementMonthlySummary>(
+    kilometerSummariesQuery,
+    "payroll.kilometer-reimbursement-summaries"
+  );
+
+  const calculationIds = useMemo(
+    () => (calculations || []).map((calculation) => calculation.id).filter(Boolean).slice(0, 100),
+    [calculations]
+  );
+  const calculationIdsKey = calculationIds.join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEmployeeSummaries() {
+      if (!canRead || canReadEmployees || !auth?.currentUser || !entityId || calculationIds.length === 0) {
+        if (!cancelled) setEmployeeSummaries([]);
+        return;
+      }
+
+      setLoadingEmployeeSummaries(true);
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const result = await getPayrollEmployeeSummariesAction({
+          idToken,
+          entityId,
+          calculationIds,
+        });
+
+        if (cancelled) return;
+
+        setEmployeeSummaries(result.success ? result.summaries || [] : []);
+      } catch {
+        if (!cancelled) setEmployeeSummaries([]);
+      } finally {
+        if (!cancelled) setLoadingEmployeeSummaries(false);
+      }
+    }
+
+    loadEmployeeSummaries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, calculationIdsKey, canRead, canReadEmployees, entityId]);
 
   const employeesMap = useMemo(() => {
     const map = new Map<string, Employee>();
@@ -104,36 +214,78 @@ export default function PayrollSynthesisPage() {
     return map;
   }, [employees]);
 
+  const employeeSummaryMap = useMemo(() => {
+    const map = new Map<string, PayrollEmployeeSummary>();
+    employeeSummaries.forEach((summary) => map.set(summary.calculationId, summary));
+    return map;
+  }, [employeeSummaries]);
+
+  const mealTicketSummaryMap = useMemo(() => {
+    const map = new Map<string, MealTicketMonthlySummary>();
+    mealTicketSummaries?.forEach((summary) => map.set(summary.employeeId, summary));
+    return map;
+  }, [mealTicketSummaries]);
+
+  const kilometerSummaryMap = useMemo(() => {
+    const map = new Map<string, KilometerReimbursementMonthlySummary>();
+    kilometerSummaries?.forEach((summary) => map.set(summary.employeeId, summary));
+    return map;
+  }, [kilometerSummaries]);
+
   const filteredCalculations = useMemo(() => {
     if (!calculations) return [];
     if (!search) return calculations;
     const term = search.toLowerCase();
     return calculations.filter(c => {
       const emp = employeesMap.get(c.employeeId);
+      const summary = employeeSummaryMap.get(c.id);
       return (
-        emp?.displayName.toLowerCase().includes(term) ||
-        emp?.employeeCode?.toLowerCase().includes(term)
+        (canReadEmployees && emp?.displayName.toLowerCase().includes(term)) ||
+        (canReadEmployees && emp?.employeeCode?.toLowerCase().includes(term)) ||
+        (canReadEmployees && emp?.taxCode?.toLowerCase().includes(term)) ||
+        (!canReadEmployees && summary?.displayName.toLowerCase().includes(term)) ||
+        (!canReadEmployees && summary?.employeeCode?.toLowerCase().includes(term))
       );
     });
-  }, [calculations, search, employeesMap]);
+  }, [calculations, search, employeesMap, employeeSummaryMap, canReadEmployees]);
 
   const handleCalculate = async () => {
-    if (!db || !user || !entityId) return;
+    if (!user || !entityId || !canCalculate) return;
     setCalculating(true);
     setCalcSummary(null);
 
     try {
-      const result = await calculateAndSaveMonthlyPayroll(
-        db,
+      const idToken = await user.getIdToken(true);
+      const result = await calculateMonthlyPayrollAction({
+        idToken,
         entityId,
-        selectedYear,
-        selectedMonth,
-        user.uid
-      );
-      setCalcSummary(result);
-      toast({ title: "Calcul terminé", description: `${result.totalEmployees} dossiers traités.` });
+        year: selectedYear,
+        month: selectedMonth,
+      });
+
+      if (!result.success) {
+        toast({
+          variant: "destructive",
+          title: "Erreur de calcul",
+          description: result.error || "Le calcul de synthèse économique n'a pas pu être finalisé.",
+        });
+        return;
+      }
+
+      setCalcSummary({
+        totalEmployees: result.totalEmployees || 0,
+        savedCount: result.savedCount || 0,
+        skippedCount: result.skippedCount || 0,
+        failedCount: result.failedCount || 0,
+        warningsCount: result.warningsCount || 0,
+      });
+      toast({ title: "Calcul terminé", description: `${result.totalEmployees || 0} dossiers traités.` });
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur de calcul", description: err.message });
+      toast({
+        variant: "destructive",
+        title: "Erreur de calcul",
+        description: err?.message || "Le calcul de synthèse économique n'a pas pu être finalisé.",
+      });
     } finally {
       setCalculating(false);
     }
@@ -224,7 +376,11 @@ export default function PayrollSynthesisPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input 
                 className="pl-10 h-11 rounded-xl bg-white border-primary/10" 
-                placeholder="Rechercher un employé ou matricule..." 
+                placeholder={
+                  canReadEmployees
+                    ? "Rechercher un employé, matricule ou codice fiscale..."
+                    : "Rechercher un collaborateur ou matricule..."
+                }
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -234,28 +390,25 @@ export default function PayrollSynthesisPage() {
         <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
           <ScrollArea className="w-full">
             <Table>
-              <TableHeader className="bg-secondary/20 hover:bg-secondary/20">
-                <TableRow className="hover:bg-transparent border-none">
-                  <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest h-12">Collaborateur</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest">Type / Mode</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center">Heures (V/N/S)</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Base Mensuelle</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Maj. Nuit</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Maj. Sup</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Fériés</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Retenues</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">Extras</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right">TOTAL BRUT</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center">Alertes</TableHead>
-                  <TableHead className="text-right pr-8"></TableHead>
+              <TableHeader className="bg-slate-50/80 hover:bg-slate-50/80">
+                <TableRow className="hover:bg-transparent border-b border-slate-200/70">
+                  <TableHead className="pl-6 text-[10px] font-black uppercase tracking-widest h-12 border-r border-slate-200/70 min-w-[190px]">Collaborateur</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest border-r border-slate-200/70 min-w-[150px]">Mode</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[120px]">Heures validées</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[115px]">Base</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[140px]">Variables</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 min-w-[130px]">Avantages</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right border-r border-slate-200/70 bg-primary/[0.03] min-w-[120px]">Total brut</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-200/70 min-w-[95px]">Alertes</TableHead>
+                  <TableHead className="text-right pr-6 min-w-[120px] sticky right-0 z-20 bg-slate-50/95"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loadingCalcs ? (
-                  <TableRow><TableCell colSpan={12} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="py-20 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary/20" /></TableCell></TableRow>
                 ) : filteredCalculations.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-32 text-center space-y-4">
+                    <TableCell colSpan={9} className="py-32 text-center space-y-4">
                        <div className="bg-slate-50 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto">
                           <TrendingUp className="w-10 h-10 text-slate-200" />
                        </div>
@@ -268,63 +421,139 @@ export default function PayrollSynthesisPage() {
                 ) : (
                   filteredCalculations.map((c) => {
                     const emp = employeesMap.get(c.employeeId);
-                    const totalExtras = (c.mealTicketsValue || 0) + (c.mileageValue || 0) + (c.bonusValue || 0);
-                    const isMonthly = c.rateSnapshot.payCalculationMode === 'monthly';
+                    const employeeSummary = employeeSummaryMap.get(c.id);
+                    const employeeName = canReadEmployees
+                      ? emp?.displayName || "Inconnu"
+                      : employeeSummary?.displayName ||
+                        (loadingEmployeeSummaries
+                          ? "Chargement collaborateur..."
+                          : "Collaborateur non renseigné");
+                    const employeeCode = canReadEmployees
+                      ? emp?.employeeCode || "Non renseigné"
+                      : employeeSummary?.employeeCode || "Non renseigné";
+                    const mealTicketSummary = mealTicketSummaryMap.get(c.employeeId);
+                    const mealTicketsBenefit =
+                      mealTicketSummary?.status === "confirmed"
+                        ? mealTicketSummary.totalValue || 0
+                        : 0;
+                    const kilometerSummary = kilometerSummaryMap.get(c.employeeId);
+                    const kilometerBenefit =
+                      kilometerSummary?.status === "confirmed"
+                        ? kilometerSummary.totalAmount || 0
+                        : c.mileageValue || 0;
+                    const totalExtras = c.bonusValue || 0;
+                    const mode = c.rateSnapshot.payCalculationMode || "monthly";
+                    const isActualWorkedHours = mode === "actual_worked_hours";
+                    const baseValue =
+                      isActualWorkedHours && c.baseWorkedValue != null
+                        ? c.baseWorkedValue
+                        : c.baseGrossValue;
+                    const variablesTotal =
+                      (c.nightValue || 0) +
+                      (c.overtimeValue || 0) +
+                      (c.holidayWorkedValue || 0) +
+                      totalExtras -
+                      (c.deductionValue || 0);
                     
                     return (
-                      <TableRow key={c.id} className="hover:bg-slate-50 transition-colors group">
-                        <TableCell className="pl-8 py-5">
+                      <TableRow key={c.id} className="group border-b border-slate-100 odd:bg-white even:bg-slate-50/30 hover:bg-slate-50 transition-colors">
+                        <TableCell className="pl-6 py-4 align-middle border-r border-slate-100">
                            <div className="flex items-center gap-3">
-                              <div className="bg-primary/5 p-2 rounded-lg text-primary"><User className="w-4 h-4" /></div>
+                              <div className="bg-primary/5 p-2 rounded-lg text-primary shrink-0"><User className="w-4 h-4" /></div>
                               <div className="min-w-0">
-                                 <p className="font-bold text-slate-900 text-sm truncate">{emp?.displayName || "Inconnu"}</p>
-                                 <p className="text-[9px] font-mono text-muted-foreground uppercase">{emp?.employeeCode || c.employeeId.slice(0, 8)}</p>
+                                 <p className="font-bold text-slate-900 text-sm truncate">{employeeName}</p>
+                                 <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                   Matricule: <span className="font-mono uppercase">{employeeCode}</span>
+                                   {canReadEmployees && (
+                                     <>
+                                       {" · "}
+                                       Codice fiscale: <span className="font-mono uppercase">{emp?.taxCode || "Non renseigné"}</span>
+                                     </>
+                                   )}
+                                 </p>
                               </div>
                            </div>
                         </TableCell>
-                        <TableCell>
-                           <div className="flex flex-col gap-1">
-                              <Badge variant="outline" className={cn("text-[8px] font-black uppercase px-2 h-4 border-none", isMonthly ? "bg-indigo-50 text-indigo-700" : "bg-teal-50 text-teal-700")}>
-                                {isMonthly ? "Mensualisé" : "Horaire"}
+                        <TableCell className="py-4 align-middle border-r border-slate-100">
+                           <div className="flex flex-col items-start gap-1.5">
+                              <Badge variant="outline" className={cn("rounded-lg border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide", MODE_BADGE_STYLES[mode])}>
+                                {MODE_LABELS[mode]}
                               </Badge>
-                              {isMonthly && c.rateSnapshot.ccnlLevelId && (
-                                <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-tight">Level {c.rateSnapshot.levelCode}</span>
+                              {c.rateSnapshot.ccnlLevelId && (
+                                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">Niveau {c.rateSnapshot.levelCode}</span>
                               )}
                            </div>
                         </TableCell>
-                        <TableCell className="text-center">
-                           <div className="flex items-center justify-center gap-2">
-                              <span className="text-xs font-black text-slate-800" title="Validées">{c.attendanceAggregation.totalValidatedHours.toFixed(1)}</span>
-                              <span className="text-[10px] text-muted-foreground">/</span>
-                              <span className="text-[10px] font-bold text-indigo-600" title="Nuit">{c.attendanceAggregation.ordinaryNightHours.toFixed(1)}</span>
-                              <span className="text-[10px] text-muted-foreground">/</span>
-                              <span className="text-[10px] font-bold text-orange-600" title="Supp">{c.attendanceAggregation.overtimeHours.toFixed(1)}</span>
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
+                           <div className="space-y-1">
+                              <p className="font-black text-slate-900 text-sm">{formatHours(c.attendanceAggregation.totalValidatedHours)}</p>
+                              <div className="flex flex-wrap justify-end gap-1">
+                                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                                  Nuit {formatHours(c.attendanceAggregation.ordinaryNightHours)}
+                                </span>
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                                  Sup. {formatHours(c.attendanceAggregation.overtimeHours)}
+                                </span>
+                              </div>
                            </div>
                         </TableCell>
-                        <TableCell className="text-right font-black text-slate-700">
-                          {isMonthly ? (
-                            `€ ${c.baseGrossValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}`
-                          ) : (
-                            <span className="text-muted-foreground font-medium italic">Calc. horaire</span>
-                          )}
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
+                          <div className="space-y-0.5">
+                            <p className="text-[10px] font-black uppercase tracking-wide text-muted-foreground">{BASE_LABELS[mode]}</p>
+                            <p className="font-black text-slate-800 text-sm">{formatEuro(baseValue)}</p>
+                          </div>
                         </TableCell>
-                        <TableCell className="text-right font-medium text-indigo-700">€ {c.nightValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right font-medium text-orange-700">€ {c.overtimeValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right font-medium text-teal-700">€ {c.holidayWorkedValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right">
-                           {c.deductionValue > 0 ? (
-                             <span className="font-bold text-red-600 text-xs">- € {c.deductionValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</span>
-                           ) : <span className="text-slate-300">—</span>}
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
+                          <div className="space-y-1">
+                            <p className="font-bold text-slate-800 text-sm">{formatEuro(variablesTotal)}</p>
+                            {isActualWorkedHours && c.paidHolidayValue != null && (
+                              <p className="text-[10px] font-bold text-teal-700">
+                                Fériés rémunérés: {formatEuro(c.paidHolidayValue)}
+                              </p>
+                            )}
+                          </div>
                         </TableCell>
-                        <TableCell className="text-right font-medium text-slate-500">€ {totalExtras.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right bg-primary/[0.02]">
-                           <span className="font-black text-primary text-sm">€ {c.grossEconomicTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</span>
+                        <TableCell className="py-4 align-middle text-right border-r border-slate-100">
+                           <div className="space-y-1">
+                             {mealTicketsBenefit > 0 || kilometerBenefit > 0 ? (
+                               <>
+                                 {mealTicketsBenefit > 0 && (
+                                   <p className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">
+                                     Buoni pasto: {formatEuro(mealTicketsBenefit)}
+                                   </p>
+                                 )}
+                                 {kilometerBenefit > 0 && (
+                                   <p className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-black text-blue-700">
+                                     Rimborsi km: {formatEuro(kilometerBenefit)}
+                                   </p>
+                                 )}
+                               </>
+                             ) : (
+                               <p className="text-[10px] font-bold text-muted-foreground">Non intégré</p>
+                             )}
+                           </div>
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className="py-4 align-middle text-right bg-primary/[0.025] border-r border-primary/10">
+                           <div className="space-y-0.5">
+                             <p className="text-[10px] font-black uppercase tracking-wide text-primary/60">Total brut</p>
+                             <span className="block font-black text-primary text-base">{formatEuro(c.grossEconomicTotal)}</span>
+                           </div>
+                        </TableCell>
+                        <TableCell className="py-4 align-middle text-center border-r border-slate-100">
                            {renderWarningIndicator(c.reconciliationWarnings)}
                         </TableCell>
-                        <TableCell className="text-right pr-8">
-                           <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100"><ChevronRight className="w-4 h-4" /></Button>
+                        <TableCell className="py-4 align-middle text-right pr-6 sticky right-0 z-10 bg-white group-hover:bg-slate-50 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)]">
+                           <a
+                             href={`/entity/${entityId}/payroll/${encodeURIComponent(c.id)}`}
+                             className={buttonVariants({
+                               variant: "ghost",
+                               size: "sm",
+                               className: "h-8 gap-1.5 font-bold text-primary hover:text-primary",
+                             })}
+                           >
+                               Voir détail
+                               <ChevronRight className="w-4 h-4" />
+                           </a>
                         </TableCell>
                       </TableRow>
                     );
@@ -360,8 +589,12 @@ export default function PayrollSynthesisPage() {
                  <span className="font-black">Base fixe + Maj.</span>
               </div>
               <div className="flex justify-between text-[10px]">
-                 <span className="text-muted-foreground font-bold">Horaire</span>
-                 <span className="font-black">H. Réelles × Taux</span>
+                 <span className="text-muted-foreground font-bold">Horaire historique</span>
+                 <span className="font-black">Compatibilité</span>
+              </div>
+              <div className="flex justify-between gap-3 text-[10px]">
+                 <span className="text-muted-foreground font-bold">Heures réelles</span>
+                 <span className="text-right font-black">Base + majorations</span>
               </div>
            </CardContent>
         </Card>
@@ -378,22 +611,22 @@ export default function PayrollSynthesisPage() {
            </DialogHeader>
            
            <div className="py-6 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                 <SummaryBox label="Total employés" value={calcSummary?.totalEmployees} color="slate" />
-                 <SummaryBox label="Records créés" value={calcSummary?.createdCount} color="green" />
-                 <SummaryBox label="Records mis à jour" value={calcSummary?.updatedCount} color="blue" />
-                 <SummaryBox label="Ignorés (Verrouillés)" value={calcSummary?.skippedCount} color="orange" />
-              </div>
+               <div className="grid grid-cols-2 gap-4">
+                  <SummaryBox label="Total employés" value={calcSummary?.totalEmployees} color="slate" />
+                  <SummaryBox label="Records enregistrés" value={calcSummary?.savedCount} color="green" />
+                  <SummaryBox label="Échecs" value={calcSummary?.failedCount} color="blue" />
+                  <SummaryBox label="Ignorés (Verrouillés)" value={calcSummary?.skippedCount} color="orange" />
+               </div>
 
-              {calcSummary?.blockingWarningsCount > 0 && (
-                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
-                   <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                   <div>
-                      <p className="text-xs font-bold text-red-800 uppercase">Attention : Anomalies bloquantes</p>
-                      <p className="text-[11px] text-red-700 font-medium">{calcSummary.blockingWarningsCount} dossier(s) sont restés en "Brouillon" car des données contractuelles (taux horaire ou base mensuelle) sont manquantes.</p>
-                   </div>
-                </div>
-              )}
+               {calcSummary?.failedCount > 0 && (
+                 <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                       <p className="text-xs font-bold text-red-800 uppercase">Attention : échecs de calcul</p>
+                       <p className="text-[11px] text-red-700 font-medium">{calcSummary.failedCount} dossier(s) n'ont pas pu être finalisés. Les autres dossiers valides restent enregistrés.</p>
+                    </div>
+                 </div>
+               )}
            </div>
 
            <DialogFooter>

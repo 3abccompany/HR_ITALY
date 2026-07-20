@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Users, Search, UserCheck, Loader2, 
   ChevronRight, ListFilter, Filter, X,
@@ -53,7 +53,6 @@ const buildFilterOptions = (values: Array<string | undefined | null>) =>
 
 export default function EmployeesManagementPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
@@ -166,7 +165,7 @@ export default function EmployeesManagementPage() {
         <div className="flex items-center gap-3">
            {canCreate && (
              <Button 
-               onClick={() => router.push(`/entity/${entityId}/employees/new-intake`)} 
+               onClick={() => window.location.assign(`/entity/${entityId}/employees/new-intake`)}
                variant="outline" 
                className="gap-2 bg-white rounded-xl font-bold border-primary/20 hover:bg-primary/5 shadow-sm"
              >
@@ -290,7 +289,7 @@ export default function EmployeesManagementPage() {
                   <TableRow 
                     key={e.employeeId} 
                     className="group cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => router.push(`/entity/${entityId}/employees/${e.employeeId}`)}
+                    onClick={() => window.location.assign(`/entity/${entityId}/employees/${e.employeeId}`)}
                   >
                     <TableCell className="pl-6 py-4">
                       <div className="flex flex-col">
@@ -333,7 +332,7 @@ export default function EmployeesManagementPage() {
                         variant="outline" 
                         size="sm" 
                         className="h-8 gap-2 rounded-xl font-bold bg-white hover:bg-primary/5 transition-all shadow-sm"
-                        onClick={() => router.push(`/entity/${entityId}/employees/${e.employeeId}`)}
+                        onClick={() => window.location.assign(`/entity/${entityId}/employees/${e.employeeId}`)}
                       >
                         <Eye className="w-3.5 h-3.5" />
                         Détails

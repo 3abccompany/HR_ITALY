@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, Building2, MapPin, 
   Calendar, Briefcase, ShieldCheck, Search, AlertCircle,
@@ -23,6 +23,7 @@ import { Worksite } from "@/types/worksite";
 import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { JobProfile } from "@/types/job-profile";
 import { useToast } from "@/hooks/use-toast";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -68,14 +69,25 @@ const initialForm = {
   openingExFest: { report: 0, acquis: 0, utilisé: 0 }
 };
 
+function toSafeNumber(value: unknown, fallback = 0) {
+  const numeric = typeof value === "string" ? Number(value) : value;
+  return typeof numeric === "number" && Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function calculateGrossAnnual(grossMonthly: unknown, monthlyPayments: unknown) {
+  const monthly = toSafeNumber(grossMonthly);
+  const payments = toSafeNumber(monthlyPayments, 13);
+  return Math.round(monthly * payments * 100) / 100;
+}
+
 export default function EmployeeIntakePage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const [formData, setFormData] = useState(initialForm);
@@ -105,6 +117,7 @@ export default function EmployeeIntakePage() {
 
   const [activeLevels, setActiveLevels] = useState<any[]>([]);
   const [loadingLevels, setLoadingLevels] = useState(false);
+  const [levelsError, setLevelsError] = useState<string | null>(null);
 
   const canCreate = hasPermission("employees.create") && hasPermission("contracts.create");
 
@@ -113,15 +126,40 @@ export default function EmployeeIntakePage() {
     async function fetchLevels() {
       if (!formData.ccnlId || !user) {
         setActiveLevels([]);
+        setLevelsError(null);
         return;
       }
       setLoadingLevels(true);
+      setLevelsError(null);
       try {
-        const idToken = await auth.currentUser?.getIdToken();
-        const levels = await getLevelsForCcnlAction(entityId, formData.ccnlId, idToken!);
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setActiveLevels([]);
+          setFormData((previous) => ({ ...previous, levelId: "", levelCode: "" }));
+          setLevelsError("Session expirée. Veuillez actualiser la page ou vous reconnecter.");
+          return;
+        }
+
+        const idToken = await currentUser.getIdToken(true);
+        if (!idToken) {
+          setActiveLevels([]);
+          setFormData((previous) => ({ ...previous, levelId: "", levelCode: "" }));
+          setLevelsError("Session expirée. Veuillez actualiser la page ou vous reconnecter.");
+          return;
+        }
+
+        const levels = await getLevelsForCcnlAction(entityId, formData.ccnlId, idToken);
         setActiveLevels(levels);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error fetching levels:", err);
+        const message = String(err?.message || "");
+        setActiveLevels([]);
+        setFormData((previous) => ({ ...previous, levelId: "", levelCode: "" }));
+        setLevelsError(
+          message.includes("AUTH_INVALID") || message.includes("Session invalide") || message.includes("Session expir")
+            ? "Session expirée. Veuillez actualiser la page ou vous reconnecter."
+            : "Impossible de charger les niveaux CCNL. Veuillez réessayer."
+        );
       } finally {
         setLoadingLevels(false);
       }
@@ -172,22 +210,27 @@ export default function EmployeeIntakePage() {
     const profile = jobProfiles.find(p => p.jobProfileId === profileId);
     if (!profile) return;
 
-    setFormData(p => ({
-      ...p,
-      jobProfileId: profileId,
-      jobTitle: profile.jobTitleName,
-      departmentId: profile.departmentId || p.departmentId,
-      departmentName: profile.departmentName || p.departmentName,
-      // Prefill recommendations
-      ccnlId: profile.defaultCcnlId || p.ccnlId,
-      ccnlName: profile.defaultCcnlName || p.ccnlName,
-      levelId: profile.defaultLevelId || p.levelId,
-      levelCode: profile.defaultLevelCode || p.levelCode,
-      weeklyHours: profile.defaultWeeklyHours || p.weeklyHours,
-      monthlyPayments: profile.defaultMonthlyPayments || p.monthlyPayments,
-      grossMonthly: profile.defaultMinimumGrossMonthly || p.grossMonthly,
-      grossAnnual: (profile.defaultMinimumGrossMonthly || p.grossMonthly) * (profile.defaultMonthlyPayments || p.monthlyPayments)
-    }));
+    setFormData(p => {
+      const monthlyPayments = toSafeNumber(profile.defaultMonthlyPayments || p.monthlyPayments, 13);
+      const grossMonthly = toSafeNumber(profile.defaultMinimumGrossMonthly || p.grossMonthly);
+
+      return {
+        ...p,
+        jobProfileId: profileId,
+        jobTitle: profile.jobTitleName,
+        departmentId: profile.departmentId || p.departmentId,
+        departmentName: profile.departmentName || p.departmentName,
+        // Prefill recommendations
+        ccnlId: profile.defaultCcnlId || p.ccnlId,
+        ccnlName: profile.defaultCcnlName || p.ccnlName,
+        levelId: profile.defaultLevelId || p.levelId,
+        levelCode: profile.defaultLevelCode || p.levelCode,
+        weeklyHours: profile.defaultWeeklyHours || p.weeklyHours,
+        monthlyPayments,
+        grossMonthly,
+        grossAnnual: calculateGrossAnnual(grossMonthly, monthlyPayments)
+      };
+    });
   };
 
   const handleWorksiteChange = (id: string) => {
@@ -197,26 +240,37 @@ export default function EmployeeIntakePage() {
 
   const handleCcnlChange = (ccnlId: string) => {
     const ccnl = ccnls.find(c => c.ccnlId === ccnlId);
-    setFormData(p => ({
-      ...p,
-      ccnlId,
-      ccnlName: ccnl?.name || "",
-      levelId: "",
-      levelCode: "",
-      weeklyHours: ccnl?.standardWeeklyHours || p.weeklyHours,
-      monthlyPayments: ccnl?.monthlyPayments || p.monthlyPayments
-    }));
+    setLevelsError(null);
+    setActiveLevels([]);
+    setFormData(p => {
+      const monthlyPayments = toSafeNumber(ccnl?.monthlyPayments || p.monthlyPayments, 13);
+
+      return {
+        ...p,
+        ccnlId,
+        ccnlName: ccnl?.name || "",
+        levelId: "",
+        levelCode: "",
+        weeklyHours: ccnl?.standardWeeklyHours || p.weeklyHours,
+        monthlyPayments,
+        grossAnnual: calculateGrossAnnual(p.grossMonthly, monthlyPayments)
+      };
+    });
   };
 
   const handleLevelChange = (levelId: string) => {
     const level = activeLevels.find(l => l.levelId === levelId);
-    setFormData(p => ({
-      ...p,
-      levelId,
-      levelCode: level?.levelCode || "",
-      grossMonthly: level?.minimumGrossMonthly || p.grossMonthly,
-      grossAnnual: (level?.minimumGrossMonthly || p.grossMonthly) * p.monthlyPayments
-    }));
+    setFormData(p => {
+      const grossMonthly = toSafeNumber(level?.minimumGrossMonthly || p.grossMonthly);
+
+      return {
+        ...p,
+        levelId,
+        levelCode: level?.levelCode || "",
+        grossMonthly,
+        grossAnnual: calculateGrossAnnual(grossMonthly, p.monthlyPayments)
+      };
+    });
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -244,26 +298,37 @@ export default function EmployeeIntakePage() {
       return;
     }
 
+    if (!tryStartSubmission()) return;
     setLoading(true);
     try {
+      const grossMonthly = toSafeNumber(formData.grossMonthly);
+      const monthlyPayments = toSafeNumber(formData.monthlyPayments, 13);
+      const grossAnnual = calculateGrossAnnual(grossMonthly, monthlyPayments);
+      const selectedLevel = activeLevels.find(l => l.levelId === formData.levelId);
       const payload = {
         ...formData,
+        grossMonthly,
+        monthlyPayments,
+        grossAnnual,
         personId: existingPerson?.personId || null,
         isNewPerson: !existingPerson,
         intakeSource: "historical_import",
         departmentName: departments?.find(d => d.departmentId === formData.departmentId)?.name || "",
         worksiteName: worksites?.find(w => w.worksiteId === formData.worksiteId)?.name || "",
         ccnlName: ccnls?.find(c => c.ccnlId === formData.ccnlId)?.name || "",
-        levelCode: activeLevels.find(l => l.levelId === formData.levelId)?.levelCode || formData.levelCode
+        levelCode: selectedLevel?.levelCode || formData.levelCode,
+        levelLabel: selectedLevel?.label || selectedLevel?.levelLabel || null,
+        qualificationCategory: selectedLevel?.qualificationCategory || selectedLevel?.qualificationLabel || null,
+        payCalculationMode: "monthly"
       };
 
       await executeEmployeeIntake(entityId, payload, user.uid);
       toast({ title: "Importation réussie", description: "L'employé et son contrat actif ont été créés." });
-      router.push(`/entity/${entityId}/employees`);
+      window.location.assign(`/entity/${entityId}/employees`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setLoading(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -286,8 +351,10 @@ export default function EmployeeIntakePage() {
   return (
     <div className="p-8 max-w-5xl mx-auto pb-32">
       <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" type="button" onClick={() => router.back()} className="rounded-full">
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" type="button" asChild className="rounded-full">
+          <a href={`/entity/${entityId}/employees`} aria-label="Retour aux employés">
+            <ArrowLeft className="w-5 h-5" />
+          </a>
         </Button>
         <div>
           <h1 className="text-3xl font-black text-primary tracking-tight">Reprise employé existant</h1>
@@ -401,6 +468,16 @@ export default function EmployeeIntakePage() {
                       {departments.map(d => <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  {loadingLevels && (
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Chargement des niveaux CCNL disponibles…
+                    </p>
+                  )}
+                  {levelsError && (
+                    <p className="text-xs font-bold text-destructive">
+                      {levelsError}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2 col-span-2">
                   <Label className="text-[10px] uppercase font-black">Intitulé du poste (Fiche de Poste)</Label>
@@ -445,7 +522,7 @@ export default function EmployeeIntakePage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Niveau de classification *</Label>
-                  <Select value={formData.levelId} onValueChange={handleLevelChange} disabled={!formData.ccnlId || loadingLevels}>
+                  <Select value={formData.levelId} onValueChange={handleLevelChange} disabled={!formData.ccnlId || loadingLevels || !!levelsError}>
                     <SelectTrigger className="rounded-xl">
                       <SelectValue placeholder={loadingLevels ? "Chargement..." : "Sélectionner niveau..."} />
                     </SelectTrigger>
@@ -476,15 +553,15 @@ export default function EmployeeIntakePage() {
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Brut Mensuel (€)</Label>
                   <Input type="number" value={formData.grossMonthly} onChange={(e) => {
-                    const m = parseFloat(e.target.value) || 0;
-                    setFormData(p => ({...p, grossMonthly: m, grossAnnual: m * p.monthlyPayments}));
+                    const m = toSafeNumber(e.target.value);
+                    setFormData(p => ({...p, grossMonthly: m, grossAnnual: calculateGrossAnnual(m, p.monthlyPayments)}));
                   }} className="rounded-xl font-bold" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Mensualités</Label>
                   <Input type="number" value={formData.monthlyPayments} onChange={(e) => {
-                    const mp = parseInt(e.target.value) || 13;
-                    setFormData(p => ({...p, monthlyPayments: mp, grossAnnual: p.grossMonthly * mp}));
+                    const mp = toSafeNumber(e.target.value, 13);
+                    setFormData(p => ({...p, monthlyPayments: mp, grossAnnual: calculateGrossAnnual(p.grossMonthly, mp)}));
                   }} className="rounded-xl" />
                 </div>
                 <div className="space-y-2">
@@ -576,7 +653,13 @@ export default function EmployeeIntakePage() {
              </Alert>
            )}
            <div className="flex justify-end gap-3">
-              <Button type="button" variant="ghost" onClick={() => router.back()} disabled={loading}>Annuler</Button>
+              {loading ? (
+                <Button type="button" variant="ghost" disabled>Annuler</Button>
+              ) : (
+                <Button type="button" variant="ghost" asChild>
+                  <a href={`/entity/${entityId}/employees`}>Annuler</a>
+                </Button>
+              )}
               <Button type="submit" disabled={loading || !formData.ccnlId || !formData.levelId} className="h-14 px-12 rounded-2xl font-black shadow-xl shadow-primary/20 gap-2">
                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                  Intégrer le collaborateur

@@ -11,8 +11,12 @@ export default function NewRecruitmentNeedPage() {
   const params = useParams();
   const entityId = params.entityId as string;
   const { user } = useUser();
-  const { entity, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { entity, membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
   const canCreate = hasPermission("recruitmentNeeds.create");
 
   if (membershipLoading) {
@@ -23,7 +27,7 @@ export default function NewRecruitmentNeedPage() {
     );
   }
 
-  if (!canCreate) {
+  if (!permissionsReady || !canCreate) {
     return (
       <div className="p-8">
         <Card className="bg-destructive/5 border-destructive/20">

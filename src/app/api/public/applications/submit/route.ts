@@ -2,9 +2,127 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminBucket } from "@/lib/firebase/admin";
 import { executeSubmissionTransaction } from "@/services/application-submission.service";
 import { AttachmentMetadata } from "@/types/application-submission";
+import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+const MAX_PUBLIC_ATTACHMENT_SIZE = 5 * 1024 * 1024; // 5 MiB
+const PUBLIC_ATTACHMENT_FIELDS = ["cv", "coverLetter"] as const;
+const PUBLIC_ATTACHMENT_MIME_EXTENSIONS: Record<string, readonly string[]> = {
+  "application/pdf": [".pdf"],
+  "application/msword": [".doc"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+};
+
+type PublicAttachmentField = (typeof PUBLIC_ATTACHMENT_FIELDS)[number];
+
+class PublicUploadValidationError extends Error {
+  constructor(
+    public readonly code:
+      | "FILE_TOO_LARGE"
+      | "FILE_TYPE_NOT_ALLOWED"
+      | "FILE_EXTENSION_MISMATCH"
+      | "INVALID_FILE"
+      | "TOO_MANY_FILES",
+    message: string
+  ) {
+    super(message);
+    this.name = "PublicUploadValidationError";
+  }
+}
+
+function isPublicUploadValidationError(error: unknown): error is PublicUploadValidationError {
+  return error instanceof PublicUploadValidationError;
+}
+
+function getAttachmentType(key: PublicAttachmentField): AttachmentMetadata["type"] {
+  return key === "cv" ? "cv" : "cover_letter";
+}
+
+function sanitizeDisplayFileName(fileName: string) {
+  const baseName = (fileName || "document")
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim() || "document";
+
+  const normalized = baseName
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9._ -]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^\.+/, "")
+    .slice(0, 120);
+
+  return normalized || "document";
+}
+
+function getLowercaseExtension(fileName: string) {
+  const safeName = sanitizeDisplayFileName(fileName);
+  const dotIndex = safeName.lastIndexOf(".");
+  return dotIndex >= 0 ? safeName.slice(dotIndex).toLowerCase() : "";
+}
+
+function validatePublicAttachment(file: File, key: PublicAttachmentField) {
+  if (!(file instanceof File) || !file.name || file.size <= 0) {
+    throw new PublicUploadValidationError(
+      "INVALID_FILE",
+      `Le fichier ${key === "cv" ? "CV" : "lettre de motivation"} est invalide.`
+    );
+  }
+
+  if (/[\\/]/.test(file.name)) {
+    throw new PublicUploadValidationError(
+      "INVALID_FILE",
+      "Le nom du fichier contient des caractères non autorisés."
+    );
+  }
+
+  if (file.size > MAX_PUBLIC_ATTACHMENT_SIZE) {
+    throw new PublicUploadValidationError(
+      "FILE_TOO_LARGE",
+      `Le fichier ${key === "cv" ? "CV" : "lettre de motivation"} dépasse la taille maximale autorisée de 5 Mo.`
+    );
+  }
+
+  const mimeType = file.type?.trim().toLowerCase();
+  if (!mimeType || !(mimeType in PUBLIC_ATTACHMENT_MIME_EXTENSIONS)) {
+    throw new PublicUploadValidationError(
+      "FILE_TYPE_NOT_ALLOWED",
+      "Format de fichier non supporté. Veuillez envoyer un fichier PDF, DOC ou DOCX."
+    );
+  }
+
+  const extension = getLowercaseExtension(file.name);
+  if (!PUBLIC_ATTACHMENT_MIME_EXTENSIONS[mimeType].includes(extension)) {
+    throw new PublicUploadValidationError(
+      "FILE_EXTENSION_MISMATCH",
+      "L'extension du fichier ne correspond pas à son format. Veuillez envoyer un fichier PDF, DOC ou DOCX valide."
+    );
+  }
+
+  return {
+    mimeType,
+    safeFileName: sanitizeDisplayFileName(file.name),
+  };
+}
+
+async function cleanupUploadedPublicSubmissionFiles(uploadedPaths: string[]) {
+  if (!adminBucket || uploadedPaths.length === 0) return;
+
+  const cleanupResults = await Promise.allSettled(
+    uploadedPaths.map((path) => adminBucket.file(path).delete({ ignoreNotFound: true }))
+  );
+
+  const failedCleanupCount = cleanupResults.filter((result) => result.status === "rejected").length;
+  if (failedCleanupCount > 0) {
+    console.warn("[Public Submission] Failed to clean up uploaded files after request failure.", {
+      attemptedCount: uploadedPaths.length,
+      failedCount: failedCleanupCount,
+    });
+  }
+}
 
 /**
  * POST /api/public/applications/submit
@@ -20,6 +138,8 @@ export async function POST(request: NextRequest) {
       { status: 503 }
     );
   }
+
+  const uploadedPaths: string[] = [];
 
   try {
     const formData = await request.formData();
@@ -73,44 +193,61 @@ export async function POST(request: NextRequest) {
     const attachments: AttachmentMetadata[] = [];
     
     // Standard file keys used in the public form renderer
-    const fileFields = ["cv", "coverLetter"];
-    
-    for (const key of fileFields) {
-      const file = formData.get(key);
-      if (file && file instanceof File) {
-        const type = key === "cv" ? "cv" : "cover_letter";
-        
-        // Construct tenant-isolated and unique storage path
-        const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-        const storagePath = `entities/${entityId}/applicationSubmissions/${submissionId}/${Date.now()}_${safeFileName}`;
-        
-        // Upload to Cloud Storage using Admin SDK
-        const fileBuffer = Buffer.from(await file.arrayBuffer());
-        const bucketFile = adminBucket.file(storagePath);
-        
-        await bucketFile.save(fileBuffer, {
-          contentType: file.type,
-          metadata: {
-            metadata: {
-              entityId,
-              submissionId,
-              formId: form.formId,
-              type,
-              origin: "public_submission"
-            }
-          }
-        });
+    for (const key of PUBLIC_ATTACHMENT_FIELDS) {
+      const files = formData.getAll(key).filter((value): value is File => value instanceof File);
 
-        attachments.push({
-          id: adminDb.collection("_").doc().id, // Metadata entry ID
-          type,
-          fileName: file.name,
-          filePath: storagePath,
-          mimeType: file.type,
-          size: file.size,
-          uploadedAt: new Date().toISOString()
-        });
+      if (files.length > 1) {
+        throw new PublicUploadValidationError(
+          "TOO_MANY_FILES",
+          "Un seul fichier est autorisé par champ de pièce jointe."
+        );
       }
+
+      const file = files[0];
+      if (!file) {
+        const invalidValue = formData.get(key);
+        if (invalidValue && !(invalidValue instanceof File)) {
+          throw new PublicUploadValidationError(
+            "INVALID_FILE",
+            "La pièce jointe fournie est invalide."
+          );
+        }
+        continue;
+      }
+
+      const type = getAttachmentType(key);
+      const { mimeType, safeFileName } = validatePublicAttachment(file, key);
+      const attachmentId = adminDb.collection("_").doc().id;
+      const objectName = `${key}_${randomUUID()}_${safeFileName}`;
+      const storagePath = `entities/${entityId}/applicationSubmissions/${submissionId}/${objectName}`;
+
+      // Upload to Cloud Storage using Admin SDK
+      const fileBuffer = Buffer.from(await file.arrayBuffer());
+      const bucketFile = adminBucket.file(storagePath);
+
+      await bucketFile.save(fileBuffer, {
+        contentType: mimeType,
+        metadata: {
+          metadata: {
+            entityId,
+            submissionId,
+            formId: form.formId,
+            type,
+            origin: "public_submission"
+          }
+        }
+      });
+      uploadedPaths.push(storagePath);
+
+      attachments.push({
+        id: attachmentId, // Metadata entry ID
+        type,
+        fileName: safeFileName,
+        filePath: storagePath,
+        mimeType,
+        size: file.size,
+        uploadedAt: new Date().toISOString()
+      });
     }
 
     // 4. Invoke Business Transaction
@@ -130,6 +267,18 @@ export async function POST(request: NextRequest) {
 
   } catch (err: any) {
     console.error("[Public Submission API] Failure:", err);
+
+    await cleanupUploadedPublicSubmissionFiles(uploadedPaths);
+
+    if (isPublicUploadValidationError(err)) {
+      return NextResponse.json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+        }
+      }, { status: 400 });
+    }
 
     // Business rule violations (Duplicate check or Identity conflict)
     if (err.message === "ALREADY_APPLIED_TO_THIS_JOB") {

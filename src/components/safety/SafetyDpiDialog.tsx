@@ -34,6 +34,10 @@ interface SafetyDpiDialogProps {
   entityId: string;
   assignmentId: string | null;
   employees: Employee[];
+  canCreateSafety: boolean;
+  canUpdateSafety: boolean;
+  canReadDocuments: boolean;
+  canUploadDocuments: boolean;
 }
 
 const initialForm = {
@@ -50,7 +54,17 @@ const initialForm = {
   reportDocumentId: "" as string | null
 };
 
-export function SafetyDpiDialog({ open, onOpenChange, entityId, assignmentId, employees }: SafetyDpiDialogProps) {
+export function SafetyDpiDialog({
+  open,
+  onOpenChange,
+  entityId,
+  assignmentId,
+  employees,
+  canCreateSafety,
+  canUpdateSafety,
+  canReadDocuments,
+  canUploadDocuments
+}: SafetyDpiDialogProps) {
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
@@ -62,6 +76,7 @@ export function SafetyDpiDialog({ open, onOpenChange, entityId, assignmentId, em
   const [fetching, setFetching] = useState(false);
 
   const isEditing = !!assignmentId;
+  const canAttachReport = (isEditing ? canUpdateSafety : canCreateSafety) && canUploadDocuments;
 
   useEffect(() => {
     async function load() {
@@ -123,15 +138,17 @@ export function SafetyDpiDialog({ open, onOpenChange, entityId, assignmentId, em
       const payload = { ...formData };
 
       if (isEditing && assignmentId) {
+        if (!canUpdateSafety) return;
         await updateDpiAssignment(entityId, assignmentId, payload, user.uid);
       } else {
+        if (!canCreateSafety) return;
         const emp = employees.find(e => e.employeeId === formData.employeeId);
         payload.employeeName = emp?.displayName || "";
         activeId = await createDpiAssignment(entityId, payload, user.uid);
       }
 
       // Optional file upload
-      if (selectedFile && activeId) {
+      if (selectedFile && activeId && canAttachReport) {
         try {
           const emp = employees.find(e => e.employeeId === formData.employeeId);
           const docId = await uploadHRDocument(
@@ -159,6 +176,12 @@ export function SafetyDpiDialog({ open, onOpenChange, entityId, assignmentId, em
             description: "Les données sont sauvegardées, mais l'envoi du document PDF a échoué." 
           });
         }
+      } else if (selectedFile && !canAttachReport) {
+        toast({
+          variant: "destructive",
+          title: "PV non ajouté",
+          description: "L’ajout d’un PV nécessite l’autorisation de charger des documents.",
+        });
       }
 
       toast({ title: assignmentId ? "Assignation mise à jour" : "Assignation enregistrée" });
@@ -251,22 +274,28 @@ export function SafetyDpiDialog({ open, onOpenChange, entityId, assignmentId, em
                   </Select>
                </div>
 
-               <div className="space-y-3 p-5 bg-slate-50 border border-slate-100 rounded-2xl">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Paperclip className="w-4 h-4 text-accent" />
-                    <Label className="text-xs font-black uppercase text-accent tracking-tight">PV de remise signé (Optionnel)</Label>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Input 
-                      type="file" 
-                      accept=".pdf,.png,.jpg,.jpeg" 
-                      className="h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-accent/10 file:text-accent file:border-none file:rounded-md file:mr-4 hover:bg-slate-100 transition-colors"
-                      onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} 
-                    />
-                    {selectedFile && <p className="text-[10px] text-green-600 font-bold">Fichier prêt : {selectedFile.name}</p>}
-                    <p className="text-[9px] text-muted-foreground italic">PDF recommandé. Peut être ajouté plus tard dans la GED.</p>
-                  </div>
-               </div>
+                {canAttachReport ? (
+                  <div className="space-y-3 p-5 bg-slate-50 border border-slate-100 rounded-2xl">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Paperclip className="w-4 h-4 text-accent" />
+                      <Label className="text-xs font-black uppercase text-accent tracking-tight">PV de remise signé (Optionnel)</Label>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Input
+                        type="file"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        className="h-11 pt-2.5 cursor-pointer file:font-black file:text-[10px] file:uppercase file:bg-accent/10 file:text-accent file:border-none file:rounded-md file:mr-4 hover:bg-slate-100 transition-colors"
+                        onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                      />
+                      {selectedFile && <p className="text-[10px] text-green-600 font-bold">Fichier prêt : {selectedFile.name}</p>}
+                      <p className="text-[9px] text-muted-foreground italic">PDF recommandé. Peut être ajouté plus tard dans la GED.</p>
+                    </div>
+                 </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground leading-relaxed italic">
+                    L’ajout d’un PV nécessite l’autorisation de charger des documents.
+                  </p>
+                )}
 
                <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Notes / Observations</Label>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Plus, Search, Edit, PowerOff, Loader2, 
   Library, FileText, Calendar, ShieldCheck,
@@ -75,12 +75,14 @@ const initialForm = {
 
 export default function CcnlRegistryPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params.entityId as string;
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
-  const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { loading: membershipLoading, hasPermission, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
+  const canReadSettings = hasPermission("settings.read");
+  const canManageSettings = hasPermission("settings.manage");
 
   // UI State
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -93,9 +95,9 @@ export default function CcnlRegistryPage() {
 
   // Queries
   const ccnlsQuery = useMemo(() => {
-    if (!db || !entityId) return null;
+    if (!db || !entityId || !permissionsReady || !canReadSettings) return null;
     return query(collection(db, `entities/${entityId}/ccnls`), orderBy("name", "asc"));
-  }, [db, entityId]);
+  }, [db, entityId, permissionsReady, canReadSettings]);
 
   const { data: ccnls, loading: loadingCcnls } = useCollection<CCNL>(ccnlsQuery);
 
@@ -174,7 +176,7 @@ export default function CcnlRegistryPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !canManageSettings) return;
 
     if (isScheduleInvalid) {
       toast({ variant: "destructive", title: "Répartition invalide", description: `La somme des heures quotidiennes (${scheduleSum}h) doit correspondre au total hebdomadaire (${formData.standardWeeklyHours}h).` });
@@ -209,7 +211,7 @@ export default function CcnlRegistryPage() {
   };
 
   const confirmArchive = async () => {
-    if (!archivingId || !user) return;
+    if (!archivingId || !user || !canManageSettings) return;
     setLoading(true);
     try {
       await archiveCcnl(entityId, archivingId, user.uid);
@@ -240,9 +242,11 @@ export default function CcnlRegistryPage() {
           <h1 className="text-3xl font-headline font-bold text-primary">Référentiel CCNL</h1>
           <p className="text-muted-foreground text-sm">Gestion des contrats collectifs et grilles de salaires.</p>
         </div>
+        {canManageSettings && (
         <Button onClick={() => setIsFormOpen(true)} className="gap-2 shadow-lg shadow-primary/10">
           <Plus className="w-4 h-4" /> Nouveau CCNL
         </Button>
+        )}
       </div>
 
       <div className="space-y-6">
@@ -320,18 +324,26 @@ export default function CcnlRegistryPage() {
                       {getStatusBadge(c.status)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
+                      <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => router.push(`/entity/${entityId}/ccnls/${c.ccnlId}`)} className="gap-2 font-bold text-primary">
-                             <Eye className="w-4 h-4" /> Gérer les niveaux
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              if (!canReadSettings) return;
+                              window.location.assign(`/entity/${entityId}/ccnls/${c.ccnlId}`);
+                            }}
+                            className="gap-2 font-bold text-primary"
+                          >
+                            <Eye className="w-4 h-4" /> Gérer les niveaux
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleEdit(c)} className="gap-2">
-                             <Edit className="w-4 h-4" /> Modifier
-                          </DropdownMenuItem>
-                          {c.status !== 'archived' && (
+                          {canManageSettings && (
+                            <DropdownMenuItem onClick={() => handleEdit(c)} className="gap-2">
+                              <Edit className="w-4 h-4" /> Modifier
+                            </DropdownMenuItem>
+                          )}
+                          {canManageSettings && c.status !== 'archived' && (
                             <DropdownMenuItem onClick={() => setArchivingId(c.ccnlId)} className="gap-2 text-destructive">
                                <PowerOff className="w-4 h-4" /> Archiver
                             </DropdownMenuItem>

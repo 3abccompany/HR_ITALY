@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Bell, 
   CheckCircle2, 
@@ -38,7 +38,6 @@ import { cn } from "@/lib/utils";
 export default function NotificationsPage() {
   const params = useParams();
   const entityId = params.entityId as string;
-  const router = useRouter();
   const { db } = useFirebase();
   const { user } = useUser();
   const { toast } = useToast();
@@ -253,7 +252,7 @@ export default function NotificationsPage() {
                                 </Button>
                               )}
                               {n.actionUrl && (
-                                <Button variant="secondary" size="sm" onClick={() => { handleMarkRead(n); router.push(n.actionUrl!); }} className="h-8 rounded-lg font-bold bg-primary/5 text-primary hover:bg-primary/10">
+                                <Button variant="secondary" size="sm" onClick={async () => { await handleMarkRead(n); window.location.assign(n.actionUrl!); }} className="h-8 rounded-lg font-bold bg-primary/5 text-primary hover:bg-primary/10">
                                    Ouvrir
                                 </Button>
                               )}

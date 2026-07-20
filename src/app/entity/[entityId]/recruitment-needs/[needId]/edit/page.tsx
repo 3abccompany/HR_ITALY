@@ -17,18 +17,23 @@ export default function EditRecruitmentNeedPage() {
   const needId = params.needId as string;
   const { db } = useFirebase();
   const { user } = useUser();
-  const { entity, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+  const { entity, membership, loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
+
+  const permissionsReady =
+    !membershipLoading &&
+    !!membership &&
+    membership.entityId === entityId;
+  const canRead = hasPermission("recruitmentNeeds.read");
+  const canUpdate = hasPermission("recruitmentNeeds.update");
 
   const needRef = useMemo(() => {
-    if (!db || !entityId || !needId) return null;
+    if (!db || !entityId || !needId || !permissionsReady || !canRead || !canUpdate) return null;
     return doc(db, `entities/${entityId}/recruitmentNeeds`, needId) as DocumentReference<RecruitmentNeed>;
-  }, [db, entityId, needId]);
+  }, [db, entityId, needId, permissionsReady, canRead, canUpdate]);
 
   const { data: need, loading: loadingNeed } = useDoc<RecruitmentNeed>(needRef);
 
-  const canUpdate = hasPermission("recruitmentNeeds.update");
-
-  if (membershipLoading || loadingNeed) {
+  if (membershipLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -36,7 +41,7 @@ export default function EditRecruitmentNeedPage() {
     );
   }
 
-  if (!canUpdate) {
+  if (!permissionsReady || !canRead || !canUpdate) {
     return (
       <div className="p-8">
         <Card className="bg-destructive/5 border-destructive/20">
@@ -46,6 +51,14 @@ export default function EditRecruitmentNeedPage() {
             <p className="text-muted-foreground">Vous n'avez pas la permission de modifier les besoins RH.</p>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  if (loadingNeed) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
       </div>
     );
   }

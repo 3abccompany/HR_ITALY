@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { 
   Loader2, ArrowLeft, User, 
   Briefcase, Building2, FileSignature,
@@ -30,16 +30,17 @@ import { Separator } from "@/components/ui/separator";
 import { useFirebase, useDoc, useUser, useCollection, useAuth } from "@/firebase";
 import { doc, DocumentReference, collection, query, where, Query, limit } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { Contract, ContractStatus } from "@/types/contract";
+import { Contract, ContractRenewalMode, ContractStatus } from "@/types/contract";
 import { Employee } from "@/types/employee";
 import { Person } from "@/types/person";
 import { EmploymentOffer } from "@/types/employment-offer";
 import { HRDocument, DOCUMENT_TYPE_LABELS, STATUS_LABELS } from "@/types/hr-document";
 import { EmploymentRequest } from "@/types/employment-request";
+import { CCNL, CCNLLevel } from "@/types/ccnl";
 import { getDocumentDownloadUrl, uploadHRDocument } from "@/services/document.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
-import Link from "next/link";
+import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { cn } from "@/lib/utils";
 import { 
   sendContractToSignature, 
@@ -88,6 +89,106 @@ import { format, isBefore, startOfDay, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
 import { sendContractToEmployeeAction } from "@/services/email.service";
+
+type PayrollMode = "monthly" | "hourly" | "actual_worked_hours";
+
+const PAYROLL_MODE_OPTIONS: Array<{
+  value: PayrollMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "monthly",
+    label: "Mensualisé",
+    description: "Base mensuelle contractuelle + variables.",
+  },
+  {
+    value: "hourly",
+    label: "Horaire historique",
+    description: "Mode conservé pour compatibilité avec les anciens dossiers.",
+  },
+  {
+    value: "actual_worked_hours",
+    label: "Heures réellement travaillées",
+    description:
+      "Heures validées × taux horaire + jours fériés rémunérés + majorations uniquement.",
+  },
+];
+
+const PAYROLL_MODE_LABELS = PAYROLL_MODE_OPTIONS.reduce(
+  (acc, option) => ({ ...acc, [option.value]: option.label }),
+  {} as Record<PayrollMode, string>
+);
+
+const resolvePayrollMode = (mode?: string | null): PayrollMode =>
+  mode === "hourly" || mode === "actual_worked_hours" ? mode : "monthly";
+
+const parsePositiveContractNumber = (value?: number | string | null): number | null => {
+  if (value === undefined || value === null) return null;
+  const numeric = typeof value === "string" ? Number(value.trim().replace(",", ".")) : value;
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+};
+
+const calculateRenewalGrossAnnual = (
+  grossMonthly?: number | string | null,
+  monthlyPayments?: number | string | null
+): number | null => {
+  const monthly = parsePositiveContractNumber(grossMonthly);
+  const payments = parsePositiveContractNumber(monthlyPayments);
+  if (monthly === null || payments === null) return null;
+  return Math.round((monthly * payments + Number.EPSILON) * 100) / 100;
+};
+
+const formatRenewalGrossAnnual = (
+  grossMonthly?: number | string | null,
+  monthlyPayments?: number | string | null
+) => calculateRenewalGrossAnnual(grossMonthly, monthlyPayments)?.toString() || "";
+
+const buildPdfEffectiveDataUpdate = (data: Partial<Contract>) => {
+  const { grossAnnual, ...snapshot } = data;
+  const resolvedGrossAnnual = parsePositiveContractNumber(grossAnnual);
+  return {
+    ...snapshot,
+    ...(resolvedGrossAnnual !== null ? { grossAnnual: resolvedGrossAnnual } : {}),
+  };
+};
+
+const isIndefiniteContractType = (contractType?: string | null) => {
+  const normalized = (contractType || "").toLowerCase();
+  return ["tempo indeterminato", "cdi", "indeterminato"].some((label) =>
+    normalized.includes(label)
+  );
+};
+
+const formatMoney = (value?: number | string | null) => {
+  const numeric = typeof value === "string" ? Number(value) : value;
+  if (typeof numeric !== "number" || !Number.isFinite(numeric) || numeric <= 0) {
+    return "Non renseigné";
+  }
+  return `${numeric.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} €`;
+};
+
+const RENEWAL_MODE_OPTIONS: Array<{
+  value: ContractRenewalMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "renew_cdd",
+    label: "Renouveler en CDD",
+    description: "Prolonge le contrat à durée déterminée avec une nouvelle date de fin.",
+  },
+  {
+    value: "convert_to_cdi",
+    label: "Convertir en CDI",
+    description: "Crée un nouveau contrat à durée indéterminée sans date de fin.",
+  },
+  {
+    value: "change_livello",
+    label: "Changer uniquement le Livello CCNL",
+    description: "Conserve le type de contrat et applique une nouvelle classification.",
+  },
+];
 
 /**
  * Robust date parser for mixed formats.
@@ -163,7 +264,6 @@ function renderContractContext(doc: HRDocument, employee?: Employee, onlyText = 
 
 export default function ContractDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const entityId = params?.entityId as string;
   const contractId = params?.contractId as string;
   
@@ -171,7 +271,12 @@ export default function ContractDetailPage() {
   const { user } = useUser();
   const auth = useAuth();
   const { toast } = useToast();
+  const { tryStartSubmission, resetSubmission } = useOneShotSubmission();
   const { loading: membershipLoading, hasPermission, entity, membership } = useActiveMembership(entityId);
+  const permissionsReady = !membershipLoading && !!membership && membership.entityId === entityId;
+  const canReadContracts = hasPermission("contracts.read");
+  const canReadEmployees = hasPermission("employees.read");
+  const canReadPersons = hasPermission("persons.read");
 
   const [processing, setProcessing] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -203,10 +308,24 @@ export default function ContractDetailPage() {
   // Renewal State
   const [isRenewalModalOpen, setIsRenewalModalOpen] = useState(false);
   const [renewalForm, setRenewalForm] = useState({
+    renewalMode: "renew_cdd" as ContractRenewalMode,
     newStartDate: "",
     newEndDate: "",
+    ccnlId: "",
+    ccnlName: "",
+    levelId: "",
+    levelCode: "",
+    levelLabel: "",
+    qualificationCategory: "",
+    grossMonthly: "",
+    grossAnnual: "",
+    weeklyHours: "",
+    monthlyPayments: "",
+    payCalculationMode: "monthly" as PayrollMode,
     renewalReason: ""
   });
+  const [renewalLevels, setRenewalLevels] = useState<CCNLLevel[]>([]);
+  const [loadingRenewalLevels, setLoadingRenewalLevels] = useState(false);
 
   // Signed Doc Ref State
   const [isSignedDocModalOpen, setIsSignedDocModalOpen] = useState(false);
@@ -223,10 +342,20 @@ export default function ContractDetailPage() {
   const [terminationFile, setTerminationFile] = useState<File | null>(null);
 
   // 1. Core Data
-  const contractRef = useMemo(() => 
-    db && entityId && contractId ? (doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>) : null,
-  [db, entityId, contractId]);
+  const contractRef = useMemo(() => {
+    if (!db || !entityId || !contractId || !permissionsReady || !canReadContracts) return null;
+    return doc(db, `entities/${entityId}/contracts`, contractId) as DocumentReference<Contract>;
+  }, [db, entityId, contractId, permissionsReady, canReadContracts]);
   const { data: contract, loading: loadingContract } = useDoc<Contract>(contractRef);
+
+  const ccnlsQuery = useMemo(() => {
+    if (!db || !entityId || !permissionsReady || !canReadContracts || !hasPermission("settings.read")) return null;
+    return query(
+      collection(db, `entities/${entityId}/ccnls`),
+      where("status", "==", "active")
+    ) as Query<CCNL>;
+  }, [db, entityId, permissionsReady, canReadContracts, hasPermission]);
+  const { data: activeCcnls } = useCollection<CCNL>(ccnlsQuery);
 
   const isRenewalOverlap = useMemo(() => {
     if (!contract?.endDate || !renewalForm.newStartDate) return false;
@@ -238,29 +367,28 @@ export default function ContractDetailPage() {
   // 2. Registry Documents
   const canReadDocs = hasPermission("documents.read");
   const docsQuery = useMemo(() => {
-    if (!db || !entityId || !contractId || !canReadDocs) return null;
+    if (!db || !entityId || !contractId || !permissionsReady || !canReadContracts || !canReadDocs) return null;
     return query(
       collection(db, `entities/${entityId}/documents`), 
       where("contractId", "==", contractId)
     ) as Query<HRDocument>;
-  }, [db, entityId, contractId, canReadDocs]);
+  }, [db, entityId, contractId, permissionsReady, canReadContracts, canReadDocs]);
 
   const { data: contractDocs } = useCollection<HRDocument>(docsQuery);
 
   // 3. Compliance Query (Proroga Tracking)
   const isRenewalContract = !!(contract?.isRenewal || contract?.previousContractId);
   const cpiQuery = useMemo(() => {
-    if (!db || !entityId || !contractId || !isRenewalContract || !hasPermission("employmentRequests.read")) return null;
+    if (!db || !entityId || !contractId || !permissionsReady || !canReadContracts || !isRenewalContract || !hasPermission("employmentRequests.read")) return null;
     return query(
       collection(db, `entities/${entityId}/employmentRequests`),
       where("contractId", "==", contractId),
-      where("type", "==", "unilav_proroga"),
       limit(1)
     ) as Query<EmploymentRequest>;
-  }, [db, entityId, contractId, isRenewalContract, hasPermission]);
+  }, [db, entityId, contractId, permissionsReady, canReadContracts, isRenewalContract, hasPermission]);
 
   const { data: cpiItems } = useCollection<EmploymentRequest>(cpiQuery);
-  const renewalCpi = cpiItems?.[0];
+  const renewalCpi = cpiItems?.find((item) => item.type === "unilav_proroga" || item.type === "unilav_trasformazione");
 
   // Grouped Documents for Display
   const groupedDocs = useMemo(() => {
@@ -302,24 +430,28 @@ export default function ContractDetailPage() {
   }, [contractDocs]);
 
   // 4. Source Documents for fallbacks
-  const employeeRef = useMemo(() => 
-    db && contract?.employeeId ? doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee> : null,
-  [db, entityId, contract?.employeeId]);
+  const employeeRef = useMemo(() => {
+    if (!db || !entityId || !contract?.employeeId || !permissionsReady || !canReadContracts || !canReadEmployees) return null;
+    return doc(db, `entities/${entityId}/employees`, contract.employeeId) as DocumentReference<Employee>;
+  }, [db, entityId, contract?.employeeId, permissionsReady, canReadContracts, canReadEmployees]);
   const { data: employee } = useDoc<Employee>(employeeRef);
 
-  const personRef = useMemo(() => 
-    db && entityId && contract?.personId ? (doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person>) : null,
-  [db, entityId, contract?.personId]);
+  const personRef = useMemo(() => {
+    if (!db || !entityId || !contract?.personId || !permissionsReady || !canReadContracts || !canReadPersons) return null;
+    return doc(db, `entities/${entityId}/persons`, contract.personId) as DocumentReference<Person>;
+  }, [db, entityId, contract?.personId, permissionsReady, canReadContracts, canReadPersons]);
   const { data: person } = useDoc<Person>(personRef);
 
-  const offerRef = useMemo(() => 
-    db && entityId && contract?.sourceOfferId ? doc(db, `entities/${entityId}/employmentOffers`, contract.sourceOfferId) as DocumentReference<EmploymentOffer> : null,
-  [db, entityId, contract?.sourceOfferId]);
+  const offerRef = useMemo(() => {
+    if (!db || !entityId || !contract?.sourceOfferId || !permissionsReady || !canReadContracts) return null;
+    return doc(db, `entities/${entityId}/employmentOffers`, contract.sourceOfferId) as DocumentReference<EmploymentOffer>;
+  }, [db, entityId, contract?.sourceOfferId, permissionsReady, canReadContracts]);
   const { data: offer } = useDoc<EmploymentOffer>(offerRef);
 
-  const communicationsQuery = useMemo(() => 
-    db && contract?.sourceOfferId ? query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", contract.sourceOfferId)) as Query<any> : null,
-  [db, entityId, contract?.sourceOfferId]);
+  const communicationsQuery = useMemo(() => {
+    if (!db || !entityId || !contract?.sourceOfferId || !permissionsReady || !canReadContracts) return null;
+    return query(collection(db, `entities/${entityId}/mandatoryCommunications`), where("employmentOfferId", "==", contract.sourceOfferId)) as Query<any>;
+  }, [db, entityId, contract?.sourceOfferId, permissionsReady, canReadContracts]);
   const { data: communications } = useCollection<any>(communicationsQuery);
   const mandatoryCommunication = communications?.find(c => c.type === "UNILAV_ASSUNZIONE");
 
@@ -332,6 +464,7 @@ export default function ContractDetailPage() {
   const isTerminated = contract?.status === 'terminated';
   const isRenewed = contract?.status === 'renewed';
   const isImported = !!(contract?.source === 'direct_hr_creation' || contract?.source === 'historical_import');
+  const isContractIndefinite = isIndefiniteContractType(contract?.contractType);
   
   const today = startOfDay(new Date());
   const contractStartDate = parseSafeDate(contract?.startDate);
@@ -349,7 +482,7 @@ export default function ContractDetailPage() {
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
   const isPdfObsolete = !!(pdfDate && contentDate && isBefore(pdfDate, contentDate));
 
-  const contractExpiryDate = parseSafeDate(contract?.endDate);
+  const contractExpiryDate = isContractIndefinite ? null : parseSafeDate(contract?.endDate);
   const isContractExpired = !!(isActive && contractExpiryDate && isBefore(contractExpiryDate, today));
   const isContractExpiringSoon = !!(isActive && contractExpiryDate && !isContractExpired && isBefore(contractExpiryDate, addDays(today, 30)));
 
@@ -377,12 +510,12 @@ export default function ContractDetailPage() {
       list.push({ label: "Signature du salarié manquante", type: 'error' });
     }
 
-    // --- UniLav Proroga Guard (Italy Compliance) ---
-    if (isRenewalContract && isFixedTermCDD) {
+    // --- UniLav Renewal / Transformation Guard (Italy Compliance) ---
+    if (isRenewalContract && (isFixedTermCDD || contract.renewalMode === "convert_to_cdi" || contract.renewalMode === "change_livello")) {
        const cpiStatus = renewalCpi?.status;
        const isCpiDone = cpiStatus === 'completed' || cpiStatus === 'communication_done';
        if (!isCpiDone) {
-          list.push({ label: "Communication UniLav/CPI de proroga non complétée.", type: 'error' });
+          list.push({ label: "Communication UniLav/CPI de renouvellement ou transformation non complétée.", type: 'error' });
        }
     }
 
@@ -400,7 +533,7 @@ export default function ContractDetailPage() {
     setGeneratingPdf(true);
     try {
       // Step 1: Save all effective content snapshots before generation
-      await updateContract(entityId, contractId, effectiveData, user.uid);
+      await updateContract(entityId, contractId, buildPdfEffectiveDataUpdate(effectiveData), user.uid);
 
       // Step 2: Trigger PDF generation API
       const idToken = await auth.currentUser?.getIdToken();
@@ -506,6 +639,13 @@ export default function ContractDetailPage() {
     const companyAddress = entity ? `${entity.adresseSiegeSocial || ""}, ${entity.codePostal || ""} ${entity.ville || ""} (${entity.province || ""})` : "";
     const employeeAddress = person ? `${person.address || ""}, ${person.postalCode || ""} ${person.city || ""} (${person.province || ""})` : "";
 
+    const effectiveGrossMonthly = getEffectiveValue('grossMonthly', offer?.proposedGrossMonthly);
+    const effectiveMonthlyPayments = getEffectiveValue('monthlyPayments', offer?.monthlyPayments || 13);
+    const effectiveGrossAnnual =
+      parsePositiveContractNumber(contract.grossAnnual) ??
+      parsePositiveContractNumber(offer?.proposedGrossAnnual) ??
+      calculateRenewalGrossAnnual(effectiveGrossMonthly, effectiveMonthlyPayments);
+
     return {
       entityLegalName: getEffectiveValue('entityLegalName', entity?.raisonSociale || entity?.legalName),
       entityName: getEffectiveValue('entityName', entity?.nomEntreprise || entity?.name),
@@ -513,7 +653,7 @@ export default function ContractDetailPage() {
       companyAddressSnapshot: getEffectiveValue('companyAddressSnapshot', companyAddress),
       legalRepresentativeName: getEffectiveValue('legalRepresentativeName', entity?.referentEntreprise),
       
-      employeeDisplayName: getEffectiveValue('employeeDisplayName', employee?.displayName || person?.displayName),
+      employeeDisplayName: getEffectiveValue('employeeDisplayName', employee?.displayName || person?.displayName || "Collaborateur non renseigné"),
       employeeCode: getEffectiveValue('employeeCode', employee?.employeeCode),
       taxCode: getEffectiveValue('taxCode', employee?.taxCode || person?.codiceFiscale),
       employeeAddressSnapshot: getEffectiveValue('employeeAddressSnapshot', employeeAddress),
@@ -539,9 +679,10 @@ export default function ContractDetailPage() {
       levelLabel: getEffectiveValue('levelLabel', offer?.levelLabel),
       qualificationCategory: getEffectiveValue('qualificationCategory', offer?.qualificationLabel),
 
-      grossMonthly: getEffectiveValue('grossMonthly', offer?.proposedGrossMonthly),
-      grossAnnual: getEffectiveValue('grossGrossAnnual' as any, offer?.proposedGrossAnnual),
-      monthlyPayments: getEffectiveValue('monthlyPayments', offer?.monthlyPayments || 13),
+      grossMonthly: effectiveGrossMonthly,
+      grossAnnual: effectiveGrossAnnual ?? undefined,
+      monthlyPayments: effectiveMonthlyPayments,
+      payCalculationMode: resolvePayrollMode(getEffectiveValue('payCalculationMode', "monthly")),
 
       uniLavProtocolNumber: getEffectiveValue('uniLavProtocolNumber', mandatoryCommunication?.protocolNumber),
       uniLavSubmissionDate: getEffectiveValue('uniLavSubmissionDate', mandatoryCommunication?.submittedAt ? 
@@ -558,10 +699,171 @@ export default function ContractDetailPage() {
       const nextDay = addDays(parseSafeDate(contract.endDate) || new Date(), 1);
       setRenewalForm(p => ({
         ...p,
-        newStartDate: nextDay.toISOString().split('T')[0]
+        newStartDate: p.newStartDate || nextDay.toISOString().split('T')[0],
+        ccnlId: p.ccnlId || contract.ccnlId || "",
+        ccnlName: p.ccnlName || contract.ccnlName || "",
+        levelId: p.levelId || contract.levelId || "",
+        levelCode: p.levelCode || contract.levelCode || "",
+        levelLabel: p.levelLabel || contract.levelLabel || "",
+        qualificationCategory: p.qualificationCategory || contract.qualificationCategory || "",
+        grossMonthly: p.grossMonthly || (contract.grossMonthly ?? "").toString(),
+        grossAnnual: p.grossAnnual || (contract.grossAnnual ?? "").toString(),
+        weeklyHours: p.weeklyHours || (contract.weeklyHours ?? "").toString(),
+        monthlyPayments: p.monthlyPayments || (contract.monthlyPayments ?? "").toString(),
+        payCalculationMode: resolvePayrollMode(p.payCalculationMode || contract.payCalculationMode)
       }));
     }
   }, [contract]);
+
+  useEffect(() => {
+    async function fetchRenewalLevels() {
+      if (!isRenewalModalOpen || !renewalForm.ccnlId || !entityId || !user) {
+        setRenewalLevels([]);
+        return;
+      }
+
+      setLoadingRenewalLevels(true);
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        if (idToken) {
+          const levels = await getLevelsForCcnlAction(entityId, renewalForm.ccnlId, idToken);
+          setRenewalLevels(levels as CCNLLevel[]);
+        }
+      } catch (err) {
+        console.error("Error fetching renewal levels:", err);
+        setRenewalLevels([]);
+      } finally {
+        setLoadingRenewalLevels(false);
+      }
+    }
+
+    fetchRenewalLevels();
+  }, [isRenewalModalOpen, renewalForm.ccnlId, entityId, user, auth.currentUser]);
+
+  const sortedActiveCcnls = useMemo(
+    () => [...(activeCcnls || [])].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    [activeCcnls]
+  );
+
+  const renewalCcnlOptions = useMemo(() => {
+    const options = [...sortedActiveCcnls];
+    const hasCurrentOption = !!renewalForm.ccnlId && options.some((item) => item.ccnlId === renewalForm.ccnlId);
+    if (!hasCurrentOption && renewalForm.ccnlId && renewalForm.ccnlName) {
+      options.unshift({
+        ccnlId: renewalForm.ccnlId,
+        name: `${renewalForm.ccnlName} — CCNL actuel`,
+        status: "active",
+      } as CCNL);
+    }
+    return options;
+  }, [renewalForm.ccnlId, renewalForm.ccnlName, sortedActiveCcnls]);
+
+  const ccnlReferenceUnavailable = !!(
+    isRenewalModalOpen &&
+    renewalForm.ccnlId &&
+    renewalForm.ccnlName &&
+    (!activeCcnls || !activeCcnls.some((item) => item.ccnlId === renewalForm.ccnlId))
+  );
+
+  const renewalTargetContractType =
+    renewalForm.renewalMode === "convert_to_cdi"
+      ? "CDI / Tempo indeterminato"
+      : contract?.contractType || "Non renseigné";
+
+  const hasRenewalClassificationMismatch = !!(
+    renewalForm.levelId &&
+    (!renewalForm.ccnlId || !renewalForm.ccnlName)
+  );
+
+  const renewalStartsMidMonth = useMemo(() => {
+    if (!renewalForm.newStartDate) return false;
+    const day = Number(renewalForm.newStartDate.split("-")[2]);
+    return Number.isFinite(day) && day !== 1;
+  }, [renewalForm.newStartDate]);
+
+  const handleOpenRenewalModal = () => {
+    if (!contract) return;
+    const nextDay = contract.endDate
+      ? addDays(parseSafeDate(contract.endDate) || new Date(), 1).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0];
+    const associatedCcnl = sortedActiveCcnls.find((item) => item.ccnlId === contract.ccnlId);
+    const effectiveMonthlyPayments =
+      parsePositiveContractNumber(contract.monthlyPayments) ??
+      parsePositiveContractNumber(associatedCcnl?.monthlyPayments) ??
+      13;
+    const grossMonthly = (contract.grossMonthly ?? "").toString();
+
+    setRenewalForm({
+      renewalMode: "renew_cdd",
+      newStartDate: nextDay,
+      newEndDate: "",
+      ccnlId: contract.ccnlId || "",
+      ccnlName: contract.ccnlName || "",
+      levelId: contract.levelId || "",
+      levelCode: contract.levelCode || "",
+      levelLabel: contract.levelLabel || "",
+      qualificationCategory: contract.qualificationCategory || "",
+      grossMonthly,
+      grossAnnual: formatRenewalGrossAnnual(grossMonthly, effectiveMonthlyPayments),
+      weeklyHours: (contract.weeklyHours ?? "").toString(),
+      monthlyPayments: effectiveMonthlyPayments.toString(),
+      payCalculationMode: resolvePayrollMode(contract.payCalculationMode),
+      renewalReason: "",
+    });
+    setIsRenewalModalOpen(true);
+  };
+
+  const handleRenewalModeChange = (renewalMode: ContractRenewalMode) => {
+    setRenewalForm((previous) => ({
+      ...previous,
+      renewalMode,
+      newEndDate: renewalMode === "convert_to_cdi" ? "" : previous.newEndDate,
+    }));
+  };
+
+  const handleRenewalCcnlChange = (ccnlId: string) => {
+    const selected = sortedActiveCcnls.find((item) => item.ccnlId === ccnlId);
+    setRenewalForm((previous) => {
+      const monthlyPayments = selected?.monthlyPayments ? selected.monthlyPayments.toString() : previous.monthlyPayments;
+      return {
+        ...previous,
+        ccnlId,
+        ccnlName: selected?.name || (ccnlId === contract?.ccnlId ? contract?.ccnlName || "" : ""),
+        levelId: "",
+        levelCode: "",
+        levelLabel: "",
+        qualificationCategory: "",
+        weeklyHours: selected?.standardWeeklyHours ? selected.standardWeeklyHours.toString() : previous.weeklyHours,
+        monthlyPayments,
+        grossAnnual: formatRenewalGrossAnnual(previous.grossMonthly, monthlyPayments),
+      };
+    });
+  };
+
+  const handleRenewalLevelChange = (levelId: string) => {
+    const level = renewalLevels.find((item) => item.levelId === levelId);
+    setRenewalForm((previous) => {
+      const monthlyPayments =
+        parsePositiveContractNumber(previous.monthlyPayments) ??
+        parsePositiveContractNumber(contract?.monthlyPayments) ??
+        13;
+      const grossMonthly =
+        parsePositiveContractNumber(level?.minimumGrossMonthly) ??
+        parsePositiveContractNumber(previous.grossMonthly) ??
+        parsePositiveContractNumber(contract?.grossMonthly) ??
+        null;
+      const grossMonthlyText = grossMonthly?.toString() || "";
+      return {
+        ...previous,
+        levelId,
+        levelCode: level?.levelCode || "",
+        levelLabel: level?.label || "",
+        qualificationCategory: level?.qualificationCategory || level?.qualificationLabel || "",
+        grossMonthly: grossMonthlyText,
+        grossAnnual: formatRenewalGrossAnnual(grossMonthlyText, monthlyPayments),
+      };
+    });
+  };
 
   const handleSave = async () => {
     if (!user || !contract) return;
@@ -582,7 +884,7 @@ export default function ContractDetailPage() {
         allowedKeys.push(
           "startDate", "jobTitleName", "departmentName", "worksiteName",
           "ccnlId", "ccnlName", "levelId", "levelCode", "grossMonthly", "grossAnnual", "weeklyHours",
-          "isPartTime", "monthlyPayments"
+          "isPartTime", "monthlyPayments", "payCalculationMode"
         );
       }
 
@@ -691,27 +993,65 @@ export default function ContractDetailPage() {
 
   const handleCreateRenewal = async () => {
     if (!user || !entityId || !contractId) return;
-    if (!renewalForm.newStartDate || !renewalForm.newEndDate) {
-      toast({ variant: "destructive", title: "Erreur", description: "Veuillez renseigner les dates du nouveau contrat." });
+    if (!renewalForm.newStartDate) {
+      toast({ variant: "destructive", title: "Erreur", description: "Veuillez renseigner la date d'effet du nouveau contrat." });
+      return;
+    }
+    if (renewalForm.renewalMode === "renew_cdd" && !renewalForm.newEndDate) {
+      toast({ variant: "destructive", title: "Erreur", description: "La date de fin est obligatoire pour un renouvellement CDD." });
+      return;
+    }
+    if (hasRenewalClassificationMismatch) {
+      toast({
+        variant: "destructive",
+        title: "Classification incohérente",
+        description: "Le Livello sélectionné doit être rattaché à un CCNL visible avant de créer le brouillon.",
+      });
       return;
     }
 
+    const renewalGrossMonthly = parsePositiveContractNumber(renewalForm.grossMonthly);
+    const renewalMonthlyPayments = parsePositiveContractNumber(renewalForm.monthlyPayments);
+    const renewalGrossAnnual = calculateRenewalGrossAnnual(renewalGrossMonthly, renewalMonthlyPayments);
+    if (renewalGrossMonthly === null || renewalMonthlyPayments === null || renewalGrossAnnual === null) {
+      toast({
+        variant: "destructive",
+        title: "RÃ©munÃ©ration invalide",
+        description: "Veuillez renseigner un brut mensuel et un nombre de mensualitÃ©s valides avant de crÃ©er le renouvellement.",
+      });
+      return;
+    }
+
+    if (!tryStartSubmission()) return;
     setProcessing(true);
     try {
       const result = await prepareContractRenewalAction(entityId, contractId, {
+        renewalMode: renewalForm.renewalMode,
         newStartDate: renewalForm.newStartDate,
-        newEndDate: renewalForm.newEndDate,
+        newEndDate: renewalForm.renewalMode === "convert_to_cdi" ? undefined : renewalForm.newEndDate,
+        contractType: renewalForm.renewalMode === "convert_to_cdi" ? "Tempo indeterminato" : contract?.contractType,
+        ccnlId: renewalForm.ccnlId || null,
+        ccnlName: renewalForm.ccnlName || null,
+        levelId: renewalForm.levelId || null,
+        levelCode: renewalForm.levelCode || null,
+        levelLabel: renewalForm.levelLabel || null,
+        qualificationCategory: renewalForm.qualificationCategory || null,
+        grossMonthly: renewalGrossMonthly,
+        grossAnnual: renewalGrossAnnual,
+        weeklyHours: Number(renewalForm.weeklyHours) || contract?.weeklyHours || 0,
+        monthlyPayments: renewalMonthlyPayments,
+        payCalculationMode: renewalForm.payCalculationMode,
         renewalReason: renewalForm.renewalReason,
         actorUid: user.uid
       });
 
       toast({ title: "Brouillon de renouvellement créé" });
       setIsRenewalModalOpen(false);
-      router.push(`/entity/${entityId}/contracts/${result.newContractId}`);
+      window.location.assign(`/entity/${entityId}/contracts/${result.newContractId}`);
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Erreur", description: err.message });
-    } finally {
+      resetSubmission();
       setProcessing(false);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
     }
   };
 
@@ -850,7 +1190,9 @@ export default function ContractDetailPage() {
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="bg-secondary/20 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><FileText className="w-10 h-10 text-muted-foreground" /></div>
         <h2 className="text-2xl font-black text-primary">Contrat introuvable</h2>
-        <Button onClick={() => router.push(`/entity/${entityId}/contracts`)} className="mt-8">Retour au registre</Button>
+        <Button asChild className="mt-8">
+          <a href={`/entity/${entityId}/contracts`}>Retour au registre</a>
+        </Button>
       </div>
     );
   }
@@ -861,15 +1203,19 @@ export default function ContractDetailPage() {
     <div className="p-8 max-w-6xl mx-auto pb-32">
       <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 sticky top-0 z-40 bg-background/80 backdrop-blur py-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/entity/${entityId}/contracts`)} className="rounded-full">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" asChild className="rounded-full">
+            <a href={`/entity/${entityId}/contracts`} aria-label="Retour aux contrats">
+              <ArrowLeft className="w-5 h-5" />
+            </a>
           </Button>
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-black text-primary tracking-tight">Détails du Contrat</h1>
               {getStatusBadge(contract.status as ContractStatus)}
             </div>
-            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">Référence : {businessReference}</p>
+            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">
+              Matricule : {effectiveData.employeeCode || businessReference || "Non renseigné"} · Codice fiscale : {effectiveData.taxCode || "Non renseigné"}
+            </p>
           </div>
         </div>
 
@@ -890,7 +1236,7 @@ export default function ContractDetailPage() {
                   </Button>
                 )}
                 
-                <DropdownMenu>
+                <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                      <Button variant="outline" size="icon" className="rounded-xl"><MoreVertical className="w-4 h-4" /></Button>
                   </DropdownMenuTrigger>
@@ -1241,6 +1587,7 @@ export default function ContractDetailPage() {
              <CardContent className="p-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                    <DetailEditable label="Nom Complet" value={effectiveData.employeeDisplayName} editValue={formData.employeeDisplayName} isEditing={isEditing} id="employeeDisplayName" disabled required onChange={(v: string) => setFormData(p => ({...p, employeeDisplayName: v}))} />
+                   <DetailEditable label="Matricule" value={effectiveData.employeeCode} editValue={formData.employeeCode} isEditing={isEditing} id="employeeCode" disabled className="font-mono uppercase" onChange={(v: string) => setFormData(p => ({...p, employeeCode: v}))} />
                    <DetailEditable label="Code Fiscal / ID National" value={effectiveData.taxCode} editValue={formData.taxCode} isEditing={isEditing} id="taxCode" required disabled={!!effectiveData.taxCode} className="font-mono uppercase" onChange={(v: string) => setFormData(p => ({...p, taxCode: v}))} />
                    <DetailEditable label="Date de Naissance" value={effectiveData.dateOfBirth} editValue={formData.dateOfBirth} isEditing={isEditing} id="dateOfBirth" type="date" disabled={!!effectiveData.dateOfBirth} onChange={(v: string) => setFormData(p => ({...p, dateOfBirth: v}))} />
                    <DetailEditable label="Lieu de Naissance" value={effectiveData.placeOfBirth} editValue={formData.placeOfBirth} isEditing={isEditing} id="placeOfBirth" onChange={(v: string) => setFormData(p => ({...p, placeOfBirth: v}))} />
@@ -1270,7 +1617,7 @@ export default function ContractDetailPage() {
                    <ScrollText className="w-4 h-4" /> Conditions & Classification
                 </CardTitle>
                 {!!canShowRenewButton && !isEditing && (
-                  <Button variant="outline" size="sm" onClick={() => setIsRenewalModalOpen(true)} className="h-8 rounded-xl font-bold bg-white text-accent border-accent/20" disabled={!!processing}>
+                  <Button variant="outline" size="sm" onClick={handleOpenRenewalModal} className="h-8 rounded-xl font-bold bg-white text-accent border-accent/20" disabled={!!processing}>
                     <RefreshCcw className="w-3.5 h-3.5 mr-2" /> Renouveler CDD
                   </Button>
                 )}
@@ -1279,7 +1626,143 @@ export default function ContractDetailPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                    <DetailEditable label="Type de Contrat" value={effectiveData.contractType} editValue={formData.contractType} isEditing={isEditing} id="contractType" disabled required onChange={(v: string) => setFormData(p => ({...p, contractType: v}))} />
                    <DetailEditable label="Date de Début" value={effectiveData.startDate} editValue={formData.startDate} isEditing={isEditing} id="startDate" type="date" disabled={!isDraft} required icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, startDate: v}))} />
-                   <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, endDate: v}))} />
+                   {isIndefiniteContractType(effectiveData.contractType) ? (
+                     <div className="space-y-1.5">
+                       <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-70">
+                         Durée
+                       </p>
+                       <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+                         <Calendar className="w-3.5 h-3.5 text-primary/40" />
+                         Durée indéterminée
+                       </div>
+                       <p className="text-xs font-medium text-muted-foreground">
+                         Aucune date de fin n'est affichée pour un CDI.
+                       </p>
+                     </div>
+                   ) : (
+                     <DetailEditable label="Date de Fin (Optionnel)" value={effectiveData.endDate} editValue={formData.endDate} isEditing={isEditing} id="endDate" type="date" disabled={!isDraft && effectiveData.contractType !== 'Tempo determinato'} icon={Calendar} onChange={(v: string) => setFormData(p => ({...p, endDate: v}))} />
+                   )}
+                </div>
+
+                <div className="mt-8 rounded-3xl border border-primary/10 bg-slate-50/70 p-5">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary/70">
+                        Classification contractuelle
+                      </p>
+                      <p className="text-xs font-medium text-muted-foreground">
+                        CCNL, Livello et paramètres de base utilisés comme référence contractuelle.
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="rounded-xl bg-white px-3 py-1 font-black text-primary">
+                      CCNL & Livello
+                    </Badge>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">CCNL</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">{effectiveData.ccnlName || "Non renseigné"}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Livello</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {effectiveData.levelCode
+                          ? `${effectiveData.levelCode}${effectiveData.levelLabel ? ` · ${effectiveData.levelLabel}` : ""}`
+                          : "Non renseigné"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Catégorie qualification</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">{effectiveData.qualificationCategory || "Non renseigné"}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Salaire brut mensuel</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">{formatMoney(effectiveData.grossMonthly)}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Heures hebdomadaires</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {effectiveData.weeklyHours ? `${effectiveData.weeklyHours}h / semaine` : "Non renseigné"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="text-[10px] font-black uppercase text-muted-foreground">Mensualités / Mode paie</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {effectiveData.monthlyPayments || "Non renseigné"} · {PAYROLL_MODE_LABELS[resolvePayrollMode(effectiveData.payCalculationMode)]}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+             </CardContent>
+          </Card>
+
+          <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
+             <CardHeader className="bg-primary/5 border-b py-4 px-8">
+                <CardTitle className="text-xs font-black uppercase tracking-widest text-primary/70 flex items-center gap-2">
+                   <Euro className="w-4 h-4" /> Paie / Synthèse économique
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="p-8 space-y-5">
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start">
+                   <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase tracking-tight opacity-70">
+                        Mode de calcul paie
+                      </Label>
+                      {isEditing ? (
+                        <Select
+                          value={resolvePayrollMode(formData.payCalculationMode || effectiveData.payCalculationMode)}
+                          onValueChange={(value: PayrollMode) =>
+                            setFormData((previous) => ({
+                              ...previous,
+                              payCalculationMode: value,
+                            }))
+                          }
+                          disabled={!isDraft}
+                        >
+                          <SelectTrigger className="h-12 rounded-xl bg-white font-bold">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PAYROLL_MODE_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge className="rounded-xl bg-primary/10 px-3 py-1.5 font-black text-primary hover:bg-primary/10">
+                            {contract.payCalculationMode
+                              ? PAYROLL_MODE_LABELS[resolvePayrollMode(contract.payCalculationMode)]
+                              : "Mensualisé par défaut"}
+                          </Badge>
+                        </div>
+                      )}
+                      <p className="text-xs font-medium leading-relaxed text-muted-foreground">
+                        Si un paramètre salarié actif définit un mode, il remplace le mode du
+                        contrat pour la période calculée.
+                      </p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary/60">
+                        Priorité appliquée : Paramètre salarié actif → Contrat → Mensualisé par défaut.
+                      </p>
+                   </div>
+
+                   <div className="rounded-2xl border border-primary/10 bg-slate-50/70 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                        Options disponibles
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        {PAYROLL_MODE_OPTIONS.map((option) => (
+                          <div key={option.value} className="rounded-xl bg-white p-3 shadow-sm">
+                            <p className="text-sm font-black text-slate-800">{option.label}</p>
+                            <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">
+                              {option.description}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                   </div>
                 </div>
              </CardContent>
           </Card>
@@ -1324,12 +1807,12 @@ export default function ContractDetailPage() {
              </CardContent>
           </Card>
 
-          {/* Proroga Tracking Sidebar Card */}
+          {/* Renewal Compliance Tracking Sidebar Card */}
           {isRenewalContract && renewalCpi && (
             <Card className="border-primary/5 rounded-[2rem] shadow-lg bg-white overflow-hidden animate-in fade-in slide-in-from-right-2">
                <CardHeader className="py-4 border-b bg-green-50/50">
                   <CardTitle className="text-[10px] font-black uppercase tracking-widest text-green-700 flex items-center gap-2">
-                     <Globe className="w-4 h-4" /> Compliance Proroga
+                     <Globe className="w-4 h-4" /> Compliance UniLav
                   </CardTitle>
                </CardHeader>
                <CardContent className="p-6 space-y-4">
@@ -1342,9 +1825,9 @@ export default function ContractDetailPage() {
                      <p className="text-xs font-mono font-bold text-slate-800 truncate">{renewalCpi.protocolCode || "Non enregistré"}</p>
                   </div>
                   <Button asChild variant="secondary" className="w-full h-9 rounded-xl font-bold bg-primary/5 text-primary hover:bg-primary/10 text-xs gap-2">
-                     <Link href={`/entity/${entityId}/employment-requests/${renewalCpi.id}`}>
+                     <a href={`/entity/${entityId}/employment-requests/${renewalCpi.id}`}>
                         Voir le dossier CPI <ChevronRight className="w-3.5 h-3.5" />
-                     </Link>
+                     </a>
                   </Button>
                </CardContent>
             </Card>
@@ -1377,27 +1860,248 @@ export default function ContractDetailPage() {
 
       {/* Modals: Renewal, SignedDoc, Termination */}
       <Dialog open={isRenewalModalOpen} onOpenChange={setIsRenewalModalOpen}>
-        <DialogContent className="rounded-[2.5rem] sm:max-w-[500px]">
-          <DialogHeader><DialogTitle className="text-xl font-black text-primary">Renouveler le contrat</DialogTitle></DialogHeader>
-          <div className="py-6 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Début</Label>
-                <Input type="date" value={renewalForm.newStartDate} onChange={(e) => setRenewalForm(p => ({...p, newStartDate: e.target.value}))} className="h-11 rounded-xl" />
+        <DialogContent className="rounded-[2.5rem] sm:max-w-[860px] max-h-[92vh] overflow-hidden p-0">
+          <DialogHeader className="px-8 pt-8 pb-5 border-b bg-primary/5">
+            <DialogTitle className="text-xl font-black text-primary">Renouveler ou transformer le contrat</DialogTitle>
+            <DialogDescription className="text-sm font-medium text-muted-foreground">
+              Le renouvellement crée un nouveau contrat. L'ancien contrat reste conservé dans l'historique.
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[68vh]">
+            <div className="p-8 space-y-6">
+              <Card className="rounded-3xl border-primary/10 bg-white shadow-sm">
+                <CardContent className="p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary/70">Classification actuelle</p>
+                      <p className="text-xs font-medium text-muted-foreground">Données conservées sur le contrat existant.</p>
+                    </div>
+                    <Badge variant="outline" className="rounded-xl bg-primary/5 px-3 py-1 font-black text-primary">Actuel</Badge>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-muted-foreground">Contrat actuel</p>
+                    <p className="text-sm font-black text-slate-800">{contract?.contractType || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-muted-foreground">Période</p>
+                    <p className="text-sm font-black text-slate-800">
+                      {formatDate(contract?.startDate)} → {isIndefiniteContractType(contract?.contractType) ? "Durée indéterminée" : formatDate(contract?.endDate)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-muted-foreground">CCNL / Livello</p>
+                    <p className="text-sm font-black text-slate-800">{contract?.ccnlName || "Non renseigné"} · {contract?.levelCode || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-muted-foreground">Brut mensuel</p>
+                    <p className="text-sm font-black text-slate-800">{contract?.grossMonthly ? `${contract.grossMonthly.toLocaleString("fr-FR")} €` : "Non renseigné"}</p>
+                  </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                {RENEWAL_MODE_OPTIONS.map((option) => {
+                  const selected = renewalForm.renewalMode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleRenewalModeChange(option.value)}
+                      className={cn(
+                        "rounded-3xl border p-4 text-left transition-all",
+                        selected ? "border-primary bg-primary/5 shadow-md shadow-primary/10" : "border-slate-200 bg-white hover:border-primary/30"
+                      )}
+                    >
+                      <span className="text-sm font-black text-slate-900">{option.label}</span>
+                      <span className="mt-2 block text-xs font-medium leading-relaxed text-muted-foreground">{option.description}</span>
+                    </button>
+                  );
+                })}
               </div>
+
+              <Card className="rounded-3xl border-blue-100 bg-blue-50/60 shadow-sm">
+                <CardContent className="p-5">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Nouvelle classification cible</p>
+                      <p className="text-xs font-medium text-blue-900/70">
+                        Aperçu dynamique du contrat brouillon qui sera créé.
+                      </p>
+                    </div>
+                    <Badge className="rounded-xl bg-blue-600 px-3 py-1 font-black text-white hover:bg-blue-600">
+                      {renewalForm.renewalMode === "convert_to_cdi" ? "CDI" : renewalForm.renewalMode === "renew_cdd" ? "CDD" : "Livello"}
+                    </Badge>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-5">
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Type cible</p>
+                      <p className="text-sm font-black text-slate-900">{renewalTargetContractType}</p>
+                      {renewalForm.renewalMode === "convert_to_cdi" && (
+                        <p className="text-[11px] font-bold text-green-700">Durée indéterminée</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">CCNL cible</p>
+                      <p className="text-sm font-black text-slate-900">{renewalForm.ccnlName || contract?.ccnlName || "Non renseigné"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Livello cible</p>
+                      <p className="text-sm font-black text-slate-900">
+                        {renewalForm.levelCode || contract?.levelCode
+                          ? `${renewalForm.levelCode || contract?.levelCode}${renewalForm.levelLabel || contract?.levelLabel ? ` · ${renewalForm.levelLabel || contract?.levelLabel}` : ""}`
+                          : "Non renseigné"}
+                      </p>
+                      {(renewalForm.qualificationCategory || contract?.qualificationCategory) && (
+                        <p className="text-[11px] font-medium text-blue-900/60">
+                          {renewalForm.qualificationCategory || contract?.qualificationCategory}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Brut mensuel cible</p>
+                      <p className="text-sm font-black text-slate-900">{formatMoney(renewalForm.grossMonthly || contract?.grossMonthly)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-blue-900/60">Mode paie cible</p>
+                      <p className="text-sm font-black text-slate-900">
+                        {PAYROLL_MODE_LABELS[resolvePayrollMode(renewalForm.payCalculationMode)]}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Alert className="rounded-2xl border-blue-200 bg-blue-50 text-blue-900">
+                <Info className="h-4 w-4" />
+                <AlertTitle className="font-black">Impact synthèse économique</AlertTitle>
+                <AlertDescription className="text-xs font-medium">
+                  Le changement de Livello s'appliquera aux prochains calculs de synthèse économique à partir de la date d'effet du nouveau contrat.
+                </AlertDescription>
+              </Alert>
+
+              {renewalStartsMidMonth && (
+                <Alert variant="destructive" className="rounded-2xl">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle className="font-black">Date d'effet en cours de mois</AlertTitle>
+                  <AlertDescription className="text-xs font-medium">
+                    Date d'effet en cours de mois : le brouillon peut être créé, mais la synthèse économique du mois concerné devra être vérifiée manuellement car le découpage automatique entre deux contrats n'est pas encore disponible.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Date d'effet</Label>
+                  <Input type="date" value={renewalForm.newStartDate} onChange={(e) => setRenewalForm(p => ({...p, newStartDate: e.target.value}))} className="h-11 rounded-xl" />
+                </div>
+                {renewalForm.renewalMode !== "convert_to_cdi" ? (
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-black">Nouvelle date de fin {renewalForm.renewalMode === "renew_cdd" ? "(requise)" : "(si applicable)"}</Label>
+                    <Input type="date" value={renewalForm.newEndDate} onChange={(e) => setRenewalForm(p => ({...p, newEndDate: e.target.value}))} required={renewalForm.renewalMode === "renew_cdd"} className="h-11 rounded-xl" />
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
+                    <p className="text-[10px] uppercase font-black text-green-700">Type du nouveau contrat</p>
+                    <p className="mt-1 text-sm font-black text-green-900">CDI / Tempo indeterminato</p>
+                    <p className="mt-1 text-xs font-medium text-green-800">La date de fin reste vide selon le modèle CDI existant.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">CCNL</Label>
+                  <Select value={renewalForm.ccnlId || "none"} onValueChange={(value) => handleRenewalCcnlChange(value === "none" ? "" : value)}>
+                    <SelectTrigger className="h-11 rounded-xl bg-white font-bold"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Conserver / Non renseigné</SelectItem>
+                      {renewalCcnlOptions.map((ccnl) => (
+                        <SelectItem key={ccnl.ccnlId} value={ccnl.ccnlId}>{ccnl.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {ccnlReferenceUnavailable && (
+                    <p className="text-xs font-medium text-amber-700">
+                      CCNL affiché depuis le contrat actuel. Référentiel CCNL non disponible.
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Livello CCNL</Label>
+                  <Select value={renewalForm.levelId || "none"} onValueChange={(value) => handleRenewalLevelChange(value === "none" ? "" : value)} disabled={!renewalForm.ccnlId || loadingRenewalLevels}>
+                    <SelectTrigger className="h-11 rounded-xl bg-white font-bold">
+                      <SelectValue placeholder={loadingRenewalLevels ? "Chargement..." : "Sélectionner"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Conserver / Non renseigné</SelectItem>
+                      {renewalLevels.map((level) => (
+                        <SelectItem key={level.levelId} value={level.levelId}>
+                          {level.levelCode} · {level.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {renewalForm.levelCode && (
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Sélection : {renewalForm.levelCode} · {renewalForm.levelLabel || "Sans libellé"}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Brut mensuel</Label>
+                  <Input type="number" value={renewalForm.grossMonthly} onChange={(e) => {
+                    const grossMonthly = e.target.value;
+                    setRenewalForm(p => ({...p, grossMonthly, grossAnnual: formatRenewalGrossAnnual(grossMonthly, p.monthlyPayments)}));
+                  }} className="h-11 rounded-xl" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Brut annuel</Label>
+                  <Input type="number" value={renewalForm.grossAnnual} onChange={(e) => setRenewalForm(p => ({...p, grossAnnual: e.target.value}))} className="h-11 rounded-xl" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Heures/semaine</Label>
+                  <Input type="number" value={renewalForm.weeklyHours} onChange={(e) => setRenewalForm(p => ({...p, weeklyHours: e.target.value}))} className="h-11 rounded-xl" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] uppercase font-black">Mensualités</Label>
+                  <Input type="number" value={renewalForm.monthlyPayments} onChange={(e) => {
+                    const monthlyPayments = e.target.value;
+                    setRenewalForm(p => ({...p, monthlyPayments, grossAnnual: formatRenewalGrossAnnual(p.grossMonthly, monthlyPayments)}));
+                  }} className="h-11 rounded-xl" />
+                </div>
+              </div>
+
               <div className="space-y-2">
-                <Label className="text-[10px] uppercase font-black">Fin</Label>
-                <Input type="date" value={renewalForm.newEndDate} onChange={(e) => setRenewalForm(p => ({...p, newEndDate: e.target.value}))} required className="h-11 rounded-xl" />
+                <Label className="text-[10px] uppercase font-black">Mode de calcul paie</Label>
+                <Select value={renewalForm.payCalculationMode} onValueChange={(value: PayrollMode) => setRenewalForm(p => ({...p, payCalculationMode: value}))}>
+                  <SelectTrigger className="h-11 rounded-xl bg-white font-bold"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PAYROLL_MODE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[10px] uppercase font-black">Motif / Notes</Label>
+                <Textarea value={renewalForm.renewalReason} onChange={(e) => setRenewalForm(p => ({...p, renewalReason: e.target.value}))} className="rounded-xl min-h-[90px]" />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label className="text-[10px] uppercase font-black">Motif</Label>
-              <Textarea value={renewalForm.renewalReason} onChange={(e) => setRenewalForm(p => ({...p, renewalReason: e.target.value}))} className="rounded-xl" />
-            </div>
-          </div>
-          <DialogFooter>
+          </ScrollArea>
+
+          <DialogFooter className="border-t bg-slate-50 px-8 py-5">
              <Button variant="ghost" onClick={() => setIsRenewalModalOpen(false)}>Annuler</Button>
-             <Button onClick={handleCreateRenewal} disabled={!!processing} className="rounded-xl px-8 font-black">Créer brouillon</Button>
+             <Button onClick={handleCreateRenewal} disabled={!!processing} className="rounded-xl px-8 font-black">
+               {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+               Créer brouillon
+             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

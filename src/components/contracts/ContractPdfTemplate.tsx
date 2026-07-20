@@ -2,10 +2,6 @@ import React from 'react';
 import { Page, Text, View, Document, StyleSheet } from '@react-pdf/renderer';
 import { Contract } from '@/types/contract';
 
-// Register standard fonts
-// Note: In server-side rendering, standard fonts are usually available.
-// If custom fonts are needed, they would need to be loaded via public URLs.
-
 const styles = StyleSheet.create({
   page: {
     padding: 60,
@@ -88,119 +84,158 @@ interface ContractPdfTemplateProps {
   contract: Contract;
 }
 
-export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return 'da definire';
-    const [y, m, d] = dateStr.split('-');
-    return `${d}/${m}/${y}`;
-  };
+function safeText(value: unknown, fallback = 'Non renseigné') {
+  if (value === null || value === undefined) return fallback;
+  const text = String(value).trim();
+  return text || fallback;
+}
 
-  const companyName = contract.entityLegalName || contract.entityName || "L'azienda";
+function isIndefiniteContractType(contractType?: string | null) {
+  const normalized = (contractType || '').toLowerCase();
+  return ['tempo indeterminato', 'cdi', 'indeterminato'].some((label) =>
+    normalized.includes(label)
+  );
+}
+
+function formatDateSafe(dateStr?: string | null, fallback = 'da definire') {
+  if (!dateStr || typeof dateStr !== 'string') return fallback;
+  const [year, month, day] = dateStr.split('-');
+  if (!year || !month || !day || Number.isNaN(Number(year)) || Number.isNaN(Number(month)) || Number.isNaN(Number(day))) {
+    return fallback;
+  }
+  return `${day}/${month}/${year}`;
+}
+
+function formatMoneySafe(value?: number | string | null, fallback = 'Non renseigné') {
+  const numeric = typeof value === 'string' ? Number(value) : value;
+  if (typeof numeric !== 'number' || !Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
+  const companyName = safeText(contract.entityLegalName || contract.entityName, "L'azienda");
+  const companyAddress = safeText(contract.companyAddressSnapshot);
+  const vatNumber = safeText(contract.entityVatNumber);
+  const legalRepresentative = safeText(contract.legalRepresentativeName);
+  const employeeName = safeText(contract.employeeDisplayName);
+  const employeeCode = safeText(contract.employeeCode || contract.contractId);
+  const placeOfBirth = safeText(contract.placeOfBirth, '-');
+  const dateOfBirth = formatDateSafe(contract.dateOfBirth);
+  const employeeAddress = safeText(contract.employeeAddressSnapshot);
+  const taxCode = safeText(contract.taxCode);
+  const qualificationCategory = safeText(contract.qualificationCategory, 'Impiegato');
+  const jobTitle = safeText(contract.jobTitleName);
+  const departmentName = safeText(contract.departmentName);
+  const contractType = safeText(contract.contractType, 'da definire');
+  const startDate = formatDateSafe(contract.startDate);
+  const isIndefinite = isIndefiniteContractType(contract.contractType);
+  const durationSentence = isIndefinite
+    ? 'Durata: tempo indeterminato, senza data di fine.'
+    : `Il termine è fissato al ${formatDateSafe(contract.endDate, 'Data di fine non renseignée')}.`;
+  const trialPeriodDays = safeText(contract.trialPeriodDays || 30);
+  const worksiteName = safeText(contract.worksiteName);
+  const ccnlName = safeText(contract.ccnlName);
+  const levelLabel = [contract.levelCode, contract.levelLabel].filter(Boolean).join(' · ') || 'Non renseigné';
+  const grossMonthly = formatMoneySafe(contract.grossMonthly);
+  const grossAnnual = formatMoneySafe(contract.grossAnnual);
+  const monthlyPayments = safeText(contract.monthlyPayments || 13);
+  const weeklyHours = safeText(contract.weeklyHours);
+  const workingScheduleNotes = safeText(contract.workingScheduleNotes, 'Non renseigné.');
+  const partTimeSentence = contract.isPartTime ? ' in regime di Part-Time.' : ' in regime di Full-Time.';
+  const uniLavProtocolNumber = safeText(contract.uniLavProtocolNumber, '');
+  const uniLavSubmissionDate = formatDateSafe(contract.uniLavSubmissionDate, 'data non renseignée');
+  const hasUniLavProtocol = uniLavProtocolNumber !== '';
+  const missions = Array.isArray(contract.missionsSnapshot)
+    ? contract.missionsSnapshot.filter((mission) => typeof mission === 'string' && mission.trim())
+    : [];
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Contratto Individuale di Lavoro</Text>
-          <Text style={styles.subtitle}>HR Nexus Studio • Rif. Interno: {contract.employeeCode || contract.contractId}</Text>
+          <Text style={styles.subtitle}>HR Nexus Studio • Rif. Interno: {employeeCode}</Text>
         </View>
 
-        {/* Art 1 - Parti */}
         <View style={styles.section}>
           <Text style={styles.articleTitle}>Art. 1 — Oggetto e Parti</Text>
           <Text style={styles.text}>
-            Tra la società <Text style={styles.bold}>{contract.entityLegalName || contract.entityName}</Text>, 
-            con sede legale in <Text style={styles.bold}>{contract.companyAddressSnapshot}</Text>, 
-            P.IVA/C.F. <Text style={styles.bold}>{contract.entityVatNumber}</Text>, 
-            nella persona del suo legale rappresentante <Text style={styles.bold}>{contract.legalRepresentativeName}</Text> (di seguito "Datore di Lavoro")
+            Tra la società <Text style={styles.bold}>{companyName}</Text>, con sede legale in <Text style={styles.bold}>{companyAddress}</Text>, P.IVA/C.F. <Text style={styles.bold}>{vatNumber}</Text>, nella persona del suo legale rappresentante <Text style={styles.bold}>{legalRepresentative}</Text> (di seguito "Datore di Lavoro")
           </Text>
           <Text style={[styles.text, { marginTop: 5, marginBottom: 5, textAlign: 'center' }]}>e</Text>
           <Text style={styles.text}>
-            il Sig./la Sig.ra <Text style={styles.bold}>{contract.employeeDisplayName}</Text>, 
-            nato/a a <Text style={styles.bold}>{contract.placeOfBirth || '-'}</Text> il <Text style={styles.bold}>{formatDate(contract.dateOfBirth)}</Text>, 
-            residente in <Text style={styles.bold}>{contract.employeeAddressSnapshot}</Text>, 
-            C.F. <Text style={styles.bold}>{contract.taxCode}</Text> (di seguito "Lavoratore")
+            il Sig./la Sig.ra <Text style={styles.bold}>{employeeName}</Text>, nato/a a <Text style={styles.bold}>{placeOfBirth}</Text> il <Text style={styles.bold}>{dateOfBirth}</Text>, residente in <Text style={styles.bold}>{employeeAddress}</Text>, C.F. <Text style={styles.bold}>{taxCode}</Text> (di seguito "Lavoratore")
           </Text>
-          <Text style={styles.text}>Si stipula il presente contratto individuale di l lavoro subordinato.</Text>
+          <Text style={styles.text}>Si stipula il presente contratto individuale di lavoro subordinato.</Text>
         </View>
 
-        {/* Art 2 - Inquadramento */}
         <View style={styles.section}>
           <Text style={styles.articleTitle}>Art. 2 — Mansione e Qualifica</Text>
           <Text style={styles.text}>
-            Il Lavoratore viene assunto con la qualifica di <Text style={styles.bold}>{contract.qualificationCategory || 'Impiegato'}</Text>, 
-            per lo svolgimento delle mansioni di <Text style={styles.bold}>{contract.jobTitleName}</Text> presso il dipartimento <Text style={styles.bold}>{contract.departmentName}</Text>.
+            Il Lavoratore viene assunto con la qualifica di <Text style={styles.bold}>{qualificationCategory}</Text>, per lo svolgimento delle mansioni di <Text style={styles.bold}>{jobTitle}</Text> presso il dipartimento <Text style={styles.bold}>{departmentName}</Text>.
           </Text>
-          {contract.missionsSnapshot && contract.missionsSnapshot.length > 0 && (
+          {missions.length > 0 ? (
             <View style={{ marginLeft: 10, marginTop: 5 }}>
-              {contract.missionsSnapshot.map((m, i) => (
-                <Text key={i} style={styles.text}>• {m}</Text>
+              {missions.map((mission, index) => (
+                <Text key={`mission-${index}`} style={styles.text}>• {mission}</Text>
               ))}
             </View>
+          ) : (
+            <Text style={styles.text}>Mansioni dettagliate: Non renseigné.</Text>
           )}
         </View>
 
-        {/* Art 3 - Durata e Prova */}
         <View style={styles.section}>
           <Text style={styles.articleTitle}>Art. 3 — Durata del rapporto e Periodo di Prova</Text>
           <Text style={styles.text}>
-            Il rapporto di lavoro decorre dal <Text style={styles.bold}>{formatDate(contract.startDate)}</Text> ed è stipulato a 
-            <Text style={styles.bold}> {contract.contractType}</Text>.
-            {contract.endDate && <Text> Il termine è fissato al {formatDate(contract.endDate)}.</Text>}
+            Il rapporto di lavoro decorre dal <Text style={styles.bold}>{startDate}</Text> ed è stipulato a <Text style={styles.bold}>{contractType}</Text>. {durationSentence}
           </Text>
           <Text style={styles.text}>
-            Il periodo di prova è stabilito in <Text style={styles.bold}>{contract.trialPeriodDays || 30} giorni</Text> di effettivo lavoro. 
-            Durante tale periodo ciascuna delle parti potrà recedere dal contratto senza obbligo di preavviso o indennità.
+            Il periodo di prova è stabilito in <Text style={styles.bold}>{trialPeriodDays} giorni</Text> di effettivo lavoro. Durante tale periodo ciascuna delle parti potrà recedere dal contratto senza obbligo di preavviso o indennità.
           </Text>
         </View>
 
-        {/* Art 4 - Sede */}
         <View style={styles.section}>
           <Text style={styles.articleTitle}>Art. 4 — Luogo di lavoro</Text>
           <Text style={styles.text}>
-            La prestazione lavorativa sarà svolta ordinariamente presso la sede di <Text style={styles.bold}>{contract.worksiteName}</Text>.
+            La prestazione lavorativa sarà svolta ordinariamente presso la sede di <Text style={styles.bold}>{worksiteName}</Text>.
           </Text>
         </View>
 
-        {/* Art 5 - Trattamento Economico */}
         <View style={styles.section}>
           <Text style={styles.articleTitle}>Art. 5 — Trattamento Economico e CCNL</Text>
           <Text style={styles.text}>
-            Al rapporto di lavoro si applicano le norme del <Text style={styles.bold}>{contract.ccnlName}</Text>. 
-            L'inquadramento è fissato al <Text style={styles.bold}>Livello {contract.levelCode}</Text>.
+            Al rapporto di lavoro si applicano le norme del <Text style={styles.bold}>{ccnlName}</Text>. L'inquadramento è fissato al <Text style={styles.bold}>Livello {levelLabel}</Text>.
           </Text>
           <Text style={styles.text}>
-            La retribuzione lorda mensile è stabilita in <Text style={styles.bold}>€ {contract.grossMonthly.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</Text>, 
-            per <Text style={styles.bold}>{contract.monthlyPayments || 13} mensilità</Text>, 
-            corrispondente ad una RAL (Retribuzione Annua Lorda) di <Text style={styles.bold}>€ {contract.grossAnnual.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</Text>.
+            La retribuzione lorda mensile è stabilita in <Text style={styles.bold}>€ {grossMonthly}</Text>, per <Text style={styles.bold}>{monthlyPayments} mensilità</Text>, corrispondente ad una RAL (Retribuzione Annua Lorda) di <Text style={styles.bold}>€ {grossAnnual}</Text>.
           </Text>
         </View>
 
-        {/* Art 6 - Orario */}
         <View style={styles.section}>
           <Text style={styles.articleTitle}>Art. 6 — Orario di lavoro</Text>
           <Text style={styles.text}>
-            L'orario di lavoro è fissato in <Text style={styles.bold}>{contract.weeklyHours} ore settimanali</Text>
-            {contract.isPartTime ? ' in regime di Part-Time.' : ' in regime di Full-Time.'}
+            L'orario di lavoro è fissato in <Text style={styles.bold}>{weeklyHours} ore settimanali</Text>{partTimeSentence}
           </Text>
-          {contract.workingScheduleNotes && (
-            <Text style={styles.text}>Note organizzative: {contract.workingScheduleNotes}</Text>
-          )}
+          <Text style={styles.text}>Note organizzative: {workingScheduleNotes}</Text>
         </View>
 
-        {/* Art 7 - Compliance */}
-        {(contract.uniLavProtocolNumber) && (
+        {hasUniLavProtocol ? (
           <View style={styles.section}>
             <Text style={styles.articleTitle}>Art. 7 — Comunicazioni Obbligatorie</Text>
             <Text style={styles.text}>
-              Si dà atto che il Datore di Lavoro ha provveduto alla comunicazione obbligatoria di assunzione (UniLav) 
-              con protocollo n. <Text style={styles.bold}>{contract.uniLavProtocolNumber}</Text> in data <Text style={styles.bold}>{contract.uniLavSubmissionDate}</Text>.
+              Si dà atto che il Datore di Lavoro ha provveduto alla comunicazione obbligatoria di assunzione (UniLav) con protocollo n. <Text style={styles.bold}>{uniLavProtocolNumber}</Text> in data <Text style={styles.bold}>{uniLavSubmissionDate}</Text>.
             </Text>
+          </View>
+        ) : (
+          <View style={styles.section}>
+            <Text style={styles.articleTitle}>Art. 7 — Comunicazioni Obbligatorie</Text>
+            <Text style={styles.text}>Protocollo UniLav non ancora renseigné nel dossier.</Text>
           </View>
         )}
 
-        {/* Standard Clauses Art 8 - 17 */}
         <View style={styles.section}>
           <Text style={styles.articleTitle}>Art. 8 — Ferie, Permessi, ROL ed ex Festività</Text>
           <Text style={styles.text}>
@@ -271,7 +306,6 @@ export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
           </Text>
         </View>
 
-        {/* Signatures */}
         <View style={{ marginTop: 40 }}>
           <Text style={styles.text}>Letto, confermato e sottoscritto.</Text>
           <Text style={[styles.text, { marginTop: 10 }]}>Luogo e data: ________________________, lì {new Date().toLocaleDateString('it-IT')}</Text>
@@ -286,10 +320,8 @@ export function ContractPdfTemplate({ contract }: ContractPdfTemplateProps) {
           </View>
         </View>
 
-        {/* Footer */}
         <Text style={styles.footer}>
-          Documento generato automaticamente da HR Nexus Studio per {companyName}. 
-          ID Documento: {contract.contractId} - Versione PDF: {contract.generatedPdfVersion || 1}
+          Documento generato automaticamente da HR Nexus Studio per {companyName}. ID Documento: {safeText(contract.contractId)} - Versione PDF: {safeText(contract.generatedPdfVersion || 1)}
         </Text>
       </Page>
     </Document>

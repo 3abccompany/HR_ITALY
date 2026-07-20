@@ -15,10 +15,12 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy, doc, getDoc } from "firebase/firestore";
+import { collection, query, orderBy } from "firebase/firestore";
+import {
+  assignMembershipRoleAction,
+  createMembershipWithRoleAction,
+} from "@/app/actions/membership-role-actions";
 import { 
-  createMembership, 
-  updateMembership, 
   disableMembership, 
   reactivateMembership 
 } from "@/services/membership.service";
@@ -42,6 +44,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+const assignableSystemRoleIds = new Set(["companyAdmin", "companyHR", "safetyManager", "employee", "readOnly"]);
+
+function isAssignableMembershipRole(role: Role) {
+  if (role.roleId === "superAdmin" || role.scope !== "entity" || role.status !== "active") return false;
+  if (assignableSystemRoleIds.has(role.roleId)) return true;
+  return role.kind === "custom" && role.isSystem !== true && role.isLocked !== true;
+}
+
+function roleKindLabel(role: Role) {
+  return assignableSystemRoleIds.has(role.roleId) ? "Prédéfini" : "Personnalisé";
+}
+
+function roleDescription(role: Role) {
+  const permissionCount = Array.isArray(role.permissions) ? role.permissions.length : 0;
+  return `${roleKindLabel(role)} · ${permissionCount} permission${permissionCount > 1 ? "s" : ""}${role.description ? ` · ${role.description}` : ""}`;
+}
+
+function safeActionError(result: { error?: string; code?: string }) {
+  return result.error || result.code || "Action impossible.";
+}
 
 export default function MembershipsManagementPage() {
   const { db, missingVars } = useFirebase();
@@ -86,7 +109,7 @@ export default function MembershipsManagementPage() {
       ]);
       setUsersMaster(u.filter(user => user.status === "active"));
       setEntitiesMaster(e.filter(entity => entity.status === "active"));
-      setRolesMaster(r.filter(role => role.status === "active" && role.scope === "entity") as Role[]);
+      setRolesMaster((r as Role[]).filter(isAssignableMembershipRole));
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible de charger les données de référence." });
     } finally {
@@ -119,25 +142,24 @@ export default function MembershipsManagementPage() {
 
     setLoading(true);
     try {
-      const selectedUser = usersMaster.find(u => u.uid === selectedUid);
-      const selectedEntity = entitiesMaster.find(e => e.entityId === selectedEntityId);
-      const selectedRole = rolesMaster.find(r => r.roleId === selectedRoleId);
-
-      if (!selectedUser || !selectedEntity || !selectedRole) throw new Error("Données de référence invalides.");
-
-      await createMembership({
-        uid: selectedUid,
+      const idToken = await user.getIdToken();
+      const result = await createMembershipWithRoleAction({
+        idToken,
+        targetUid: selectedUid,
         entityId: selectedEntityId,
         roleId: selectedRoleId,
-        userDisplayName: selectedUser.displayName,
-        userEmail: selectedUser.email,
-        entityName: selectedEntity.nomEntreprise || selectedEntity.name || "N/A",
-        roleLabel: selectedRole.label,
-        permissions: selectedRole.permissions,
-        notes
-      }, user.uid);
+        notes,
+      });
 
-      toast({ title: "Affectation créée", description: "L'utilisateur a été rattaché à l'entité." });
+      if (!result.success) {
+        toast({ variant: "destructive", title: "Action refusée", description: safeActionError(result) });
+        return;
+      }
+
+      toast({
+        title: "Affectation créée",
+        description: result.auditWarning || "L'utilisateur a été rattaché à l'entité.",
+      });
       resetForm();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -161,32 +183,29 @@ export default function MembershipsManagementPage() {
     const currentMembership = memberships?.find(m => m.membershipId === editingId);
     if (!currentMembership) return;
 
-    // Trigger confirmation dialog for permission sync if role changed OR manually requested
     setRoleChangePending({ id: editingId, roleId: selectedRoleId });
   };
 
-  const executeUpdate = async (id: string, data: Partial<Membership>, syncPermissions: boolean) => {
+  const executeRoleAssignment = async (id: string, roleId: string) => {
     setLoading(true);
     try {
-      let finalData = { ...data };
-      if (syncPermissions && data.roleId && db) {
-        const roleRef = doc(db, "roles", data.roleId);
-        const roleSnap = await getDoc(roleRef);
-        if (roleSnap.exists()) {
-          const roleData = roleSnap.data();
-          finalData.permissions = roleData.permissions;
-          finalData.roleLabel = roleData.label;
-        }
-      } else if (data.roleId && db) {
-        const roleRef = doc(db, "roles", data.roleId);
-        const roleSnap = await getDoc(roleRef);
-        if (roleSnap.exists()) {
-          finalData.roleLabel = roleSnap.data().label;
-        }
+      if (!user) return;
+      const idToken = await user.getIdToken();
+      const result = await assignMembershipRoleAction({
+        idToken,
+        membershipId: id,
+        roleId,
+      });
+
+      if (!result.success) {
+        toast({ variant: "destructive", title: "Action refusée", description: safeActionError(result) });
+        return;
       }
 
-      await updateMembership(id, finalData, user!.uid);
-      toast({ title: "Mis à jour", description: "L'affectation a été modifiée." });
+      toast({
+        title: "Rôle affecté",
+        description: result.auditWarning || "Le rôle et les permissions effectives ont été générés côté serveur.",
+      });
       resetForm();
       setRoleChangePending(null);
     } catch (err: any) {
@@ -197,21 +216,25 @@ export default function MembershipsManagementPage() {
   };
 
   const handleQuickSync = async (m: Membership) => {
-    if (!db || !user) return;
+    if (!user) return;
     setLoading(true);
     try {
-      const roleRef = doc(db, "roles", m.roleId);
-      const roleSnap = await getDoc(roleRef);
-      if (!roleSnap.exists()) throw new Error("Rôle introuvable dans le catalogue.");
-      
-      const roleData = roleSnap.data();
-      await updateMembership(m.membershipId, {
-        permissions: roleData.permissions,
-        roleLabel: roleData.label,
-        updatedAt: new Date()
-      }, user.uid);
-      
-      toast({ title: "Permissions synchronisées", description: `Les accès pour ${m.userDisplayName} ont été mis à jour.` });
+      const idToken = await user.getIdToken();
+      const result = await assignMembershipRoleAction({
+        idToken,
+        membershipId: m.membershipId,
+        roleId: m.roleId,
+      });
+
+      if (!result.success) {
+        toast({ variant: "destructive", title: "Action refusée", description: safeActionError(result) });
+        return;
+      }
+
+      toast({
+        title: "Permissions régénérées",
+        description: result.auditWarning || `Les accès pour ${m.userDisplayName} ont été générés côté serveur.`,
+      });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
     } finally {
@@ -305,6 +328,9 @@ export default function MembershipsManagementPage() {
                       <Select value={selectedUid} onValueChange={setSelectedUid}>
                         <SelectTrigger><SelectValue placeholder="Choisir un utilisateur" /></SelectTrigger>
                         <SelectContent>
+                          {usersMaster.length === 0 && (
+                            <SelectItem value="__no_users__" disabled>Aucun utilisateur actif</SelectItem>
+                          )}
                           {usersMaster.map(u => (
                             <SelectItem key={u.uid} value={u.uid}>{u.displayName} ({u.email})</SelectItem>
                           ))}
@@ -316,6 +342,9 @@ export default function MembershipsManagementPage() {
                       <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
                         <SelectTrigger><SelectValue placeholder="Choisir une entreprise" /></SelectTrigger>
                         <SelectContent>
+                          {entitiesMaster.length === 0 && (
+                            <SelectItem value="__no_entities__" disabled>Aucune entité active</SelectItem>
+                          )}
                           {entitiesMaster.map(e => (
                             <SelectItem key={e.entityId} value={e.entityId}>{e.nomEntreprise || e.name}</SelectItem>
                           ))}
@@ -342,18 +371,46 @@ export default function MembershipsManagementPage() {
                   <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
                     <SelectTrigger><SelectValue placeholder="Choisir un rôle" /></SelectTrigger>
                     <SelectContent>
-                      {rolesMaster.map(r => (
-                        <SelectItem key={r.roleId} value={r.roleId}>{r.label}</SelectItem>
+                      {rolesMaster.length === 0 && (
+                        <SelectItem value="__no_roles__" disabled>Aucun rôle entité affectable</SelectItem>
+                      )}
+                      {rolesMaster.some(r => assignableSystemRoleIds.has(r.roleId)) && (
+                        <div className="px-2 py-1 text-xs font-semibold uppercase text-muted-foreground">Rôles prédéfinis</div>
+                      )}
+                      {rolesMaster.filter(r => assignableSystemRoleIds.has(r.roleId)).map(r => (
+                        <SelectItem key={r.roleId} value={r.roleId}>
+                          {r.label} — {roleDescription(r)}
+                        </SelectItem>
+                      ))}
+                      {rolesMaster.some(r => !assignableSystemRoleIds.has(r.roleId)) && (
+                        <div className="px-2 py-1 text-xs font-semibold uppercase text-muted-foreground">Rôles personnalisés</div>
+                      )}
+                      {rolesMaster.filter(r => !assignableSystemRoleIds.has(r.roleId)).map(r => (
+                        <SelectItem key={r.roleId} value={r.roleId}>
+                          {r.label} — {roleDescription(r)}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
+              {!editingId && (
               <div className="space-y-2">
                 <Label htmlFor="notes">Notes Internes</Label>
                 <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observations sur cette affectation..." />
               </div>
+              )}
+
+              {editingId && (
+                <Alert className="border-primary/20 bg-primary/5">
+                  <ShieldCheck className="h-4 w-4" />
+                  <AlertTitle>Permissions générées côté serveur</AlertTitle>
+                  <AlertDescription>
+                    Les permissions effectives sont générées côté serveur à partir du rôle. Cette action ne modifie pas l'entité du membership ni les champs non liés au rôle.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <Button type="button" variant="outline" onClick={resetForm} disabled={loading}>
@@ -361,7 +418,7 @@ export default function MembershipsManagementPage() {
                 </Button>
                 <Button type="submit" disabled={loading}>
                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                  {editingId ? "Vérifier et Enregistrer" : "Créer l'affectation"}
+                  {editingId ? "Affecter ce rôle" : "Créer l'affectation"}
                 </Button>
               </div>
             </form>
@@ -506,27 +563,17 @@ export default function MembershipsManagementPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Mise à jour des accès</AlertDialogTitle>
             <AlertDialogDescription>
-              Voulez-vous également synchroniser les permissions effectives de cette affectation avec celles définies dans le catalogue des rôles ? 
-              Ceci est nécessaire pour appliquer les nouveaux modules comme "Personnes / Timeline".
+              Les permissions effectives sont générées côté serveur à partir du rôle sélectionné. Le client ne transmet pas le tableau final de permissions.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="sm:justify-between flex-col sm:flex-row gap-2">
+          <AlertDialogFooter>
             <AlertDialogCancel className="w-full sm:w-auto" disabled={loading}>Annuler</AlertDialogCancel>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Button 
-                variant="outline" 
-                onClick={() => executeUpdate(roleChangePending!.id, { roleId: roleChangePending!.roleId, notes }, false)}
-                disabled={loading}
-              >
-                Garder les permissions actuelles
-              </Button>
-              <Button 
-                onClick={() => executeUpdate(roleChangePending!.id, { roleId: roleChangePending!.roleId, notes }, true)}
-                disabled={loading}
-              >
-                Synchroniser du catalogue
-              </Button>
-            </div>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); executeRoleAssignment(roleChangePending!.id, roleChangePending!.roleId); }}
+              disabled={loading}
+            >
+              {loading ? "Affectation..." : "Confirmer l'affectation"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
