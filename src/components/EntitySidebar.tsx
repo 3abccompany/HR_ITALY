@@ -213,9 +213,14 @@ export function EntitySidebar() {
 
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={() => router.push("/select-entity")} tooltip="Changer d'entreprise">
-              <ArrowLeftRight className="w-4 h-4" />
-              <span>Changer d'entreprise</span>
+            <SidebarMenuButton
+              asChild
+              tooltip="Changer d'entreprise"
+            >
+              <a href="/select-entity">
+                <ArrowLeftRight className="w-4 h-4" />
+                <span>Changer d'entreprise</span>
+              </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

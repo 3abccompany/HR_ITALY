@@ -22,41 +22,72 @@ export default function SelectEntityPage() {
   useEffect(() => {
     if (authLoading) return;
 
+    let cancelled = false;
+
     if (!user) {
-      router.push("/login");
+      setLoading(false);
+      router.replace("/login");
       return;
     }
 
     async function checkAndLoad() {
+      setLoading(true);
+      setError(null);
+
+      const uid = user!.uid;
+      const membershipsPromise = getValidActiveMembershipsByUid(uid);
+
       try {
+        const profile = await getUserProfile(uid);
+        if (cancelled) return;
+
         // 1. Check if user is Super Admin
-        const profile = await getUserProfile(user!.uid);
         if (profile?.platformRole === 'superAdmin') {
+          setLoading(false);
+          void membershipsPromise.catch(() => {
+            console.warn("[SelectEntityPage] Membership validation skipped after profile redirect.");
+          });
           router.push('/super-admin');
           return;
         }
 
         if (profile?.status !== 'active') {
+          setLoading(false);
+          void membershipsPromise.catch(() => {
+            console.warn("[SelectEntityPage] Membership validation skipped after access redirect.");
+          });
           router.push('/no-access');
           return;
         }
 
         // 2. Load valid active memberships
-        const list = await getValidActiveMembershipsByUid(user!.uid);
+        const list = await membershipsPromise;
+        if (cancelled) return;
         if (list.length === 0) {
+          setLoading(false);
           router.push("/no-access");
           return;
         }
         setMemberships(list);
       } catch (e: any) {
+        if (cancelled) return;
+        void membershipsPromise.catch(() => {
+          console.warn("[SelectEntityPage] Membership validation skipped after selector load failure.");
+        });
         console.error("Error loading entity selector context:", e);
         setError("Impossible de charger vos accès.");
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     checkAndLoad();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user, authLoading, router]);
 
   if (loading || authLoading) {

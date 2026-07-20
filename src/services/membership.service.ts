@@ -79,13 +79,33 @@ export async function getActiveMembershipsByUid(uid: string): Promise<Membership
  */
 export async function getValidActiveMembershipsByUid(uid: string): Promise<Membership[]> {
   const activeMemberships = await getActiveMembershipsByUid(uid);
-  const validMemberships: Membership[] = [];
-
-  for (const m of activeMemberships) {
+  const membershipsWithEntities = await Promise.allSettled(activeMemberships.map(async (m) => {
     const entity = await getEntityById(m.entityId);
-    if (entity && entity.status === "active") {
-      validMemberships.push(m);
+    return {
+      membership: m,
+      isValid: !!entity && entity.status === "active",
+    };
+  }));
+
+  const validMemberships: Membership[] = [];
+  let rejectedReads = 0;
+
+  membershipsWithEntities.forEach((result, index) => {
+    if (result.status === "rejected") {
+      rejectedReads += 1;
+      console.warn("[membership] Entity validation failed for active membership", {
+        entityId: activeMemberships[index]?.entityId,
+      });
+      return;
     }
+
+    if (result.value.isValid) {
+      validMemberships.push(result.value.membership);
+    }
+  });
+
+  if (validMemberships.length === 0 && rejectedReads > 0) {
+    throw new Error("Unable to validate active membership entities.");
   }
 
   return validMemberships;
