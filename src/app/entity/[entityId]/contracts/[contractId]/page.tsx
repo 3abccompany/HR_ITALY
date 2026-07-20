@@ -144,6 +144,15 @@ const formatRenewalGrossAnnual = (
   monthlyPayments?: number | string | null
 ) => calculateRenewalGrossAnnual(grossMonthly, monthlyPayments)?.toString() || "";
 
+const buildPdfEffectiveDataUpdate = (data: Partial<Contract>) => {
+  const { grossAnnual, ...snapshot } = data;
+  const resolvedGrossAnnual = parsePositiveContractNumber(grossAnnual);
+  return {
+    ...snapshot,
+    ...(resolvedGrossAnnual !== null ? { grossAnnual: resolvedGrossAnnual } : {}),
+  };
+};
+
 const isIndefiniteContractType = (contractType?: string | null) => {
   const normalized = (contractType || "").toLowerCase();
   return ["tempo indeterminato", "cdi", "indeterminato"].some((label) =>
@@ -524,7 +533,7 @@ export default function ContractDetailPage() {
     setGeneratingPdf(true);
     try {
       // Step 1: Save all effective content snapshots before generation
-      await updateContract(entityId, contractId, effectiveData, user.uid);
+      await updateContract(entityId, contractId, buildPdfEffectiveDataUpdate(effectiveData), user.uid);
 
       // Step 2: Trigger PDF generation API
       const idToken = await auth.currentUser?.getIdToken();
@@ -630,6 +639,13 @@ export default function ContractDetailPage() {
     const companyAddress = entity ? `${entity.adresseSiegeSocial || ""}, ${entity.codePostal || ""} ${entity.ville || ""} (${entity.province || ""})` : "";
     const employeeAddress = person ? `${person.address || ""}, ${person.postalCode || ""} ${person.city || ""} (${person.province || ""})` : "";
 
+    const effectiveGrossMonthly = getEffectiveValue('grossMonthly', offer?.proposedGrossMonthly);
+    const effectiveMonthlyPayments = getEffectiveValue('monthlyPayments', offer?.monthlyPayments || 13);
+    const effectiveGrossAnnual =
+      parsePositiveContractNumber(contract.grossAnnual) ??
+      parsePositiveContractNumber(offer?.proposedGrossAnnual) ??
+      calculateRenewalGrossAnnual(effectiveGrossMonthly, effectiveMonthlyPayments);
+
     return {
       entityLegalName: getEffectiveValue('entityLegalName', entity?.raisonSociale || entity?.legalName),
       entityName: getEffectiveValue('entityName', entity?.nomEntreprise || entity?.name),
@@ -663,9 +679,9 @@ export default function ContractDetailPage() {
       levelLabel: getEffectiveValue('levelLabel', offer?.levelLabel),
       qualificationCategory: getEffectiveValue('qualificationCategory', offer?.qualificationLabel),
 
-      grossMonthly: getEffectiveValue('grossMonthly', offer?.proposedGrossMonthly),
-      grossAnnual: getEffectiveValue('grossGrossAnnual' as any, offer?.proposedGrossAnnual),
-      monthlyPayments: getEffectiveValue('monthlyPayments', offer?.monthlyPayments || 13),
+      grossMonthly: effectiveGrossMonthly,
+      grossAnnual: effectiveGrossAnnual ?? undefined,
+      monthlyPayments: effectiveMonthlyPayments,
       payCalculationMode: resolvePayrollMode(getEffectiveValue('payCalculationMode', "monthly")),
 
       uniLavProtocolNumber: getEffectiveValue('uniLavProtocolNumber', mandatoryCommunication?.protocolNumber),
