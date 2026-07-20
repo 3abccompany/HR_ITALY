@@ -123,6 +123,27 @@ const PAYROLL_MODE_LABELS = PAYROLL_MODE_OPTIONS.reduce(
 const resolvePayrollMode = (mode?: string | null): PayrollMode =>
   mode === "hourly" || mode === "actual_worked_hours" ? mode : "monthly";
 
+const parsePositiveContractNumber = (value?: number | string | null): number | null => {
+  if (value === undefined || value === null) return null;
+  const numeric = typeof value === "string" ? Number(value.trim().replace(",", ".")) : value;
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+};
+
+const calculateRenewalGrossAnnual = (
+  grossMonthly?: number | string | null,
+  monthlyPayments?: number | string | null
+): number | null => {
+  const monthly = parsePositiveContractNumber(grossMonthly);
+  const payments = parsePositiveContractNumber(monthlyPayments);
+  if (monthly === null || payments === null) return null;
+  return Math.round((monthly * payments + Number.EPSILON) * 100) / 100;
+};
+
+const formatRenewalGrossAnnual = (
+  grossMonthly?: number | string | null,
+  monthlyPayments?: number | string | null
+) => calculateRenewalGrossAnnual(grossMonthly, monthlyPayments)?.toString() || "";
+
 const isIndefiniteContractType = (contractType?: string | null) => {
   const normalized = (contractType || "").toLowerCase();
   return ["tempo indeterminato", "cdi", "indeterminato"].some((label) =>
@@ -749,6 +770,12 @@ export default function ContractDetailPage() {
     const nextDay = contract.endDate
       ? addDays(parseSafeDate(contract.endDate) || new Date(), 1).toISOString().split("T")[0]
       : new Date().toISOString().split("T")[0];
+    const associatedCcnl = sortedActiveCcnls.find((item) => item.ccnlId === contract.ccnlId);
+    const effectiveMonthlyPayments =
+      parsePositiveContractNumber(contract.monthlyPayments) ??
+      parsePositiveContractNumber(associatedCcnl?.monthlyPayments) ??
+      13;
+    const grossMonthly = (contract.grossMonthly ?? "").toString();
 
     setRenewalForm({
       renewalMode: "renew_cdd",
@@ -760,10 +787,10 @@ export default function ContractDetailPage() {
       levelCode: contract.levelCode || "",
       levelLabel: contract.levelLabel || "",
       qualificationCategory: contract.qualificationCategory || "",
-      grossMonthly: (contract.grossMonthly ?? "").toString(),
-      grossAnnual: (contract.grossAnnual ?? "").toString(),
+      grossMonthly,
+      grossAnnual: formatRenewalGrossAnnual(grossMonthly, effectiveMonthlyPayments),
       weeklyHours: (contract.weeklyHours ?? "").toString(),
-      monthlyPayments: (contract.monthlyPayments ?? "").toString(),
+      monthlyPayments: effectiveMonthlyPayments.toString(),
       payCalculationMode: resolvePayrollMode(contract.payCalculationMode),
       renewalReason: "",
     });
@@ -780,32 +807,44 @@ export default function ContractDetailPage() {
 
   const handleRenewalCcnlChange = (ccnlId: string) => {
     const selected = sortedActiveCcnls.find((item) => item.ccnlId === ccnlId);
-    setRenewalForm((previous) => ({
-      ...previous,
-      ccnlId,
-      ccnlName: selected?.name || (ccnlId === contract?.ccnlId ? contract?.ccnlName || "" : ""),
-      levelId: "",
-      levelCode: "",
-      levelLabel: "",
-      qualificationCategory: "",
-      weeklyHours: selected?.standardWeeklyHours ? selected.standardWeeklyHours.toString() : previous.weeklyHours,
-      monthlyPayments: selected?.monthlyPayments ? selected.monthlyPayments.toString() : previous.monthlyPayments,
-    }));
+    setRenewalForm((previous) => {
+      const monthlyPayments = selected?.monthlyPayments ? selected.monthlyPayments.toString() : previous.monthlyPayments;
+      return {
+        ...previous,
+        ccnlId,
+        ccnlName: selected?.name || (ccnlId === contract?.ccnlId ? contract?.ccnlName || "" : ""),
+        levelId: "",
+        levelCode: "",
+        levelLabel: "",
+        qualificationCategory: "",
+        weeklyHours: selected?.standardWeeklyHours ? selected.standardWeeklyHours.toString() : previous.weeklyHours,
+        monthlyPayments,
+        grossAnnual: formatRenewalGrossAnnual(previous.grossMonthly, monthlyPayments),
+      };
+    });
   };
 
   const handleRenewalLevelChange = (levelId: string) => {
     const level = renewalLevels.find((item) => item.levelId === levelId);
     setRenewalForm((previous) => {
-      const monthlyPayments = Number(previous.monthlyPayments) || contract?.monthlyPayments || 13;
-      const grossMonthly = level?.minimumGrossMonthly || Number(previous.grossMonthly) || contract?.grossMonthly || 0;
+      const monthlyPayments =
+        parsePositiveContractNumber(previous.monthlyPayments) ??
+        parsePositiveContractNumber(contract?.monthlyPayments) ??
+        13;
+      const grossMonthly =
+        parsePositiveContractNumber(level?.minimumGrossMonthly) ??
+        parsePositiveContractNumber(previous.grossMonthly) ??
+        parsePositiveContractNumber(contract?.grossMonthly) ??
+        null;
+      const grossMonthlyText = grossMonthly?.toString() || "";
       return {
         ...previous,
         levelId,
         levelCode: level?.levelCode || "",
         levelLabel: level?.label || "",
         qualificationCategory: level?.qualificationCategory || level?.qualificationLabel || "",
-        grossMonthly: grossMonthly.toString(),
-        grossAnnual: (grossMonthly * monthlyPayments).toString(),
+        grossMonthly: grossMonthlyText,
+        grossAnnual: formatRenewalGrossAnnual(grossMonthlyText, monthlyPayments),
       };
     });
   };
@@ -955,6 +994,18 @@ export default function ContractDetailPage() {
       return;
     }
 
+    const renewalGrossMonthly = parsePositiveContractNumber(renewalForm.grossMonthly);
+    const renewalMonthlyPayments = parsePositiveContractNumber(renewalForm.monthlyPayments);
+    const renewalGrossAnnual = calculateRenewalGrossAnnual(renewalGrossMonthly, renewalMonthlyPayments);
+    if (renewalGrossMonthly === null || renewalMonthlyPayments === null || renewalGrossAnnual === null) {
+      toast({
+        variant: "destructive",
+        title: "RÃ©munÃ©ration invalide",
+        description: "Veuillez renseigner un brut mensuel et un nombre de mensualitÃ©s valides avant de crÃ©er le renouvellement.",
+      });
+      return;
+    }
+
     if (!tryStartSubmission()) return;
     setProcessing(true);
     try {
@@ -969,10 +1020,10 @@ export default function ContractDetailPage() {
         levelCode: renewalForm.levelCode || null,
         levelLabel: renewalForm.levelLabel || null,
         qualificationCategory: renewalForm.qualificationCategory || null,
-        grossMonthly: Number(renewalForm.grossMonthly) || contract?.grossMonthly || 0,
-        grossAnnual: Number(renewalForm.grossAnnual) || contract?.grossAnnual || 0,
+        grossMonthly: renewalGrossMonthly,
+        grossAnnual: renewalGrossAnnual,
         weeklyHours: Number(renewalForm.weeklyHours) || contract?.weeklyHours || 0,
-        monthlyPayments: Number(renewalForm.monthlyPayments) || contract?.monthlyPayments || 13,
+        monthlyPayments: renewalMonthlyPayments,
         payCalculationMode: renewalForm.payCalculationMode,
         renewalReason: renewalForm.renewalReason,
         actorUid: user.uid
@@ -1990,8 +2041,7 @@ export default function ContractDetailPage() {
                   <Label className="text-[10px] uppercase font-black">Brut mensuel</Label>
                   <Input type="number" value={renewalForm.grossMonthly} onChange={(e) => {
                     const grossMonthly = e.target.value;
-                    const monthlyPayments = Number(renewalForm.monthlyPayments) || contract?.monthlyPayments || 13;
-                    setRenewalForm(p => ({...p, grossMonthly, grossAnnual: ((Number(grossMonthly) || 0) * monthlyPayments).toString()}));
+                    setRenewalForm(p => ({...p, grossMonthly, grossAnnual: formatRenewalGrossAnnual(grossMonthly, p.monthlyPayments)}));
                   }} className="h-11 rounded-xl" />
                 </div>
                 <div className="space-y-2">
@@ -2006,7 +2056,7 @@ export default function ContractDetailPage() {
                   <Label className="text-[10px] uppercase font-black">Mensualités</Label>
                   <Input type="number" value={renewalForm.monthlyPayments} onChange={(e) => {
                     const monthlyPayments = e.target.value;
-                    setRenewalForm(p => ({...p, monthlyPayments, grossAnnual: ((Number(p.grossMonthly) || 0) * (Number(monthlyPayments) || 0)).toString()}));
+                    setRenewalForm(p => ({...p, monthlyPayments, grossAnnual: formatRenewalGrossAnnual(p.grossMonthly, monthlyPayments)}));
                   }} className="h-11 rounded-xl" />
                 </div>
               </div>
