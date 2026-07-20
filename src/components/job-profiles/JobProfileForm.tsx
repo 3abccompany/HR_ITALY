@@ -395,9 +395,20 @@ export function JobProfileForm({ entityId, entityName, userId, initialData, isEd
         supervisor?.title ||
         (!relationshipDirty.directSupervisorJobTitleId && initialData?.directSupervisorJobTitleId === formData.directSupervisorJobTitleId ? initialData.directSupervisorJobTitleName : undefined) ||
         "N/A";
+      const {
+        defaultWeeklyHours,
+        defaultMonthlyPayments,
+        defaultMinimumGrossMonthly,
+        defaultMinimumGrossHourly,
+        ...definedFormData
+      } = formData;
 
       const payload = {
-        ...formData,
+        ...definedFormData,
+        ...(defaultWeeklyHours !== undefined ? { defaultWeeklyHours } : {}),
+        ...(defaultMonthlyPayments !== undefined ? { defaultMonthlyPayments } : {}),
+        ...(defaultMinimumGrossMonthly !== undefined ? { defaultMinimumGrossMonthly } : {}),
+        ...(defaultMinimumGrossHourly !== undefined ? { defaultMinimumGrossHourly } : {}),
         entityName: entityName,
         departmentName,
         jobTitleName,
