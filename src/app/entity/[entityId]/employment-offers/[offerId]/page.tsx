@@ -757,7 +757,7 @@ export default function EditEmploymentOfferPage() {
                                          <Upload className="w-3.5 h-3.5" />
                                          {item.status === 'missing' ? 'Joindre' : 'Remplacer'}
                                       </Button>
-                                      <input type="file" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onChange={(e) => handleUploadPreHireDoc(item, e)} />
+                                      <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onChange={(e) => handleUploadPreHireDoc(item, e)} />
                                    </div>
                                  )}
                                  {item.status === 'uploaded' && (

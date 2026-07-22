@@ -9,6 +9,8 @@
     "build": "NODE_ENV=production next build",
     "start": "next start",
     "lint": "next lint",
+    "test:storage-rules": "node --test tests/security/storage-rules.test.mjs",
+    "test:storage-rules:emulator": "firebase emulators:exec --project demo-hr-italy --only firestore,storage \"npm run test:storage-rules\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -60,10 +62,12 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
     "@types/node": "^20",
     "@types/nodemailer": "^6.4.15",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
+    "firebase-tools": "^15.24.0",
     "genkit-cli": "^1.28.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
