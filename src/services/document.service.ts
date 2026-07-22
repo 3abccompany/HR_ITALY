@@ -20,6 +20,10 @@ import { createAuditLog } from "./audit.service";
 import { PreHireDocument } from "@/types/pre-hire-dossier";
 import { EmploymentOffer } from "@/types/employment-offer";
 
+const PRE_HIRE_ALLOWED_MIME_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
+const PRE_HIRE_ALLOWED_EXTENSIONS = ["pdf", "png", "jpg", "jpeg"];
+const PRE_HIRE_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+
 /**
  * Normalizes payload for Firestore.
  * Preserves FieldValue and Timestamp instances to avoid stripping server directives.
@@ -287,10 +291,22 @@ export async function uploadPreHireDocument(params: {
   const { entityId, dossierId, item, file, offer, actorUid, actorName, expiresAt, oldFileId } = params;
   if (!db || !storage) throw new Error("Firebase services not initialized");
 
+  if (file.size <= 0 || file.size >= PRE_HIRE_MAX_FILE_SIZE_BYTES) {
+    throw new Error("Fichier trop volumineux (max 10Mo).");
+  }
+
+  if (!PRE_HIRE_ALLOWED_MIME_TYPES.includes(file.type)) {
+    throw new Error("Format de fichier non supporté. Veuillez utiliser PDF, PNG ou JPEG.");
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (!extension || !PRE_HIRE_ALLOWED_EXTENSIONS.includes(extension)) {
+    throw new Error("Extension de fichier non supportée. Veuillez utiliser PDF, PNG ou JPEG.");
+  }
+
   // 1. Storage Upload
   const docRef = doc(collection(db, `entities/${entityId}/documents`));
   const docId = docRef.id;
-  const extension = file.name.split('.').pop() || 'bin';
   const timestamp = Date.now();
   const storagePath = `entities/${entityId}/documents/${docId}/${item.type}_${timestamp}.${extension}`;
   const fileRef = ref(storage, storagePath);

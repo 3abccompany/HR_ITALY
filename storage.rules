@@ -1,41 +1,233 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    
-    // --- Helper Functions ---
-    
+
+    // --- Core identity / tenant helpers ---
+
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isEntityMember(entityId) {
+    function isActiveUser() {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function isActiveEntity(entityId) {
+      return firestore.exists(/databases/(default)/documents/entities/$(entityId))
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)).data.status == 'active';
+    }
+
+    function isActiveMembership(entityId) {
       let membershipId = request.auth.uid + "_" + entityId;
-      return isSignedIn() && 
-        firestore.exists(/databases/(default)/documents/memberships/$(membershipId)) &&
-        firestore.get(/databases/(default)/documents/memberships/$(membershipId)).data.status == 'active';
+      return isActiveUser()
+        && isActiveEntity(entityId)
+        && firestore.exists(/databases/(default)/documents/memberships/$(membershipId))
+        && firestore.get(/databases/(default)/documents/memberships/$(membershipId)).data.status == 'active';
     }
 
     function isPlatformAdmin() {
-      return isSignedIn() && 
-        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.platformRole == 'superAdmin';
+      return isActiveUser()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.platformRole == 'superAdmin';
     }
 
-    // --- Entity Scoped Rules ---
+    function hasPermission(entityId, permission) {
+      let membershipId = request.auth.uid + "_" + entityId;
+      return isActiveMembership(entityId)
+        && permission in firestore.get(/databases/(default)/documents/memberships/$(membershipId)).data.permissions;
+    }
 
-    match /entities/{entityId}/{allPaths=**} {
-      // Main tenant isolation rule: only members of the entity or platform admins can access files
-      allow read, write: if isEntityMember(entityId) || isPlatformAdmin();
-      
-      // Strict validation for manual document uploads
+    function isActiveSelfEmployee(entityId, employeeId) {
+      return isActiveMembership(entityId)
+        && employeeId != null
+        && firestore.exists(/databases/(default)/documents/entities/$(entityId)/employees/$(employeeId))
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/employees/$(employeeId)).data.userId == request.auth.uid
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/employees/$(employeeId)).data.status == 'active';
+    }
+
+    // --- File validation helpers ---
+
+    function isAllowedHrFileUpload() {
+      return request.resource != null
+        && request.resource.size > 0
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('application/pdf|image/png|image/jpeg|image/jpg');
+    }
+
+    // --- Document metadata helpers ---
+
+    function documentExists(entityId, documentId) {
+      return firestore.exists(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId))
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data.entityId == entityId;
+    }
+
+    function documentIsContractRelated(entityId, documentId) {
+      let data = firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data;
+      return data.relatedModule == 'contracts'
+        || data.contractId != null
+        || data.documentType in ['generated_contract_pdf', 'signed_contract', 'termination_document', 'unilav_receipt', 'cpi_receipt'];
+    }
+
+    function documentIsRecruitmentRelated(entityId, documentId) {
+      let data = firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data;
+      return data.relatedModule in ['candidates', 'applications', 'preHireDossiers', 'employmentRequests', 'mandatoryCommunications']
+        || data.candidateId != null
+        || data.preHireDossierId != null
+        || data.documentType in ['cv', 'application_attachment', 'prehire_required_document', 'hiring_request'];
+    }
+
+    function documentIsLeaveRelated(entityId, documentId) {
+      let data = firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data;
+      return data.relatedModule == 'timeOffRequests'
+        || data.documentType in ['absence_justification', 'medical_certificate', 'work_accident_justification'];
+    }
+
+    function documentIsMedicalRelated(entityId, documentId) {
+      let data = firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data;
+      return data.relatedModule == 'medicalVisits'
+        || data.documentType == 'medical_certificate';
+    }
+
+    function documentIsTrainingRelated(entityId, documentId) {
+      let data = firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data;
+      return data.relatedModule == 'trainings'
+        || data.documentType == 'training_certificate';
+    }
+
+    function documentIsPayrollRelated(entityId, documentId) {
+      let data = firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data;
+      return data.relatedModule == 'payroll'
+        || data.documentType == 'payroll_document';
+    }
+
+    function documentIsSafetyRelated(entityId, documentId) {
+      let data = firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data;
+      return data.relatedModule == 'safety'
+        || data.documentType == 'dpi_delivery_report';
+    }
+
+    function canReadDocumentByPermission(entityId, documentId) {
+      return documentExists(entityId, documentId)
+        && (
+          hasPermission(entityId, 'documents.read')
+          || (documentIsContractRelated(entityId, documentId) && hasPermission(entityId, 'contracts.read'))
+          || (documentIsRecruitmentRelated(entityId, documentId) && hasPermission(entityId, 'candidates.read'))
+          || (documentIsLeaveRelated(entityId, documentId) && hasPermission(entityId, 'leaveRequests.read'))
+          || (documentIsMedicalRelated(entityId, documentId) && hasPermission(entityId, 'medicalVisits.read'))
+          || (documentIsTrainingRelated(entityId, documentId) && hasPermission(entityId, 'training.read'))
+          || (documentIsPayrollRelated(entityId, documentId) && hasPermission(entityId, 'payroll.read'))
+          || (documentIsSafetyRelated(entityId, documentId) && hasPermission(entityId, 'safety.read'))
+        );
+    }
+
+    function canReadOwnDocument(entityId, documentId) {
+      return documentExists(entityId, documentId)
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data.employeeId != null
+        && isActiveSelfEmployee(entityId, firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data.employeeId)
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data.isSensitive is bool
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data.isSensitive == false
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data.status in ['valid', 'expiring_soon', 'expired']
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/documents/$(documentId)).data.documentType in ['generated_contract_pdf', 'signed_contract', 'absence_justification', 'training_certificate', 'dpi_delivery_report', 'other'];
+    }
+
+    function canReadDocumentFile(entityId, documentId) {
+      return isPlatformAdmin()
+        || canReadDocumentByPermission(entityId, documentId)
+        || canReadOwnDocument(entityId, documentId);
+    }
+
+    function canCreateDocumentFile(entityId) {
+      return isAllowedHrFileUpload()
+        && (
+          isPlatformAdmin()
+          || hasPermission(entityId, 'documents.upload')
+          || hasPermission(entityId, 'contracts.create')
+          || hasPermission(entityId, 'contracts.update')
+        );
+    }
+
+    function canUpdateDocumentFile(entityId, documentId) {
+      return isAllowedHrFileUpload()
+        && documentExists(entityId, documentId)
+        && (
+          isPlatformAdmin()
+          || hasPermission(entityId, 'documents.upload')
+          || hasPermission(entityId, 'documents.archive')
+          || hasPermission(entityId, 'contracts.update')
+        );
+    }
+
+    // --- Contract metadata helpers ---
+
+    function contractExists(entityId, contractId) {
+      return firestore.exists(/databases/(default)/documents/entities/$(entityId)/contracts/$(contractId))
+        && firestore.get(/databases/(default)/documents/entities/$(entityId)/contracts/$(contractId)).data.entityId == entityId;
+    }
+
+    function canReadContractFile(entityId, contractId) {
+      return contractExists(entityId, contractId)
+        && (
+          isPlatformAdmin()
+          || hasPermission(entityId, 'contracts.read')
+          || isActiveSelfEmployee(entityId, firestore.get(/databases/(default)/documents/entities/$(entityId)/contracts/$(contractId)).data.employeeId)
+        );
+    }
+
+    function canUploadSignedContractFile(entityId, contractId) {
+      return isAllowedHrFileUpload()
+        && contractExists(entityId, contractId)
+        && (
+          isPlatformAdmin()
+          || hasPermission(entityId, 'contracts.create')
+          || hasPermission(entityId, 'contracts.update')
+        );
+    }
+
+    // --- Entity-scoped Storage paths: explicit allowlist, fail closed ---
+
+    match /entities/{entityId} {
+
+      // Public application attachments are written by the server/Admin SDK and
+      // downloaded only through verified signed-URL API routes.
+      match /applicationSubmissions/{submissionId}/{fileName} {
+        allow read, write: if false;
+      }
+
+      // Generic HR document registry files.
       match /documents/{documentId}/{fileName} {
-        allow write: if (isEntityMember(entityId) || isPlatformAdmin())
-                      && request.resource.size < 10 * 1024 * 1024 // 10MB
-                      && request.resource.contentType.matches('application/pdf|image/png|image/jpeg');
+        allow read: if canReadDocumentFile(entityId, documentId);
+        allow create: if canCreateDocumentFile(entityId);
+        allow update: if canUpdateDocumentFile(entityId, documentId);
+        allow delete: if false;
+      }
+
+      // Generated contract PDFs are produced by server/Admin SDK flows.
+      match /contracts/{contractId}/generated/{fileName} {
+        allow read: if canReadContractFile(entityId, contractId);
+        allow create, update, delete: if false;
+      }
+
+      // HR-uploaded signed contracts.
+      match /contracts/{contractId}/signed-contract/{fileName} {
+        allow read: if canReadContractFile(entityId, contractId);
+        allow create: if canUploadSignedContractFile(entityId, contractId);
+        allow update, delete: if false;
+      }
+
+      // Employee signed returns are uploaded by verified server actions.
+      match /contracts/{contractId}/signed-returns/{fileName} {
+        allow read: if canReadContractFile(entityId, contractId);
+        allow create, update, delete: if false;
+      }
+
+      // Unknown entity paths are denied by default.
+      match /{allPaths=**} {
+        allow read, write: if false;
       }
     }
 
-    // Default deny
+    // Global default deny.
     match /{allPaths=**} {
       allow read, write: if false;
     }
