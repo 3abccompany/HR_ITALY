@@ -5,6 +5,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createHash, randomBytes } from "crypto";
 import { PublicOfferDTO, EmploymentOffer } from "@/types/employment-offer";
 import { sendEmploymentOfferEmail } from "@/services/email.service";
+import { buildExternalPublicUrl, getExternalPublicBaseUrl } from "@/lib/url/external-public-url";
 
 /**
  * 7K-D Server Action: Sends the offer to the candidate.
@@ -18,6 +19,8 @@ export async function sendOfferToCandidateAction(params: {
   const { entityId, offerId, actorUid } = params;
 
   try {
+    const externalPublicBaseUrl = getExternalPublicBaseUrl();
+
     const offerRef = adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId);
     const snap = await offerRef.get();
     
@@ -39,8 +42,7 @@ export async function sendOfferToCandidateAction(params: {
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + validityDays);
 
-    const baseUrl = process.env.APP_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
-    const offerLink = `${baseUrl}/offer/${rawToken}`;
+    const offerLink = buildExternalPublicUrl(`/offer/${rawToken}`, externalPublicBaseUrl);
 
     await sendEmploymentOfferEmail({
       entityId,

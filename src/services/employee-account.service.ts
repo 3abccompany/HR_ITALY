@@ -5,6 +5,7 @@ import { adminDb, adminAuth } from "@/lib/firebase/admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createHash, randomBytes } from "crypto";
 import { sendEmployeeInvitationEmailAction } from "./email.service";
+import { buildExternalPublicUrl, getExternalPublicBaseUrl } from "@/lib/url/external-public-url";
 
 /**
  * @fileOverview Server-only service for managing employee user accounts and invitations.
@@ -28,6 +29,7 @@ export async function inviteEmployeeToEmployeeSpace(params: {
   const { entityId, employeeId, actorUid } = params;
 
   if (!adminDb) throw new Error("Firestore Admin not initialized");
+  const externalPublicBaseUrl = getExternalPublicBaseUrl();
 
   const employeeRef = adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId);
   
@@ -75,9 +77,8 @@ export async function inviteEmployeeToEmployeeSpace(params: {
     });
 
     // 5. EMAIL DISPATCH
-    const baseUrl = process.env.APP_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002";
     // FIX: Include entityId in query string to allow direct lookup without collectionGroup
-    const activationLink = `${baseUrl}/activate/${rawToken}?entityId=${entityId}`;
+    const activationLink = buildExternalPublicUrl(`/activate/${rawToken}?entityId=${encodeURIComponent(entityId)}`, externalPublicBaseUrl);
 
     const emailResult = await sendEmployeeInvitationEmailAction({
       entityId,

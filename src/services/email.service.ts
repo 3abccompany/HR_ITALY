@@ -9,6 +9,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import nodemailer from 'nodemailer';
 import { resolveEmailTransportForEntity } from "./email-settings.service";
 import crypto from 'crypto';
+import { buildExternalPublicUrl, getExternalPublicBaseUrl } from "@/lib/url/external-public-url";
 
 export interface SendInterviewEmailParams {
   entityId: string;
@@ -96,47 +97,6 @@ function renderTemplate(template: string, data: Record<string, string>): string 
   return rendered;
 }
 
-function getInterviewConfirmationBaseUrl() {
-  const configuredUrl = process.env.APP_PUBLIC_URL?.trim();
-
-  if (!configuredUrl) {
-    throw new Error("APP_PUBLIC_URL must be configured to send interview confirmation emails.");
-  }
-
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(configuredUrl);
-  } catch {
-    throw new Error("APP_PUBLIC_URL must be a valid absolute HTTPS URL.");
-  }
-
-  const hostname = parsedUrl.hostname.toLowerCase();
-
-  if (parsedUrl.protocol !== "https:") {
-    throw new Error("APP_PUBLIC_URL must use HTTPS for interview confirmation emails.");
-  }
-
-  if (parsedUrl.username || parsedUrl.password) {
-    throw new Error("APP_PUBLIC_URL must not contain credentials.");
-  }
-
-  if (parsedUrl.search || parsedUrl.hash) {
-    throw new Error("APP_PUBLIC_URL must not contain a query string or fragment.");
-  }
-
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".cloudworkstations.dev") ||
-    hostname.includes("firebase-studio")
-  ) {
-    throw new Error("APP_PUBLIC_URL must be a stable public application URL.");
-  }
-
-  return parsedUrl.origin;
-}
-
 /**
  * Internal helper to render the CPI email content based on common template data.
  */
@@ -221,7 +181,7 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
   if (!adminDb) throw new Error("Firestore Admin not initialized");
 
   try {
-    const interviewConfirmationBaseUrl = getInterviewConfirmationBaseUrl();
+    const externalPublicBaseUrl = getExternalPublicBaseUrl();
 
     // 1. Generate Secure Attendance Confirmation Token
     const rawToken = crypto.randomBytes(32).toString('hex');
@@ -255,7 +215,7 @@ export async function sendInterviewEmailAction(params: SendInterviewEmailParams)
     });
 
     // 4. Prepare Link and Render Template
-    const confirmationLink = `${interviewConfirmationBaseUrl}/interview/confirm/${rawToken}`;
+    const confirmationLink = buildExternalPublicUrl(`/interview/confirm/${rawToken}`, externalPublicBaseUrl);
     
     const finalTemplateData = {
       ...templateData,
