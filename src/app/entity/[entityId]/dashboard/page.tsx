@@ -244,6 +244,30 @@ export default function EntityDashboardPage() {
       });
     }
 
+    // 5. GED / Documents
+    if (canReadDocs && documents) {
+      documents.forEach(d => {
+        if (['archived', 'replaced', 'rejected'].includes(d.status)) return;
+        if (d.replacedById) return;
+
+        const expiryDate = parseSafeDate(d.expiresAt);
+        if (!expiryDate) return;
+
+        const expiryDay = startOfDay(expiryDate);
+        const daysUntilExpiry = differenceInDays(expiryDay, today);
+        const title = d.title || d.relatedLabel || 'Document';
+        const subject = d.employeeDisplayName || d.candidateDisplayName || d.relatedLabel || 'GED';
+
+        if (isBefore(expiryDay, today)) {
+          s.criticalCount++;
+          s.gedAlerts.push({ id: d.id, title, subtitle: `${subject} · Document expiré`, date: d.expiresAt, type: 'document', variant: 'expired', link: `/entity/${entityId}/documents` });
+        } else if (daysUntilExpiry <= 30) {
+          s.upcoming30Count++;
+          s.gedAlerts.push({ id: d.id, title, subtitle: `${subject} · Échéance document`, date: d.expiresAt, type: 'document', variant: 'soon', link: `/entity/${entityId}/documents` });
+        }
+      });
+    }
+
     // Sorting by priority (earlier dates first)
     const sortByDate = (a: any, b: any) => {
       const d1 = parseSafeDate(a.date)?.getTime() || 0;
@@ -260,7 +284,7 @@ export default function EntityDashboardPage() {
     s.gedAlerts.sort(sortByDate);
 
     return s;
-  }, [contracts, employees, medicalVisits, trainings, safetyAssignments, employmentRequests, canReadContracts, canReadMedical, canReadTraining, canReadSafety, canReadCPI, entityId]);
+  }, [contracts, documents, employees, medicalVisits, trainings, safetyAssignments, employmentRequests, canReadContracts, canReadDocs, canReadMedical, canReadTraining, canReadSafety, canReadCPI, entityId]);
 
   const isLoading = membershipLoading || !permissionsReady;
 
