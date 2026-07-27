@@ -54,6 +54,10 @@ function sanitizePayload(obj: any): any {
   return newObj;
 }
 
+function resolvePayCalculationMode(mode: unknown): Contract["payCalculationMode"] {
+  return mode === "actual_worked_hours" ? "actual_worked_hours" : "monthly";
+}
+
 /**
  * Atomic transaction to ingest an existing employee into the system.
  * Creates Person (if new), Employee, Active Contract, HR Dossier, and initial Leave Balance.
@@ -166,7 +170,7 @@ export async function executeEmployeeIntake(entityId: string, payload: any, acto
       grossMonthly: payload.grossMonthly || 0,
       grossAnnual: payload.grossAnnual || 0,
       monthlyPayments: payload.monthlyPayments || 13,
-      payCalculationMode: payload.payCalculationMode || "monthly",
+      payCalculationMode: resolvePayCalculationMode(payload.payCalculationMode),
       status: "active",
       source: payload.intakeSource || "direct_hr_creation",
       activatedAt: now,

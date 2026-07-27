@@ -25,9 +25,29 @@ import { JobProfile } from "@/types/job-profile";
 import { useToast } from "@/hooks/use-toast";
 import { useOneShotSubmission } from "@/hooks/use-one-shot-submission";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+
+type PayCalculationMode = "monthly" | "actual_worked_hours";
+
+const PAY_CALCULATION_MODE_OPTIONS: Array<{
+  value: PayCalculationMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "monthly",
+    label: "Mensualisé",
+    description: "Base mensuelle contractuelle avec le brut mensuel de référence.",
+  },
+  {
+    value: "actual_worked_hours",
+    label: "Heures réellement travaillées",
+    description: "Le futur calcul mensuel utilisera les heures validées et le taux horaire applicable.",
+  },
+];
 
 const initialForm = {
   firstName: "",
@@ -63,6 +83,7 @@ const initialForm = {
   grossMonthly: 0,
   monthlyPayments: 13,
   grossAnnual: 0,
+  payCalculationMode: "monthly" as PayCalculationMode,
   
   openingFerie: { report: 0, acquis: 0, utilisé: 0 },
   openingRol: { report: 0, acquis: 0, utilisé: 0 },
@@ -209,9 +230,10 @@ export default function EmployeeIntakePage() {
   const handleJobProfileChange = (profileId: string) => {
     const profile = jobProfiles.find(p => p.jobProfileId === profileId);
     if (!profile) return;
+    const linkedCcnl = profile.defaultCcnlId ? ccnls.find(c => c.ccnlId === profile.defaultCcnlId) : undefined;
 
     setFormData(p => {
-      const monthlyPayments = toSafeNumber(profile.defaultMonthlyPayments || p.monthlyPayments, 13);
+      const monthlyPayments = toSafeNumber(linkedCcnl?.monthlyPayments || profile.defaultMonthlyPayments || p.monthlyPayments, 13);
       const grossMonthly = toSafeNumber(profile.defaultMinimumGrossMonthly || p.grossMonthly);
 
       return {
@@ -222,10 +244,10 @@ export default function EmployeeIntakePage() {
         departmentName: profile.departmentName || p.departmentName,
         // Prefill recommendations
         ccnlId: profile.defaultCcnlId || p.ccnlId,
-        ccnlName: profile.defaultCcnlName || p.ccnlName,
+        ccnlName: linkedCcnl?.name || profile.defaultCcnlName || p.ccnlName,
         levelId: profile.defaultLevelId || p.levelId,
         levelCode: profile.defaultLevelCode || p.levelCode,
-        weeklyHours: profile.defaultWeeklyHours || p.weeklyHours,
+        weeklyHours: linkedCcnl?.standardWeeklyHours || profile.defaultWeeklyHours || p.weeklyHours,
         monthlyPayments,
         grossMonthly,
         grossAnnual: calculateGrossAnnual(grossMonthly, monthlyPayments)
@@ -252,8 +274,9 @@ export default function EmployeeIntakePage() {
         levelId: "",
         levelCode: "",
         weeklyHours: ccnl?.standardWeeklyHours || p.weeklyHours,
+        grossMonthly: 0,
         monthlyPayments,
-        grossAnnual: calculateGrossAnnual(p.grossMonthly, monthlyPayments)
+        grossAnnual: calculateGrossAnnual(0, monthlyPayments)
       };
     });
   };
@@ -319,7 +342,7 @@ export default function EmployeeIntakePage() {
         levelCode: selectedLevel?.levelCode || formData.levelCode,
         levelLabel: selectedLevel?.label || selectedLevel?.levelLabel || null,
         qualificationCategory: selectedLevel?.qualificationCategory || selectedLevel?.qualificationLabel || null,
-        payCalculationMode: "monthly"
+        payCalculationMode: formData.payCalculationMode
       };
 
       await executeEmployeeIntake(entityId, payload, user.uid);
@@ -550,6 +573,38 @@ export default function EmployeeIntakePage() {
              </div>
 
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-dashed">
+                <div className="space-y-3 md:col-span-3">
+                  <Label className="text-[10px] uppercase font-black">Mode de calcul</Label>
+                  <RadioGroup
+                    value={formData.payCalculationMode}
+                    onValueChange={(value: PayCalculationMode) =>
+                      setFormData((previous) => ({ ...previous, payCalculationMode: value }))
+                    }
+                    className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                  >
+                    {PAY_CALCULATION_MODE_OPTIONS.map((option) => (
+                      <Label
+                        key={option.value}
+                        htmlFor={`pay-mode-${option.value}`}
+                        className={cn(
+                          "flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition-all",
+                          formData.payCalculationMode === option.value
+                            ? "border-primary bg-primary/5 shadow-sm"
+                            : "border-primary/10 bg-white hover:bg-slate-50"
+                        )}
+                      >
+                        <RadioGroupItem value={option.value} id={`pay-mode-${option.value}`} className="mt-1" />
+                        <span className="space-y-1">
+                          <span className="block text-sm font-black text-slate-900">{option.label}</span>
+                          <span className="block text-xs font-medium leading-relaxed text-muted-foreground">
+                            {option.description}
+                          </span>
+                        </span>
+                      </Label>
+                    ))}
+                  </RadioGroup>
+                </div>
+
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Brut Mensuel (€)</Label>
                   <Input type="number" value={formData.grossMonthly} onChange={(e) => {
@@ -569,6 +624,11 @@ export default function EmployeeIntakePage() {
                   <div className="h-10 bg-slate-50 border rounded-xl flex items-center px-3 font-black text-primary">
                     € {formData.grossAnnual.toLocaleString('fr-FR')}
                   </div>
+                  {formData.payCalculationMode === "actual_worked_hours" && (
+                    <p className="text-xs font-medium leading-relaxed text-muted-foreground">
+                      Valeur annuelle de référence uniquement : le montant mensuel effectif sera calculé à partir des heures réellement travaillées et validées, selon le taux horaire applicable.
+                    </p>
+                  )}
                 </div>
              </div>
           </CardContent>
