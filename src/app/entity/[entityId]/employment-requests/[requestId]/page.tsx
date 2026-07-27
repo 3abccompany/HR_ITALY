@@ -31,15 +31,22 @@ import {
   query, 
   orderBy, 
   updateDoc, 
+  setDoc,
   serverTimestamp, 
   getDoc, 
+  getDocs,
   Timestamp,
   where,
+  limit,
   Query 
 } from "firebase/firestore";
 import { EmploymentRequest, EmploymentRequestStatus, EmploymentRequestType } from "@/types/employment-request";
+import { EmploymentOffer } from "@/types/employment-offer";
 import { Consultant } from "@/types/consultant";
 import { HRDocument } from "@/types/hr-document";
+import { Person } from "@/types/person";
+import { Worksite } from "@/types/worksite";
+import { Contract } from "@/types/contract";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   updateConsultantAssignment, 
@@ -84,6 +91,156 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
 
+function buildUniLavAssunzioneFallbackBody(params: {
+  request: EmploymentRequest;
+  offer?: EmploymentOffer | null;
+  person?: Person | null;
+  worksite?: Worksite | null;
+  contract?: Contract | null;
+  entity?: any;
+  consultantName?: string | null;
+  requestId: string;
+}) {
+  const { request, offer, person, worksite, contract, entity, consultantName, requestId } = params;
+  const requestAny = request as any;
+  const clean = (value: unknown) => {
+    if (value === null || value === undefined) return "";
+    const normalized = String(value).trim();
+    return normalized && normalized !== "undefined" && normalized !== "null" ? normalized : "";
+  };
+  const numberValue = (value: unknown) => {
+    if (value === null || value === undefined || value === "") return "";
+    return String(value).trim();
+  };
+  const firstValue = (...values: unknown[]) => {
+    for (const value of values) {
+      const normalized = clean(value);
+      if (normalized) return normalized;
+    }
+    return "";
+  };
+  const firstNumberValue = (...values: unknown[]) => {
+    for (const value of values) {
+      const normalized = numberValue(value);
+      if (normalized) return normalized;
+    }
+    return "";
+  };
+  const pushLine = (target: string[], label: string, value: unknown) => {
+    const normalized = clean(value);
+    if (normalized) target.push(`- ${label} : ${normalized}`);
+  };
+  const pushNumberLine = (target: string[], label: string, value: unknown, suffix = "") => {
+    const normalized = numberValue(value);
+    if (normalized) target.push(`- ${label} : ${normalized}${suffix}`);
+  };
+  const isFixedTermContract = (contractType?: string | null) => {
+    const normalized = clean(contractType).toLowerCase();
+    return ["tempo determinato", "fixed_term", "cdd"].includes(normalized);
+  };
+  const employeeName = firstValue(
+    [person?.firstName, person?.lastName].map(clean).filter(Boolean).join(" "),
+    person?.displayName,
+    contract?.employeeDisplayName,
+    request.candidateDisplayName
+  );
+  const employeeEmail = firstValue(person?.email, request.candidateEmail);
+  const employeePhone = firstValue(person?.phone, request.candidatePhone);
+  const contractType = firstValue(offer?.contractType, contract?.contractType, request.contractType);
+  const startDate = firstValue(offer?.proposedStartDate, contract?.startDate, request.plannedHireDate);
+  const endDate = isFixedTermContract(contractType) ? firstValue(offer?.proposedEndDate, contract?.endDate) : "";
+  const worksiteName = firstValue(worksite?.name, offer?.worksiteName, contract?.worksiteName, requestAny.worksiteName);
+  const entityName = firstValue(entity?.raisonSociale, entity?.legalName, entity?.nomEntreprise, entity?.name);
+  const lines: string[] = [
+    `Bonjour${consultantName?.trim() ? ` ${consultantName.trim()}` : ""},`,
+    "",
+    "Merci de procéder à la communication UniLav relative à l’embauche suivante.",
+    "",
+  ];
+
+  const employeeLines: string[] = [];
+  pushLine(employeeLines, "Nom et prénom", employeeName);
+  pushLine(employeeLines, "Codice fiscale", firstValue(person?.codiceFiscale, contract?.taxCode));
+  pushLine(employeeLines, "Date de naissance", firstValue(person?.dateOfBirth, contract?.dateOfBirth));
+  pushLine(employeeLines, "Lieu de naissance", firstValue(person?.placeOfBirth, contract?.placeOfBirth));
+  pushLine(employeeLines, "Sexe", person?.gender);
+  pushLine(employeeLines, "Adresse / résidence", firstValue(person?.address, contract?.employeeAddressSnapshot));
+  pushLine(employeeLines, "Ville", person?.city);
+  pushLine(employeeLines, "Province", person?.province);
+  pushLine(employeeLines, "Code postal", person?.postalCode);
+  pushLine(employeeLines, "Email", employeeEmail);
+  pushLine(employeeLines, "Téléphone", employeePhone);
+
+  if (employeeLines.length > 0) {
+    lines.push("SALARIÉ / LAVORATORE", ...employeeLines, "");
+  }
+
+  const hiringLines: string[] = [];
+  pushLine(hiringLines, "Date d'embauche / début", startDate);
+  pushLine(hiringLines, "Type de contrat", contractType);
+  pushLine(hiringLines, "Date de fin du contrat", endDate);
+  pushLine(hiringLines, "Temps plein / temps partiel", firstValue(offer?.workingTime, contract?.isPartTime === true ? "Temps partiel" : contract?.isPartTime === false ? "Temps plein" : "", requestAny.workingTime));
+  pushNumberLine(hiringLines, "Heures hebdomadaires", firstNumberValue(offer?.weeklyHours, contract?.weeklyHours, requestAny.weeklyHours), " h/semaine");
+  pushLine(hiringLines, "Horaire / organisation du travail", firstValue(offer?.workingScheduleNotes, contract?.workingScheduleNotes));
+  const trialPeriod = firstNumberValue(offer?.trialPeriodDays, contract?.trialPeriodDays);
+  pushLine(hiringLines, "Période d'essai", trialPeriod ? `${trialPeriod}${contract?.trialPeriodUnit ? ` ${contract.trialPeriodUnit}` : " jours"}` : "");
+  pushLine(hiringLines, "CCNL", firstValue(offer?.ccnlName, contract?.ccnlName, requestAny.ccnlName));
+  pushLine(hiringLines, "Niveau", firstValue(
+    [offer?.levelCode, offer?.levelLabel].map(clean).filter(Boolean).join(" - "),
+    [contract?.levelCode, contract?.levelLabel].map(clean).filter(Boolean).join(" - "),
+    requestAny.levelCode,
+    requestAny.levelLabel
+  ));
+  pushLine(hiringLines, "Qualification / fonction", firstValue(offer?.qualificationLabel, contract?.qualificationCategory, offer?.jobTitleName, contract?.jobTitleName, request.jobRoleId));
+  pushLine(hiringLines, "Département / service", firstValue(offer?.departmentName, contract?.departmentName, requestAny.departmentName));
+  pushNumberLine(hiringLines, "Rémunération brute mensuelle", firstNumberValue(offer?.proposedGrossMonthly, contract?.grossMonthly, requestAny.proposedGrossMonthly));
+  pushNumberLine(hiringLines, "Rémunération brute annuelle", firstNumberValue(offer?.proposedGrossAnnual, contract?.grossAnnual, requestAny.proposedGrossAnnual));
+
+  if (hiringLines.length > 0) {
+    lines.push("EMBAUCHE / RAPPORT DE TRAVAIL", ...hiringLines, "");
+  }
+
+  const worksiteLines: string[] = [];
+  pushLine(worksiteLines, "Site", worksiteName);
+  pushLine(worksiteLines, "Adresse", worksite?.address);
+  pushLine(worksiteLines, "Ville", worksite?.city);
+  pushLine(worksiteLines, "Province", worksite?.province);
+  pushLine(worksiteLines, "Code postal", (worksite as any)?.postalCode);
+
+  if (worksiteLines.length > 0) {
+    lines.push("LIEU DE TRAVAIL", ...worksiteLines, "");
+  }
+
+  const companyLines: string[] = [];
+  pushLine(companyLines, "Raison sociale", entityName);
+  pushLine(companyLines, "Codice fiscale entreprise", entity?.codeFiscalEntreprise);
+  pushLine(companyLines, "Partita IVA / numéro TVA", entity?.numeroTVA);
+  pushLine(companyLines, "Adresse siège", entity?.adresseSiegeSocial);
+  pushLine(companyLines, "Code postal", entity?.codePostal);
+  pushLine(companyLines, "Ville", entity?.ville);
+  pushLine(companyLines, "Province", entity?.province);
+  pushLine(companyLines, "Téléphone", entity?.telephone);
+  pushLine(companyLines, "Email", entity?.email);
+  pushLine(companyLines, "PEC", entity?.pec);
+
+  if (companyLines.length > 0) {
+    lines.push("ENTREPRISE / DATORE DI LAVORO", ...companyLines, "");
+  }
+
+  const dossierLines: string[] = [];
+  pushLine(dossierLines, "Référence demande", firstValue(request.id, requestId));
+  pushLine(dossierLines, "Référence offre", request.offerId);
+  pushLine(dossierLines, "Consultant", consultantName);
+
+  if (dossierLines.length > 0) {
+    lines.push("DOSSIER", ...dossierLines, "");
+  }
+
+  lines.push("Merci de nous transmettre la confirmation de la communication UniLav ainsi que le numéro de protocole dès disponibilité.", "", "Cordialement,");
+
+  return lines.join("\n");
+}
+
 export default function EmploymentRequestDetailPage() {
   const params = useParams();
   const entityId = params?.entityId as string;
@@ -103,6 +260,27 @@ export default function EmploymentRequestDetailPage() {
   [db, entityId, requestId]);
 
   const { data: request, loading } = useDoc<EmploymentRequest>(requestRef);
+
+  const offerRef = useMemo(() =>
+    db && entityId && request?.offerId ? (doc(db, `entities/${entityId}/employmentOffers`, request.offerId) as DocumentReference<EmploymentOffer>) : null,
+  [db, entityId, request?.offerId]);
+  const { data: employmentOffer } = useDoc<EmploymentOffer>(offerRef);
+
+  const personRef = useMemo(() =>
+    db && entityId && request?.personId ? (doc(db, `entities/${entityId}/persons`, request.personId) as DocumentReference<Person>) : null,
+  [db, entityId, request?.personId]);
+  const { data: person } = useDoc<Person>(personRef);
+
+  const worksiteId = request?.worksiteId || employmentOffer?.worksiteId || null;
+  const worksiteRef = useMemo(() =>
+    db && entityId && worksiteId ? (doc(db, `entities/${entityId}/worksites`, worksiteId) as DocumentReference<Worksite>) : null,
+  [db, entityId, worksiteId]);
+  const { data: worksite } = useDoc<Worksite>(worksiteRef);
+
+  const contractRef = useMemo(() =>
+    db && entityId && request?.contractId && !request?.offerId ? (doc(db, `entities/${entityId}/contracts`, request.contractId) as DocumentReference<Contract>) : null,
+  [db, entityId, request?.contractId, request?.offerId]);
+  const { data: contract } = useDoc<Contract>(contractRef);
 
   // Mandatory Communication Lookup
   const communicationsQuery = useMemo(() => {
@@ -152,6 +330,8 @@ export default function EmploymentRequestDetailPage() {
   const [externalEditTo, setExternalEditTo] = useState("");
   const [externalEditSubject, setExternalEditSubject] = useState("");
   const [externalEditBody, setExternalEditBody] = useState("");
+  const [savedMandatoryCommunication, setSavedMandatoryCommunication] = useState<any | null>(null);
+  const effectiveMandatoryCommunication = savedMandatoryCommunication || mandatoryCommunication;
 
   useEffect(() => {
     if (request) {
@@ -167,6 +347,10 @@ export default function EmploymentRequestDetailPage() {
       });
     }
   }, [request]);
+
+  useEffect(() => {
+    setSavedMandatoryCommunication(null);
+  }, [requestId]);
 
   const isTerminal = request?.status === "completed" || request?.status === "cancelled";
   const canComplete = request && !isTerminal && request.protocolCode && request.cpiCommunicationDate && request.receiptDocumentId;
@@ -262,11 +446,16 @@ export default function EmploymentRequestDetailPage() {
 
       if (!result.success) throw new Error((result as any).error || "Impossible de générer l'aperçu.");
 
-      setEditableSubject(result.preview!.subject);
-      setEditableBody(result.preview!.text);
+      const savedSubject = effectiveMandatoryCommunication?.emailSubject?.trim();
+      const savedBody = effectiveMandatoryCommunication?.emailBody?.trim();
+      const finalSubject = savedSubject || result.preview!.subject;
+      const finalBody = savedBody || result.preview!.text;
+
+      setEditableSubject(finalSubject);
+      setEditableBody(finalBody);
       setEmailPreview({
         to: consultantForm.email,
-        subject: result.preview!.subject,
+        subject: finalSubject,
         html: result.preview!.html
       });
       setIsPreviewOpen(true);
@@ -282,12 +471,13 @@ export default function EmploymentRequestDetailPage() {
     setExternalEditTo(consultantForm.email || "");
     
     // Support Fallback for Proroga if body is missing
-    let subject = mandatoryCommunication?.emailSubject || `Communication UniLav - ${request.candidateDisplayName || 'Recrutement'}`;
-    let body = mandatoryCommunication?.emailBody || "";
+    let subject = effectiveMandatoryCommunication?.emailSubject || `Communication UniLav - ${request.candidateDisplayName || 'Recrutement'}`;
+    let body = effectiveMandatoryCommunication?.emailBody || "";
 
-    if (!body && request.type === 'unilav_proroga') {
-      subject = `Richiesta Proroga UniLav — ${request.candidateDisplayName || 'Collaboratore'} — ${request.plannedHireDate || ''}`;
-      body = `Buongiorno,
+    if (!body) {
+      if (request.type === 'unilav_proroga') {
+        subject = `Richiesta Proroga UniLav — ${request.candidateDisplayName || 'Collaboratore'} — ${request.plannedHireDate || ''}`;
+        body = `Buongiorno,
 
 con la presente si richiede la predisposizione e/o trasmissione della comunicazione obbligatoria UniLav/CPI relativa alla proroga del contratto a tempo determinato del seguente lavoratore:
 
@@ -301,6 +491,18 @@ Contratto precedente / riferimento: ${request.previousContractId || 'Non disponi
 Si richiede cortesemente di procedere con la comunicazione di proroga e di trasmettere il numero di protocollo e la ricevuta PDF una volta disponibile.
 
 Cordiali saluti,`;
+      } else {
+        body = buildUniLavAssunzioneFallbackBody({
+          request,
+          offer: employmentOffer,
+          person,
+          worksite,
+          contract,
+          entity,
+          consultantName: consultantForm.name,
+          requestId,
+        });
+      }
     }
 
     setExternalEditSubject(subject);
@@ -309,18 +511,117 @@ Cordiali saluti,`;
   };
 
   const handleCopyExternal = () => {
-    const text = `À: ${externalEditTo}\nObjet: ${externalEditSubject}\n\n${externalEditBody}`;
-    navigator.clipboard.writeText(text);
+    navigator.clipboard.writeText(externalEditBody);
     toast({ title: "Email copié", description: "Le contenu édité est dans votre presse-papier." });
   };
 
-  const handleMailToExternal = () => {
-    if (!externalEditTo) {
-      toast({ variant: "destructive", title: "Email manquant", description: "Veuillez renseigner l'adresse email du destinataire." });
+  const handleSaveExternalEmailDraft = async () => {
+    if (!user || !entityId || !db || !request) return;
+
+    if (!canUpdate) {
+      toast({ variant: "destructive", title: "Action non autorisée", description: "Vous n'avez pas la permission de modifier ce dossier." });
       return;
     }
-    const mailtoUrl = `mailto:${externalEditTo}?subject=${encodeURIComponent(externalEditSubject)}&body=${encodeURIComponent(externalEditBody)}`;
-    window.location.href = mailtoUrl;
+
+    setProcessing(true);
+    try {
+      const expectedType =
+        request.type === "unilav_proroga"
+          ? "UNILAV_PROROGA"
+          : request.type === "unilav_trasformazione"
+            ? "UNILAV_TRASFORMAZIONE"
+            : "UNILAV_ASSUNZIONE";
+      const lookupId = request.offerId || request.id;
+      const basePath = `entities/${entityId}/mandatoryCommunications`;
+      const matchesContext = (communication: any) =>
+        communication?.entityId === entityId &&
+        (
+          communication.employmentRequestId === request.id ||
+          communication.employmentOfferId === lookupId ||
+          communication.communicationId === request.mandatoryCommunicationId
+        );
+
+      let resolvedCommunication = effectiveMandatoryCommunication;
+      let resolvedCommunicationId = resolvedCommunication?.id || resolvedCommunication?.communicationId || null;
+
+      if (!resolvedCommunicationId && request.mandatoryCommunicationId) {
+        const linkedRef = doc(db, basePath, request.mandatoryCommunicationId);
+        const linkedSnap = await getDoc(linkedRef);
+        if (linkedSnap.exists()) {
+          const linkedData = { ...linkedSnap.data(), id: linkedSnap.id };
+          if (matchesContext(linkedData)) {
+            resolvedCommunication = linkedData;
+            resolvedCommunicationId = linkedSnap.id;
+          }
+        }
+      }
+
+      if (!resolvedCommunicationId) {
+        const requestLinkedQuery = query(
+          collection(db, basePath),
+          where("employmentRequestId", "==", request.id),
+          limit(10)
+        );
+        const requestLinkedSnap = await getDocs(requestLinkedQuery);
+        const requestLinkedMatch = requestLinkedSnap.docs
+          .map((docSnap) => ({ ...(docSnap.data() as any), id: docSnap.id }))
+          .find((communication: any) => matchesContext(communication) && communication.type === expectedType);
+
+        if (requestLinkedMatch) {
+          resolvedCommunication = requestLinkedMatch;
+          resolvedCommunicationId = requestLinkedMatch.id || requestLinkedMatch.communicationId;
+        }
+      }
+
+      const now = serverTimestamp();
+      const draftUpdate = {
+        emailSubject: externalEditSubject,
+        emailBody: externalEditBody,
+        updatedAt: now,
+        updatedBy: user.uid,
+      };
+
+      if (resolvedCommunicationId) {
+        const communicationRef = doc(db, basePath, resolvedCommunicationId);
+        await updateDoc(communicationRef, draftUpdate);
+        setSavedMandatoryCommunication({
+          ...(resolvedCommunication || {}),
+          id: resolvedCommunicationId,
+          communicationId: resolvedCommunication?.communicationId || resolvedCommunicationId,
+          ...draftUpdate,
+        });
+      } else {
+        const communicationRef = doc(collection(db, basePath));
+        const payload: any = {
+          communicationId: communicationRef.id,
+          entityId,
+          employmentOfferId: lookupId,
+          employmentRequestId: request.id,
+          type: expectedType,
+          status: "draft",
+          emailSubject: externalEditSubject,
+          emailBody: externalEditBody,
+          createdAt: now,
+          createdBy: user.uid,
+          updatedAt: now,
+          updatedBy: user.uid,
+        };
+
+        if (request.personId) payload.personId = request.personId;
+        if (request.candidateId) payload.candidateId = request.candidateId;
+        if (request.employeeId) payload.employeeId = request.employeeId;
+        if (request.contractId) payload.contractId = request.contractId;
+
+        await setDoc(communicationRef, payload);
+        setSavedMandatoryCommunication({ ...payload, id: communicationRef.id });
+      }
+
+      toast({ title: "Brouillon enregistré", description: "Les modifications du message UniLav ont été sauvegardées." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Enregistrement impossible", description: err.message || "Le brouillon n'a pas pu être enregistré." });
+    } finally {
+      setProcessing(false);
+    }
   };
 
   /**
@@ -945,20 +1246,21 @@ Cordiali saluti,`;
           </div>
 
           <DialogFooter className="shrink-0 pt-6 border-t flex flex-col sm:flex-row gap-3">
-             <Button variant="ghost" onClick={() => setIsExternalEditOpen(false)} className="rounded-xl font-bold">Fermer</Button>
              <Button 
+                onClick={handleSaveExternalEmailDraft}
+                disabled={processing || !externalEditSubject.trim() || !externalEditBody.trim()}
+                className="rounded-xl font-black bg-primary text-white shadow-lg gap-2 px-6"
+             >
+                {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Enregistrer les modifications
+             </Button>
+             <Button
                 variant="outline" 
                 onClick={handleCopyExternal}
                 className="rounded-xl font-bold gap-2 bg-white"
              >
-                <RefreshCcw className="w-4 h-4" /> Copier le message édité
+                <RefreshCcw className="w-4 h-4" /> Copier le message
              </Button>
-             <Button 
-                onClick={handleMailToExternal}
-                className="rounded-xl font-black bg-primary text-white shadow-lg gap-2 px-6"
-             >
-                <Send className="w-4 h-4" /> Ouvrir dans le client mail
-             </Button>
+             <Button variant="ghost" onClick={() => setIsExternalEditOpen(false)} className="rounded-xl font-bold">Fermer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

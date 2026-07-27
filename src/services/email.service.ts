@@ -170,6 +170,20 @@ Ufficio Risorse Umane — ${data.companyName}`;
   return { html, text };
 }
 
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderPlainTextEmailHtml(text: string): string {
+  const escapedText = escapeHtmlText(text);
+  return `<div style="font-family: sans-serif; white-space: pre-wrap; line-height: 1.5; color: #1F1F66;">${escapedText.replace(/\n/g, '<br>')}</div>`;
+}
+
 /**
  * Server Action to send an interview notification.
  * Integrates Entity SMTP with global fallback.
@@ -442,25 +456,13 @@ export async function sendConsultantCPIRequestAction(params: SendConsultantCPIPa
     const canSend = source === 'entity' || isGlobalConfigured;
 
     const finalSubject = subjectOverride?.trim() || subject;
-    let finalHtml: string;
-    let finalText: string;
+    const renderedPreview = renderConsultantCPIEmailContent(templateData);
+    const editedBody = bodyOverride?.trim();
+    const previewText = renderedPreview.text.trim();
 
-    if (bodyOverride?.trim()) {
-      finalText = bodyOverride.trim();
-      // Basic text to HTML conversion with entity escaping for safety
-      const escapedText = finalText
-        .replace(/&/g, "&amp;")
-        .replace(/@/g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-      
-      finalHtml = `<div style="font-family: sans-serif; white-space: pre-wrap; line-height: 1.5; color: #1F1F66;">${escapedText.replace(/\n/g, '<br>')}</div>`;
-    } else {
-      const { html, text } = renderConsultantCPIEmailContent(templateData);
-      finalHtml = html;
-      finalText = text;
-    }
+    const usesCanonicalPreview = !editedBody || editedBody === previewText;
+    const finalText = usesCanonicalPreview ? renderedPreview.text : editedBody;
+    const finalHtml = usesCanonicalPreview ? renderedPreview.html : renderPlainTextEmailHtml(editedBody);
 
     if (canSend) {
       const info = await transporter.sendMail({
