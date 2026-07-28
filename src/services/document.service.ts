@@ -286,13 +286,21 @@ export async function uploadPreHireDocument(params: {
 }) {
   const { entityId, dossierId, item, file, offer, actorUid, actorName, expiresAt, oldFileId } = params;
   if (!db || !storage) throw new Error("Firebase services not initialized");
+  const normalizedItem = item as PreHireDocument & { id?: string; key?: string; documentId?: string | null; required?: boolean };
+  const checklistItemId = normalizedItem.itemId || normalizedItem.id || normalizedItem.key;
+  const checklistItemType = normalizedItem.type || normalizedItem.key || "prehire_required_document";
+  const existingFileId = oldFileId || normalizedItem.fileId || normalizedItem.documentId || undefined;
+
+  if (!checklistItemId) {
+    throw new Error("Identifiant de document pré-embauche manquant.");
+  }
 
   // 1. Storage Upload
   const docRef = doc(collection(db, `entities/${entityId}/documents`));
   const docId = docRef.id;
   const extension = file.name.split('.').pop() || 'bin';
   const timestamp = Date.now();
-  const storagePath = `entities/${entityId}/documents/${docId}/${item.type}_${timestamp}.${extension}`;
+  const storagePath = `entities/${entityId}/documents/${docId}/${checklistItemType}_${timestamp}.${extension}`;
   const fileRef = ref(storage, storagePath);
   
   await uploadBytes(fileRef, file);
@@ -300,7 +308,7 @@ export async function uploadPreHireDocument(params: {
   // 2. Metadata Preparation
   const now = serverTimestamp();
   const sensitiveTypes = ["id_card", "tax_code", "iban", "residence", "residence_permit"];
-  const isSensitive = sensitiveTypes.includes(item.type) || item.label.toLowerCase().includes("iban");
+  const isSensitive = sensitiveTypes.includes(checklistItemType) || item.label.toLowerCase().includes("iban");
 
   const docData = {
     id: docId,
@@ -317,13 +325,13 @@ export async function uploadPreHireDocument(params: {
     candidateId: offer.candidateId || null,
     employmentOfferId: offer.offerId,
     preHireDossierId: dossierId,
-    checklistItemId: item.itemId,
+    checklistItemId,
     relatedModule: "preHireDossiers",
     relatedId: dossierId,
     
     version: 1,
     isSensitive,
-    isRequired: true,
+    isRequired: normalizedItem.isRequired ?? normalizedItem.required ?? true,
     expiresAt: expiresAt || null,
     
     uploadedAt: now,
@@ -339,8 +347,8 @@ export async function uploadPreHireDocument(params: {
   const batch = writeBatch(db);
 
   // If replacing, unlink old document from identity to prevent pick-up by conversion service
-  if (oldFileId) {
-    const oldDocRef = doc(db, `entities/${entityId}/documents`, oldFileId);
+  if (existingFileId) {
+    const oldDocRef = doc(db, `entities/${entityId}/documents`, existingFileId);
     batch.update(oldDocRef, sanitizePayload({
       status: "replaced",
       candidateId: null,
@@ -354,7 +362,7 @@ export async function uploadPreHireDocument(params: {
   
   batch.set(docRef, sanitizePayload(docData));
 
-  const itemRef = doc(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`, item.itemId);
+  const itemRef = doc(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`, checklistItemId);
   batch.update(itemRef, sanitizePayload({
     fileId: docId,
     documentId: docId,
@@ -368,6 +376,8 @@ export async function uploadPreHireDocument(params: {
     // Reset validation metadata upon new upload/replacement
     reviewedAt: null,
     reviewedBy: null,
+    approvedAt: null,
+    approvedBy: null,
     rejectionReason: null
   }));
 
@@ -378,10 +388,10 @@ export async function uploadPreHireDocument(params: {
     await createAuditLog({
       userId: actorUid,
       entityId,
-      action: oldFileId ? "document.replaced" : "document.uploaded",
+      action: existingFileId ? "document.replaced" : "document.uploaded",
       resourceType: "document",
       resourceId: docId,
-      details: { checklistItemId: item.itemId, offerId: offer.offerId, context: "pre-hire", oldFileId: oldFileId || null }
+      details: { checklistItemId, offerId: offer.offerId, context: "pre-hire", oldFileId: existingFileId || null }
     });
   } catch (e) {
     console.warn("[Audit] Failed to log pre-hire doc upload:", e);

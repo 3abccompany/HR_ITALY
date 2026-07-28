@@ -269,6 +269,13 @@ export default function EmploymentOffersListPage() {
           <h1 className="text-3xl font-headline font-bold text-primary">Propositions d'embauche</h1>
           <p className="text-muted-foreground text-sm">Gestion des offres contractuelles internes et réponses candidats.</p>
         </div>
+        {canUpdate && (
+          <Button asChild className="rounded-xl font-black shadow-lg shadow-primary/10 gap-2">
+            <a href={`/entity/${entityId}/employment-offers/direct-hire`}>
+              <FilePlus2 className="h-4 w-4" /> + Embauche directe
+            </a>
+          </Button>
+        )}
       </div>
 
       <div className="space-y-6">
@@ -419,6 +426,11 @@ export default function EmploymentOffersListPage() {
                   <TableRow key={o.offerId} className="hover:bg-muted/50 transition-colors group cursor-pointer" onClick={() => window.location.assign(`/entity/${entityId}/employment-offers/${o.offerId}`)}>
                     <TableCell>
                       <div className="font-bold text-primary">{o.candidateDisplayName || "N/A"}</div>
+                      {o.acceptanceMode === "hr_direct" && (
+                        <Badge variant="outline" className="mt-1 h-5 w-fit border-indigo-200 bg-indigo-50 px-2 text-[9px] font-black uppercase text-indigo-700">
+                          Embauche directe
+                        </Badge>
+                      )}
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase mt-1">
                         <Briefcase className="w-3 h-3" /> {o.jobTitleName || "N/A"}
                       </div>

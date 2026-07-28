@@ -218,53 +218,6 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         .collection("mandatoryCommunications")
         .doc(communicationId);
     
-      const candidateName =
-        offerData.candidateDisplayName || "Candidato non specificato";
-    
-      const startDate =
-        offerData.proposedStartDate || "Data da confermare";
-      
-      const endDate =
-        offerData.proposedEndDate || "Nessuna data di fine (Indeterminato)";
-    
-      const consultantEmailSubject =
-        `Richiesta Comunicazione Obbligatoria / UniLav — ${candidateName} — ${startDate}`;
-    
-      const consultantEmailBody = [
-        "Buongiorno,",
-        "",
-        `il candidato ${candidateName} ha accettato l'offerta di assunzione.`,
-        "",
-        "Si richiede la predisposizione della Comunicazione Obbligatoria / UniLav, salvo verifica documentale finale.",
-        "",
-        "Dati principali:",
-        `- Candidato: ${candidateName}`,
-        `- Email candidato: ${offerData.candidateEmail || "-"}`,
-        `- Telefono candidato: ${offerData.candidatePhone || "-"}`,
-        `- Mansione / posizione: ${offerData.jobTitleName || "-"}`,
-        `- Reparto: ${offerData.departmentName || "-"}`,
-        `- Sede di lavoro: ${offerData.worksiteName || "-"}`,
-        `- Tipo contratto: ${offerData.contractType || "-"}`,
-        `- Orario: ${offerData.workingTime || "-"}`,
-        `- Data inizio proposta: ${startDate}`,
-        `- Data fine proposta: ${endDate}`,
-        `- CCNL: ${offerData.ccnlName || "-"}`,
-        `- Livello: ${offerData.levelCode || offerData.levelLabel || "-"}`,
-        `- Retribuzione lorda mensile: ${offerData.proposedGrossMonthly || "-"} €`,
-        `- RAL: ${offerData.proposedGrossAnnual || "-"} €`,
-        "",
-        "Documenti da verificare:",
-        "- Carte d’identità: da verificare",
-        "- Tessera sanitaria: da verificare",
-        "- Richiesta assunzione: da verificare",
-        "",
-        "Si prega di confermare eventuali dati mancanti.",
-        "",
-        "Nota: questa email è una richiesta operativa di preparazione. Non costituisce conferma di invio ufficiale UniLav.",
-        "",
-        "Cordiali saluti.",
-      ].join("\n");
-    
       transaction.set(dossierRef, {
         dossierId,
         entityId: tokenData.entityId,
@@ -345,8 +298,8 @@ export async function respondToOfferAction(rawToken: string, response: "accepted
         emailSent: false,
         sentToConsultantAt: null,
     
-        emailSubject: consultantEmailSubject,
-        emailBody: consultantEmailBody,
+        emailSubject: "",
+        emailBody: "",
     
         protocolNumber: "",
         receiptPdfUrl: "",

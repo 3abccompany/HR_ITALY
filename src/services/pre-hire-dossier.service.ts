@@ -18,6 +18,10 @@ import { EmploymentOffer } from "@/types/employment-offer";
 import { createAuditLog } from "./audit.service";
 import { sendDocumentRequestEmailAction } from "./email.service";
 
+function isPreHireDocumentRequired(item: PreHireDocument & { required?: boolean }) {
+  return item.isRequired ?? item.required ?? false;
+}
+
 /**
  * Initializes a new Pre-Hire Dossier with a default Italian checklist.
  */
@@ -219,7 +223,7 @@ async function evaluateDossierReadiness(entityId: string, dossierId: string, act
   const itemsSnap = await getDocs(collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`));
   const items = itemsSnap.docs.map(d => d.data() as PreHireDocument);
 
-  const requiredItems = items.filter(i => i.isRequired);
+  const requiredItems = items.filter(isPreHireDocumentRequired);
   
   // A dossier is ready ONLY if all required items are either approved or not applicable
   const allRequiredApproved = requiredItems.length > 0 && requiredItems.every(i => 
@@ -270,7 +274,7 @@ export async function sendDocumentRequestEmail(entityId: string, dossierId: stri
   const offer = offerSnap.data() as EmploymentOffer;
 
   const itemsSnap = await getDocs(collection(db, `entities/${entityId}/preHireDossiers/${dossierId}/checklist`));
-  const items = itemsSnap.docs.map(d => d.data() as PreHireDocument).filter(i => i.isRequired && i.status !== "not_required" && i.status !== "approved" && i.status !== "not_applicable");
+  const items = itemsSnap.docs.map(d => d.data() as PreHireDocument).filter(i => isPreHireDocumentRequired(i) && i.status !== "not_required" && i.status !== "approved" && i.status !== "not_applicable");
 
   const result = await sendDocumentRequestEmailAction({
     entityId,

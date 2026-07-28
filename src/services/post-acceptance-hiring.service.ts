@@ -6,6 +6,7 @@ import {
   DEFAULT_PRE_HIRE_CHECKLIST,
   calculatePreHireReadiness,
 } from "@/lib/post-acceptance-hiring/defaults";
+import type { UniLavAssunzioneAcceptanceMode } from "@/lib/unilav/consultant-assunzione-email";
 import type {
   MandatoryCommunication,
   PreHireDossier,
@@ -36,6 +37,7 @@ export type OfferAcceptanceSnapshot = {
 
   proposedGrossMonthly?: number | null;
   proposedGrossAnnual?: number | null;
+  acceptanceMode?: UniLavAssunzioneAcceptanceMode | null;
 };
 
 export type EnsurePostAcceptanceHiringInput = {
@@ -69,63 +71,6 @@ function cloneDefaultChecklist(): PreHireDocumentChecklistItem[] {
   return DEFAULT_PRE_HIRE_CHECKLIST.map((item) => ({
     ...item,
   }));
-}
-
-function formatEuro(value?: number | null) {
-  if (typeof value !== "number" || Number.isNaN(value)) return "-";
-
-  return `${value.toLocaleString("it-IT", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })} €`;
-}
-
-function buildConsultantEmailDraft(snapshot: OfferAcceptanceSnapshot) {
-  const candidateName =
-    snapshot.candidateDisplayName || "Candidato non specificato";
-
-  const startDate = snapshot.proposedStartDate || "Data da confermare";
-  const endDate = snapshot.proposedEndDate || "Nessuna data di fine (Indeterminato)";
-
-  const subject = `Richiesta Comunicazione Obbligatoria / UniLav — ${candidateName} — ${startDate}`;
-
-  const body = [
-    "Buongiorno,",
-    "",
-    `il candidato ${candidateName} ha accettato l'offerta di assunzione.`,
-    "",
-    "Si richiede la predisposizione della Comunicazione Obbligatoria / UniLav, salvo verifica documentale finale.",
-    "",
-    "Dati principali:",
-    `- Candidato: ${candidateName}`,
-    `- Email candidato: ${snapshot.candidateEmail || "-"}`,
-    `- Telefono candidato: ${snapshot.candidatePhone || "-"}`,
-    `- Mansione / posizione: ${snapshot.jobTitleName || "-"}`,
-    `- Reparto: ${snapshot.departmentName || "-"}`,
-    `- Sede di lavoro: ${snapshot.worksiteName || "-"}`,
-    `- Indirizzo sede: ${snapshot.worksiteAddress || "-"}`,
-    `- Tipo contratto: ${snapshot.contractType || "-"}`,
-    `- Orario: ${snapshot.workingTime || "-"}`,
-    `- Data inizio proposta: ${startDate}`,
-    `- Data fine proposta: ${endDate}`,
-    `- CCNL: ${snapshot.ccnlName || "-"}`,
-    `- Livello: ${snapshot.levelCode || snapshot.levelLabel || "-"}`,
-    `- Retribuzione lorda mensile: ${formatEuro(snapshot.proposedGrossMonthly)}`,
-    `- RAL: ${formatEuro(snapshot.proposedGrossAnnual)}`,
-    "",
-    "Documenti da verificare:",
-    "- Carte d’identità: da verificare",
-    "- Tessera sanitaria: da verificare",
-    "- Richiesta assunzione: da verificare",
-    "",
-    "Si prega di confermare eventuali dati mancanti.",
-    "",
-    "Nota: questa email è una richiesta operativa di preparazione. Non costituisce conferma di invio ufficiale UniLav.",
-    "",
-    "Cordiali saluti.",
-  ].join("\n");
-
-  return { subject, body };
 }
 
 async function findExistingPreHireDossier(
@@ -326,8 +271,6 @@ export async function ensurePostAcceptanceHiringWorkflowAfterOfferAccepted(
 
     mandatoryCommunicationId = communicationRef.id;
 
-    const emailDraft = buildConsultantEmailDraft(offerSnapshot);
-
     const communicationPayload: MandatoryCommunicationPayload = {
       id: mandatoryCommunicationId,
       communicationId: mandatoryCommunicationId,
@@ -351,8 +294,8 @@ export async function ensurePostAcceptanceHiringWorkflowAfterOfferAccepted(
       emailSent: false,
       sentToConsultantAt: null,
 
-      emailSubject: emailDraft.subject,
-      emailBody: emailDraft.body,
+      emailSubject: "",
+      emailBody: "",
 
       protocolNumber: "",
       receiptPdfUrl: "",

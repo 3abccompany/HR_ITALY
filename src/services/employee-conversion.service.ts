@@ -170,6 +170,7 @@ export async function convertOfferToEmployeeAction(params: {
           levelCode: offer.levelCode,
           grossMonthly: offer.proposedGrossMonthly || 0,
           grossAnnual: offer.proposedGrossAnnual || 0,
+          ...(offer.payCalculationMode ? { payCalculationMode: offer.payCalculationMode } : {}),
           status: "draft",
           createdAt: FieldValue.serverTimestamp(),
           createdBy: actorUid,

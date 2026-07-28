@@ -419,18 +419,25 @@ export async function getConsultantCPIEmailPreviewAction(params: {
   entityId: string;
   requestId: string;
   templateData: SendConsultantCPIParams['templateData'];
+  subjectOverride?: string;
+  bodyOverride?: string;
 }): Promise<{ success: true; preview: { subject: string; html: string; text: string; } } | { success: false; error: string }> {
   try {
-    const { templateData } = params;
+    const { templateData, subjectOverride, bodyOverride } = params;
     const subject = `Richiesta Comunicazione UniLav/CPI — ${templateData.candidateName} — ${templateData.plannedHireDate}`;
-    const { html, text } = renderConsultantCPIEmailContent(templateData);
+    const renderedPreview = renderConsultantCPIEmailContent(templateData);
+    const finalSubject = subjectOverride?.trim() || subject;
+    const finalText = bodyOverride?.trim() || renderedPreview.text;
+    const finalHtml = bodyOverride?.trim()
+      ? renderPlainTextEmailHtml(finalText)
+      : renderedPreview.html;
     
     return { 
       success: true, 
       preview: {
-        subject,
-        html,
-        text
+        subject: finalSubject,
+        html: finalHtml,
+        text: finalText
       } 
     };
   } catch (err: any) {

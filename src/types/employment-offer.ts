@@ -12,6 +12,8 @@ export type EmploymentOfferStatus =
   | "cancelled";
 
 export type ConversionStatus = "pending" | "converted";
+export type EmploymentOfferAcceptanceMode = "candidate_portal" | "hr_direct";
+export type PayCalculationMode = "monthly" | "actual_worked_hours";
 
 export interface EmploymentOffer {
   offerId: string;
@@ -67,6 +69,7 @@ export interface EmploymentOffer {
   proposedGrossHourly?: number;
   proposedGrossAnnual?: number;
   salaryNotes?: string;
+  payCalculationMode?: PayCalculationMode;
 
   status: EmploymentOfferStatus;
   notes?: string;
@@ -89,6 +92,9 @@ export interface EmploymentOffer {
   viewCount?: number;
   respondedAt?: any;
   candidateResponse?: "accepted" | "declined";
+  acceptanceMode?: EmploymentOfferAcceptanceMode;
+  acceptedBy?: string;
+  directHireReason?: string;
   declinedReason?: string;
   resendCount?: number;
   lastResentAt?: any;

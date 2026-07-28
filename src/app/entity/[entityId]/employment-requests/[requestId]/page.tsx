@@ -90,8 +90,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
+import { buildUniLavAssunzioneConsultantEmail, type UniLavAssunzioneEmailInput } from "@/lib/unilav/consultant-assunzione-email";
 
-function buildUniLavAssunzioneFallbackBody(params: {
+
+function buildUniLavAssunzioneEmailDraft(params: {
   request: EmploymentRequest;
   offer?: EmploymentOffer | null;
   person?: Person | null;
@@ -103,14 +105,14 @@ function buildUniLavAssunzioneFallbackBody(params: {
 }) {
   const { request, offer, person, worksite, contract, entity, consultantName, requestId } = params;
   const requestAny = request as any;
+  const offerAny = offer as any;
+  const contractAny = contract as any;
+  const worksiteAny = worksite as any;
+
   const clean = (value: unknown) => {
     if (value === null || value === undefined) return "";
     const normalized = String(value).trim();
     return normalized && normalized !== "undefined" && normalized !== "null" ? normalized : "";
-  };
-  const numberValue = (value: unknown) => {
-    if (value === null || value === undefined || value === "") return "";
-    return String(value).trim();
   };
   const firstValue = (...values: unknown[]) => {
     for (const value of values) {
@@ -119,126 +121,81 @@ function buildUniLavAssunzioneFallbackBody(params: {
     }
     return "";
   };
-  const firstNumberValue = (...values: unknown[]) => {
-    for (const value of values) {
-      const normalized = numberValue(value);
-      if (normalized) return normalized;
-    }
-    return "";
-  };
-  const pushLine = (target: string[], label: string, value: unknown) => {
-    const normalized = clean(value);
-    if (normalized) target.push(`- ${label} : ${normalized}`);
-  };
-  const pushNumberLine = (target: string[], label: string, value: unknown, suffix = "") => {
-    const normalized = numberValue(value);
-    if (normalized) target.push(`- ${label} : ${normalized}${suffix}`);
-  };
   const isFixedTermContract = (contractType?: string | null) => {
     const normalized = clean(contractType).toLowerCase();
     return ["tempo determinato", "fixed_term", "cdd"].includes(normalized);
   };
+
   const employeeName = firstValue(
     [person?.firstName, person?.lastName].map(clean).filter(Boolean).join(" "),
     person?.displayName,
-    contract?.employeeDisplayName,
+    contractAny?.employeeDisplayName,
     request.candidateDisplayName
   );
-  const employeeEmail = firstValue(person?.email, request.candidateEmail);
-  const employeePhone = firstValue(person?.phone, request.candidatePhone);
   const contractType = firstValue(offer?.contractType, contract?.contractType, request.contractType);
-  const startDate = firstValue(offer?.proposedStartDate, contract?.startDate, request.plannedHireDate);
-  const endDate = isFixedTermContract(contractType) ? firstValue(offer?.proposedEndDate, contract?.endDate) : "";
-  const worksiteName = firstValue(worksite?.name, offer?.worksiteName, contract?.worksiteName, requestAny.worksiteName);
-  const entityName = firstValue(entity?.raisonSociale, entity?.legalName, entity?.nomEntreprise, entity?.name);
-  const lines: string[] = [
-    `Bonjour${consultantName?.trim() ? ` ${consultantName.trim()}` : ""},`,
-    "",
-    "Merci de procéder à la communication UniLav relative à l’embauche suivante.",
-    "",
-  ];
-
-  const employeeLines: string[] = [];
-  pushLine(employeeLines, "Nom et prénom", employeeName);
-  pushLine(employeeLines, "Codice fiscale", firstValue(person?.codiceFiscale, contract?.taxCode));
-  pushLine(employeeLines, "Date de naissance", firstValue(person?.dateOfBirth, contract?.dateOfBirth));
-  pushLine(employeeLines, "Lieu de naissance", firstValue(person?.placeOfBirth, contract?.placeOfBirth));
-  pushLine(employeeLines, "Sexe", person?.gender);
-  pushLine(employeeLines, "Adresse / résidence", firstValue(person?.address, contract?.employeeAddressSnapshot));
-  pushLine(employeeLines, "Ville", person?.city);
-  pushLine(employeeLines, "Province", person?.province);
-  pushLine(employeeLines, "Code postal", person?.postalCode);
-  pushLine(employeeLines, "Email", employeeEmail);
-  pushLine(employeeLines, "Téléphone", employeePhone);
-
-  if (employeeLines.length > 0) {
-    lines.push("SALARIÉ / LAVORATORE", ...employeeLines, "");
-  }
-
-  const hiringLines: string[] = [];
-  pushLine(hiringLines, "Date d'embauche / début", startDate);
-  pushLine(hiringLines, "Type de contrat", contractType);
-  pushLine(hiringLines, "Date de fin du contrat", endDate);
-  pushLine(hiringLines, "Temps plein / temps partiel", firstValue(offer?.workingTime, contract?.isPartTime === true ? "Temps partiel" : contract?.isPartTime === false ? "Temps plein" : "", requestAny.workingTime));
-  pushNumberLine(hiringLines, "Heures hebdomadaires", firstNumberValue(offer?.weeklyHours, contract?.weeklyHours, requestAny.weeklyHours), " h/semaine");
-  pushLine(hiringLines, "Horaire / organisation du travail", firstValue(offer?.workingScheduleNotes, contract?.workingScheduleNotes));
-  const trialPeriod = firstNumberValue(offer?.trialPeriodDays, contract?.trialPeriodDays);
-  pushLine(hiringLines, "Période d'essai", trialPeriod ? `${trialPeriod}${contract?.trialPeriodUnit ? ` ${contract.trialPeriodUnit}` : " jours"}` : "");
-  pushLine(hiringLines, "CCNL", firstValue(offer?.ccnlName, contract?.ccnlName, requestAny.ccnlName));
-  pushLine(hiringLines, "Niveau", firstValue(
-    [offer?.levelCode, offer?.levelLabel].map(clean).filter(Boolean).join(" - "),
-    [contract?.levelCode, contract?.levelLabel].map(clean).filter(Boolean).join(" - "),
+  const trialPeriod = firstValue(offerAny?.trialPeriodDays, contractAny?.trialPeriodDays);
+  const level = firstValue(
+    [offerAny?.levelCode, offerAny?.levelLabel].map(clean).filter(Boolean).join(" - "),
+    [contractAny?.levelCode, contractAny?.levelLabel].map(clean).filter(Boolean).join(" - "),
     requestAny.levelCode,
     requestAny.levelLabel
-  ));
-  pushLine(hiringLines, "Qualification / fonction", firstValue(offer?.qualificationLabel, contract?.qualificationCategory, offer?.jobTitleName, contract?.jobTitleName, request.jobRoleId));
-  pushLine(hiringLines, "Département / service", firstValue(offer?.departmentName, contract?.departmentName, requestAny.departmentName));
-  pushNumberLine(hiringLines, "Rémunération brute mensuelle", firstNumberValue(offer?.proposedGrossMonthly, contract?.grossMonthly, requestAny.proposedGrossMonthly));
-  pushNumberLine(hiringLines, "Rémunération brute annuelle", firstNumberValue(offer?.proposedGrossAnnual, contract?.grossAnnual, requestAny.proposedGrossAnnual));
+  );
 
-  if (hiringLines.length > 0) {
-    lines.push("EMBAUCHE / RAPPORT DE TRAVAIL", ...hiringLines, "");
-  }
+  const input: UniLavAssunzioneEmailInput = {
+    acceptanceMode: offer?.acceptanceMode === "hr_direct"
+      ? "hr_direct"
+      : offer?.candidateResponse === "accepted"
+        ? "candidate_portal"
+        : "unknown",
+    consultantName,
+    employeeFullName: employeeName,
+    codiceFiscale: firstValue(person?.codiceFiscale, contractAny?.taxCode),
+    birthDate: firstValue(person?.dateOfBirth, contractAny?.dateOfBirth),
+    birthPlace: firstValue(person?.placeOfBirth, contractAny?.placeOfBirth),
+    gender: person?.gender,
+    residenceAddress: firstValue(person?.address, contractAny?.employeeAddressSnapshot),
+    residenceCity: person?.city,
+    residenceProvince: person?.province,
+    residencePostalCode: person?.postalCode,
+    employeeEmail: firstValue(person?.email, request.candidateEmail),
+    employeePhone: firstValue(person?.phone, request.candidatePhone),
+    startDate: firstValue(offer?.proposedStartDate, contract?.startDate, request.plannedHireDate),
+    endDate: isFixedTermContract(contractType) ? firstValue(offer?.proposedEndDate, contract?.endDate) : "",
+    contractType,
+    workingTime: firstValue(
+      offer?.workingTime,
+      contractAny?.isPartTime === true ? "Temps partiel" : contractAny?.isPartTime === false ? "Temps plein" : "",
+      requestAny.workingTime
+    ),
+    weeklyHours: firstValue(offerAny?.weeklyHours, contractAny?.weeklyHours, requestAny.weeklyHours),
+    workingSchedule: firstValue(offerAny?.workingScheduleNotes, contractAny?.workingScheduleNotes),
+    trialPeriod: trialPeriod ? `${trialPeriod}${contractAny?.trialPeriodUnit ? ` ${contractAny.trialPeriodUnit}` : " jours"}` : "",
+    ccnl: firstValue(offerAny?.ccnlName, contractAny?.ccnlName, requestAny.ccnlName),
+    level,
+    qualification: firstValue(offerAny?.qualificationLabel, contractAny?.qualificationCategory, offer?.jobTitleName, contractAny?.jobTitleName, request.jobRoleId),
+    department: firstValue(offer?.departmentName, contractAny?.departmentName, requestAny.departmentName),
+    grossMonthly: firstValue(offer?.proposedGrossMonthly, contractAny?.grossMonthly, requestAny.proposedGrossMonthly),
+    grossAnnual: firstValue(offer?.proposedGrossAnnual, contractAny?.grossAnnual, requestAny.proposedGrossAnnual),
+    worksiteName: firstValue(worksite?.name, offer?.worksiteName, contractAny?.worksiteName, requestAny.worksiteName),
+    worksiteAddress: worksite?.address,
+    worksiteCity: worksite?.city,
+    worksiteProvince: worksite?.province,
+    worksitePostalCode: worksiteAny?.postalCode,
+    employerLegalName: firstValue(entity?.raisonSociale, entity?.legalName, entity?.nomEntreprise, entity?.name),
+    employerCodiceFiscale: entity?.codeFiscalEntreprise,
+    employerVat: entity?.numeroTVA,
+    employerRegisteredOffice: entity?.adresseSiegeSocial,
+    employerPostalCode: entity?.codePostal,
+    employerCity: entity?.ville,
+    employerProvince: entity?.province,
+    employerPhone: entity?.telephone,
+    employerEmail: entity?.email,
+    employerPec: entity?.pec,
+    employmentRequestId: firstValue(request.id, requestId),
+    employmentOfferId: request.offerId,
+  };
 
-  const worksiteLines: string[] = [];
-  pushLine(worksiteLines, "Site", worksiteName);
-  pushLine(worksiteLines, "Adresse", worksite?.address);
-  pushLine(worksiteLines, "Ville", worksite?.city);
-  pushLine(worksiteLines, "Province", worksite?.province);
-  pushLine(worksiteLines, "Code postal", (worksite as any)?.postalCode);
-
-  if (worksiteLines.length > 0) {
-    lines.push("LIEU DE TRAVAIL", ...worksiteLines, "");
-  }
-
-  const companyLines: string[] = [];
-  pushLine(companyLines, "Raison sociale", entityName);
-  pushLine(companyLines, "Codice fiscale entreprise", entity?.codeFiscalEntreprise);
-  pushLine(companyLines, "Partita IVA / numéro TVA", entity?.numeroTVA);
-  pushLine(companyLines, "Adresse siège", entity?.adresseSiegeSocial);
-  pushLine(companyLines, "Code postal", entity?.codePostal);
-  pushLine(companyLines, "Ville", entity?.ville);
-  pushLine(companyLines, "Province", entity?.province);
-  pushLine(companyLines, "Téléphone", entity?.telephone);
-  pushLine(companyLines, "Email", entity?.email);
-  pushLine(companyLines, "PEC", entity?.pec);
-
-  if (companyLines.length > 0) {
-    lines.push("ENTREPRISE / DATORE DI LAVORO", ...companyLines, "");
-  }
-
-  const dossierLines: string[] = [];
-  pushLine(dossierLines, "Référence demande", firstValue(request.id, requestId));
-  pushLine(dossierLines, "Référence offre", request.offerId);
-  pushLine(dossierLines, "Consultant", consultantName);
-
-  if (dossierLines.length > 0) {
-    lines.push("DOSSIER", ...dossierLines, "");
-  }
-
-  lines.push("Merci de nous transmettre la confirmation de la communication UniLav ainsi que le numéro de protocole dès disponibilité.", "", "Cordialement,");
-
-  return lines.join("\n");
+  return buildUniLavAssunzioneConsultantEmail(input);
 }
 
 export default function EmploymentRequestDetailPage() {
@@ -428,9 +385,28 @@ export default function EmploymentRequestDetailPage() {
 
     setProcessing(true);
     try {
+      const generatedAssunzioneDraft =
+        request.type !== "unilav_proroga" && request.type !== "unilav_trasformazione"
+          ? buildUniLavAssunzioneEmailDraft({
+              request,
+              offer: employmentOffer,
+              person,
+              worksite,
+              contract,
+              entity,
+              consultantName: consultantForm.name,
+              requestId,
+            })
+          : null;
+      const savedSubject = effectiveMandatoryCommunication?.emailSubject?.trim();
+      const savedBody = effectiveMandatoryCommunication?.emailBody?.trim();
+      const subjectOverride = savedSubject || generatedAssunzioneDraft?.subject;
+      const bodyOverride = savedBody || generatedAssunzioneDraft?.body;
       const result = await getConsultantCPIEmailPreviewAction({
         entityId,
         requestId,
+        subjectOverride,
+        bodyOverride,
         templateData: {
           consultantName: consultantForm.name || "Consulente",
           candidateName: request.candidateDisplayName || "Candidato",
@@ -446,8 +422,6 @@ export default function EmploymentRequestDetailPage() {
 
       if (!result.success) throw new Error((result as any).error || "Impossible de générer l'aperçu.");
 
-      const savedSubject = effectiveMandatoryCommunication?.emailSubject?.trim();
-      const savedBody = effectiveMandatoryCommunication?.emailBody?.trim();
       const finalSubject = savedSubject || result.preview!.subject;
       const finalBody = savedBody || result.preview!.text;
 
@@ -492,7 +466,7 @@ Si richiede cortesemente di procedere con la comunicazione di proroga e di trasm
 
 Cordiali saluti,`;
       } else {
-        body = buildUniLavAssunzioneFallbackBody({
+        const generatedDraft = buildUniLavAssunzioneEmailDraft({
           request,
           offer: employmentOffer,
           person,
@@ -502,6 +476,8 @@ Cordiali saluti,`;
           consultantName: consultantForm.name,
           requestId,
         });
+        subject = effectiveMandatoryCommunication?.emailSubject || generatedDraft.subject;
+        body = generatedDraft.body;
       }
     }
 

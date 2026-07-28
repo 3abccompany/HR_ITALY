@@ -394,7 +394,7 @@ export default function EditEmploymentOfferPage() {
         entityId, dossierId: dossier.dossierId, item: pendingUploadItem,
         file: pendingUploadFile, offer, actorUid: user.uid,
         actorName: membership?.userDisplayName || undefined, expiresAt: pendingExpiresAt || undefined,
-        oldFileId: pendingUploadItem.fileId
+        oldFileId: getPreHireFileId(pendingUploadItem)
       });
       toast({ title: "Document téléversé" });
       setIsUploadDialogOpen(false);
@@ -408,10 +408,11 @@ export default function EditEmploymentOfferPage() {
   };
 
   const handleConsultDocument = async (item: PreHireDocument) => {
-    if (!item.fileId) return;
-    setLoadingFileId(item.itemId);
+    const fileId = getPreHireFileId(item);
+    if (!fileId) return;
+    setLoadingFileId(getPreHireItemId(item));
     try {
-      const docSnap = await getDoc(doc(db!, `entities/${entityId}/documents`, item.fileId));
+      const docSnap = await getDoc(doc(db!, `entities/${entityId}/documents`, fileId));
       if (!docSnap.exists()) throw new Error("Document introuvable.");
       const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
       window.open(url, '_blank');
@@ -421,16 +422,19 @@ export default function EditEmploymentOfferPage() {
   };
 
   const isAccepted = offer?.status === 'accepted';
+  const isDirectHire = offer?.acceptanceMode === "hr_direct";
   const isUniLavDone = mandatoryCommunication?.status === "receipt_received" || standaloneRequest?.status === 'completed';
   const isConverted = offer?.conversionStatus === 'converted';
   const canConvert = dossier?.readyForConversion && isUniLavDone && !isConverted;
 
   const canManage = hasPermission("contracts.create") || hasPermission("contracts.update");
+  const canUploadPreHireDocuments = hasPermission("documents.upload");
+  const canDirectHireUploadPreHireDocuments = isDirectHire && canUploadPreHireDocuments;
 
   const blockers = useMemo(() => {
     const list: string[] = [];
     if (!dossier?.readyForConversion) {
-      const missing = checklist?.filter(i => i.isRequired && i.status !== 'approved' && i.status !== 'not_applicable').map(i => i.label);
+      const missing = checklist?.filter(i => isRequiredPreHireItem(i) && i.status !== 'approved' && i.status !== 'not_applicable').map(i => i.label);
       if (missing && missing.length > 0) {
         missing.forEach(m => list.push(`Attente validation : ${m}`));
       } else if (!checklist || checklist.length === 0) {
@@ -441,8 +445,8 @@ export default function EditEmploymentOfferPage() {
     return list;
   }, [dossier, checklist, isUniLavDone]);
 
-  const validatedCount = checklist?.filter(i => i.isRequired && (i.status === 'approved' || i.status === 'not_applicable')).length || 0;
-  const requiredCount = checklist?.filter(i => i.isRequired).length || 0;
+  const validatedCount = checklist?.filter(i => isRequiredPreHireItem(i) && (i.status === 'approved' || i.status === 'not_applicable')).length || 0;
+  const requiredCount = checklist?.filter(i => isRequiredPreHireItem(i)).length || 0;
 
   if (membershipLoading || loadingOffer) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
 
@@ -473,6 +477,11 @@ export default function EditEmploymentOfferPage() {
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-black text-primary tracking-tight">Onboarding Funnel</h1>
                 {getStatusBadge(offer.status as EmploymentOfferStatus)}
+                {offer.acceptanceMode === "hr_direct" && (
+                  <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-[9px] font-black uppercase text-indigo-700">
+                    Embauche directe
+                  </Badge>
+                )}
               </div>
               <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest mt-1">Candidat : {offer.candidateDisplayName}</p>
             </div>
@@ -547,7 +556,16 @@ export default function EditEmploymentOfferPage() {
                 <DetailItem label="Intitulé du Poste" value={offer.jobTitleName} icon={Briefcase} />
                 <DetailItem label="Département" value={offer.departmentName} icon={Building2} />
                 <DetailItem label="Site d'affectation" value={offer.worksiteName} icon={MapPin} />
-                {offer.recruitmentNeedTitle && <DetailItem label="Projet de recrutement" value={offer.recruitmentNeedTitle} icon={Info} />}
+                {isDirectHire ? (
+                  <>
+                    <DetailItem label="Mode d'embauche" value="Embauche directe" icon={Info} />
+                    {offer.recruitmentNeedId && offer.recruitmentNeedTitle && offer.recruitmentNeedTitle !== "Besoin sans titre" && (
+                      <DetailItem label="Besoin RH lié" value={offer.recruitmentNeedTitle} icon={Info} />
+                    )}
+                  </>
+                ) : (
+                  offer.recruitmentNeedTitle && <DetailItem label="Projet de recrutement" value={offer.recruitmentNeedTitle} icon={Info} />
+                )}
              </CardContent>
           </Card>
 
@@ -701,15 +719,17 @@ export default function EditEmploymentOfferPage() {
                        <Button variant="outline" size="sm" onClick={() => setIsCustomDocOpen(true)} className="h-8 rounded-xl font-bold bg-white gap-2 border-dashed">
                           <Plus className="w-3.5 h-3.5" /> Ajouter demande
                        </Button>
-                       <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={handleSendDocRequestLocal} 
-                          disabled={saving || !user} 
-                          className="h-8 rounded-xl font-bold bg-white gap-2"
-                        >
-                          <Send className="w-3.5 h-3.5" /> Relancer candidat
-                       </Button>
+                       {!isDirectHire && (
+                         <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleSendDocRequestLocal}
+                            disabled={saving || !user}
+                            className="h-8 rounded-xl font-bold bg-white gap-2"
+                          >
+                            <Send className="w-3.5 h-3.5" /> Relancer candidat
+                         </Button>
+                       )}
                      </div>
                   )}
                 </CardHeader>
@@ -722,8 +742,12 @@ export default function EditEmploymentOfferPage() {
                     </div>
                   ) : (
                     <div className="grid gap-3">
-                      {checklist?.map(item => (
-                        <div key={item.itemId} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm group hover:border-primary/20 transition-all">
+                      {checklist?.map(item => {
+                        const itemId = getPreHireItemId(item);
+                        const fileId = getPreHireFileId(item);
+                        const uploadableStatus = isUploadablePreHireStatus(item.status);
+                        return (
+                        <div key={itemId} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm group hover:border-primary/20 transition-all">
                           <div className="flex items-center gap-4">
                              <div className={cn("p-2 rounded-xl shrink-0", 
                                item.status === 'approved' ? "bg-green-100 text-green-600" : 
@@ -734,7 +758,7 @@ export default function EditEmploymentOfferPage() {
                              <div className="min-w-0">
                                 <div className="flex items-center gap-2">
                                   <p className="text-sm font-black text-slate-800 truncate">{item.label}</p>
-                                  {item.isRequired && <Badge variant="outline" className="text-[8px] font-black uppercase h-4 border-red-200 text-red-700 bg-red-50">Requis</Badge>}
+                                  {isRequiredPreHireItem(item) && <Badge variant="outline" className="text-[8px] font-black uppercase h-4 border-red-200 text-red-700 bg-red-50">Requis</Badge>}
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                    {getDocStatusBadge(item.status)}
@@ -742,38 +766,38 @@ export default function EditEmploymentOfferPage() {
                                 </div>
                              </div>
                           </div>
-                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                             {item.fileId && (
+                          <div className={cn("flex items-center gap-2 transition-opacity", isDirectHire ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
+                             {fileId && (
                                <Button variant="secondary" size="sm" className="h-8 rounded-xl font-bold bg-primary/5 text-primary gap-1.5" onClick={() => handleConsultDocument(item)}>
-                                 {loadingFileId === item.itemId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                                 {loadingFileId === itemId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
                                  Voir
                                </Button>
                              )}
                              {!isConverted && (
                                <>
-                                 {(item.status === 'missing' || item.status === 'uploaded' || item.status === 'rejected') && (
+                                 {uploadableStatus && (!isDirectHire || canDirectHireUploadPreHireDocuments) && (
                                    <div className="relative">
                                       <Button variant="outline" size="sm" className="h-8 rounded-xl font-bold border-dashed border-2 gap-1.5">
                                          <Upload className="w-3.5 h-3.5" />
-                                         {item.status === 'missing' ? 'Joindre' : 'Remplacer'}
+                                         {isDirectHire && !fileId ? 'Ajouter le document' : fileId ? 'Remplacer' : 'Joindre'}
                                       </Button>
                                       <input type="file" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onChange={(e) => handleUploadPreHireDoc(item, e)} />
                                    </div>
                                  )}
                                  {item.status === 'uploaded' && (
                                    <div className="flex gap-1 ml-2">
-                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" title="Approuver" onClick={() => handleUpdateDoc(item.itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
-                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" title="Rejeter" onClick={() => setRejectItem({ id: item.itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
+                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" title="Approuver" onClick={() => handleUpdateDoc(itemId, 'approved')}><CheckCircle2 className="w-4 h-4" /></Button>
+                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" title="Rejeter" onClick={() => setRejectItem({ id: itemId, reason: "" })}><XCircle className="w-4 h-4" /></Button>
                                    </div>
                                  )}
-                                 {item.isCustom && item.status === 'missing' && !item.fileId && (
-                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Supprimer" onClick={() => handleDeleteCustomDoc(item.itemId)}><Trash2 className="w-4 h-4" /></Button>
+                                 {item.isCustom && isMissingPreHireStatus(item.status) && !fileId && (
+                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Supprimer" onClick={() => handleDeleteCustomDoc(itemId)}><Trash2 className="w-4 h-4" /></Button>
                                  )}
                                </>
                              )}
                           </div>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   )}
                 </CardContent>
@@ -1143,6 +1167,29 @@ function getDocStatusBadge(status: string) {
     case 'not_applicable': return <div className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase">N/A</div>;
     default: return <div className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase"><Circle className="w-3 h-3 opacity-20" /> Manquant</div>;
   }
+}
+
+function getPreHireItemId(item: PreHireDocument) {
+  const legacyOrModern = item as PreHireDocument & { id?: string; key?: string };
+  return legacyOrModern.itemId || legacyOrModern.id || legacyOrModern.key || "";
+}
+
+function getPreHireFileId(item: PreHireDocument) {
+  const legacyOrModern = item as PreHireDocument & { documentId?: string | null };
+  return legacyOrModern.fileId || legacyOrModern.documentId || "";
+}
+
+function isRequiredPreHireItem(item: PreHireDocument) {
+  const legacyOrModern = item as PreHireDocument & { required?: boolean };
+  return legacyOrModern.isRequired ?? legacyOrModern.required ?? false;
+}
+
+function isMissingPreHireStatus(status: string) {
+  return status === "missing" || status === "requested";
+}
+
+function isUploadablePreHireStatus(status: string) {
+  return isMissingPreHireStatus(status) || status === "uploaded" || status === "rejected";
 }
 
 function formatDateTime(val: any): string {
