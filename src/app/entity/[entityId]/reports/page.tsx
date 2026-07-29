@@ -42,6 +42,12 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import {
+  allocateWeeklyOrdinaryOvertime,
+  getAttendanceFullWeekRange,
+  resolveDateAwareWeeklyThreshold,
+} from "@/lib/attendance/weekly-overtime";
+import type { CCNL } from "@/types/ccnl";
 import type { Employee } from "@/types/employee";
 import type { AttendanceRecord } from "@/types/attendance";
 import type { Contract } from "@/types/contract";
@@ -390,6 +396,7 @@ export default function ReportsPage() {
   const canReadEmployees = hasPermission("employees.read");
   const canReadAttendances = hasPermission("attendances.read");
   const canReadContracts = hasPermission("contracts.read");
+  const canReadCcnls = hasPermission("ccnls.read");
   const canReadEmploymentRequests = hasPermission("employmentRequests.read");
   const canReadMealTickets = hasPermission("mealTickets.read") || hasPermission("mealTickets.manage");
   const canReadReimbursements =
@@ -406,6 +413,11 @@ export default function ReportsPage() {
   const { startDate, endDate } = useMemo(
     () => getMonthRange(selectedYear, selectedMonth),
     [selectedMonth, selectedYear]
+  );
+
+  const { start: fullWeekStartDate, end: fullWeekEndDate } = useMemo(
+    () => getAttendanceFullWeekRange(startDate, endDate),
+    [endDate, startDate]
   );
 
   const employeesQuery = useMemo(() => {
@@ -446,10 +458,10 @@ export default function ReportsPage() {
     if (!db || !entityId || !permissionsReady || !canReadReports || !canReadAttendances) return null;
     return query(
       collection(db, `entities/${entityId}/attendances`),
-      where("attendanceDate", ">=", startDate),
-      where("attendanceDate", "<=", endDate)
+      where("attendanceDate", ">=", fullWeekStartDate),
+      where("attendanceDate", "<=", fullWeekEndDate)
     ) as Query<AttendanceRecord>;
-  }, [db, entityId, permissionsReady, canReadReports, canReadAttendances, startDate, endDate]);
+  }, [db, entityId, permissionsReady, canReadReports, canReadAttendances, fullWeekStartDate, fullWeekEndDate]);
 
   const contractsQuery = useMemo(() => {
     if (!db || !entityId || !permissionsReady || !canReadReports || !canReadContracts) return null;
@@ -459,6 +471,16 @@ export default function ReportsPage() {
       where("startDate", "<=", endDate)
     ) as Query<Contract>;
   }, [db, entityId, permissionsReady, canReadReports, canReadContracts, startDate, endDate]);
+
+  const attendanceContractsQuery = useMemo(() => {
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadContracts) return null;
+    return query(collection(db, `entities/${entityId}/contracts`)) as Query<Contract>;
+  }, [db, entityId, permissionsReady, canReadReports, canReadContracts]);
+
+  const ccnlsQuery = useMemo(() => {
+    if (!db || !entityId || !permissionsReady || !canReadReports || !canReadCcnls) return null;
+    return query(collection(db, `entities/${entityId}/ccnls`)) as Query<CCNL>;
+  }, [db, entityId, permissionsReady, canReadReports, canReadCcnls]);
 
   const employmentRequestsQuery = useMemo(() => {
     if (!db || !entityId || !permissionsReady || !canReadReports || !canReadEmploymentRequests) return null;
@@ -494,6 +516,14 @@ export default function ReportsPage() {
     contractsQuery,
     "reports.contracts"
   );
+  const { data: attendanceContracts, loading: loadingAttendanceContracts } = useCollection<Contract>(
+    attendanceContractsQuery,
+    "reports.attendance-contracts"
+  );
+  const { data: ccnls, loading: loadingCcnls } = useCollection<CCNL>(
+    ccnlsQuery,
+    "reports.ccnls"
+  );
   const { data: employmentRequests, loading: loadingEmploymentRequests } = useCollection<EmploymentRequest>(
     employmentRequestsQuery,
     "reports.employment-requests"
@@ -509,6 +539,22 @@ export default function ReportsPage() {
     employees?.forEach((employee) => map.set(employee.employeeId, employee));
     return map;
   }, [employees]);
+
+  const contractsByEmployee = useMemo(() => {
+    const map = new Map<string, Contract[]>();
+    (attendanceContracts || []).forEach((contract) => {
+      const list = map.get(contract.employeeId) || [];
+      list.push(contract);
+      map.set(contract.employeeId, list);
+    });
+    return map;
+  }, [attendanceContracts]);
+
+  const ccnlsById = useMemo(() => {
+    const map = new Map<string, CCNL>();
+    (ccnls || []).forEach((ccnl) => map.set(ccnl.ccnlId, ccnl));
+    return map;
+  }, [ccnls]);
 
   const mealTicketMap = useMemo(() => {
     const map = new Map<string, MealTicketMonthlySummary>();
@@ -581,8 +627,53 @@ export default function ReportsPage() {
     return Array.from(grouped.entries())
       .map(([employeeId, records]) => {
         const employee = employeesMap.get(employeeId);
-        const validatedRecords = records.filter((record) => ["validated", "corrected", "locked"].includes(record.status));
-        const sundayWorkedHours = records.reduce((sum, record) => {
+        const employeeContracts = contractsByEmployee.get(employeeId) || [];
+        const recordsInPeriod = records.filter((record) => record.attendanceDate >= startDate && record.attendanceDate <= endDate);
+        const recordsByWeek = new Map<string, AttendanceRecord[]>();
+        records.forEach((record) => {
+          const weekKey = getAttendanceFullWeekRange(record.attendanceDate, record.attendanceDate).start;
+          const list = recordsByWeek.get(weekKey) || [];
+          list.push(record);
+          recordsByWeek.set(weekKey, list);
+        });
+
+        let canonicalOvertime = 0;
+        recordsByWeek.forEach((weekRecords) => {
+          const thresholds = new Set<number>();
+          weekRecords.forEach((record) => {
+            const resolved = resolveDateAwareWeeklyThreshold({
+              employeeId,
+              attendanceDate: record.attendanceDate,
+              employeeWeeklyHours: employee?.weeklyHours,
+              contracts: employeeContracts,
+              ccnlsById,
+            }).thresholdHours;
+            if (resolved) thresholds.add(resolved);
+          });
+
+          if (thresholds.size !== 1) {
+            canonicalOvertime += weekRecords
+              .filter((record) => record.attendanceDate >= startDate && record.attendanceDate <= endDate)
+              .reduce((sum, record) => sum + (record.overtimeHours || 0), 0);
+            return;
+          }
+
+          const allocation = allocateWeeklyOrdinaryOvertime(
+            weekRecords.map((record) => ({
+              id: record.attendanceId || record.id,
+              date: record.attendanceDate,
+              workedHours: record.validatedHours || 0,
+              sortKey: record.attendanceDate,
+            })),
+            Array.from(thresholds)[0]
+          );
+
+          canonicalOvertime += allocation.allocations
+            .filter((allocation) => allocation.date >= startDate && allocation.date <= endDate)
+            .reduce((sum, allocation) => sum + allocation.overtimeHours, 0);
+        });
+        const validatedRecords = recordsInPeriod.filter((record) => ["validated", "corrected", "locked"].includes(record.status));
+        const sundayWorkedHours = recordsInPeriod.reduce((sum, record) => {
           const day = new Date(`${record.attendanceDate}T00:00:00`).getDay();
           return sum + (day === 0 ? record.validatedHours || 0 : 0);
         }, 0);
@@ -590,17 +681,17 @@ export default function ReportsPage() {
         return {
           employeeId,
           employee,
-          totalDays: new Set(records.map((record) => record.attendanceDate)).size,
+          totalDays: new Set(recordsInPeriod.map((record) => record.attendanceDate)).size,
           validatedDays: new Set(validatedRecords.map((record) => record.attendanceDate)).size,
-          validatedHours: records.reduce((sum, record) => sum + (record.validatedHours || 0), 0),
-          dayHours: records.reduce((sum, record) => sum + (record.dayHours || 0), 0),
-          nightHours: records.reduce((sum, record) => sum + (record.nightHours || 0), 0),
-          overtimeHours: records.reduce((sum, record) => sum + (record.overtimeHours || 0), 0),
+          validatedHours: recordsInPeriod.reduce((sum, record) => sum + (record.validatedHours || 0), 0),
+          dayHours: recordsInPeriod.reduce((sum, record) => sum + (record.dayHours || 0), 0),
+          nightHours: recordsInPeriod.reduce((sum, record) => sum + (record.nightHours || 0), 0),
+          overtimeHours: Number(canonicalOvertime.toFixed(2)),
           sundayWorkedHours,
-          holidayWorkedHours: records.reduce((sum, record) => sum + (record.holidayWorkedHours || 0), 0),
-          absences: records.filter((record) => !!record.absenceCode).length,
-          anomalies: records.filter((record) => record.anomalyFlag).length,
-          draftOrUnvalidated: records.filter((record) => ["draft", "draft_imported"].includes(record.status)).length,
+          holidayWorkedHours: recordsInPeriod.reduce((sum, record) => sum + (record.holidayWorkedHours || 0), 0),
+          absences: recordsInPeriod.filter((record) => !!record.absenceCode).length,
+          anomalies: recordsInPeriod.filter((record) => record.anomalyFlag).length,
+          draftOrUnvalidated: recordsInPeriod.filter((record) => ["draft", "draft_imported"].includes(record.status)).length,
         };
       })
       .filter((row) => {
@@ -612,7 +703,7 @@ export default function ReportsPage() {
         const employeeB = b.employee?.displayName || b.employeeId;
         return employeeA.localeCompare(employeeB);
       });
-  }, [attendanceRecords, employeesMap, search]);
+  }, [attendanceRecords, ccnlsById, contractsByEmployee, employeesMap, endDate, search, startDate]);
 
   const employmentRequestByContractId = useMemo(() => {
     const map = new Map<string, EmploymentRequest>();
@@ -842,6 +933,8 @@ export default function ReportsPage() {
     loadingKilometers ||
     loadingAttendance ||
     loadingContracts ||
+    loadingAttendanceContracts ||
+    loadingCcnls ||
     loadingEmploymentRequests ||
     loadingMandatoryCommunications;
 

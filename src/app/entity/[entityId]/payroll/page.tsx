@@ -454,6 +454,10 @@ export default function PayrollSynthesisPage() {
                       (c.holidayWorkedValue || 0) +
                       totalExtras -
                       (c.deductionValue || 0);
+                    const standardOvertimePremiumValue = c.overtimeDayValue || 0;
+                    const sundayOvertimePremiumValue = c.overtimeSundayValue || 0;
+                    const holidayOvertimePremiumValue = c.overtimeHolidayValue || 0;
+                    const ordinaryHolidayPremiumValue = c.holidayWorkedValue || 0;
                     
                     return (
                       <TableRow key={c.id} className="group border-b border-slate-100 odd:bg-white even:bg-slate-50/30 hover:bg-slate-50 transition-colors">
@@ -506,9 +510,15 @@ export default function PayrollSynthesisPage() {
                         <TableCell className="py-4 align-middle text-right border-r border-slate-100">
                           <div className="space-y-1">
                             <p className="font-bold text-slate-800 text-sm">{formatEuro(variablesTotal)}</p>
+                            <div className="space-y-0.5 text-[10px] font-bold text-slate-600">
+                              <p>Sup. standard: {formatEuro(standardOvertimePremiumValue)}</p>
+                              <p>Sup. dimanche: {formatEuro(sundayOvertimePremiumValue)}</p>
+                              <p>Sup. jour ferie: {formatEuro(holidayOvertimePremiumValue)}</p>
+                              <p>Ferie travaille ordinaire: {formatEuro(ordinaryHolidayPremiumValue)}</p>
+                            </div>
                             {isActualWorkedHours && c.paidHolidayValue != null && (
                               <p className="text-[10px] font-bold text-teal-700">
-                                Fériés rémunérés: {formatEuro(c.paidHolidayValue)}
+                                Feries non travailles remuneres: {formatEuro(c.paidHolidayValue)}
                               </p>
                             )}
                           </div>

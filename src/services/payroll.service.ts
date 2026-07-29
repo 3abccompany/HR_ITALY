@@ -9,6 +9,7 @@ import {
   collection, 
   query, 
   where, 
+  documentId,
   getDocs, 
   orderBy,
   doc,
@@ -48,11 +49,16 @@ import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
 import { createAuditLog } from "./audit.service";
 import {
+  getAttendanceFullWeekRange,
+  resolveDateAwareWeeklyThreshold,
+} from "@/lib/attendance/weekly-overtime";
+import {
   calculatePayrollEconomicValues as calculatePayrollEconomicValuesCore,
   getPayrollMonthRange,
   percentageToDecimal,
   percentageToMultiplier,
   reconcileWeeklyOvertime,
+  resolveWeeklyThresholdHours,
   resolveSupportedPayCalculationMode,
   roundMoney,
   sanitizeForFirestore,
@@ -82,6 +88,42 @@ async function resolvePaidHolidayHoursForActualWorkedMode(
   }
 
   return Number(paidHolidayHours.toFixed(2));
+}
+
+async function buildDateAwareWeeklyThresholdResolver(
+  db: Firestore,
+  entityId: string,
+  employeeId: string
+): Promise<(attendanceDate: string) => number | null> {
+  const employeeSnap = await getDoc(doc(db, `entities/${entityId}/employees`, employeeId));
+  const employee = employeeSnap.exists() ? employeeSnap.data() as Employee : null;
+  const contractSnap = await getDocs(query(
+    collection(db, `entities/${entityId}/contracts`),
+    where("employeeId", "==", employeeId)
+  ));
+  const contracts = contractSnap.docs.map((contractDoc) => contractDoc.data() as Contract);
+  const ccnlIds = Array.from(new Set(contracts.map((contract) => contract.ccnlId).filter(Boolean) as string[]));
+  const ccnlsById = new Map<string, CCNL>();
+
+  for (let i = 0; i < ccnlIds.length; i += 30) {
+    const chunk = ccnlIds.slice(i, i + 30);
+    const snap = await getDocs(query(
+      collection(db, `entities/${entityId}/ccnls`),
+      where(documentId(), "in", chunk)
+    ));
+    snap.docs.forEach((ccnlDoc) => {
+      const ccnl = ccnlDoc.data() as CCNL;
+      ccnlsById.set(ccnl.ccnlId, ccnl);
+    });
+  }
+
+  return (attendanceDate: string) => resolveDateAwareWeeklyThreshold({
+    employeeId,
+    attendanceDate,
+    employeeWeeklyHours: employee?.weeklyHours,
+    contracts,
+    ccnlsById,
+  }).thresholdHours;
 }
 
 export async function aggregateMonthlyAttendance(
@@ -271,18 +313,11 @@ export async function resolvePayrollRateSnapshot(
   }
 
   // 2. Expected Weekly Hours priority: Contract > Root Standard > Root Schedule Sum
-  let expectedWeeklyHours: number | null = null;
-  const isValidNum = (v: any): v is number => typeof v === 'number' && v > 0;
-
-  if (isValidNum(contract.weeklyHours)) {
-    expectedWeeklyHours = contract.weeklyHours;
-  } else if (ccnlData && isValidNum(ccnlData.standardWeeklyHours)) {
-    expectedWeeklyHours = ccnlData.standardWeeklyHours;
-  } else if (ccnlData && ccnlData.weeklySchedule) {
-    const s = ccnlData.weeklySchedule;
-    const sum = (s.monday || 0) + (s.tuesday || 0) + (s.wednesday || 0) + (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0) + (s.sunday || 0);
-    if (sum > 0) expectedWeeklyHours = sum;
-  }
+  const expectedWeeklyHours = resolveWeeklyThresholdHours({
+    contractWeeklyHours: contract.weeklyHours,
+    ccnlStandardWeeklyHours: ccnlData?.standardWeeklyHours,
+    ccnlWeeklySchedule: ccnlData?.weeklySchedule,
+  });
 
   // 3. Premium Priority: PayrollParameter > Level value > null
   const payCalculationMode =
@@ -348,6 +383,8 @@ export async function calculateAndSaveMonthlyPayroll(
   actorUid: string
 ) {
   const { startDateIso, endDateIso, nextMonthStartDateIso } = await getPayrollMonthRange(year, month);
+  const { start: fullWeekStartDate, end: fullWeekEndDate } = getAttendanceFullWeekRange(startDateIso, endDateIso);
+  const fullWeekNextEndDate = format(addDays(parseISO(fullWeekEndDate), 1), "yyyy-MM-dd");
   
   // Fetch Holidays from Registry for robust detection (Phase Fix)
   const holidaysRef = collection(db, `entities/${entityId}/holidays`);
@@ -386,42 +423,50 @@ export async function calculateAndSaveMonthlyPayroll(
             )
           : 0;
 
-      const threshold = rate.expectedWeeklyHours;
+      const getExpectedWeeklyHoursForDate = await buildDateAwareWeeklyThresholdResolver(db, entityId, empId);
+      const attRef = collection(db, `entities/${entityId}/attendances`);
+      const attSnap = await getDocs(query(
+        attRef,
+        where("employeeId", "==", empId),
+        where("attendanceDate", ">=", fullWeekStartDate),
+        where("attendanceDate", "<", fullWeekNextEndDate)
+      ));
 
-      if (!threshold) {
-         empWarnings.push({
-           code: "missing_weekly_schedule",
-           severity: "warning",
-           employeeId: empId,
-           message: "Seuil hebdomadaire non détecté. Réconciliation SUP bloquée."
-         });
-         agg.overtimeHours = 0; 
-         agg.weeklyBreakdown = [];
-      } else {
-         const attRef = collection(db, `entities/${entityId}/attendances`);
-         const attSnap = await getDocs(query(
-           attRef,
-           where("employeeId", "==", empId),
-           where("attendanceDate", ">=", startDateIso),
-           where("attendanceDate", "<", nextMonthStartDateIso)
-         ));
-         
-         const reliableStatuses = ["validated", "corrected", "locked"];
-         const records = attSnap.docs
-           .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
-           .filter(r => reliableStatuses.includes(r.status));
+      const reliableStatuses = ["validated", "corrected", "locked"];
+      const records = attSnap.docs
+        .map(d => ({ ...d.data(), id: d.id } as AttendanceRecord))
+        .filter(r => reliableStatuses.includes(r.status));
 
-         const reconciliation = await reconcileWeeklyOvertime(records, threshold, holidaysMap);
-         
-         agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
-         agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
-         agg.overtimeDayHours = reconciliation.overtimeDayHours;
-         agg.overtimeNightHours = reconciliation.overtimeNightHours;
-         agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
-         agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
-         agg.sundayWorkedHours = reconciliation.sundayWorkedHours;
-         agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
-      }
+      const reconciliation = await reconcileWeeklyOvertime(records, rate.expectedWeeklyHours ?? null, holidaysMap, {
+        getExpectedWeeklyHoursForDate,
+        includedDateStart: startDateIso,
+        includedDateEnd: endDateIso,
+      });
+
+      reconciliation.weeklyBreakdown
+        .filter((week) => week.classificationStatus === "limited")
+        .forEach((week) => {
+          empWarnings.push({
+            code: week.classificationReason === "contract_threshold_changed_inside_week"
+              ? "overtime_classification_limited"
+              : "missing_weekly_schedule",
+            severity: "warning",
+            employeeId: empId,
+            message: week.classificationReason === "contract_threshold_changed_inside_week"
+              ? `Seuil hebdomadaire ambigu du ${week.weekStart} au ${week.weekEnd}: changement de contrat dans la semaine.`
+              : `Seuil hebdomadaire non détecté du ${week.weekStart} au ${week.weekEnd}. Réconciliation SUP bloquée.`,
+          });
+        });
+
+      agg.overtimeHours = reconciliation.weeklyReconciledOvertimeHours;
+      agg.ordinaryNightHours = reconciliation.ordinaryNightHours;
+      agg.overtimeDayHours = reconciliation.overtimeDayHours;
+      agg.overtimeNightHours = reconciliation.overtimeNightHours;
+      agg.overtimeSundayHours = reconciliation.overtimeSundayHours;
+      agg.overtimeHolidayHours = reconciliation.overtimeHolidayHours;
+      agg.sundayWorkedHours = reconciliation.sundayWorkedHours;
+      agg.weeklyBreakdown = reconciliation.weeklyBreakdown;
+
 
       const econ = await calculatePayrollEconomicValues(agg, rate, empWarnings, {
         paidHolidayHours

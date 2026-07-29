@@ -4,10 +4,14 @@ import {
   startOfMonth,
   endOfMonth,
   addMonths,
-  startOfWeek,
-  endOfWeek,
   addDays,
 } from "date-fns";
+import {
+  allocateWeeklyOrdinaryOvertime,
+  getAttendanceWeekContext,
+  resolveWeeklyThresholdHours,
+  type WeeklyOvertimeInput,
+} from "@/lib/attendance/weekly-overtime";
 import type {
   PayrollAttendanceAggregation,
   PayrollPayCalculationMode,
@@ -16,18 +20,6 @@ import type {
   PayrollWeeklyBreakdown,
 } from "@/types/payroll";
 import type { AttendanceRecord } from "@/types/attendance";
-
-function getWeekContext(dateIso: string) {
-  const date = parseISO(dateIso);
-  const start = startOfWeek(date, { weekStartsOn: 1 });
-  const end = endOfWeek(date, { weekStartsOn: 1 });
-
-  return {
-    weekKey: `${format(start, "yyyy")}-W${format(start, "II")}`,
-    weekStart: format(start, "yyyy-MM-dd"),
-    weekEnd: format(end, "yyyy-MM-dd"),
-  };
-}
 
 interface WorkedSegment {
   start: Date;
@@ -126,10 +118,19 @@ function classifyExclusiveSegment(seg: ClassifiedSegment): "holiday" | "sunday" 
   return "day";
 }
 
+interface PayrollOvertimeInput extends WeeklyOvertimeInput {
+  segment: ClassifiedSegment;
+}
+
 export async function reconcileWeeklyOvertime(
   records: AttendanceRecord[],
   expectedWeeklyHours: number | null,
-  holidaysMap: Map<string, string>
+  holidaysMap: Map<string, string>,
+  options: {
+    getExpectedWeeklyHoursForDate?: (attendanceDate: string) => number | null;
+    includedDateStart?: string;
+    includedDateEnd?: string;
+  } = {}
 ): Promise<{
   weeklyReconciledOvertimeHours: number;
   overtimeDayHours: number;
@@ -140,7 +141,7 @@ export async function reconcileWeeklyOvertime(
   ordinaryNightHours: number;
   weeklyBreakdown: PayrollWeeklyBreakdown[];
 }> {
-  if (expectedWeeklyHours === null) {
+  if (expectedWeeklyHours === null && !options.getExpectedWeeklyHoursForDate) {
     return {
       weeklyReconciledOvertimeHours: 0,
       overtimeDayHours: 0,
@@ -155,7 +156,7 @@ export async function reconcileWeeklyOvertime(
 
   const weeksMap = new Map<string, { weekStart: string; weekEnd: string; records: AttendanceRecord[] }>();
   records.forEach(r => {
-    const ctx = getWeekContext(r.attendanceDate);
+    const ctx = getAttendanceWeekContext(r.attendanceDate);
     if (!weeksMap.has(ctx.weekKey)) {
       weeksMap.set(ctx.weekKey, { weekStart: ctx.weekStart, weekEnd: ctx.weekEnd, records: [] });
     }
@@ -173,16 +174,84 @@ export async function reconcileWeeklyOvertime(
 
   for (const [weekKey, weekData] of Array.from(weeksMap.entries())) {
     const weekRecords = [...weekData.records].sort((a, b) => a.attendanceDate.localeCompare(b.attendanceDate));
-
-    const allSegments: ClassifiedSegment[] = [];
-    weekRecords.forEach(r => {
-      const worked = getWorkedSegmentsFromRecord(r, holidaysMap);
-      worked.forEach(ws => {
-        allSegments.push(...splitSegmentByBoundaries(ws));
-      });
+    const weekThresholds = new Set<number>();
+    weekRecords.forEach((record) => {
+      const resolved = options.getExpectedWeeklyHoursForDate
+        ? options.getExpectedWeeklyHoursForDate(record.attendanceDate)
+        : expectedWeeklyHours;
+      if (typeof resolved === "number" && Number.isFinite(resolved) && resolved > 0) {
+        weekThresholds.add(resolved);
+      }
     });
 
-    allSegments.sort((a, b) => a.start.getTime() - b.start.getTime());
+    const weekThreshold = weekThresholds.size === 1
+      ? Array.from(weekThresholds)[0]
+      : null;
+
+    if (weekThreshold === null) {
+      const weekWorked = weekRecords.reduce((sum, record) => sum + Math.max(0, record.validatedHours || 0), 0);
+      const weekRawSup = weekRecords.reduce((s, r) => s + (r.overtimeHours || 0), 0);
+
+      breakdown.push({
+        weekKey,
+        weekStart: weekData.weekStart,
+        weekEnd: weekData.weekEnd,
+        expectedWeeklyHours: null,
+        workedHoursInWeek: Number(weekWorked.toFixed(2)),
+        rawImportedOvertimeHours: Number(weekRawSup.toFixed(2)),
+        weeklyOvertimeHours: 0,
+        payableOvertimeHoursInPayrollMonth: 0,
+        ordinaryNightHours: 0,
+        overtimeDayHours: 0,
+        overtimeNightHours: 0,
+        overtimeSundayHours: 0,
+        overtimeHolidayHours: 0,
+        classificationStatus: "limited",
+        classificationReason: weekThresholds.size > 1
+          ? "contract_threshold_changed_inside_week"
+          : "missing_weekly_threshold",
+      });
+      continue;
+    }
+
+    const weeklyInputs: PayrollOvertimeInput[] = [];
+    weekRecords.forEach((r) => {
+      const worked = getWorkedSegmentsFromRecord(r, holidaysMap);
+      const splitSegments = worked.flatMap((ws) => splitSegmentByBoundaries(ws));
+
+      if (splitSegments.length > 0) {
+        splitSegments.forEach((segment, index) => {
+          weeklyInputs.push({
+            id: `${r.attendanceId || r.id || r.attendanceDate}_${index}`,
+            date: r.attendanceDate,
+            workedHours: segment.durationHours,
+            sortKey: segment.start.getTime(),
+            segment,
+          });
+        });
+        return;
+      }
+
+      const fallbackHours = Math.max(0, r.validatedHours || 0);
+      if (fallbackHours <= 0) return;
+
+      const fallbackDate = parseISO(r.attendanceDate);
+      const isHoliday = r.holidayFlag === true || holidaysMap.has(r.attendanceDate);
+      weeklyInputs.push({
+        id: `${r.attendanceId || r.id || r.attendanceDate}_day_total`,
+        date: r.attendanceDate,
+        workedHours: fallbackHours,
+        sortKey: r.attendanceDate,
+        segment: {
+          start: fallbackDate,
+          end: fallbackDate,
+          durationHours: fallbackHours,
+          isNight: false,
+          isSunday: fallbackDate.getDay() === 0,
+          isHoliday,
+        },
+      });
+    });
 
     let weekWorked = 0;
     let weekOvDay = 0;
@@ -193,39 +262,48 @@ export async function reconcileWeeklyOvertime(
     let weekOrdNight = 0;
     const weekRawSup = weekRecords.reduce((s, r) => s + (r.overtimeHours || 0), 0);
 
-    for (const seg of allSegments) {
-      const remaining = seg.durationHours;
-      if (seg.isSunday && remaining > 0) {
-        weekSundayWorked += remaining;
-      }
-      const portionBefore = Math.max(0, Math.min(remaining, expectedWeeklyHours - weekWorked));
-      const portionAfter = remaining - portionBefore;
+    const allocationResult = allocateWeeklyOrdinaryOvertime(weeklyInputs, weekThreshold);
+    const allocationsById = new Map(allocationResult.allocations.map((allocation) => [allocation.id, allocation]));
 
-      if (portionBefore > 0) {
-        if (seg.isNight) weekOrdNight += portionBefore;
+    for (const input of weeklyInputs) {
+      const allocation = allocationsById.get(input.id);
+      if (!allocation) continue;
+      const isIncludedDate =
+        (!options.includedDateStart || input.date >= options.includedDateStart) &&
+        (!options.includedDateEnd || input.date <= options.includedDateEnd);
+
+      const seg = input.segment;
+      if (seg.isSunday && allocation.workedHours > 0) {
+        if (isIncludedDate) weekSundayWorked += allocation.workedHours;
       }
 
-      if (portionAfter > 0) {
+      if (isIncludedDate && allocation.ordinaryHours > 0) {
+        if (seg.isNight) weekOrdNight += allocation.ordinaryHours;
+      }
+
+      if (isIncludedDate && allocation.overtimeHours > 0) {
         const cat = classifyExclusiveSegment(seg);
-        if (cat === "holiday") weekOvHol += portionAfter;
-        else if (cat === "sunday") weekOvSun += portionAfter;
-        else if (cat === "night") weekOvNight += portionAfter;
-        else weekOvDay += portionAfter;
+        if (cat === "holiday") weekOvHol += allocation.overtimeHours;
+        else if (cat === "sunday") weekOvSun += allocation.overtimeHours;
+        else if (cat === "night") weekOvNight += allocation.overtimeHours;
+        else weekOvDay += allocation.overtimeHours;
       }
 
-      weekWorked += remaining;
+      weekWorked += allocation.workedHours;
     }
 
-    const weekOv = Math.max(0, weekWorked - expectedWeeklyHours);
+    const weekOv = Math.max(0, weekWorked - weekThreshold);
+    const payableWeekOv = weekOvDay + weekOvNight + weekOvSun + weekOvHol;
 
     breakdown.push({
       weekKey,
       weekStart: weekData.weekStart,
       weekEnd: weekData.weekEnd,
-      expectedWeeklyHours,
+      expectedWeeklyHours: weekThreshold,
       workedHoursInWeek: Number(weekWorked.toFixed(2)),
       rawImportedOvertimeHours: Number(weekRawSup.toFixed(2)),
       weeklyOvertimeHours: Number(weekOv.toFixed(2)),
+      payableOvertimeHoursInPayrollMonth: Number(payableWeekOv.toFixed(2)),
       ordinaryNightHours: Number(weekOrdNight.toFixed(2)),
       overtimeDayHours: Number(weekOvDay.toFixed(2)),
       overtimeNightHours: Number(weekOvNight.toFixed(2)),
@@ -234,7 +312,7 @@ export async function reconcileWeeklyOvertime(
       classificationStatus: "classified",
     });
 
-    totalOvertime += weekOv;
+    totalOvertime += payableWeekOv;
     totalOvDay += weekOvDay;
     totalOvNight += weekOvNight;
     totalOvSun += weekOvSun;
@@ -331,6 +409,8 @@ export function resolveSupportedPayCalculationMode(
     : undefined;
 }
 
+export { resolveWeeklyThresholdHours };
+
 export async function calculatePayrollEconomicValues(
   agg: PayrollAttendanceAggregation,
   rate: PayrollRateSnapshot,
@@ -422,7 +502,7 @@ export async function calculatePayrollEconomicValues(
 
   const ordinaryHolidayHours = Math.max(0, (agg.holidayWorkedHours || 0) - (agg.overtimeHolidayHours || 0));
   const holidayWorkedValue = isActualWorkedHours
-    ? roundMoney((agg.holidayWorkedHours || 0) * rateValue * pOvHol)
+    ? roundMoney(ordinaryHolidayHours * rateValue * pOvHol)
     : roundMoney(ordinaryHolidayHours * rateValue * (1 + pOvHol));
 
   const grossEconomicTotal = roundMoney(

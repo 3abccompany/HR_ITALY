@@ -663,6 +663,34 @@ export default function PayrollCalculationDetailPage() {
             },
           ]
         : [];
+  const overtimeHolidayHours = Math.max(0, aggregation.overtimeHolidayHours || 0);
+  const holidayWorkedHours = Math.max(0, aggregation.holidayWorkedHours || 0);
+  const ordinaryHolidayWorkedHours = Math.max(0, holidayWorkedHours - overtimeHolidayHours);
+  const overtimeHolidayPremiumValue = Math.max(0, calculation.overtimeHolidayValue || 0);
+  const standardOvertimePremiumValue = Math.max(0, calculation.overtimeDayValue || 0);
+  const overtimeNightPremiumValue = Math.max(0, calculation.overtimeNightValue || 0);
+  const sundayOvertimePremiumValue = Math.max(0, calculation.overtimeSundayValue || 0);
+  const genericHolidayPremiumValue = Math.max(0, calculation.holidayWorkedValue || 0);
+  const totalHolidayPremiumAdded = Number(
+    (overtimeHolidayPremiumValue + genericHolidayPremiumValue).toFixed(2)
+  );
+  const totalMajorationsValue = Number(
+    (
+      (calculation.nightValue || 0) +
+      (calculation.overtimeValue || 0) +
+      genericHolidayPremiumValue
+    ).toFixed(2)
+  );
+  const hasOvertimeHolidayPremium = overtimeHolidayHours > 0 || overtimeHolidayPremiumValue > 0;
+  const holidayClassificationLabel = hasOvertimeHolidayPremium
+    ? ordinaryHolidayWorkedHours > 0
+      ? "Férié travaillé + Sup. férié"
+      : "Sup. férié"
+    : "Férié travaillé";
+  const holidayMajoratedHourlyRate =
+    rate.ordinaryHourlyRate != null && rate.holidayPremiumPercent != null
+      ? rate.ordinaryHourlyRate * (1 + rate.holidayPremiumPercent / 100)
+      : null;
   const employeeDisplayName = canReadEmployees
     ? employee
       ? `${employee.firstName || ""} ${employee.lastName || ""}`.trim() || employee.displayName
@@ -827,9 +855,9 @@ export default function PayrollCalculationDetailPage() {
             </div>
             <div className="rounded-2xl bg-emerald-900 px-5 py-3 text-white">
               <p className="text-[10px] font-black uppercase tracking-widest text-white/60">
-                Montant enregistré
+                Majoration ajoutee
               </p>
-              <p className="text-xl font-black">{euro(calculation.holidayWorkedValue)}</p>
+              <p className="text-xl font-black">{euro(totalHolidayPremiumAdded)}</p>
             </div>
           </div>
         </CardHeader>
@@ -863,8 +891,11 @@ export default function PayrollCalculationDetailPage() {
                 >
                   <SnapshotValue label="Jour férié" value={holiday.name} />
                   <SnapshotValue label="Date" value={formatIsoDate(holiday.date)} />
+                  <SnapshotValue label="Type" value={holidayClassificationLabel} />
                   <SnapshotValue label="Heures travaillées" value={hours(holiday.workedHours)} />
                   <SnapshotValue label="Taux horaire" value={euro(rate.ordinaryHourlyRate)} />
+                  <SnapshotValue label="Heures feriees ordinaires" value={hours(ordinaryHolidayWorkedHours)} />
+                  <SnapshotValue label="Sup. ferie" value={hours(overtimeHolidayHours)} />
                   <SnapshotValue
                     label="Majoration férié"
                     value={
@@ -873,8 +904,16 @@ export default function PayrollCalculationDetailPage() {
                         : `${rate.holidayPremiumPercent} %`
                     }
                   />
+                  <SnapshotValue label="Taux horaire majore" value={holidayMajoratedHourlyRate == null ? "Non renseigne" : euro(holidayMajoratedHourlyRate)} />
+                  <SnapshotValue label="Majoration ajoutee" value={euro(totalHolidayPremiumAdded)} />
                 </div>
               ))}
+              {hasOvertimeHolidayPremium && (
+                <p className="rounded-2xl border border-emerald-100 bg-white/70 p-4 text-xs text-emerald-800/80">
+                  Les heures classees Sup. ferie utilisent deja la majoration feriee specifique.
+                  Leur base horaire reste incluse dans la base heures travaillees et n'est pas ajoutee une seconde fois.
+                </p>
+              )}
               {holidayRows.length > 1 && (
                 <p className="text-xs text-emerald-800/70">
                   Le montant affiché est le total enregistré pour l’ensemble des jours fériés
@@ -922,18 +961,22 @@ export default function PayrollCalculationDetailPage() {
                 <SnapshotValue label="Base heures validées" value={optionalEuro(calculation.baseWorkedValue)} />
                 <SnapshotValue label="Heures validées" value={hours(aggregation.totalValidatedHours)} />
                 <SnapshotValue label="Taux horaire" value={euro(rate.ordinaryHourlyRate)} />
-                <SnapshotValue label="Heures fériées rémunérées" value={optionalHours(calculation.paidHolidayHours)} />
-                <SnapshotValue label="Jours fériés rémunérés" value={optionalEuro(calculation.paidHolidayValue)} />
+                <SnapshotValue label="Fériés non travaillés rémunérés" value={optionalHours(calculation.paidHolidayHours)} />
+                <SnapshotValue label="Montant fériés non travaillés" value={optionalEuro(calculation.paidHolidayValue)} />
               </>
             )}
             <SnapshotValue label="Majoration nuit" value={euro(calculation.nightValue)} />
-            <SnapshotValue label="Heures supplémentaires" value={euro(calculation.overtimeValue)} />
+            <SnapshotValue label="Majoration sup. standard" value={euro(standardOvertimePremiumValue)} />
+            <SnapshotValue label="Majoration sup. nuit" value={euro(overtimeNightPremiumValue)} />
+            <SnapshotValue label="Majoration sup. dimanche" value={euro(sundayOvertimePremiumValue)} />
+            <SnapshotValue label="Majoration sup. jour ferie" value={euro(overtimeHolidayPremiumValue)} />
             <SnapshotValue
-              label={isActualWorkedHours ? "Majoration férié travaillé" : "Jour férié travaillé"}
-              value={euro(calculation.holidayWorkedValue)}
+              label={isActualWorkedHours ? "Majoration ferie travaille ordinaire" : "Jour ferie travaille ordinaire"}
+              value={euro(genericHolidayPremiumValue)}
             />
             <SnapshotValue label="Retenues" value={euro(calculation.deductionValue)} />
-            <SnapshotValue label="Total extras" value={euro(extras)} />
+            <SnapshotValue label="Total majorations" value={euro(totalMajorationsValue)} />
+            <SnapshotValue label="Extras" value={euro(extras)} />
           </div>
           <Separator />
           <div className="flex items-center justify-between rounded-2xl bg-primary p-5 text-white">
@@ -1133,14 +1176,23 @@ export default function PayrollCalculationDetailPage() {
                   <strong>{euro(rate.ordinaryHourlyRate)}</strong>.
                 </p>
                 <p>
-                  Jours fériés rémunérés persistés :{" "}
+                  Feries non travaillees remunerees persistees :{" "}
                   <strong>{optionalHours(calculation.paidHolidayHours)}</strong> pour{" "}
                   <strong>{optionalEuro(calculation.paidHolidayValue)}</strong>.
                 </p>
+                <div className="space-y-1">
+                  <p className="font-bold text-slate-900">Majorations persistees :</p>
+                  <ul className="ml-4 list-disc space-y-1">
+                    <li>Nuit : <strong>{euro(calculation.nightValue)}</strong></li>
+                    <li>Sup. standard : <strong>{euro(standardOvertimePremiumValue)}</strong></li>
+                    <li>Sup. nuit : <strong>{euro(overtimeNightPremiumValue)}</strong></li>
+                    <li>Sup. dimanche : <strong>{euro(sundayOvertimePremiumValue)}</strong></li>
+                    <li>Sup. jour ferie : <strong>{euro(overtimeHolidayPremiumValue)}</strong></li>
+                    <li>Ferie travaille ordinaire : <strong>{euro(genericHolidayPremiumValue)}</strong></li>
+                  </ul>
+                </div>
                 <p>
-                  Majorations uniquement : nuit <strong>{euro(calculation.nightValue)}</strong>,
-                  heures supplémentaires <strong>{euro(calculation.overtimeValue)}</strong> et
-                  férié travaillé <strong>{euro(calculation.holidayWorkedValue)}</strong>.
+                  Total majorations : <strong>{euro(totalMajorationsValue)}</strong>.
                 </p>
                 <p>
                   Extras persistés : <strong>{euro(extras)}</strong>. Retenues persistées :{" "}
@@ -1150,16 +1202,19 @@ export default function PayrollCalculationDetailPage() {
             ) : (
               <>
                 <p>
-                  {isMonthly ? "Base mensuelle" : "Base horaire"} persistée :{" "}
+                  {isMonthly ? "Base mensuelle" : "Base horaire"} persistee :{" "}
                   <strong>{euro(calculation.baseGrossValue)}</strong>.
                 </p>
                 <p>
-                  Variables persistées : nuit <strong>{euro(calculation.nightValue)}</strong>,
-                  heures supplémentaires <strong>{euro(calculation.overtimeValue)}</strong> et
-                  jours fériés <strong>{euro(calculation.holidayWorkedValue)}</strong>.
+                  Variables persistees : nuit <strong>{euro(calculation.nightValue)}</strong>,
+                  sup. standard <strong>{euro(standardOvertimePremiumValue)}</strong>,
+                  sup. nuit <strong>{euro(overtimeNightPremiumValue)}</strong>,
+                  sup. dimanche <strong>{euro(sundayOvertimePremiumValue)}</strong>,
+                  sup. jour ferie <strong>{euro(overtimeHolidayPremiumValue)}</strong> et
+                  ferie travaille ordinaire <strong>{euro(genericHolidayPremiumValue)}</strong>.
                 </p>
                 <p>
-                  Extras persistés : <strong>{euro(extras)}</strong>. Retenues persistées :{" "}
+                  Extras persistÃ©s : <strong>{euro(extras)}</strong>. Retenues persistÃ©es :{" "}
                   <strong>{euro(calculation.deductionValue)}</strong>.
                 </p>
               </>

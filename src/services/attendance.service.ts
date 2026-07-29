@@ -20,6 +20,14 @@ import {
   AttendanceImportBatch,
   AttendancePreviewRow
 } from "@/types/attendance";
+import type { CCNL } from "@/types/ccnl";
+import type { Contract } from "@/types/contract";
+import type { Employee } from "@/types/employee";
+import {
+  allocateWeeklyOrdinaryOvertime,
+  getAttendanceWeekContext,
+  resolveDateAwareWeeklyThreshold,
+} from "@/lib/attendance/weekly-overtime";
 import { createAuditLog } from "./audit.service";
 
 /**
@@ -44,13 +52,13 @@ export interface AttendanceSplits {
  * Calculates total hours and Day/Night/Overtime splits for a set of punches.
  * Day period: 06:00 -> 22:00
  * Night period: 22:00 -> 06:00
- * Overtime: > 8h total
+ * Overtime is finalized later through weekly contractual allocation.
  */
 export function calculateAttendanceSplits(
   punches: AttendancePunch[], 
   pauseMinutes: number = 0,
   isHoliday: boolean = false,
-  ordinaryThreshold: number = 8
+  ordinaryThreshold: number = Number.POSITIVE_INFINITY
 ): AttendanceSplits {
   let grossDayMinutes = 0;
   let grossNightMinutes = 0;
@@ -192,6 +200,188 @@ export function validatePreviewRow(row: AttendancePreviewRow, employeesMap: Map<
   };
 }
 
+async function fetchDocsByIds<T>(collectionPath: string, ids: string[]): Promise<Map<string, T>> {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  const result = new Map<string, T>();
+
+  for (let i = 0; i < uniqueIds.length; i += 30) {
+    const chunk = uniqueIds.slice(i, i + 30);
+    const snap = await getDocs(query(
+      collection(db, collectionPath),
+      where(documentId(), "in", chunk)
+    ));
+    snap.docs.forEach((docSnap) => {
+      result.set(docSnap.id, docSnap.data() as T);
+    });
+  }
+
+  return result;
+}
+
+async function buildCanonicalWeeklyImportPlan(
+  entityId: string,
+  rows: AttendancePreviewRow[]
+): Promise<{
+  rowsToImport: AttendancePreviewRow[];
+  existingUpdates: Array<{ attendanceId: string; overtimeHours: number }>;
+}> {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const employeeIds = Array.from(new Set(rows.map((row) => row.employeeId).filter(Boolean) as string[]));
+  const employeesById = await fetchDocsByIds<Employee>(`entities/${entityId}/employees`, employeeIds);
+  const contractsByEmployee = new Map<string, Contract[]>();
+  for (let i = 0; i < employeeIds.length; i += 30) {
+    const chunk = employeeIds.slice(i, i + 30);
+    const snap = await getDocs(query(
+      collection(db, `entities/${entityId}/contracts`),
+      where("employeeId", "in", chunk)
+    ));
+    snap.docs.forEach((docSnap) => {
+      const contract = docSnap.data() as Contract;
+      const list = contractsByEmployee.get(contract.employeeId) || [];
+      list.push(contract);
+      contractsByEmployee.set(contract.employeeId, list);
+    });
+  }
+
+  const ccnlIds = Array.from(new Set(
+    Array.from(contractsByEmployee.values())
+      .flat()
+      .map((contract) => contract.ccnlId)
+      .filter(Boolean) as string[]
+  ));
+  const ccnlsById = await fetchDocsByIds<CCNL>(`entities/${entityId}/ccnls`, ccnlIds);
+  const rowsByEmployee = new Map<string, AttendancePreviewRow[]>();
+
+  rows.forEach((row) => {
+    if (!row.employeeId) return;
+    const employeeRows = rowsByEmployee.get(row.employeeId) || [];
+    employeeRows.push(row);
+    rowsByEmployee.set(row.employeeId, employeeRows);
+  });
+
+  const overtimeByRowId = new Map<string, number>();
+  const existingUpdates: Array<{ attendanceId: string; overtimeHours: number }> = [];
+
+  for (const [employeeId, employeeRows] of Array.from(rowsByEmployee.entries())) {
+    const affectedRanges = Array.from(new Map(
+      employeeRows.map((row) => {
+        const range = getAttendanceWeekContext(row.date);
+        return [range.weekKey, range];
+      })
+    ).values());
+    const minWeekStart = affectedRanges.map((range) => range.weekStart).sort()[0];
+    const maxWeekEnd = affectedRanges.map((range) => range.weekEnd).sort().at(-1);
+    const employee = employeesById.get(employeeId);
+    const employeeContracts = contractsByEmployee.get(employeeId) || [];
+
+    const existingSnap = minWeekStart && maxWeekEnd
+      ? await getDocs(query(
+          collection(db, `entities/${entityId}/attendances`),
+          where("employeeId", "==", employeeId),
+          where("attendanceDate", ">=", minWeekStart),
+          where("attendanceDate", "<=", maxWeekEnd)
+        ))
+      : null;
+
+    const merged = new Map<string, {
+      id: string;
+      date: string;
+      workedHours: number;
+      existingOvertimeHours?: number;
+      rowId?: string;
+      isIncoming: boolean;
+    }>();
+
+    existingSnap?.docs.forEach((docSnap) => {
+      const record = docSnap.data() as AttendanceRecord;
+      const weekKey = getAttendanceWeekContext(record.attendanceDate).weekKey;
+      if (!affectedRanges.some((range) => range.weekKey === weekKey)) return;
+      merged.set(record.attendanceId || docSnap.id, {
+        id: record.attendanceId || docSnap.id,
+        date: record.attendanceDate,
+        workedHours: record.validatedHours || 0,
+        existingOvertimeHours: record.overtimeHours || 0,
+        isIncoming: false,
+      });
+    });
+
+    employeeRows.forEach((row) => {
+      const attendanceId = buildAttendanceId(row.employeeId!, row.date);
+      merged.set(attendanceId, {
+        id: attendanceId,
+        rowId: row.rowId,
+        date: row.date,
+        workedHours: row.validatedHours || 0,
+        existingOvertimeHours: row.overtimeHours || 0,
+        isIncoming: true,
+      });
+    });
+
+    const mergedByWeek = new Map<string, Array<{
+      id: string;
+      date: string;
+      workedHours: number;
+      existingOvertimeHours?: number;
+      rowId?: string;
+      isIncoming: boolean;
+    }>>();
+
+    Array.from(merged.values()).forEach((entry) => {
+      const weekKey = getAttendanceWeekContext(entry.date).weekKey;
+      const list = mergedByWeek.get(weekKey) || [];
+      list.push(entry);
+      mergedByWeek.set(weekKey, list);
+    });
+
+    for (const weekRows of Array.from(mergedByWeek.values())) {
+      const thresholds = new Map<number, string>();
+      weekRows.forEach((entry) => {
+        const threshold = resolveDateAwareWeeklyThreshold({
+          employeeId,
+          attendanceDate: entry.date,
+          employeeWeeklyHours: employee?.weeklyHours,
+          contracts: employeeContracts,
+          ccnlsById: ccnlsById as Map<string, CCNL>,
+        }).thresholdHours;
+        if (threshold) thresholds.set(threshold, String(threshold));
+      });
+
+      if (thresholds.size !== 1) continue;
+      const threshold = Array.from(thresholds.keys())[0];
+      const allocation = allocateWeeklyOrdinaryOvertime(
+        weekRows.map((entry) => ({
+          id: entry.id,
+          date: entry.date,
+          workedHours: entry.workedHours,
+          sortKey: entry.date,
+        })),
+        threshold
+      );
+
+      allocation.allocations.forEach((item) => {
+        const entry = merged.get(item.id);
+        if (!entry) return;
+        if (entry.rowId) overtimeByRowId.set(entry.rowId, item.overtimeHours);
+        if (!entry.isIncoming && Number((entry.existingOvertimeHours || 0).toFixed(2)) !== item.overtimeHours) {
+          existingUpdates.push({ attendanceId: item.id, overtimeHours: item.overtimeHours });
+        }
+      });
+    }
+  }
+
+  return {
+    rowsToImport: rows.map((row) => (
+      overtimeByRowId.has(row.rowId)
+        ? { ...row, overtimeHours: overtimeByRowId.get(row.rowId)! }
+        : row
+    )),
+    existingUpdates,
+  };
+}
+
 /**
  * Performs a real draft import of attendance records into Firestore.
  * Supports conflict resolution strategies (fail, skip, overwrite).
@@ -264,6 +454,12 @@ export async function executeAttendanceImport(params: {
 
   if (finalRowsToImport.length === 0) return { batchId: "no_op", count: 0 };
 
+  const canonicalPlan = await buildCanonicalWeeklyImportPlan(entityId, finalRowsToImport);
+  const canonicalRowsToImport = canonicalPlan.rowsToImport;
+  const canonicalOvertimeHours = Number(
+    canonicalRowsToImport.reduce((sum, row) => sum + (row.overtimeHours || 0), 0).toFixed(2)
+  );
+
   // 4. Prepare Batch
   const batchId = doc(collection(db, "temp")).id;
   const batchRef = doc(db, `entities/${entityId}/attendanceImportBatches`, batchId);
@@ -283,16 +479,20 @@ export async function executeAttendanceImport(params: {
     createdBy: actorUid,
     updatedAt: now,
     updatedBy: actorUid,
+    overtimeHours: canonicalOvertimeHours,
   };
   mainBatch.set(batchRef, finalBatchData);
 
   // 5. Chunked Writes
   const chunks: AttendancePreviewRow[][] = [];
-  for (let i = 0; i < finalRowsToImport.length; i += 450) {
-    chunks.push(finalRowsToImport.slice(i, i + 450));
+  for (let i = 0; i < canonicalRowsToImport.length; i += 450) {
+    chunks.push(canonicalRowsToImport.slice(i, i + 450));
   }
 
   let replacedCount = 0;
+  const existingUpdates = canonicalPlan.existingUpdates.filter(
+    (update) => !keysInFile.has(update.attendanceId)
+  );
 
   for (let i = 0; i < chunks.length; i++) {
     const chunkBatch = i === 0 ? mainBatch : writeBatch(db);
@@ -344,6 +544,18 @@ export async function executeAttendanceImport(params: {
     });
 
     await chunkBatch.commit();
+  }
+
+  for (let i = 0; i < existingUpdates.length; i += 450) {
+    const updateBatch = writeBatch(db);
+    existingUpdates.slice(i, i + 450).forEach((update) => {
+      updateBatch.update(doc(db, `entities/${entityId}/attendances`, update.attendanceId), {
+        overtimeHours: update.overtimeHours,
+        updatedAt: now,
+        updatedBy: actorUid,
+      });
+    });
+    await updateBatch.commit();
   }
 
   await createAuditLog({
