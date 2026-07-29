@@ -14,7 +14,7 @@ import {
   runTransaction,
   writeBatch
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { HRDocument, HRDocumentType, DOCUMENT_TYPE_LABELS } from "@/types/hr-document";
 import { createAuditLog } from "./audit.service";
 import { PreHireDocument } from "@/types/pre-hire-dossier";
@@ -507,6 +507,150 @@ export async function replaceHRDocument(
     });
     return id;
   });
+}
+
+export async function replaceHRDocumentWithLinkedUpdates(params: {
+  entityId: string;
+  oldDocumentId: string;
+  file: File;
+  actorUid: string;
+  replacementReason: string;
+  metadata?: Partial<HRDocument>;
+  actorName?: string;
+  linkedUpdates?: { path: string; data: Record<string, any> }[];
+}) {
+  const {
+    entityId,
+    oldDocumentId,
+    file,
+    actorUid,
+    replacementReason,
+    metadata = {},
+    actorName,
+    linkedUpdates = [],
+  } = params;
+
+  if (!db || !storage) throw new Error("Firebase services not initialized");
+
+  const oldDocRef = doc(db, `entities/${entityId}/documents`, oldDocumentId);
+  const oldDocSnap = await getDoc(oldDocRef);
+  if (!oldDocSnap.exists()) throw new Error("Document d'origine introuvable.");
+  const oldDoc = oldDocSnap.data() as HRDocument;
+
+  if (oldDoc.entityId !== entityId) {
+    throw new Error("Le document d'origine n'appartient pas à cette entité.");
+  }
+
+  if (oldDoc.status === "replaced" || oldDoc.status === "archived") {
+    throw new Error("Ce document a déjà été remplacé ou archivé.");
+  }
+
+  const newDocRef = doc(collection(db, `entities/${entityId}/documents`));
+  const newDocId = newDocRef.id;
+  const safeFileName = file.name.replace(/\s+/g, "_");
+  const storagePath = `entities/${entityId}/documents/${newDocId}/${safeFileName}`;
+  const fileRef = ref(storage, storagePath);
+  let committed = false;
+
+  await uploadBytes(fileRef, file);
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const latestOldDocSnap = await transaction.get(oldDocRef);
+      if (!latestOldDocSnap.exists()) throw new Error("Document d'origine introuvable.");
+      const latestOldDoc = latestOldDocSnap.data() as HRDocument;
+
+      if (latestOldDoc.status === "replaced" || latestOldDoc.status === "archived") {
+        throw new Error("Ce document a déjà été remplacé ou archivé.");
+      }
+
+      const now = serverTimestamp();
+      const version = (latestOldDoc.version || 1) + 1;
+      const rootId = latestOldDoc.rootDocumentId || latestOldDoc.id;
+
+      const newDocData: HRDocument = {
+        ...latestOldDoc,
+        ...(metadata as any),
+        id: newDocId,
+        entityId,
+        status: "valid",
+        storagePath,
+        fileName: safeFileName,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        version,
+        replacesId: oldDocumentId,
+        replacedById: null,
+        rootDocumentId: rootId,
+        replacementReason,
+        uploadedAt: now,
+        uploadedBy: actorUid,
+        uploadedByDisplayName: actorName || actorUid,
+        createdAt: now,
+        createdBy: actorUid,
+        updatedAt: now,
+        updatedBy: actorUid,
+        sourceKey: null,
+      };
+
+      transaction.set(newDocRef, sanitizePayload(newDocData));
+
+      transaction.update(oldDocRef, {
+        status: "replaced",
+        replacedById: newDocId,
+        replacedAt: now,
+        replacedBy: actorUid,
+        updatedAt: now,
+        updatedBy: actorUid,
+      });
+
+      for (const linkedUpdate of linkedUpdates) {
+        const resolvedData = Object.fromEntries(
+          Object.entries(linkedUpdate.data).map(([key, value]) => [
+            key,
+            value === "__NEW_DOCUMENT_ID__" ? newDocId : value,
+          ])
+        );
+        transaction.update(doc(db, linkedUpdate.path), sanitizePayload(resolvedData));
+      }
+
+      if (latestOldDoc.personId) {
+        const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+        transaction.set(timelineRef, {
+          eventId: timelineRef.id,
+          entityId,
+          personId: latestOldDoc.personId,
+          type: "document.replaced",
+          label: `Document renouvelé : ${DOCUMENT_TYPE_LABELS[latestOldDoc.documentType] || latestOldDoc.documentType}`,
+          description: `Remplacement de "${latestOldDoc.title}" par une nouvelle version. Motif : ${replacementReason}`,
+          sourceCollection: "documents",
+          sourceId: newDocId,
+          createdAt: now,
+          createdBy: actorUid,
+        });
+      }
+    });
+
+    committed = true;
+  } catch (error) {
+    if (!committed) {
+      await deleteObject(fileRef).catch(() => undefined);
+    }
+    throw error;
+  }
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "document.replaced",
+    resourceType: "document",
+    resourceId: newDocId,
+    details: { oldId: oldDocumentId, reason: replacementReason },
+  }).catch(() => {
+    console.warn("[Document Replacement] Audit log failed after successful replacement.");
+  });
+
+  return newDocId;
 }
 
 /**

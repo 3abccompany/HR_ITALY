@@ -53,6 +53,7 @@ import {
   markAsSentToConsultant, 
   recordCpiCommunication,
   linkReceiptToEmploymentRequest,
+  replaceEmploymentRequestReceipt,
   completeEmploymentRequest
 } from "@/services/employment-request.service";
 import { findConsultantByEmail, createConsultant } from "@/services/consultant.service";
@@ -91,6 +92,8 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { sendConsultantCPIRequestAction, getConsultantCPIEmailPreviewAction } from "@/services/email.service";
 import { buildUniLavAssunzioneConsultantEmail, type UniLavAssunzioneEmailInput } from "@/lib/unilav/consultant-assunzione-email";
+
+const MAX_RECEIPT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
 
 function buildUniLavAssunzioneEmailDraft(params: {
@@ -210,6 +213,7 @@ export default function EmploymentRequestDetailPage() {
 
   const canRead = hasPermission("employmentRequests.read");
   const canUpdate = hasPermission("employmentRequests.update");
+  const canUploadDocuments = hasPermission("documents.upload");
   const canReadConsultants = hasPermission("consultants.read");
 
   const requestRef = useMemo(() => 
@@ -275,6 +279,10 @@ export default function EmploymentRequestDetailPage() {
   const [processing, setProcessing] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [isRegistryConfirmOpen, setIsRegistryConfirmOpen] = useState(false);
+  const [isReceiptReplaceOpen, setIsReceiptReplaceOpen] = useState(false);
+  const [receiptReplacementFile, setReceiptReplacementFile] = useState<File | null>(null);
+  const [receiptReplacementForm, setReceiptReplacementForm] = useState({ protocolCode: "", cpiCommunicationDate: "" });
+  const [replacingReceipt, setReplacingReceipt] = useState(false);
 
   // --- Preview & Edit State (Official System) ---
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -311,6 +319,14 @@ export default function EmploymentRequestDetailPage() {
 
   const isTerminal = request?.status === "completed" || request?.status === "cancelled";
   const canComplete = request && !isTerminal && request.protocolCode && request.cpiCommunicationDate && request.receiptDocumentId;
+  const isAssunzioneRequest = request?.type === "unilav";
+  const canReplaceAssunzioneReceipt = Boolean(
+    request?.receiptDocumentId &&
+    isAssunzioneRequest &&
+    request.status !== "cancelled" &&
+    canUpdate &&
+    canUploadDocuments
+  );
 
   // --- Handlers ---
 
@@ -687,12 +703,24 @@ Cordiali saluti,`;
     }
   };
 
+  const getReceiptFileValidationError = (file: File) => {
+    if (file.type !== "application/pdf") {
+      return "Veuillez envoyer un fichier PDF.";
+    }
+    if (file.size > MAX_RECEIPT_FILE_SIZE_BYTES) {
+      return "Fichier trop volumineux. Max 10 Mo.";
+    }
+    return null;
+  };
+
   const handleUploadReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user || !request) return;
 
-    if (file.type !== "application/pdf") {
-      toast({ variant: "destructive", title: "Format invalide", description: "Veuillez envoyer un fichier PDF." });
+    const validationError = getReceiptFileValidationError(file);
+    if (validationError) {
+      toast({ variant: "destructive", title: "Fichier invalide", description: validationError });
+      e.target.value = "";
       return;
     }
 
@@ -728,6 +756,73 @@ Cordiali saluti,`;
       toast({ variant: "destructive", title: "Erreur d'envoi", description: err.message });
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const handleOpenReplaceReceipt = () => {
+    if (!request?.receiptDocumentId) return;
+    setReceiptReplacementForm({
+      protocolCode: request.protocolCode || "",
+      cpiCommunicationDate: request.cpiCommunicationDate || "",
+    });
+    setReceiptReplacementFile(null);
+    setIsReceiptReplaceOpen(true);
+  };
+
+  const handleReplacementFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (!file) {
+      setReceiptReplacementFile(null);
+      return;
+    }
+
+    const validationError = getReceiptFileValidationError(file);
+    if (validationError) {
+      toast({ variant: "destructive", title: "Fichier invalide", description: validationError });
+      e.target.value = "";
+      setReceiptReplacementFile(null);
+      return;
+    }
+
+    setReceiptReplacementFile(file);
+  };
+
+  const handleConfirmReplaceReceipt = async () => {
+    if (!user || !request?.receiptDocumentId || !receiptReplacementFile) {
+      toast({ variant: "destructive", title: "Fichier requis", description: "Veuillez sélectionner le nouveau récépissé PDF." });
+      return;
+    }
+    if (!receiptReplacementForm.protocolCode.trim() || !receiptReplacementForm.cpiCommunicationDate.trim()) {
+      toast({ variant: "destructive", title: "Champs requis", description: "Veuillez renseigner le protocole et la date." });
+      return;
+    }
+
+    const validationError = getReceiptFileValidationError(receiptReplacementFile);
+    if (validationError) {
+      toast({ variant: "destructive", title: "Fichier invalide", description: validationError });
+      return;
+    }
+
+    setReplacingReceipt(true);
+    try {
+      await replaceEmploymentRequestReceipt({
+        entityId,
+        requestId,
+        currentReceiptDocumentId: request.receiptDocumentId,
+        file: receiptReplacementFile,
+        protocolCode: receiptReplacementForm.protocolCode,
+        cpiCommunicationDate: receiptReplacementForm.cpiCommunicationDate,
+        actorUid: user.uid,
+        actorName: membership?.userDisplayName || "Utilisateur",
+      });
+
+      toast({ title: "Récépissé remplacé", description: "Le nouveau PDF est désormais le récépissé officiel du dossier." });
+      setIsReceiptReplaceOpen(false);
+      setReceiptReplacementFile(null);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Remplacement impossible", description: err.message });
+    } finally {
+      setReplacingReceipt(false);
     }
   };
 
@@ -1023,10 +1118,24 @@ Cordiali saluti,`;
                             </div>
                          </div>
                       </div>
-                      <Button variant="outline" size="sm" className="rounded-xl font-bold gap-2 bg-white" onClick={handleOpenReceipt} disabled={loadingFile || !receipt}>
-                         {loadingFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                         Ouvrir
-                      </Button>
+                      <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                        <Button variant="outline" size="sm" className="rounded-xl font-bold gap-2 bg-white" onClick={handleOpenReceipt} disabled={loadingFile || !receipt}>
+                           {loadingFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                           Ouvrir
+                        </Button>
+                        {canReplaceAssunzioneReceipt && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-xl font-bold gap-2 bg-white border-amber-200 text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+                            onClick={handleOpenReplaceReceipt}
+                            disabled={replacingReceipt || !receipt}
+                          >
+                            {replacingReceipt ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5" />}
+                            Remplacer
+                          </Button>
+                        )}
+                      </div>
                    </div>
                 ) : (
                    <div className={cn(
@@ -1126,6 +1235,108 @@ Cordiali saluti,`;
           </Card>
         </div>
       </div>
+
+      {/* Assunzione Receipt Replacement Dialog */}
+      <Dialog
+        open={isReceiptReplaceOpen}
+        onOpenChange={(open) => {
+          if (replacingReceipt) return;
+          setIsReceiptReplaceOpen(open);
+          if (!open) setReceiptReplacementFile(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px] rounded-[2rem]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
+              <RefreshCcw className="w-5 h-5 text-amber-600" />
+              Remplacer le récépissé UniLav
+            </DialogTitle>
+            <DialogDescription>
+              Chargez une nouvelle version du PDF officiel. Le récépissé actuel reste valide tant que le remplacement n'est pas confirmé.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4 space-y-5">
+            <div className="rounded-2xl border bg-slate-50 p-4 flex items-start gap-3">
+              <FileCheck className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Récépissé actuel</p>
+                <p className="text-sm font-bold text-slate-800 truncate">{receipt?.title || request.receiptDocumentId}</p>
+                {request.receiptDocumentId && (
+                  <p className="text-[10px] font-bold text-muted-foreground mt-1">ID actuel : {request.receiptDocumentId.substring(0, 8)}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Numéro de protocole</Label>
+                <Input
+                  value={receiptReplacementForm.protocolCode}
+                  onChange={(e) => setReceiptReplacementForm((prev) => ({ ...prev, protocolCode: e.target.value }))}
+                  placeholder="Ex: UNILAV-..."
+                  className="rounded-xl h-11 font-bold"
+                  disabled={replacingReceipt}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Date de communication</Label>
+                <Input
+                  type="date"
+                  value={receiptReplacementForm.cpiCommunicationDate}
+                  onChange={(e) => setReceiptReplacementForm((prev) => ({ ...prev, cpiCommunicationDate: e.target.value }))}
+                  className="rounded-xl h-11 font-bold"
+                  disabled={replacingReceipt}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Nouveau récépissé PDF</Label>
+              <Input
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handleReplacementFileChange}
+                className="rounded-xl h-11"
+                disabled={replacingReceipt}
+              />
+              <p className="text-[10px] font-bold text-muted-foreground uppercase">PDF uniquement — max 10 Mo</p>
+              {receiptReplacementFile && (
+                <p className="text-xs font-bold text-green-700">
+                  Sélectionné : {receiptReplacementFile.name}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setIsReceiptReplaceOpen(false);
+                setReceiptReplacementFile(null);
+              }}
+              disabled={replacingReceipt}
+              className="rounded-xl font-bold"
+            >
+              Annuler
+            </Button>
+            <Button
+              onClick={handleConfirmReplaceReceipt}
+              disabled={
+                replacingReceipt ||
+                !receiptReplacementFile ||
+                !receiptReplacementForm.protocolCode.trim() ||
+                !receiptReplacementForm.cpiCommunicationDate.trim()
+              }
+              className="rounded-xl px-6 font-black shadow-lg gap-2"
+            >
+              {replacingReceipt ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+              Confirmer le remplacement
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* CPI Email Preview & Edit Dialog (System/SMTP) */}
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>

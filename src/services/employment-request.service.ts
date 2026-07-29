@@ -10,11 +10,12 @@ import {
   orderBy, 
   serverTimestamp,
   Timestamp,
-  runTransaction
 } from "firebase/firestore";
 import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
 import { EmploymentOffer } from "@/types/employment-offer";
+import { HRDocument } from "@/types/hr-document";
 import { createAuditLog } from "./audit.service";
+import { replaceHRDocumentWithLinkedUpdates } from "./document.service";
 
 /**
  * Normalizes payload for Firestore.
@@ -362,6 +363,178 @@ export async function linkReceiptToEmploymentRequest(params: {
   });
 
   return { success: true };
+}
+
+export async function replaceEmploymentRequestReceipt(params: {
+  entityId: string;
+  requestId: string;
+  currentReceiptDocumentId: string;
+  file: File;
+  protocolCode: string;
+  cpiCommunicationDate: string;
+  actorUid: string;
+  actorName?: string;
+}) {
+  const {
+    entityId,
+    requestId,
+    currentReceiptDocumentId,
+    file,
+    protocolCode,
+    cpiCommunicationDate,
+    actorUid,
+    actorName,
+  } = params;
+
+  if (!db) throw new Error("Firestore not initialized");
+
+  if (!file) throw new Error("Nouveau récépissé PDF requis.");
+  if (file.type !== "application/pdf") {
+    throw new Error("Format invalide. Veuillez envoyer un fichier PDF.");
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("Fichier trop volumineux. Max 10 Mo.");
+  }
+  if (!protocolCode?.trim() || !cpiCommunicationDate?.trim()) {
+    throw new Error("Veuillez renseigner le protocole et la date.");
+  }
+
+  const requestRefPath = `entities/${entityId}/employmentRequests/${requestId}`;
+  const requestSnap = await getDoc(doc(db, requestRefPath));
+  if (!requestSnap.exists()) throw new Error("Dossier introuvable.");
+  const request = requestSnap.data() as EmploymentRequest;
+
+  if (request.entityId !== entityId) {
+    throw new Error("Le dossier n'appartient pas à cette entité.");
+  }
+  if (request.type !== "unilav") {
+    throw new Error("Le remplacement du récépissé est disponible uniquement pour les embauches CPI/UniLav.");
+  }
+  if (request.status === "cancelled") {
+    throw new Error("Action impossible sur un dossier annulé.");
+  }
+  if (!request.receiptDocumentId) {
+    throw new Error("Aucun récépissé officiel existant à remplacer.");
+  }
+  if (request.receiptDocumentId !== currentReceiptDocumentId) {
+    throw new Error("Le récépissé courant a changé. Rechargez la page avant de réessayer.");
+  }
+
+  const receiptRefPath = `entities/${entityId}/documents/${currentReceiptDocumentId}`;
+  const receiptSnap = await getDoc(doc(db, receiptRefPath));
+  if (!receiptSnap.exists()) throw new Error("Récépissé courant introuvable.");
+  const receipt = receiptSnap.data() as HRDocument;
+
+  if (receipt.entityId !== entityId) {
+    throw new Error("Le récépissé courant n'appartient pas à cette entité.");
+  }
+  if (receipt.relatedModule !== "employmentRequests" || receipt.relatedId !== requestId) {
+    throw new Error("Le document courant n'est pas lié à ce dossier CPI.");
+  }
+  if (receipt.documentType !== "cpi_receipt") {
+    throw new Error("Le document courant n'est pas un récépissé CPI d'embauche.");
+  }
+
+  const now = serverTimestamp();
+  const trimmedProtocol = protocolCode.trim();
+  const trimmedDate = cpiCommunicationDate.trim();
+  const parsedCommunicationDate = new Date(trimmedDate);
+  if (Number.isNaN(parsedCommunicationDate.getTime())) {
+    throw new Error("Date de communication invalide.");
+  }
+
+  const linkedUpdates: { path: string; data: Record<string, any> }[] = [
+    {
+      path: requestRefPath,
+      data: {
+        receiptDocumentId: "__NEW_DOCUMENT_ID__",
+        protocolCode: trimmedProtocol,
+        cpiCommunicationDate: trimmedDate,
+        updatedAt: now,
+        updatedBy: actorUid,
+      },
+    },
+  ];
+
+  if (request.mandatoryCommunicationId) {
+    const mandatoryCommunicationRefPath = `entities/${entityId}/mandatoryCommunications/${request.mandatoryCommunicationId}`;
+    const mandatoryCommunicationSnap = await getDoc(doc(db, mandatoryCommunicationRefPath));
+    if (!mandatoryCommunicationSnap.exists()) {
+      throw new Error("Communication obligatoire liée introuvable.");
+    }
+    const mandatoryCommunication = mandatoryCommunicationSnap.data() as any;
+    if (mandatoryCommunication.entityId !== entityId) {
+      throw new Error("La communication obligatoire liée n'appartient pas à cette entité.");
+    }
+    if (mandatoryCommunication.type && mandatoryCommunication.type !== "UNILAV_ASSUNZIONE") {
+      throw new Error("La communication obligatoire liée n'est pas une embauche UniLav.");
+    }
+    if (
+      mandatoryCommunication.employmentRequestId &&
+      mandatoryCommunication.employmentRequestId !== requestId
+    ) {
+      throw new Error("La communication obligatoire liée ne correspond pas à ce dossier.");
+    }
+    if (
+      mandatoryCommunication.employmentOfferId &&
+      request.offerId &&
+      mandatoryCommunication.employmentOfferId !== request.offerId
+    ) {
+      throw new Error("La communication obligatoire liée ne correspond pas à l'offre de ce dossier.");
+    }
+
+    linkedUpdates.push({
+      path: mandatoryCommunicationRefPath,
+      data: {
+        protocolNumber: trimmedProtocol,
+        submittedAt: Timestamp.fromDate(parsedCommunicationDate),
+        status: "receipt_received",
+        updatedAt: now,
+        updatedBy: actorUid,
+      },
+    });
+  }
+
+  const newDocumentId = await replaceHRDocumentWithLinkedUpdates({
+    entityId,
+    oldDocumentId: currentReceiptDocumentId,
+    file,
+    actorUid,
+    actorName,
+    replacementReason: "Correction du récépissé officiel UniLav/CPI",
+    metadata: {
+      title: `Récépissé ${request.candidateDisplayName || "CPI"} - ${trimmedProtocol}`,
+      documentType: "cpi_receipt",
+      relatedModule: "employmentRequests",
+      relatedId: requestId,
+      personId: request.personId,
+      candidateId: request.candidateId,
+      employeeId: request.employeeId,
+      contractId: request.contractId,
+      status: "valid",
+    },
+    linkedUpdates,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "cpi.receiptReplaced",
+    resourceType: "employmentRequest",
+    resourceId: requestId,
+    details: {
+      previousReceiptDocumentId: currentReceiptDocumentId,
+      newReceiptDocumentId: newDocumentId,
+      previousProtocolCode: request.protocolCode || null,
+      newProtocolCode: trimmedProtocol,
+      previousCommunicationDate: request.cpiCommunicationDate || null,
+      newCommunicationDate: trimmedDate,
+    },
+  }).catch(() => {
+    console.warn("[CPI Receipt Replacement] Audit log failed after successful replacement.");
+  });
+
+  return { success: true, documentId: newDocumentId };
 }
 
 /**
