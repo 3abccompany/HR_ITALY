@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { 
   Users, Search, UserCheck, Loader2, 
-  ChevronRight, ListFilter, Filter, X,
+  ChevronLeft, ChevronRight, ListFilter, Filter, X,
   Building2, MapPin, Calendar, Briefcase, Eye,
   ArrowUpRight, AlertCircle, UserX, LayoutDashboard,
   RefreshCcw, Mail, Fingerprint, Plus
@@ -125,6 +125,22 @@ export default function EmployeesManagementPage() {
     });
   }, [employees, filters]);
 
+  const totalResults = filteredEmployees.length;
+  const totalPages = Math.max(1, Math.ceil(totalResults / pagination.pageSize));
+  const effectiveCurrentPage = Math.min(pagination.page, totalPages);
+  const paginatedEmployees = useMemo(() => {
+    const start = (effectiveCurrentPage - 1) * pagination.pageSize;
+    return filteredEmployees.slice(start, start + pagination.pageSize);
+  }, [filteredEmployees, effectiveCurrentPage, pagination.pageSize]);
+
+  useEffect(() => {
+    setPagination(p => ({ ...p, page: 1 }));
+  }, [filters, pagination.pageSize]);
+
+  useEffect(() => {
+    setPagination(p => (p.page > totalPages ? { ...p, page: totalPages } : p));
+  }, [totalPages]);
+
   // Derived Stats for KPI Cards
   const stats = useMemo(() => {
     if (!employees) return { total: 0, active: 0, inactive: 0, sites: 0 };
@@ -144,6 +160,11 @@ export default function EmployeesManagementPage() {
 
   const handleUpdateFilter = (key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleResetFilters = () => {
+    setFilters(initialFilters);
+    setPagination(p => ({ ...p, page: 1 }));
   };
 
   if (membershipLoading || !permissionsReady) {
@@ -226,7 +247,7 @@ export default function EmployeesManagementPage() {
               <Button 
                 variant="ghost" 
                 size="sm" 
-                onClick={() => setFilters(initialFilters)} 
+                onClick={handleResetFilters}
                 className="h-9 text-xs text-muted-foreground hover:text-primary rounded-xl"
               >
                 <RefreshCcw className="w-3.5 h-3.5 mr-2" />
@@ -280,12 +301,12 @@ export default function EmployeesManagementPage() {
                     <div className="flex flex-col items-center gap-3">
                       <ListFilter className="h-10 w-10 opacity-20" />
                       <p className="font-bold text-sm uppercase tracking-widest">Aucun employé ne correspond aux filtres sélectionnés.</p>
-                      <Button variant="outline" size="sm" onClick={() => setFilters(initialFilters)} className="rounded-xl">Voir tout le personnel</Button>
+                      <Button variant="outline" size="sm" onClick={handleResetFilters} className="rounded-xl">Voir tout le personnel</Button>
                     </div>
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredEmployees.map(e => (
+                paginatedEmployees.map(e => (
                   <TableRow 
                     key={e.employeeId} 
                     className="group cursor-pointer hover:bg-muted/50 transition-colors"
@@ -343,6 +364,54 @@ export default function EmployeesManagementPage() {
               )}
             </TableBody>
           </Table>
+
+          {!loadingEmployees && filteredEmployees.length > 0 && (
+            <div className="border-t bg-secondary/10 px-4 py-3 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Lignes par page:</span>
+                  <Select
+                    value={String(pagination.pageSize)}
+                    onValueChange={(v) => setPagination(p => ({ ...p, pageSize: Number(v), page: 1 }))}
+                  >
+                    <SelectTrigger className="h-7 w-20 text-[10px] font-bold">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                  Page {effectiveCurrentPage} sur {totalPages}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setPagination(p => ({ ...p, page: Math.max(1, p.page - 1) }))}
+                  disabled={effectiveCurrentPage <= 1}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setPagination(p => ({ ...p, page: Math.min(totalPages, p.page + 1) }))}
+                  disabled={effectiveCurrentPage >= totalPages}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
     </div>
