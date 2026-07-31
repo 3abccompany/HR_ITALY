@@ -6,6 +6,13 @@ import { EmploymentOffer } from "@/types/employment-offer";
 import { Person } from "@/types/person";
 import { RecruitmentNeed, RecruitmentNeedStatus } from "@/types/recruitment-need";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
+import {
+  EMPLOYEE_MATRICULE_COUNTER_COLLECTION,
+  EMPLOYEE_MATRICULE_COUNTER_ID,
+  EMPLOYEE_MATRICULE_RESERVATION_COLLECTION,
+  allocateEmployeeMatriculeInTransaction,
+  getHighestCanonicalEmployeeMatriculeSequence,
+} from "./employee-matricule.service";
 
 /**
  * Normalization helper for identity identifier (Phase 6B).
@@ -64,6 +71,10 @@ export async function convertOfferToEmployeeAction(params: {
       docsRef.where("personId", "==", offerData.personId).get(),
       offerData.candidateId ? docsRef.where("candidateId", "==", offerData.candidateId).get() : Promise.resolve(null)
     ]);
+    const existingEmployeesSnap = await adminDb.collection("entities").doc(entityId).collection("employees").get();
+    const bootstrapLastSequence = getHighestCanonicalEmployeeMatriculeSequence(
+      existingEmployeesSnap.docs.map((employeeDoc) => employeeDoc.data())
+    );
 
     return await adminDb.runTransaction(async (transaction) => {
       // --- PHASE 1: READS ---
@@ -105,6 +116,10 @@ export async function convertOfferToEmployeeAction(params: {
       // --- PHASE 2: VALIDATIONS ---
 
       if (!mSnap.exists || mSnap.data()?.status !== 'active') throw new Error("Accès refusé.");
+      const permissions = Array.isArray(mSnap.data()?.permissions) ? mSnap.data()?.permissions : [];
+      if (!permissions.includes("employees.create") || !permissions.includes("contracts.create")) {
+        throw new Error("Permissions employees.create et contracts.create requises.");
+      }
       const personData = personSnap.data() as Person;
       const entity = entitySnap.data();
 
@@ -114,22 +129,44 @@ export async function convertOfferToEmployeeAction(params: {
 
       if (!employeeId) employeeId = adminDb.collection("entities").doc(entityId).collection("employees").doc().id;
       if (!contractId) contractId = adminDb.collection("entities").doc(entityId).collection("contracts").doc().id;
+      const employeeRef = adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId);
 
       // --- PHASE 6B: Resolve Canonical Identifier ---
       const resolvedTaxCode = getIdentifier(personData) || getIdentifier(offer) || getIdentifier(candidateSnap.data()) || null;
+      let employeeCode = "";
+      if (isNewEmployee) {
+        const allocation = await allocateEmployeeMatriculeInTransaction({
+          transaction,
+          employeeRef,
+          counterRef: adminDb.collection("entities").doc(entityId).collection(EMPLOYEE_MATRICULE_COUNTER_COLLECTION).doc(EMPLOYEE_MATRICULE_COUNTER_ID),
+          makeReservationRef: (code) => adminDb.collection("entities").doc(entityId).collection(EMPLOYEE_MATRICULE_RESERVATION_COLLECTION).doc(code),
+          entityId,
+          employeeId,
+          hireDate: offer.proposedStartDate,
+          fallbackStartDate: offer.proposedStartDate,
+          bootstrapLastSequence,
+          actorUid,
+          timestamp: FieldValue.serverTimestamp(),
+        });
+        employeeCode = allocation.employeeCode;
+      } else {
+        const existingEmployeeSnap = await transaction.get(employeeRef);
+        if (!existingEmployeeSnap.exists) throw new Error("Employé déjà référencé introuvable.");
+        employeeCode = existingEmployeeSnap.data()?.employeeCode || "";
+      }
 
       // --- PHASE 3: WRITES ---
       
       const isConversionNew = offer.conversionStatus !== 'converted' && !offer.employeeId;
 
       if (isNewEmployee) {
-        transaction.set(adminDb.collection("entities").doc(entityId).collection("employees").doc(employeeId), {
+        transaction.set(employeeRef, {
           employeeId, 
           personId: personData.personId, 
           entityId, 
           sourceOfferId: offerId, 
           recruitmentNeedId: offer.recruitmentNeedId || null, // Enrichment (Phase 7K-E Fix)
-          employeeCode: personData.codiceFiscale ? `E-${personData.codiceFiscale.substring(0, 6)}` : `E-${Date.now().toString().slice(-6)}`,
+          employeeCode,
           firstName: personData.firstName, 
           lastName: personData.lastName, 
           displayName: personData.displayName,
@@ -157,6 +194,7 @@ export async function convertOfferToEmployeeAction(params: {
           personId: personData.personId, 
           employeeId, 
           sourceOfferId: offerId,
+          employeeCode,
           employeeDisplayName: personData.displayName,
           taxCode: resolvedTaxCode || "",
           jobTitleName: offer.jobTitleName,

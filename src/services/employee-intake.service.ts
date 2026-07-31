@@ -1,36 +1,44 @@
-import { db } from "@/lib/firebase/client";
-import { 
-  collection, 
-  doc, 
-  runTransaction, 
-  serverTimestamp, 
-  getDocs, 
-  query, 
-  where, 
-  limit 
-} from "firebase/firestore";
+"use server";
+
+import { adminDb } from "@/lib/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { Person } from "@/types/person";
 import { Employee } from "@/types/employee";
 import { Contract } from "@/types/contract";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
 import { LeaveBalance, LeaveBalanceCounter } from "@/types/time-off";
-import { createAuditLog } from "./audit.service";
+import {
+  EMPLOYEE_MATRICULE_COUNTER_COLLECTION,
+  EMPLOYEE_MATRICULE_COUNTER_ID,
+  EMPLOYEE_MATRICULE_RESERVATION_COLLECTION,
+  allocateEmployeeMatriculeInTransaction,
+  getHighestCanonicalEmployeeMatriculeSequence,
+} from "./employee-matricule.service";
+
+async function assertIntakePermissions(entityId: string, actorUid: string) {
+  if (!actorUid) throw new Error("Accès refusé.");
+  const membershipSnap = await adminDb.collection("memberships").doc(`${actorUid}_${entityId}`).get();
+  const membership = membershipSnap.data();
+  const permissions = Array.isArray(membership?.permissions) ? membership.permissions : [];
+  if (!membershipSnap.exists || membership?.status !== "active" || !permissions.includes("employees.create") || !permissions.includes("contracts.create")) {
+    throw new Error("Permissions employees.create et contracts.create requises.");
+  }
+}
 
 /**
  * Checks for an existing person by identity identifier (Codice Fiscale) or email.
  */
-export async function findExistingPersonForIntake(entityId: string, identifier: string) {
-  if (!db || !identifier) return null;
+export async function findExistingPersonForIntake(entityId: string, identifier: string, actorUid: string) {
+  if (!identifier) return null;
+  await assertIntakePermissions(entityId, actorUid);
   const term = identifier.trim().toUpperCase();
   
   // Try Codice Fiscale
-  const qCf = query(collection(db, `entities/${entityId}/persons`), where("codiceFiscale", "==", term), limit(1));
-  const snapCf = await getDocs(qCf);
+  const snapCf = await adminDb.collection("entities").doc(entityId).collection("persons").where("codiceFiscale", "==", term).limit(1).get();
   if (!snapCf.empty) return snapCf.docs[0].data() as Person;
 
   // Try Email
-  const qEmail = query(collection(db, `entities/${entityId}/persons`), where("email", "==", term.toLowerCase()), limit(1));
-  const snapEmail = await getDocs(qEmail);
+  const snapEmail = await adminDb.collection("entities").doc(entityId).collection("persons").where("email", "==", term.toLowerCase()).limit(1).get();
   if (!snapEmail.empty) return snapEmail.docs[0].data() as Person;
 
   return null;
@@ -58,28 +66,84 @@ function resolvePayCalculationMode(mode: unknown): Contract["payCalculationMode"
   return mode === "actual_worked_hours" ? "actual_worked_hours" : "monthly";
 }
 
+function normalizeIntakeOperationId(value: unknown) {
+  if (typeof value !== "string") {
+    throw new Error("Identifiant d'opÃ©ration d'intÃ©gration invalide.");
+  }
+
+  const operationId = value.trim();
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(operationId)) {
+    throw new Error("Identifiant d'opÃ©ration d'intÃ©gration invalide.");
+  }
+
+  return operationId;
+}
+
 /**
  * Atomic transaction to ingest an existing employee into the system.
  * Creates Person (if new), Employee, Active Contract, HR Dossier, and initial Leave Balance.
  */
 export async function executeEmployeeIntake(entityId: string, payload: any, actorUid: string) {
-  if (!db) throw new Error("Firestore not initialized");
+  await assertIntakePermissions(entityId, actorUid);
+  const intakeOperationId = normalizeIntakeOperationId(payload.intakeOperationId);
 
-  const personId = payload.personId || doc(collection(db, `entities/${entityId}/persons`)).id;
-  const employeeId = doc(collection(db, `entities/${entityId}/employees`)).id;
-  const contractId = doc(collection(db, `entities/${entityId}/contracts`)).id;
-  const dossierId = doc(collection(db, `entities/${entityId}/preHireDossiers`)).id;
+  const entityRef = adminDb.collection("entities").doc(entityId);
+  const existingEmployeesSnap = await entityRef.collection("employees").get();
+  const bootstrapLastSequence = getHighestCanonicalEmployeeMatriculeSequence(
+    existingEmployeesSnap.docs.map((employeeDoc) => employeeDoc.data() as Employee)
+  );
+
+  const personId = payload.personId || entityRef.collection("persons").doc().id;
+  const employeeId = entityRef.collection("employees").doc().id;
+  const contractId = entityRef.collection("contracts").doc().id;
+  const dossierId = entityRef.collection("preHireDossiers").doc().id;
   const year = new Date().getFullYear();
   const balanceId = `${employeeId}_${year}`;
 
-  return await runTransaction(db, async (transaction) => {
-    const personRef = doc(db, `entities/${entityId}/persons`, personId);
-    const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
-    const contractRef = doc(db, `entities/${entityId}/contracts`, contractId);
-    const dossierRef = doc(db, `entities/${entityId}/preHireDossiers`, dossierId);
-    const balanceRef = doc(db, `entities/${entityId}/leaveBalances`, balanceId);
+  const result = await adminDb.runTransaction(async (transaction) => {
+    const operationRef = entityRef.collection("employeeIntakeOperations").doc(intakeOperationId);
+    const operationSnap = await transaction.get(operationRef);
+    if (operationSnap.exists) {
+      const operation = operationSnap.data();
+      if (operation?.status !== "completed" || !operation.employeeId) {
+        throw new Error("Cette opÃ©ration d'intÃ©gration est incomplÃ¨te. Veuillez contacter un administrateur.");
+      }
 
-    const now = serverTimestamp();
+      const existingEmployeeRef = entityRef.collection("employees").doc(operation.employeeId);
+      const existingEmployeeSnap = await transaction.get(existingEmployeeRef);
+      if (!existingEmployeeSnap.exists) {
+        throw new Error("Cette opÃ©ration d'intÃ©gration rÃ©fÃ©rence un employÃ© introuvable. Veuillez contacter un administrateur.");
+      }
+
+      const existingEmployee = existingEmployeeSnap.data() as Employee;
+      return {
+        employeeId: operation.employeeId as string,
+        employeeCode: existingEmployee.employeeCode,
+        reusedExisting: true,
+      };
+    }
+
+    const personRef = entityRef.collection("persons").doc(personId);
+    const employeeRef = entityRef.collection("employees").doc(employeeId);
+    const contractRef = entityRef.collection("contracts").doc(contractId);
+    const dossierRef = entityRef.collection("preHireDossiers").doc(dossierId);
+    const balanceRef = entityRef.collection("leaveBalances").doc(balanceId);
+    const counterRef = entityRef.collection(EMPLOYEE_MATRICULE_COUNTER_COLLECTION).doc(EMPLOYEE_MATRICULE_COUNTER_ID);
+
+    const now = FieldValue.serverTimestamp();
+    const { employeeCode } = await allocateEmployeeMatriculeInTransaction({
+      transaction,
+      employeeRef,
+      counterRef,
+      makeReservationRef: (code) => entityRef.collection(EMPLOYEE_MATRICULE_RESERVATION_COLLECTION).doc(code),
+      entityId,
+      employeeId,
+      hireDate: payload.hireDate,
+      fallbackStartDate: payload.contractStartDate,
+      bootstrapLastSequence,
+      actorUid,
+      timestamp: now,
+    });
 
     // 1. Person Creation or Update
     const personData: Partial<Person> = {
@@ -117,7 +181,7 @@ export async function executeEmployeeIntake(entityId: string, payload: any, acto
       employeeId,
       personId,
       entityId,
-      employeeCode: payload.employeeCode || `E-${Date.now().toString().slice(-6)}`,
+      employeeCode,
       firstName: payload.firstName,
       lastName: payload.lastName,
       displayName: `${payload.firstName} ${payload.lastName}`,
@@ -240,7 +304,7 @@ export async function executeEmployeeIntake(entityId: string, payload: any, acto
     transaction.set(balanceRef, sanitizePayload(balanceData));
 
     // 6. Timeline Event
-    const timelineRef = doc(collection(db, `entities/${entityId}/personTimeline`));
+    const timelineRef = entityRef.collection("personTimeline").doc();
     transaction.set(timelineRef, {
       eventId: timelineRef.id,
       entityId,
@@ -256,16 +320,39 @@ export async function executeEmployeeIntake(entityId: string, payload: any, acto
       createdBy: actorUid,
     });
 
-    return { employeeId };
-  }).then(async (res) => {
-    await createAuditLog({
-      userId: actorUid,
+    transaction.set(operationRef, {
+      operationId: intakeOperationId,
       entityId,
-      action: "employee.historical_intake",
-      resourceType: "employee",
-      resourceId: res.employeeId,
-      details: { hireDate: payload.hireDate }
+      status: "completed",
+      employeeId,
+      employeeCode,
+      personId,
+      contractId,
+      dossierId,
+      createdAt: now,
+      createdBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid,
     });
-    return res;
+
+    return { employeeId, employeeCode, reusedExisting: false };
   });
+
+  if (!result.reusedExisting) {
+    try {
+      await adminDb.collection("auditLogs").doc().set({
+        userId: actorUid,
+        entityId,
+        action: "employee.historical_intake",
+        resourceType: "employee",
+        resourceId: result.employeeId,
+        details: { hireDate: payload.hireDate, intakeOperationId },
+        timestamp: FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("New intake audit log failed after successful employee creation.", error);
+    }
+  }
+
+  return { employeeId: result.employeeId, employeeCode: result.employeeCode };
 }

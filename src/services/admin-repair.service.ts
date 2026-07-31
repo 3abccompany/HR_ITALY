@@ -1,67 +1,82 @@
-import { db } from "@/lib/firebase/client";
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  serverTimestamp, 
-  runTransaction,
-  collection,
-  query,
-  where,
-  getDocs
-} from "firebase/firestore";
+"use server";
+
+import { adminDb } from "@/lib/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { Candidate } from "@/types/candidate";
 import { Person } from "@/types/person";
 import { EmploymentOffer } from "@/types/employment-offer";
-import { createAuditLog } from "./audit.service";
+import {
+  EMPLOYEE_MATRICULE_COUNTER_COLLECTION,
+  EMPLOYEE_MATRICULE_COUNTER_ID,
+  EMPLOYEE_MATRICULE_RESERVATION_COLLECTION,
+  allocateEmployeeMatriculeInTransaction,
+  getHighestCanonicalEmployeeMatriculeSequence,
+} from "./employee-matricule.service";
+
+async function assertRepairPermission(entityId: string, actorUid: string) {
+  if (!actorUid) throw new Error("Accès refusé.");
+  const [membershipSnap, userSnap] = await Promise.all([
+    adminDb.collection("memberships").doc(`${actorUid}_${entityId}`).get(),
+    adminDb.collection("users").doc(actorUid).get(),
+  ]);
+  const membership = membershipSnap.data();
+  const permissions = Array.isArray(membership?.permissions) ? membership.permissions : [];
+  const isPlatformAdmin = userSnap.data()?.platformRole === "superAdmin" && userSnap.data()?.status === "active";
+  if (!isPlatformAdmin && (!membershipSnap.exists || membership?.status !== "active" || !permissions.includes("employees.update"))) {
+    throw new Error("Permission employees.update requise.");
+  }
+}
 
 /**
  * REPAIR ONLY: Recreates a missing employee document for a finalized recruitment.
- * Target Candidate: bbJ1tMjhE2pUrcUsv9jy
  */
 export async function repairCandidateEmployeeRecord(entityId: string, candidateId: string, actorUid: string) {
-  if (!db) throw new Error("Firestore not initialized");
+  await assertRepairPermission(entityId, actorUid);
+  const entityRef = adminDb.collection("entities").doc(entityId);
+  const existingEmployeesSnap = await entityRef.collection("employees").get();
+  const bootstrapLastSequence = getHighestCanonicalEmployeeMatriculeSequence(
+    existingEmployeesSnap.docs.map((employeeDoc) => employeeDoc.data() as any)
+  );
 
-  return await runTransaction(db, async (transaction) => {
-    // 1. Fetch Candidate
-    const candidateRef = doc(db, `entities/${entityId}/candidates`, candidateId);
+  return await adminDb.runTransaction(async (transaction) => {
+    const candidateRef = entityRef.collection("candidates").doc(candidateId);
     const candidateSnap = await transaction.get(candidateRef);
-    if (!candidateSnap.exists()) throw new Error(`Candidat ${candidateId} introuvable.`);
+    if (!candidateSnap.exists) throw new Error(`Candidat ${candidateId} introuvable.`);
     const candidate = candidateSnap.data() as Candidate;
 
-    // 2. Fetch Person
-    const personRef = doc(db, `entities/${entityId}/persons`, candidate.personId);
+    const personRef = entityRef.collection("persons").doc(candidate.personId);
     const personSnap = await transaction.get(personRef);
-    if (!personSnap.exists()) throw new Error("Fiche identité introuvable.");
+    if (!personSnap.exists) throw new Error("Fiche identité introuvable.");
     const person = personSnap.data() as Person;
 
-    // 3. Fetch Offer (if exists)
-    const offersRef = collection(db, `entities/${entityId}/employmentOffers`);
-    const offerQ = query(offersRef, where("candidateId", "==", candidateId));
-    const offerSnap = await getDocs(offerQ);
+    const offerSnap = await entityRef.collection("employmentOffers").where("candidateId", "==", candidateId).get();
     const offer = !offerSnap.empty ? (offerSnap.docs[0].data() as EmploymentOffer) : null;
 
-    // 4. Resolve Employee ID
     const employeeId = candidate.employeeId || person.currentEmployeeId || offer?.employeeId;
     if (!employeeId) {
-       throw new Error("Aucun EmployeeID n'est associé à ce candidat ou à cette personne. La conversion n'a probablement jamais eu lieu.");
+      throw new Error("Aucun EmployeeID n'est associé à ce candidat ou à cette personne. La conversion n'a probablement jamais eu lieu.");
     }
 
-    // 5. Check if Employee Document exists
-    const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
+    const employeeRef = entityRef.collection("employees").doc(employeeId);
     const employeeSnap = await transaction.get(employeeRef);
 
-    if (employeeSnap.exists()) {
-      console.log("L'employé existe déjà. Réparation des liens uniquement.");
-    } else {
-      console.log("L'employé est manquant. Recréation du document...");
-      
-      const employeeCode = person.codiceFiscale 
-        ? `E-${person.codiceFiscale.substring(0, 6)}` 
-        : `E-REPAIR-${candidateId.substring(0, 4)}`;
+    if (!employeeSnap.exists) {
+      const hireDate = offer?.proposedStartDate || candidate.applicationDate || "";
+      const { employeeCode } = await allocateEmployeeMatriculeInTransaction({
+        transaction,
+        employeeRef,
+        counterRef: entityRef.collection(EMPLOYEE_MATRICULE_COUNTER_COLLECTION).doc(EMPLOYEE_MATRICULE_COUNTER_ID),
+        makeReservationRef: (code) => entityRef.collection(EMPLOYEE_MATRICULE_RESERVATION_COLLECTION).doc(code),
+        entityId,
+        employeeId,
+        hireDate,
+        fallbackStartDate: offer?.proposedStartDate || null,
+        bootstrapLastSequence,
+        actorUid,
+        timestamp: FieldValue.serverTimestamp(),
+      });
 
-      const employeeData: any = {
+      transaction.set(employeeRef, {
         employeeId,
         personId: person.personId,
         entityId,
@@ -75,60 +90,55 @@ export async function repairCandidateEmployeeRecord(entityId: string, candidateI
         email: person.email,
         phone: person.phone || "",
         birthDate: person.dateOfBirth || (person as any).birthDate || "",
-        hireDate: offer?.proposedStartDate || candidate.applicationDate || "",
+        hireDate,
         departmentId: candidate.departmentId || offer?.departmentId || "",
         departmentName: candidate.department || offer?.departmentName || "",
         jobTitle: candidate.positionApplied || offer?.jobTitleName || "",
         worksiteName: offer?.worksiteName || "",
         status: "active",
-        createdAt: candidate.statusUpdatedAt || serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-
-      transaction.set(employeeRef, employeeData);
+        createdAt: candidate.statusUpdatedAt || FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
     }
 
-    // 6. Repair Links & Lifecycle
     transaction.update(candidateRef, {
       status: "hired",
-      employeeId: employeeId,
-      updatedAt: serverTimestamp(),
+      employeeId,
+      updatedAt: FieldValue.serverTimestamp(),
     });
 
     transaction.update(personRef, {
       currentLifecycleStatus: "employee",
       currentEmployeeId: employeeId,
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
 
     if (offer) {
-      const oRef = doc(db, `entities/${entityId}/employmentOffers`, offer.offerId);
-      transaction.update(oRef, {
-        employeeId: employeeId,
+      transaction.update(entityRef.collection("employmentOffers").doc(offer.offerId), {
+        employeeId,
         conversionStatus: "converted",
-        updatedAt: serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     }
 
-    // 7. View Update
-    const viewRef = doc(db, `entities/${entityId}/candidateViews`, employeeId);
-    transaction.set(viewRef, {
+    transaction.set(entityRef.collection("candidateViews").doc(employeeId), {
       id: employeeId,
       employeeId,
       displayName: person.displayName,
       status: "active",
-      updatedAt: serverTimestamp()
+      updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
 
     return { employeeId };
   }).then(async (res) => {
-    await createAuditLog({
+    await adminDb.collection("auditLogs").doc().set({
       userId: actorUid,
       entityId,
       action: "admin.repair_employee_record",
       resourceType: "employee",
       resourceId: res.employeeId,
-      details: { candidateId }
+      details: { candidateId },
+      timestamp: FieldValue.serverTimestamp(),
     });
     return res;
   });
@@ -136,76 +146,68 @@ export async function repairCandidateEmployeeRecord(entityId: string, candidateI
 
 /**
  * REPAIR ONLY: Links a specific EmploymentRequest and its linked receipt document to an existing employeeId.
- * Derived from offerId.
  */
 export async function repairCpiLink(entityId: string, offerId: string, actorUid: string) {
-  if (!db) throw new Error("Firestore not initialized");
-
+  await assertRepairPermission(entityId, actorUid);
+  const entityRef = adminDb.collection("entities").doc(entityId);
   const requestId = `unilav_${offerId}`;
-  
-  return await runTransaction(db, async (transaction) => {
-    const requestRef = doc(db, `entities/${entityId}/employmentRequests`, requestId);
+
+  return await adminDb.runTransaction(async (transaction) => {
+    const requestRef = entityRef.collection("employmentRequests").doc(requestId);
     const requestSnap = await transaction.get(requestRef);
-    if (!requestSnap.exists()) throw new Error(`Dossier CPI ${requestId} introuvable.`);
+    if (!requestSnap.exists) throw new Error(`Dossier CPI ${requestId} introuvable.`);
     const request = requestSnap.data() as any;
 
-    // Try to resolve employeeId from various links
     let employeeId = request.employeeId;
-    
-    if (!employeeId) {
-      const personRef = doc(db, `entities/${entityId}/persons`, request.personId);
-      const personSnap = await transaction.get(personRef);
-      employeeId = personSnap.exists() ? personSnap.data().currentEmployeeId : null;
+
+    if (!employeeId && request.personId) {
+      const personSnap = await transaction.get(entityRef.collection("persons").doc(request.personId));
+      employeeId = personSnap.exists ? personSnap.data()?.currentEmployeeId : null;
     }
-    
-    if (!employeeId) {
-      const candidateRef = doc(db, `entities/${entityId}/candidates`, request.candidateId);
-      const candidateSnap = await transaction.get(candidateRef);
-      employeeId = candidateSnap.exists() ? candidateSnap.data().employeeId : null;
+
+    if (!employeeId && request.candidateId) {
+      const candidateSnap = await transaction.get(entityRef.collection("candidates").doc(request.candidateId));
+      employeeId = candidateSnap.exists ? candidateSnap.data()?.employeeId : null;
     }
 
     if (!employeeId) {
-      const offerRef = doc(db, `entities/${entityId}/employmentOffers`, offerId);
-      const offerSnap = await transaction.get(offerRef);
-      employeeId = offerSnap.exists() ? offerSnap.data().employeeId : null;
+      const offerSnap = await transaction.get(entityRef.collection("employmentOffers").doc(offerId));
+      employeeId = offerSnap.exists ? offerSnap.data()?.employeeId : null;
     }
 
     if (!employeeId) throw new Error("CONVERSION_NOT_FOUND: Impossible de résoudre l'EmployeeId pour ce dossier.");
 
-    // Verify employee exists
-    const employeeRef = doc(db, `entities/${entityId}/employees`, employeeId);
+    const employeeRef = entityRef.collection("employees").doc(employeeId);
     const employeeSnap = await transaction.get(employeeRef);
-    if (!employeeSnap.exists()) throw new Error(`EMPLOYEE_MISSING: Le document employé ${employeeId} n'existe pas.`);
-    const employeeData = employeeSnap.data();
+    if (!employeeSnap.exists) throw new Error(`EMPLOYEE_MISSING: Le document employé ${employeeId} n'existe pas.`);
+    const employeeData = employeeSnap.data()!;
 
-    // 1. Update EmploymentRequest
     transaction.update(requestRef, {
       employeeId,
       candidateDisplayName: employeeData.displayName,
-      updatedAt: serverTimestamp(),
-      updatedBy: actorUid
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid,
     });
 
-    // 2. Update Receipt Document
     if (request.receiptDocumentId) {
-      const docRef = doc(db, `entities/${entityId}/documents`, request.receiptDocumentId);
-      transaction.update(docRef, {
+      transaction.update(entityRef.collection("documents").doc(request.receiptDocumentId), {
         employeeId,
         employeeDisplayName: employeeData.displayName,
-        updatedAt: serverTimestamp(),
-        updatedBy: actorUid
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid,
       });
     }
 
     return { employeeId, receiptDocumentId: request.receiptDocumentId };
   }).then(async (res) => {
-    await createAuditLog({
+    await adminDb.collection("auditLogs").doc().set({
       userId: actorUid,
       entityId,
       action: "admin.repair_cpi_link",
       resourceType: "employmentRequest",
       resourceId: requestId,
-      details: res
+      details: res,
+      timestamp: FieldValue.serverTimestamp(),
     });
     return res;
   });

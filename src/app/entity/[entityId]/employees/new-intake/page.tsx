@@ -101,6 +101,21 @@ function calculateGrossAnnual(grossMonthly: unknown, monthlyPayments: unknown) {
   return Math.round(monthly * payments * 100) / 100;
 }
 
+function createIntakeOperationId() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") {
+    return cryptoApi.randomUUID();
+  }
+
+  if (typeof cryptoApi?.getRandomValues !== "function") {
+    throw new Error("Impossible de gÃ©nÃ©rer l'identifiant d'opÃ©ration d'intÃ©gration.");
+  }
+
+  const bytes = new Uint8Array(16);
+  cryptoApi.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export default function EmployeeIntakePage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -112,6 +127,7 @@ export default function EmployeeIntakePage() {
   const { loading: membershipLoading, hasPermission } = useActiveMembership(entityId);
 
   const [formData, setFormData] = useState(initialForm);
+  const [intakeOperationId] = useState(createIntakeOperationId);
   const [loading, setLoading] = useState(false);
   const [searchingPerson, setSearchingPerson] = useState(false);
   const [existingPerson, setExistingPerson] = useState<any>(null);
@@ -189,6 +205,7 @@ export default function EmployeeIntakePage() {
   }, [formData.ccnlId, entityId, user, auth]);
 
   const handleSearchPerson = async () => {
+    if (!user) return;
     const identifier = formData.codiceFiscale || formData.email;
     if (!identifier) {
       toast({ variant: "destructive", title: "Erreur", description: "Veuillez saisir un Code Fiscal ou un Email pour la recherche." });
@@ -198,7 +215,7 @@ export default function EmployeeIntakePage() {
     setSearchingPerson(true);
     setSearchAttempted(true);
     try {
-      const person = await findExistingPersonForIntake(entityId, identifier);
+      const person = await findExistingPersonForIntake(entityId, identifier, user.uid);
       if (person) {
         setExistingPerson(person);
         setFormData(p => ({
@@ -330,6 +347,7 @@ export default function EmployeeIntakePage() {
       const selectedLevel = activeLevels.find(l => l.levelId === formData.levelId);
       const payload = {
         ...formData,
+        intakeOperationId,
         grossMonthly,
         monthlyPayments,
         grossAnnual,
@@ -468,7 +486,9 @@ export default function EmployeeIntakePage() {
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Matricule / Code Interne</Label>
-                  <Input value={formData.employeeCode} onChange={(e) => setFormData(p => ({...p, employeeCode: e.target.value}))} placeholder="Ex: E-00123" className="rounded-xl" />
+                  <div className="rounded-xl border border-dashed border-primary/20 bg-muted/30 px-4 py-3 text-sm font-semibold text-muted-foreground">
+                    Matricule : Généré automatiquement à la création
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase font-black">Date d'embauche réelle</Label>
