@@ -88,6 +88,14 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "effectiveFrom", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "participants",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "entityId", "order": "ASCENDING" },
+        { "fieldPath": "employeeId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

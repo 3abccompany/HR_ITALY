@@ -97,6 +97,7 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "training.read", module: "training", action: "read", label: "Voir les formations", description: "Suivi des compétences et stages.", scope: "entity" },
   { code: "training.create", module: "training", action: "create", label: "Ajouter formation", description: "Enregistrement d'une nouvelle session.", scope: "entity" },
   { code: "training.update", module: "training", action: "update", label: "Modifier formation", description: "Mise à jour des acquis.", scope: "entity" },
+  { code: "training.approve", module: "training", action: "approve", label: "Approuver formation", description: "Validation ou rejet d'une session de formation.", scope: "entity" },
   { code: "safety.read", module: "safety", action: "read", label: "Voir sécurité", description: "Consultation des habilitations sécurité.", scope: "entity" },
   { code: "safety.create", module: "safety", action: "create", label: "Ajouter sécurité", description: "Saisie de nouveaux équipements ou titres.", scope: "entity" },
   { code: "safety.update", module: "safety", action: "update", label: "Modifier sécurité", description: "Mise à jour des dates de validité.", scope: "entity" },

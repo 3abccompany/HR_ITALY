@@ -77,6 +77,7 @@ export const MVP_ROLES: RoleDefinition[] = [
           if (safetyModules.includes(p.module)) {
             // Safety Managers don't write medical visits in this MVP logic
             if (p.module === "medicalVisits" && p.action !== "read") return false;
+            if (p.module === "training" && p.action === "approve") return false;
             return true;
           }
           return false;

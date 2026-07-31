@@ -52,6 +52,32 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId)).data.status == 'active';
     }
 
+    function isValidTrainingSessionStatus(status) {
+      return status in ['draft', 'scheduled', 'in_progress', 'completed', 'cancelled', 'archived'];
+    }
+
+    function isValidTrainingApprovalStatus(status) {
+      return status in ['not_submitted', 'pending', 'approved', 'rejected'];
+    }
+
+    function isTrainingApprovalDecisionChange() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'approvedAt',
+        'approvedBy',
+        'rejectedAt',
+        'rejectedBy',
+        'rejectionReason'
+      ]) ||
+      (
+        request.resource.data.diff(resource.data).changedKeys().hasAny(['approvalStatus']) &&
+        request.resource.data.approvalStatus in ['approved', 'rejected']
+      );
+    }
+
+    function isValidTrainingParticipantStatus(status) {
+      return status in ['planned', 'attended', 'absent', 'completed', 'not_completed', 'cancelled'];
+    }
+
     // --- Public Collection Group Rules ---
     
     match /{path=**}/applicationForms/{formId} {
@@ -369,6 +395,60 @@ service cloud.firestore {
         allow create: if hasPermission(entityId, 'training.create') || isPlatformAdmin();
         allow update: if hasPermission(entityId, 'training.update') || isPlatformAdmin();
         allow delete: if false;
+      }
+
+      match /trainingSessions/{sessionId} {
+        allow read: if hasPermission(entityId, 'training.read') || isPlatformAdmin();
+        allow create: if (hasPermission(entityId, 'training.create') || isPlatformAdmin())
+                      && request.resource.data.entityId == entityId
+                      && request.resource.data.id == sessionId
+                      && request.resource.data.createdBy == request.auth.uid
+                      && request.resource.data.updatedBy == request.auth.uid
+                      && isValidTrainingSessionStatus(request.resource.data.status)
+                      && isValidTrainingApprovalStatus(request.resource.data.approvalStatus)
+                      && !(request.resource.data.approvalStatus in ['approved', 'rejected']);
+        allow update: if request.resource.data.entityId == entityId
+                      && resource.data.entityId == entityId
+                      && request.resource.data.id == resource.data.id
+                      && request.resource.data.createdAt == resource.data.createdAt
+                      && request.resource.data.createdBy == resource.data.createdBy
+                      && isValidTrainingSessionStatus(request.resource.data.status)
+                      && isValidTrainingApprovalStatus(request.resource.data.approvalStatus)
+                      && (
+                        isPlatformAdmin()
+                        || (
+                          hasPermission(entityId, 'training.update')
+                          && !isTrainingApprovalDecisionChange()
+                        )
+                        || hasPermission(entityId, 'training.approve')
+                      );
+        allow delete: if false;
+
+        match /participants/{employeeId} {
+          allow read: if hasPermission(entityId, 'training.read') || isPlatformAdmin();
+          allow create: if (hasPermission(entityId, 'training.update') || isPlatformAdmin())
+                        && exists(/databases/$(database)/documents/entities/$(entityId)/trainingSessions/$(sessionId))
+                        && get(/databases/$(database)/documents/entities/$(entityId)/trainingSessions/$(sessionId)).data.entityId == entityId
+                        && exists(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId))
+                        && request.resource.data.entityId == entityId
+                        && request.resource.data.sessionId == sessionId
+                        && request.resource.data.employeeId == employeeId
+                        && request.resource.data.id == employeeId
+                        && isValidTrainingParticipantStatus(request.resource.data.participantStatus);
+          allow update: if (hasPermission(entityId, 'training.update') || isPlatformAdmin())
+                        && resource.data.entityId == entityId
+                        && resource.data.sessionId == sessionId
+                        && resource.data.employeeId == employeeId
+                        && request.resource.data.entityId == entityId
+                        && request.resource.data.sessionId == sessionId
+                        && request.resource.data.employeeId == employeeId
+                        && request.resource.data.id == resource.data.id
+                        && request.resource.data.createdAt == resource.data.createdAt
+                        && request.resource.data.createdBy == resource.data.createdBy
+                        && exists(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId))
+                        && isValidTrainingParticipantStatus(request.resource.data.participantStatus);
+          allow delete: if false;
+        }
       }
 
       match /safetyDpiAssignments/{assignmentId} {

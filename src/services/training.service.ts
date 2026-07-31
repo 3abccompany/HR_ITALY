@@ -1,5 +1,6 @@
 import { db } from "@/lib/firebase/client";
 import { 
+  collectionGroup,
   collection, 
   doc, 
   setDoc, 
@@ -14,7 +15,15 @@ import {
   runTransaction,
   writeBatch
 } from "firebase/firestore";
-import { Training } from "@/types/training";
+import {
+  Training,
+  TrainingApprovalStatus,
+  TrainingParticipant,
+  TrainingParticipantStatus,
+  TrainingSession,
+  TrainingSessionStatus,
+  EmployeeTrainingHistoryItem,
+} from "@/types/training";
 import { createAuditLog } from "./audit.service";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
@@ -44,6 +53,538 @@ function sanitizePayload(obj: any): any {
     }
   }
   return newObj;
+}
+
+const TRAINING_SESSION_STATUSES: TrainingSessionStatus[] = [
+  "draft",
+  "scheduled",
+  "in_progress",
+  "completed",
+  "cancelled",
+  "archived",
+];
+
+const TRAINING_APPROVAL_STATUSES: TrainingApprovalStatus[] = [
+  "not_submitted",
+  "pending",
+  "approved",
+  "rejected",
+];
+
+const TRAINING_PARTICIPANT_STATUSES: TrainingParticipantStatus[] = [
+  "planned",
+  "attended",
+  "absent",
+  "completed",
+  "not_completed",
+  "cancelled",
+];
+
+function assertNonEmpty(value: unknown, message: string): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(message);
+  }
+}
+
+function assertValidSessionStatus(status: TrainingSessionStatus) {
+  if (!TRAINING_SESSION_STATUSES.includes(status)) {
+    throw new Error("Statut de session de formation invalide.");
+  }
+}
+
+function assertValidApprovalStatus(status: TrainingApprovalStatus) {
+  if (!TRAINING_APPROVAL_STATUSES.includes(status)) {
+    throw new Error("Statut d'approbation de formation invalide.");
+  }
+}
+
+function assertValidParticipantStatus(status: TrainingParticipantStatus) {
+  if (!TRAINING_PARTICIPANT_STATUSES.includes(status)) {
+    throw new Error("Statut participant de formation invalide.");
+  }
+}
+
+function buildEmployeeDisplayName(employee: any): string {
+  if (typeof employee?.displayName === "string" && employee.displayName.trim()) {
+    return employee.displayName.trim();
+  }
+
+  return [employee?.firstName, employee?.lastName]
+    .filter((part) => typeof part === "string" && part.trim())
+    .join(" ")
+    .trim();
+}
+
+function sessionRef(entityId: string, sessionId: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  return doc(db, `entities/${entityId}/trainingSessions`, sessionId);
+}
+
+function participantRef(entityId: string, sessionId: string, employeeId: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  return doc(db, `entities/${entityId}/trainingSessions/${sessionId}/participants`, employeeId);
+}
+
+export type CreateTrainingSessionInput = Omit<
+  Partial<TrainingSession>,
+  | "id"
+  | "entityId"
+  | "status"
+  | "approvalStatus"
+  | "createdAt"
+  | "createdBy"
+  | "updatedAt"
+  | "updatedBy"
+  | "submittedForApprovalAt"
+  | "submittedForApprovalBy"
+  | "approvedAt"
+  | "approvedBy"
+  | "rejectedAt"
+  | "rejectedBy"
+  | "rejectionReason"
+  | "archivedAt"
+  | "archivedBy"
+> & Pick<TrainingSession, "title" | "trainingType" | "startDate">;
+
+export type UpdateTrainingSessionInput = Omit<
+  Partial<TrainingSession>,
+  | "id"
+  | "entityId"
+  | "createdAt"
+  | "createdBy"
+  | "updatedAt"
+  | "updatedBy"
+  | "approvalStatus"
+  | "submittedForApprovalAt"
+  | "submittedForApprovalBy"
+  | "approvedAt"
+  | "approvedBy"
+  | "rejectedAt"
+  | "rejectedBy"
+  | "rejectionReason"
+>;
+
+export async function createTrainingSession(
+  entityId: string,
+  data: CreateTrainingSessionInput,
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  assertNonEmpty(entityId, "Entité requise.");
+  assertNonEmpty(actorUid, "Acteur requis.");
+  assertNonEmpty(data.title, "Titre de formation requis.");
+  assertNonEmpty(data.trainingType, "Type de formation requis.");
+  assertNonEmpty(data.startDate, "Date de début requise.");
+
+  const ref = doc(collection(db, `entities/${entityId}/trainingSessions`));
+  const sessionId = ref.id;
+
+  const payload: TrainingSession = sanitizePayload({
+    ...data,
+    id: sessionId,
+    entityId,
+    status: "draft",
+    approvalStatus: "not_submitted",
+    certificateRequired: data.certificateRequired ?? false,
+    createdAt: serverTimestamp(),
+    createdBy: actorUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  }) as TrainingSession;
+
+  await setDoc(ref, payload);
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "trainingSession.created",
+    resourceType: "trainingSession",
+    resourceId: sessionId,
+    details: { title: data.title, type: data.trainingType }
+  });
+
+  return sessionId;
+}
+
+export async function updateTrainingSession(
+  entityId: string,
+  sessionId: string,
+  data: UpdateTrainingSessionInput,
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  assertNonEmpty(entityId, "Entité requise.");
+  assertNonEmpty(sessionId, "Session de formation requise.");
+  assertNonEmpty(actorUid, "Acteur requis.");
+
+  if (data.status) assertValidSessionStatus(data.status);
+
+  const forbiddenKeys = [
+    "entityId",
+    "createdAt",
+    "createdBy",
+    "approvalStatus",
+    "submittedForApprovalAt",
+    "submittedForApprovalBy",
+    "approvedAt",
+    "approvedBy",
+    "rejectedAt",
+    "rejectedBy",
+    "rejectionReason",
+  ];
+
+  for (const key of forbiddenKeys) {
+    if (key in (data as Record<string, unknown>)) {
+      throw new Error("Champ de session de formation non modifiable par cette opération.");
+    }
+  }
+
+  const ref = sessionRef(entityId, sessionId);
+  const current = await getDoc(ref);
+  if (!current.exists()) throw new Error("Session de formation introuvable.");
+  if (current.data().entityId !== entityId) throw new Error("Session de formation hors entité.");
+
+  const payload = sanitizePayload({
+    ...data,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  await updateDoc(ref, payload);
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "trainingSession.updated",
+    resourceType: "trainingSession",
+    resourceId: sessionId,
+    details: { changes: Object.keys(data) }
+  });
+}
+
+export async function getTrainingSession(entityId: string, sessionId: string): Promise<TrainingSession | null> {
+  if (!db) throw new Error("Firestore not initialized");
+  const snap = await getDoc(sessionRef(entityId, sessionId));
+  if (!snap.exists()) return null;
+  const data = snap.data() as TrainingSession;
+  if (data.entityId !== entityId) throw new Error("Session de formation hors entité.");
+  return { ...data, id: snap.id };
+}
+
+export async function listTrainingSessions(entityId: string): Promise<TrainingSession[]> {
+  if (!db) throw new Error("Firestore not initialized");
+  const q = query(collection(db, `entities/${entityId}/trainingSessions`), orderBy("startDate", "desc"));
+  const snap = await getDocs(q);
+  return snap.docs.map((item) => ({ ...(item.data() as TrainingSession), id: item.id }));
+}
+
+export async function submitTrainingSessionForApproval(entityId: string, sessionId: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const ref = sessionRef(entityId, sessionId);
+  const current = await getDoc(ref);
+  if (!current.exists()) throw new Error("Session de formation introuvable.");
+
+  const session = current.data() as TrainingSession;
+  if (session.entityId !== entityId) throw new Error("Session de formation hors entité.");
+  if (!["not_submitted", "rejected"].includes(session.approvalStatus)) {
+    throw new Error("Cette session ne peut pas être soumise pour approbation.");
+  }
+
+  await updateDoc(ref, {
+    approvalStatus: "pending",
+    submittedForApprovalAt: serverTimestamp(),
+    submittedForApprovalBy: actorUid,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "trainingSession.submittedForApproval",
+    resourceType: "trainingSession",
+    resourceId: sessionId,
+  });
+}
+
+export async function approveTrainingSession(entityId: string, sessionId: string, actorUid: string) {
+  if (!db) throw new Error("Firestore not initialized");
+  const ref = sessionRef(entityId, sessionId);
+  const current = await getDoc(ref);
+  if (!current.exists()) throw new Error("Session de formation introuvable.");
+
+  const session = current.data() as TrainingSession;
+  if (session.entityId !== entityId) throw new Error("Session de formation hors entité.");
+  if (session.approvalStatus !== "pending") {
+    throw new Error("Seule une session en attente peut être approuvée.");
+  }
+
+  await updateDoc(ref, {
+    approvalStatus: "approved",
+    approvedAt: serverTimestamp(),
+    approvedBy: actorUid,
+    rejectedAt: null,
+    rejectedBy: null,
+    rejectionReason: null,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "trainingSession.approved",
+    resourceType: "trainingSession",
+    resourceId: sessionId,
+  });
+}
+
+export async function rejectTrainingSession(
+  entityId: string,
+  sessionId: string,
+  reason: string,
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  assertNonEmpty(reason, "Motif de rejet requis.");
+
+  const ref = sessionRef(entityId, sessionId);
+  const current = await getDoc(ref);
+  if (!current.exists()) throw new Error("Session de formation introuvable.");
+
+  const session = current.data() as TrainingSession;
+  if (session.entityId !== entityId) throw new Error("Session de formation hors entité.");
+  if (session.approvalStatus !== "pending") {
+    throw new Error("Seule une session en attente peut être rejetée.");
+  }
+
+  await updateDoc(ref, {
+    approvalStatus: "rejected",
+    rejectedAt: serverTimestamp(),
+    rejectedBy: actorUid,
+    rejectionReason: reason.trim(),
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "trainingSession.rejected",
+    resourceType: "trainingSession",
+    resourceId: sessionId,
+    details: { reason: reason.trim() }
+  });
+}
+
+export async function addTrainingParticipants(
+  entityId: string,
+  sessionId: string,
+  employeeIds: string[],
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  assertNonEmpty(entityId, "Entité requise.");
+  assertNonEmpty(sessionId, "Session de formation requise.");
+  assertNonEmpty(actorUid, "Acteur requis.");
+
+  const uniqueEmployeeIds = Array.from(new Set(employeeIds.map((id) => id.trim()).filter(Boolean)));
+  if (uniqueEmployeeIds.length === 0) throw new Error("Aucun collaborateur sélectionné.");
+
+  const created: string[] = [];
+  const existing: string[] = [];
+
+  await runTransaction(db, async (transaction) => {
+    const sRef = sessionRef(entityId, sessionId);
+    const sessionSnap = await transaction.get(sRef);
+    if (!sessionSnap.exists()) throw new Error("Session de formation introuvable.");
+    if ((sessionSnap.data() as TrainingSession).entityId !== entityId) {
+      throw new Error("Session de formation hors entité.");
+    }
+
+    const employeeSnaps = await Promise.all(uniqueEmployeeIds.map(async (employeeId) => {
+      const employeeRef = doc(db!, `entities/${entityId}/employees`, employeeId);
+      const employeeSnap = await transaction.get(employeeRef);
+      return { employeeId, employeeRef, employeeSnap };
+    }));
+
+    for (const { employeeId, employeeSnap } of employeeSnaps) {
+      if (!employeeSnap.exists()) throw new Error("Collaborateur introuvable.");
+      const employee = employeeSnap.data();
+      if (employee.entityId && employee.entityId !== entityId) {
+        throw new Error("Collaborateur hors entité.");
+      }
+
+      const pRef = participantRef(entityId, sessionId, employeeId);
+      const existingParticipant = await transaction.get(pRef);
+      if (existingParticipant.exists()) {
+        existing.push(employeeId);
+        continue;
+      }
+
+      const displayName = buildEmployeeDisplayName(employee);
+      const participant: TrainingParticipant = sanitizePayload({
+        id: employeeId,
+        entityId,
+        sessionId,
+        employeeId,
+        personId: employee.personId ?? null,
+        employeeCodeSnapshot: employee.employeeCode ?? null,
+        employeeDisplayNameSnapshot: displayName || null,
+        participantStatus: "planned",
+        resultStatus: null,
+        certificateDocumentId: null,
+        assignedAt: serverTimestamp(),
+        assignedBy: actorUid,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      }) as TrainingParticipant;
+
+      transaction.set(pRef, participant);
+      created.push(employeeId);
+    }
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "trainingSession.participantsAdded",
+    resourceType: "trainingSession",
+    resourceId: sessionId,
+    details: { created, existing }
+  });
+
+  return { created, existing };
+}
+
+export async function cancelTrainingParticipant(
+  entityId: string,
+  sessionId: string,
+  employeeId: string,
+  actorUid: string,
+  cancellationReason?: string | null
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  const ref = participantRef(entityId, sessionId, employeeId);
+  const current = await getDoc(ref);
+  if (!current.exists()) throw new Error("Participant de formation introuvable.");
+  const participant = current.data() as TrainingParticipant;
+  if (participant.entityId !== entityId || participant.sessionId !== sessionId || participant.employeeId !== employeeId) {
+    throw new Error("Participant de formation hors contexte.");
+  }
+  if (["completed", "attended"].includes(participant.participantStatus)) {
+    throw new Error("Une participation déjà réalisée ne peut pas être annulée par cette opération.");
+  }
+
+  await updateDoc(ref, sanitizePayload({
+    participantStatus: "cancelled",
+    cancelledAt: serverTimestamp(),
+    cancelledBy: actorUid,
+    cancellationReason: cancellationReason?.trim() || null,
+    updatedAt: serverTimestamp(),
+    updatedBy: actorUid,
+  }));
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: "trainingParticipant.cancelled",
+    resourceType: "trainingParticipant",
+    resourceId: `${sessionId}/${employeeId}`,
+    details: { sessionId, employeeId, cancellationReason: cancellationReason?.trim() || null }
+  });
+}
+
+export async function getTrainingParticipants(entityId: string, sessionId: string): Promise<TrainingParticipant[]> {
+  if (!db) throw new Error("Firestore not initialized");
+  const snap = await getDocs(collection(db, `entities/${entityId}/trainingSessions/${sessionId}/participants`));
+  return snap.docs
+    .map((item) => ({ ...(item.data() as TrainingParticipant), id: item.id }))
+    .filter((participant) => participant.entityId === entityId && participant.sessionId === sessionId);
+}
+
+export function mapLegacyTrainingToHistoryItem(training: Training): EmployeeTrainingHistoryItem {
+  return {
+    id: training.id,
+    entityId: training.entityId,
+    employeeId: training.employeeId,
+    source: "legacy",
+    legacyTrainingId: training.id,
+    sessionId: training.sessionId ?? null,
+    title: training.title,
+    trainingType: training.trainingType,
+    providerName: training.provider,
+    startDate: training.startDate || training.courseDate,
+    endDate: training.endDate ?? null,
+    durationHours: training.durationHours ?? null,
+    status: training.status,
+    approvalStatus: null,
+    participantStatus: null,
+    resultStatus: training.resultStatus ?? null,
+    certificateDocumentId: training.certificateDocumentId ?? null,
+  };
+}
+
+export async function getEmployeeTrainingHistory(
+  entityId: string,
+  employeeId: string
+): Promise<EmployeeTrainingHistoryItem[]> {
+  if (!db) throw new Error("Firestore not initialized");
+
+  const canonicalQuery = query(
+    collectionGroup(db, "participants"),
+    where("entityId", "==", entityId),
+    where("employeeId", "==", employeeId)
+  );
+  const canonicalSnap = await getDocs(canonicalQuery);
+
+  const canonicalItems: Array<EmployeeTrainingHistoryItem | null> = await Promise.all(canonicalSnap.docs.map(async (participantDoc) => {
+    const participant = participantDoc.data() as TrainingParticipant;
+    const sRef = sessionRef(entityId, participant.sessionId);
+    const sSnap = await getDoc(sRef);
+    if (!sSnap.exists()) return null;
+    const session = { ...(sSnap.data() as TrainingSession), id: sSnap.id };
+    if (session.entityId !== entityId) return null;
+
+    const historyItem: EmployeeTrainingHistoryItem = {
+      id: `${participant.sessionId}:${participant.employeeId}`,
+      entityId,
+      employeeId,
+      source: "canonical",
+      sessionId: participant.sessionId,
+      participantId: participant.id || participant.employeeId,
+      title: session.title,
+      trainingType: session.trainingType,
+      providerName: session.providerName ?? null,
+      startDate: session.startDate,
+      endDate: session.endDate ?? null,
+      durationHours: session.durationHours ?? null,
+      status: session.status,
+      approvalStatus: session.approvalStatus,
+      participantStatus: participant.participantStatus,
+      resultStatus: participant.resultStatus ?? null,
+      certificateDocumentId: participant.certificateDocumentId ?? null,
+    };
+
+    return historyItem;
+  }));
+
+  const legacyQuery = query(
+    collection(db, `entities/${entityId}/trainings`),
+    where("employeeId", "==", employeeId)
+  );
+  const legacySnap = await getDocs(legacyQuery);
+  const legacyItems = legacySnap.docs.map((item) => mapLegacyTrainingToHistoryItem({
+    ...(item.data() as Training),
+    id: item.id,
+  }));
+
+  return [
+    ...canonicalItems.filter((item): item is EmployeeTrainingHistoryItem => item !== null),
+    ...legacyItems,
+  ];
 }
 
 export async function createTraining(entityId: string, data: Partial<Training>, actorUid: string) {

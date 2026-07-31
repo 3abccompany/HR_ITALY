@@ -31,6 +31,32 @@ export type TrainingResultStatus =
   | "not_attended"
   | "not_required";
 
+export type TrainingSessionStatus =
+  | "draft"
+  | "scheduled"
+  | "in_progress"
+  | "completed"
+  | "cancelled"
+  | "archived";
+
+export type TrainingApprovalStatus =
+  | "not_submitted"
+  | "pending"
+  | "approved"
+  | "rejected";
+
+export type TrainingTrainerType = "internal" | "external";
+
+export type TrainingDeliveryMode = "classroom" | "online" | "blended" | "on_the_job";
+
+export type TrainingParticipantStatus =
+  | "planned"
+  | "attended"
+  | "absent"
+  | "completed"
+  | "not_completed"
+  | "cancelled";
+
 export interface Training {
   id: string;
   entityId: string;
@@ -76,6 +102,112 @@ export interface Training {
   updatedBy: string;
   archivedAt?: Date | FieldValue | null;
   archivedBy?: string | null;
+}
+
+export interface TrainingSession {
+  id: string;
+  entityId: string;
+
+  title: string;
+  trainingType: TrainingType;
+  description?: string | null;
+
+  providerName?: string | null;
+
+  trainerType?: TrainingTrainerType | null;
+  trainerName?: string | null;
+  trainerEmail?: string | null;
+  internalTrainerEmployeeId?: string | null;
+
+  deliveryMode?: TrainingDeliveryMode | null;
+  location?: string | null;
+
+  startDate: string; // YYYY-MM-DD
+  endDate?: string | null; // YYYY-MM-DD
+  startTime?: string | null; // HH:mm
+  endTime?: string | null; // HH:mm
+  durationHours?: number | null;
+
+  costAmount?: number | null;
+
+  certificateRequired?: boolean;
+
+  status: TrainingSessionStatus;
+  approvalStatus: TrainingApprovalStatus;
+
+  submittedForApprovalAt?: Date | FieldValue | null;
+  submittedForApprovalBy?: string | null;
+
+  approvedAt?: Date | FieldValue | null;
+  approvedBy?: string | null;
+
+  rejectedAt?: Date | FieldValue | null;
+  rejectedBy?: string | null;
+  rejectionReason?: string | null;
+
+  createdAt: Date | FieldValue;
+  createdBy: string;
+  updatedAt: Date | FieldValue;
+  updatedBy: string;
+
+  archivedAt?: Date | FieldValue | null;
+  archivedBy?: string | null;
+}
+
+export interface TrainingParticipant {
+  id: string;
+  entityId: string;
+  sessionId: string;
+
+  employeeId: string;
+  personId?: string | null;
+
+  employeeCodeSnapshot?: string | null;
+  employeeDisplayNameSnapshot?: string | null;
+
+  participantStatus: TrainingParticipantStatus;
+  resultStatus?: TrainingResultStatus | null;
+
+  certificateDocumentId?: string | null;
+
+  assignedAt: Date | FieldValue;
+  assignedBy: string;
+
+  completedAt?: Date | FieldValue | null;
+  completedBy?: string | null;
+
+  cancelledAt?: Date | FieldValue | null;
+  cancelledBy?: string | null;
+  cancellationReason?: string | null;
+
+  createdAt: Date | FieldValue;
+  createdBy: string;
+  updatedAt: Date | FieldValue;
+  updatedBy: string;
+}
+
+export type EmployeeTrainingHistorySource = "canonical" | "legacy";
+
+export interface EmployeeTrainingHistoryItem {
+  id: string;
+  entityId: string;
+  employeeId: string;
+  source: EmployeeTrainingHistorySource;
+  sessionId?: string | null;
+  participantId?: string | null;
+  legacyTrainingId?: string | null;
+
+  title: string;
+  trainingType: TrainingType;
+  providerName?: string | null;
+  startDate: string;
+  endDate?: string | null;
+  durationHours?: number | null;
+  status: TrainingSessionStatus | TrainingStatus;
+  approvalStatus?: TrainingApprovalStatus | null;
+  participantStatus?: TrainingParticipantStatus | null;
+  resultStatus?: TrainingResultStatus | null;
+  certificateDocumentId?: string | null;
 }
 
 export const TRAINING_TYPE_LABELS: Record<TrainingType, string> = {
