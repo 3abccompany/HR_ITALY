@@ -247,19 +247,19 @@ export async function cancelEmploymentOffer(entityId: string, offerId: string, a
  * 7K-D: Sends the offer to the candidate via Server Action.
  * This function triggers the secure token generation and email dispatch.
  */
-export async function initiateOfferSend(entityId: string, offerId: string, actorUid: string) {
+export async function initiateOfferSend(entityId: string, offerId: string, idToken: string) {
   // Use dynamic import to keep crypto/admin logic server-side
   const { sendOfferToCandidateAction } = await import("@/app/offer/[token]/actions");
   
   const result = await sendOfferToCandidateAction({
     entityId,
     offerId,
-    actorUid
+    idToken
   });
 
   if (result.success) {
     await createAuditLog({
-      userId: actorUid,
+      userId: result.actorUid,
       entityId,
       action: "employmentOffer.sent",
       resourceType: "employmentOffer",

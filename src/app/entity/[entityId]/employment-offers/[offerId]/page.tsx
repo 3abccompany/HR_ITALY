@@ -284,7 +284,12 @@ export default function EditEmploymentOfferPage() {
     if (!user || !entityId || !offerId || !offer) return;
     setSending(true);
     try {
-      const result = await initiateOfferSend(entityId, offerId, user.uid);
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error("Session expirée. Veuillez vous reconnecter.");
+      }
+      const idToken = await currentUser.getIdToken(true);
+      const result = await initiateOfferSend(entityId, offerId, idToken);
       if (result && result.success) {
         toast({ title: "Offre envoyée", description: "Le candidat a été notifié par email." });
       }

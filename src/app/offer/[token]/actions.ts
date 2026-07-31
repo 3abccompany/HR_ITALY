@@ -1,11 +1,67 @@
 'use server';
 
-import { adminDb } from "@/lib/firebase/admin";
+import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createHash, randomBytes } from "crypto";
 import { PublicOfferDTO, EmploymentOffer } from "@/types/employment-offer";
+import { Candidate } from "@/types/candidate";
+import { Person } from "@/types/person";
 import { sendEmploymentOfferEmail } from "@/services/email.service";
 import { buildExternalPublicUrl, getExternalPublicBaseUrl } from "@/lib/url/external-public-url";
+
+const OFFER_SEND_PERMISSIONS = ["contracts.create", "contracts.update"];
+const SAFE_FORBIDDEN_MESSAGE = "AccÃ¨s refusÃ©.";
+
+async function authorizeOfferSend(params: { entityId: string; idToken: string }) {
+  const { entityId, idToken } = params;
+  if (!entityId || !idToken) {
+    throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  }
+
+  let decodedToken;
+  try {
+    decodedToken = await adminAuth.verifyIdToken(idToken);
+  } catch {
+    throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  }
+  const actorUid = decodedToken.uid;
+
+  const [userSnap, entitySnap, membershipSnap] = await Promise.all([
+    adminDb.collection("users").doc(actorUid).get(),
+    adminDb.collection("entities").doc(entityId).get(),
+    adminDb.collection("memberships").doc(`${actorUid}_${entityId}`).get(),
+  ]);
+
+  if (!userSnap.exists || userSnap.data()?.status !== "active") {
+    throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  }
+
+  if (!entitySnap.exists || entitySnap.data()?.status !== "active") {
+    throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  }
+
+  const membership = membershipSnap.data();
+  if (!membershipSnap.exists || membership?.status !== "active") {
+    throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  }
+
+  const permissions = Array.isArray(membership.permissions) ? membership.permissions : [];
+  if (!OFFER_SEND_PERMISSIONS.some((permission) => permissions.includes(permission))) {
+    throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  }
+
+  return { actorUid, entityData: entitySnap.data() || {} };
+}
+
+function resolveTrustedCandidateEmail(candidate: Candidate, person: Person | null) {
+  const candidateEmail = typeof candidate.email === "string" ? candidate.email.trim().toLowerCase() : "";
+  if (candidateEmail) return candidateEmail;
+
+  const personEmail = typeof person?.email === "string" ? person.email.trim().toLowerCase() : "";
+  if (personEmail) return personEmail;
+
+  throw new Error("DonnÃ©es candidat incomplÃ¨tes.");
+}
 
 /**
  * 7K-D Server Action: Sends the offer to the candidate.
@@ -14,27 +70,65 @@ import { buildExternalPublicUrl, getExternalPublicBaseUrl } from "@/lib/url/exte
 export async function sendOfferToCandidateAction(params: {
   entityId: string;
   offerId: string;
-  actorUid: string;
-}) {
-  const { entityId, offerId, actorUid } = params;
+  idToken: string;
+}): Promise<{ success: true; actorUid: string } | { success: false; error: string }> {
+  const { entityId, offerId, idToken } = params;
 
   try {
-    const externalPublicBaseUrl = getExternalPublicBaseUrl();
+    const { actorUid, entityData } = await authorizeOfferSend({ entityId, idToken });
 
     const offerRef = adminDb.collection("entities").doc(entityId).collection("employmentOffers").doc(offerId);
     const snap = await offerRef.get();
     
     if (!snap.exists) throw new Error("Proposition introuvable.");
     const offer = snap.data() as EmploymentOffer;
+    if (offer.entityId && offer.entityId !== entityId) {
+      throw new Error(SAFE_FORBIDDEN_MESSAGE);
+    }
+
+    if (!offer.candidateId) {
+      throw new Error("DonnÃ©es candidat incomplÃ¨tes.");
+    }
+
+    const candidateSnap = await adminDb.collection("entities").doc(entityId).collection("candidates").doc(offer.candidateId).get();
+    if (!candidateSnap.exists) {
+      throw new Error("DonnÃ©es candidat incomplÃ¨tes.");
+    }
+
+    const candidate = candidateSnap.data() as Candidate;
+    if (candidate.entityId && candidate.entityId !== entityId) {
+      throw new Error(SAFE_FORBIDDEN_MESSAGE);
+    }
+    if (candidate.candidateId && candidate.candidateId !== offer.candidateId) {
+      throw new Error("DonnÃ©es candidat incohÃ©rentes.");
+    }
+    if (offer.personId && candidate.personId !== offer.personId) {
+      throw new Error("DonnÃ©es candidat incohÃ©rentes.");
+    }
+
+    let person: Person | null = null;
+    if (offer.personId) {
+      const personSnap = await adminDb.collection("entities").doc(entityId).collection("persons").doc(offer.personId).get();
+      if (!personSnap.exists) {
+        throw new Error("DonnÃ©es candidat incomplÃ¨tes.");
+      }
+      person = personSnap.data() as Person;
+      if (person.entityId && person.entityId !== entityId) {
+        throw new Error(SAFE_FORBIDDEN_MESSAGE);
+      }
+      if (candidate.personId && person.personId !== candidate.personId) {
+        throw new Error("DonnÃ©es candidat incohÃ©rentes.");
+      }
+    }
 
     const allowed = ["ready_to_send", "sent", "viewed"];
     if (!allowed.includes(offer.status)) {
       throw new Error("Le statut actuel de la proposition ne permet pas l'envoi.");
     }
 
-    const entitySnap = await adminDb.collection("entities").doc(entityId).get();
-    const entityData = entitySnap.data();
     const resolvedEntityName = entityData?.nomEntreprise || entityData?.raisonSociale || "l'entreprise";
+    const trustedRecipientEmail = resolveTrustedCandidateEmail(candidate, person);
+    const externalPublicBaseUrl = getExternalPublicBaseUrl();
 
     const rawToken = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -46,9 +140,9 @@ export async function sendOfferToCandidateAction(params: {
 
     await sendEmploymentOfferEmail({
       entityId,
-      to: offer.candidateEmail,
+      to: trustedRecipientEmail,
       subject: `Proposta di assunzione — ${resolvedEntityName}`,
-      candidateName: offer.candidateDisplayName,
+      candidateName: candidate.displayName || offer.candidateDisplayName,
       companyName: resolvedEntityName,
       jobTitle: offer.jobTitleName,
       offerLink,
@@ -86,10 +180,10 @@ export async function sendOfferToCandidateAction(params: {
     });
 
     await batch.commit();
-    return { success: true };
+    return { success: true, actorUid };
   } catch (err: any) {
     console.error("[Send Offer Action] Error:", err);
-    return { success: false, error: err.message };
+    return { success: false, error: err.message || "Envoi impossible." };
   }
 }
 
