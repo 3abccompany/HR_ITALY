@@ -95,6 +95,20 @@ import { buildUniLavAssunzioneConsultantEmail, type UniLavAssunzioneEmailInput }
 
 const MAX_RECEIPT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
+const UNILAV_RECEIPT_REPLACEMENT_TYPES: Partial<Record<EmploymentRequestType, {
+  mandatoryCommunicationType: "UNILAV_ASSUNZIONE" | "UNILAV_PROROGA" | "UNILAV_TRASFORMAZIONE";
+}>> = {
+  unilav: {
+    mandatoryCommunicationType: "UNILAV_ASSUNZIONE",
+  },
+  unilav_proroga: {
+    mandatoryCommunicationType: "UNILAV_PROROGA",
+  },
+  unilav_trasformazione: {
+    mandatoryCommunicationType: "UNILAV_TRASFORMAZIONE",
+  },
+};
+
 
 function buildUniLavAssunzioneEmailDraft(params: {
   request: EmploymentRequest;
@@ -255,8 +269,11 @@ export default function EmploymentRequestDetailPage() {
   }, [db, entityId, request]);
   
   const { data: communications } = useCollection<any>(communicationsQuery);
+  const expectedMandatoryCommunicationType = request?.type
+    ? UNILAV_RECEIPT_REPLACEMENT_TYPES[request.type]?.mandatoryCommunicationType
+    : null;
   const mandatoryCommunication = communications?.find(c => 
-    c.type === "UNILAV_ASSUNZIONE" || c.type === "UNILAV_PROROGA"
+    expectedMandatoryCommunicationType ? c.type === expectedMandatoryCommunicationType : false
   );
 
   // Consultant Registry
@@ -319,10 +336,12 @@ export default function EmploymentRequestDetailPage() {
 
   const isTerminal = request?.status === "completed" || request?.status === "cancelled";
   const canComplete = request && !isTerminal && request.protocolCode && request.cpiCommunicationDate && request.receiptDocumentId;
-  const isAssunzioneRequest = request?.type === "unilav";
-  const canReplaceAssunzioneReceipt = Boolean(
+  const isReplaceableUniLavRequest = Boolean(
+    request?.type && UNILAV_RECEIPT_REPLACEMENT_TYPES[request.type]
+  );
+  const canReplaceUniLavReceipt = Boolean(
     request?.receiptDocumentId &&
-    isAssunzioneRequest &&
+    isReplaceableUniLavRequest &&
     request.status !== "cancelled" &&
     canUpdate &&
     canUploadDocuments
@@ -1123,7 +1142,7 @@ Cordiali saluti,`;
                            {loadingFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                            Ouvrir
                         </Button>
-                        {canReplaceAssunzioneReceipt && (
+                        {canReplaceUniLavReceipt && (
                           <Button
                             variant="outline"
                             size="sm"

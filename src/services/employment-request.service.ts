@@ -11,11 +11,29 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { EmploymentRequest, EmploymentRequestStatus } from "@/types/employment-request";
+import { EmploymentRequest, EmploymentRequestStatus, EmploymentRequestType } from "@/types/employment-request";
 import { EmploymentOffer } from "@/types/employment-offer";
-import { HRDocument } from "@/types/hr-document";
+import { HRDocument, HRDocumentType } from "@/types/hr-document";
 import { createAuditLog } from "./audit.service";
 import { replaceHRDocumentWithLinkedUpdates } from "./document.service";
+
+const UNILAV_RECEIPT_REPLACEMENT_TYPES: Partial<Record<EmploymentRequestType, {
+  receiptDocumentType: HRDocumentType;
+  mandatoryCommunicationType: "UNILAV_ASSUNZIONE" | "UNILAV_PROROGA" | "UNILAV_TRASFORMAZIONE";
+}>> = {
+  unilav: {
+    receiptDocumentType: "cpi_receipt",
+    mandatoryCommunicationType: "UNILAV_ASSUNZIONE",
+  },
+  unilav_proroga: {
+    receiptDocumentType: "unilav_receipt",
+    mandatoryCommunicationType: "UNILAV_PROROGA",
+  },
+  unilav_trasformazione: {
+    receiptDocumentType: "cpi_receipt",
+    mandatoryCommunicationType: "UNILAV_TRASFORMAZIONE",
+  },
+};
 
 /**
  * Normalizes payload for Firestore.
@@ -407,8 +425,9 @@ export async function replaceEmploymentRequestReceipt(params: {
   if (request.entityId !== entityId) {
     throw new Error("Le dossier n'appartient pas à cette entité.");
   }
-  if (request.type !== "unilav") {
-    throw new Error("Le remplacement du récépissé est disponible uniquement pour les embauches CPI/UniLav.");
+  const replacementConfig = UNILAV_RECEIPT_REPLACEMENT_TYPES[request.type];
+  if (!replacementConfig) {
+    throw new Error("Le remplacement du récépissé est disponible uniquement pour les communications UniLav prises en charge.");
   }
   if (request.status === "cancelled") {
     throw new Error("Action impossible sur un dossier annulé.");
@@ -431,8 +450,8 @@ export async function replaceEmploymentRequestReceipt(params: {
   if (receipt.relatedModule !== "employmentRequests" || receipt.relatedId !== requestId) {
     throw new Error("Le document courant n'est pas lié à ce dossier CPI.");
   }
-  if (receipt.documentType !== "cpi_receipt") {
-    throw new Error("Le document courant n'est pas un récépissé CPI d'embauche.");
+  if (receipt.documentType !== replacementConfig.receiptDocumentType) {
+    throw new Error("Le document courant ne correspond pas au type de récépissé attendu pour cette communication UniLav.");
   }
 
   const now = serverTimestamp();
@@ -466,8 +485,8 @@ export async function replaceEmploymentRequestReceipt(params: {
     if (mandatoryCommunication.entityId !== entityId) {
       throw new Error("La communication obligatoire liée n'appartient pas à cette entité.");
     }
-    if (mandatoryCommunication.type && mandatoryCommunication.type !== "UNILAV_ASSUNZIONE") {
-      throw new Error("La communication obligatoire liée n'est pas une embauche UniLav.");
+    if (mandatoryCommunication.type && mandatoryCommunication.type !== replacementConfig.mandatoryCommunicationType) {
+      throw new Error("La communication obligatoire liée ne correspond pas au type de ce dossier UniLav.");
     }
     if (
       mandatoryCommunication.employmentRequestId &&
@@ -504,7 +523,7 @@ export async function replaceEmploymentRequestReceipt(params: {
     replacementReason: "Correction du récépissé officiel UniLav/CPI",
     metadata: {
       title: `Récépissé ${request.candidateDisplayName || "CPI"} - ${trimmedProtocol}`,
-      documentType: "cpi_receipt",
+      documentType: replacementConfig.receiptDocumentType,
       relatedModule: "employmentRequests",
       relatedId: requestId,
       personId: request.personId,
