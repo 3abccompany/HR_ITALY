@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { 
   Stethoscope, Plus, Search, Eye, Edit, Archive, 
   Loader2, Filter, X, ListFilter, Calendar, 
-  AlertTriangle, CheckCircle2, Clock, User, 
+  AlertTriangle, CheckCircle2, Clock, User, Users,
   Building2, ArrowUpRight, History, MoreVertical,
   RefreshCcw, FileSignature, FileText, Paperclip,
   FileCheck, Upload, ShieldCheck, Download
@@ -24,17 +24,22 @@ import {
   MedicalFitnessStatus, 
   MedicalVisitStatus,
   MEDICAL_VISIT_TYPE_LABELS,
-  FITNESS_STATUS_LABELS 
+  FITNESS_STATUS_LABELS,
+  MEDICAL_VISIT_PROVIDER_TYPE_LABELS,
+  MEDICAL_VISIT_REQUEST_STATUS_LABELS,
+  MEDICAL_VISIT_REQUEST_URGENCY_LABELS,
 } from "@/types/medical-visit";
 import {
   archiveMedicalVisitAction,
   attachMedicalCertificateAction,
+  getMedicalVisitRequestsAction,
   getMedicalCertificateUrlAction,
   replaceMedicalCertificateAction,
 } from "@/app/entity/[entityId]/medical-visits/actions";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { MedicalVisitDialog } from "@/components/medical-visits/MedicalVisitDialog";
+import { MedicalVisitRequestDialog } from "@/components/medical-visits/MedicalVisitRequestDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +69,22 @@ const initialFilters = {
   deadlineStatus: "all"
 };
 
+type MedicalVisitRequestSummary = {
+  id: string;
+  visitType: MedicalVisitType;
+  providerType: "doctor" | "medical_center";
+  providerName: string;
+  providerEmail: string;
+  medicalCenter: string | null;
+  desiredStartDate: string;
+  desiredEndDate: string;
+  urgency: "normal" | "urgent" | "critical";
+  constraints: string | null;
+  status: string;
+  participantCount: number;
+  createdAt: string | null;
+};
+
 export default function MedicalVisitsRegistryPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -76,6 +97,10 @@ export default function MedicalVisitsRegistryPage() {
   const [isDialogVisible, setIsDialogVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isResultMode, setIsResultMode] = useState(false);
+  const [isRequestDialogVisible, setIsRequestDialogVisible] = useState(false);
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
+  const [groupedRequests, setGroupedRequests] = useState<MedicalVisitRequestSummary[]>([]);
+  const [loadingGroupedRequests, setLoadingGroupedRequests] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
   const [loading, setLoading] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
@@ -108,6 +133,28 @@ export default function MedicalVisitsRegistryPage() {
 
   const { data: visits, loading: loadingVisits } = useCollection<MedicalVisit>(visitsQuery, "medical-visits.registry");
   const { data: employees, loading: loadingEmployees, error: employeesError } = useCollection<Employee>(employeesQuery, "medical-visits.employees_lookup");
+
+  const loadGroupedRequests = useCallback(async () => {
+    if (!user || !entityId || !permissionsReady || !canRead) {
+      setGroupedRequests([]);
+      return;
+    }
+    setLoadingGroupedRequests(true);
+    try {
+      const idToken = await user.getIdToken(true);
+      const result = await getMedicalVisitRequestsAction({ idToken, entityId });
+      if (!result.success) throw new Error(result.error);
+      setGroupedRequests(result.requests as MedicalVisitRequestSummary[]);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message || "Demandes groupées indisponibles." });
+    } finally {
+      setLoadingGroupedRequests(false);
+    }
+  }, [canRead, entityId, permissionsReady, toast, user]);
+
+  useEffect(() => {
+    loadGroupedRequests();
+  }, [loadGroupedRequests]);
 
   const employeeDirectorySuccessfullyLoaded =
     canReadEmployees &&
@@ -266,15 +313,80 @@ export default function MedicalVisitsRegistryPage() {
             <Button
               onClick={() => {
                 if (!canReadEmployees) return;
-                setEditingId(null);
-                setIsResultMode(false);
-                setIsDialogVisible(true);
+                setEditingRequestId(null);
+                setIsRequestDialogVisible(true);
               }}
               disabled={!canReadEmployees}
               className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold"
             >
-              <Plus className="w-4 h-4" /> Nouvelle visite
+              <Plus className="w-4 h-4" /> Nouvelle demande de visites médicales
             </Button>
+            <p className="max-w-sm text-xs font-medium text-muted-foreground text-left md:text-right">
+              Sélectionnez un ou plusieurs employés et le médecin ou centre médical.
+            </p>
+            {false && (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  disabled={!canReadEmployees}
+                  className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold"
+                >
+                  <Plus className="w-4 h-4" /> Nouvelle
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[min(20rem,calc(100vw-2rem))] rounded-2xl">
+                <DropdownMenuItem
+                  onClick={() => {
+                    setEditingRequestId(null);
+                    setIsRequestDialogVisible(true);
+                  }}
+                  className="flex-col items-start gap-1 p-3"
+                >
+                  <span className="flex items-center gap-2 font-black">
+                    <Users className="h-4 w-4" /> Demande groupée
+                  </span>
+                  <span className="text-xs text-muted-foreground">Organiser des visites pour plusieurs employés</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setEditingRequestId(null);
+                    setIsRequestDialogVisible(true);
+                  }}
+                  className="flex-col items-start gap-1 p-3"
+                >
+                  <span className="flex items-center gap-2 font-black">
+                    <Users className="h-4 w-4" /> Demande de visites médicales
+                  </span>
+                  <span className="text-xs text-muted-foreground">Sélectionner un ou plusieurs employés</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            )}
+            {false && (<>
+            <Button
+              onClick={() => {
+                if (!canReadEmployees) return;
+                setEditingRequestId(null);
+                setIsRequestDialogVisible(true);
+              }}
+              disabled={!canReadEmployees}
+              className="gap-2 rounded-xl shadow-lg shadow-primary/10 font-bold"
+            >
+              <Users className="w-4 h-4" /> Nouvelle demande de visites médicales
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!canReadEmployees) return;
+                setEditingRequestId(null);
+                setIsRequestDialogVisible(true);
+              }}
+              disabled={!canReadEmployees}
+              className="gap-2 rounded-xl font-bold"
+            >
+              <Users className="w-4 h-4" /> Nouvelle demande de visites médicales
+            </Button>
+            </>)}
             {!canReadEmployees && (
               <p className="max-w-xs text-[10px] font-medium text-muted-foreground text-left md:text-right">
                 La création d’une visite médicale nécessite l’autorisation de consulter les employés.
@@ -291,6 +403,107 @@ export default function MedicalVisitsRegistryPage() {
          <StatCard title="Échéances critiques" value={visits?.filter(v => v.nextVisitDate && isBefore(parseISO(v.nextVisitDate), addDays(startOfDay(new Date()), 30))).length || 0} icon={AlertTriangle} color="red" />
          <StatCard title="Aptes (Idonei)" value={visits?.filter(v => v.fitnessStatus === 'fit').length || 0} icon={CheckCircle2} color="green" />
       </div>
+
+      <section className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-black text-primary">Demandes de visites médicales</h2>
+            <p className="text-sm text-muted-foreground">Demandes adressées au médecin ou centre pour un ou plusieurs employés.</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={loadGroupedRequests} disabled={loadingGroupedRequests} className="gap-2 self-start sm:self-auto">
+            {loadingGroupedRequests ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+            Actualiser
+          </Button>
+        </div>
+
+        {loadingGroupedRequests ? (
+          <Card className="rounded-[2rem] border-primary/10 p-8 text-center">
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+          </Card>
+        ) : groupedRequests.length === 0 ? (
+          <Card className="rounded-[2rem] border-dashed border-primary/20 bg-muted/20 p-8 text-center">
+            <Users className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm font-bold text-muted-foreground">Aucune demande groupée enregistrée.</p>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {groupedRequests.map((request) => (
+              <Card key={request.id} className="rounded-[2rem] border-primary/10 shadow-sm">
+                <CardContent className="space-y-4 p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <Badge variant="secondary" className="mb-2 rounded-full font-black">
+                        {MEDICAL_VISIT_REQUEST_STATUS_LABELS[request.status as keyof typeof MEDICAL_VISIT_REQUEST_STATUS_LABELS] || "Brouillon"}
+                      </Badge>
+                      <h3 className="truncate text-base font-black text-primary">{MEDICAL_VISIT_TYPE_LABELS[request.visitType]}</h3>
+                      <p className="text-sm font-bold text-slate-700">{request.providerName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {MEDICAL_VISIT_PROVIDER_TYPE_LABELS[request.providerType]} · {request.medicalCenter || "Centre non renseigné"}
+                      </p>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <p className="text-lg font-black text-primary">{request.participantCount}</p>
+                      <p className="text-[10px] font-bold uppercase text-muted-foreground">
+                        {request.participantCount === 1 ? "collaborateur" : "collaborateurs"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+                    <div>
+                      <p className="font-black uppercase text-muted-foreground">Période souhaitée</p>
+                      <p className="font-bold">{format(parseISO(request.desiredStartDate), "dd/MM/yyyy")} – {format(parseISO(request.desiredEndDate), "dd/MM/yyyy")}</p>
+                    </div>
+                    <div>
+                      <p className="font-black uppercase text-muted-foreground">Urgence</p>
+                      <p className="font-bold">{MEDICAL_VISIT_REQUEST_URGENCY_LABELS[request.urgency]}</p>
+                    </div>
+                    <div>
+                      <p className="font-black uppercase text-muted-foreground">Créée le</p>
+                      <p className="font-bold">{request.createdAt ? format(parseISO(request.createdAt), "dd/MM/yyyy") : "—"}</p>
+                    </div>
+                    <div>
+                      <p className="font-black uppercase text-muted-foreground">Prochaines étapes</p>
+                      <p className="font-bold text-muted-foreground">Demande au médecin · Créneaux · Planification</p>
+                    </div>
+                  </div>
+
+                  {request.status === "draft" && canUpdateMedicalVisits && (
+                    <div className="flex flex-wrap gap-2 border-t pt-3">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => {
+                          setEditingRequestId(request.id);
+                          setIsRequestDialogVisible(true);
+                        }}
+                      >
+                        <Edit className="mr-2 h-4 w-4" />
+                        Modifier la demande
+                      </Button>
+                      {false && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => {
+                          setEditingRequestId(request.id);
+                          setIsRequestDialogVisible(true);
+                        }}
+                      >
+                        <Users className="mr-2 h-4 w-4" />
+                        Gérer les employés
+                      </Button>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
 
       <div className="space-y-4">
         {/* Filters */}
@@ -506,6 +719,18 @@ export default function MedicalVisitsRegistryPage() {
           </Table>
         </Card>
       </div>
+
+      <MedicalVisitRequestDialog
+        open={isRequestDialogVisible}
+        onOpenChange={(open) => {
+          setIsRequestDialogVisible(open);
+          if (!open) setEditingRequestId(null);
+        }}
+        entityId={entityId}
+        requestId={editingRequestId}
+        employees={activeEmployees}
+        onSaved={loadGroupedRequests}
+      />
 
       <MedicalVisitDialog 
         open={isDialogVisible} 

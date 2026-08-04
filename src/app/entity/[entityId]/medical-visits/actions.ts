@@ -4,7 +4,14 @@ import crypto from "crypto";
 import { adminAuth, adminBucket, adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { createTrustedAuditLog } from "@/services/audit.server";
-import type { MedicalFitnessStatus, MedicalVisitStatus, MedicalVisitType } from "@/types/medical-visit";
+import type {
+  MedicalFitnessStatus,
+  MedicalVisitProviderType,
+  MedicalVisitRequestStatus,
+  MedicalVisitRequestUrgency,
+  MedicalVisitStatus,
+  MedicalVisitType,
+} from "@/types/medical-visit";
 
 const SAFE_FORBIDDEN_MESSAGE = "Accès refusé.";
 const MEDICAL_CREATE_PERMISSION = "medicalVisits.create";
@@ -42,6 +49,20 @@ const MEDICAL_VISIT_STATUSES: MedicalVisitStatus[] = [
   "archived",
 ];
 
+const MEDICAL_VISIT_REQUEST_STATUSES: MedicalVisitRequestStatus[] = [
+  "draft",
+  "provider_request_sent",
+  "awaiting_provider_response",
+  "slots_received",
+  "assignments_ready",
+  "employees_planned",
+  "completed",
+  "cancelled",
+];
+
+const MEDICAL_VISIT_PROVIDER_TYPES: MedicalVisitProviderType[] = ["doctor", "medical_center"];
+const MEDICAL_VISIT_REQUEST_URGENCIES: MedicalVisitRequestUrgency[] = ["normal", "urgent", "critical"];
+
 const SCHEDULE_UPDATE_STATUSES: MedicalVisitStatus[] = [
   "scheduled",
   "pending_result",
@@ -70,6 +91,71 @@ type MedicalCertificateMutationResult =
 type MedicalCertificateUrlResult =
   | { success: true; url: string }
   | { success: false; error: string };
+
+type MedicalVisitRequestSummary = {
+  id: string;
+  entityId: string;
+  visitType: MedicalVisitType;
+  providerType: MedicalVisitProviderType;
+  providerName: string;
+  providerEmail: string;
+  medicalCenter: string | null;
+  desiredStartDate: string;
+  desiredEndDate: string;
+  urgency: MedicalVisitRequestUrgency;
+  constraints: string | null;
+  status: MedicalVisitRequestStatus;
+  participantCount: number;
+  createdAt: string | null;
+  createdBy: string;
+  updatedAt: string | null;
+  updatedBy: string;
+};
+
+type MedicalVisitRequestParticipantDto = {
+  employeeId: string;
+  employeeCodeSnapshot: string;
+  employeeDisplayNameSnapshot: string;
+  personId: string | null;
+  contractId: string | null;
+  selectionStatus: string;
+  assignedSlotId: string | null;
+  resultingMedicalVisitId: string | null;
+  notificationStatus: string;
+  emailStatus: string;
+  createdAt: string | null;
+  createdBy: string;
+  updatedAt: string | null;
+  updatedBy: string;
+};
+
+type MedicalVisitRequestSaveResult =
+  | { success: true; requestId: string }
+  | { success: false; error: string };
+
+type MedicalVisitRequestListResult =
+  | { success: true; requests: MedicalVisitRequestSummary[] }
+  | { success: false; error: string };
+
+type MedicalVisitRequestDetailsResult =
+  | { success: true; request: MedicalVisitRequestSummary; participants: MedicalVisitRequestParticipantDto[] }
+  | { success: false; error: string };
+
+type MedicalVisitRequestSaveInput = {
+  idToken: string;
+  entityId: string;
+  requestId?: string | null;
+  visitType: MedicalVisitType;
+  providerType: MedicalVisitProviderType;
+  providerName: string;
+  providerEmail: string;
+  medicalCenter?: string | null;
+  desiredStartDate: string;
+  desiredEndDate: string;
+  urgency: MedicalVisitRequestUrgency;
+  constraints?: string | null;
+  employeeIds: string[];
+};
 
 type MedicalVisitCreateInput = {
   idToken: string;
@@ -107,6 +193,214 @@ type MedicalVisitResultInput = {
 
 function isValidDateOnly(value: unknown) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+export async function saveMedicalVisitRequestWithParticipantsAction(
+  input: MedicalVisitRequestSaveInput
+): Promise<MedicalVisitRequestSaveResult> {
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(input as Record<string, unknown>, [
+      "idToken",
+      "entityId",
+      "requestId",
+      "visitType",
+      "providerType",
+      "providerName",
+      "providerEmail",
+      "medicalCenter",
+      "desiredStartDate",
+      "desiredEndDate",
+      "urgency",
+      "constraints",
+      "employeeIds",
+    ]);
+
+    const isEditing = !!input.requestId;
+    const { actorUid } = await authorizeMedicalAction(
+      input.entityId,
+      input.idToken,
+      isEditing ? MEDICAL_UPDATE_PERMISSION : MEDICAL_CREATE_PERMISSION
+    );
+
+    const visitType = assertAllowed(input.visitType, MEDICAL_VISIT_TYPES, "Type de visite");
+    const providerType = assertAllowed(input.providerType, MEDICAL_VISIT_PROVIDER_TYPES, "Type de prestataire");
+    const providerName = requireString(input.providerName, "Nom du prestataire", 180);
+    const providerEmail = normalizeEmail(input.providerEmail);
+    const medicalCenter = normalizeOptionalString(input.medicalCenter, 180);
+    const desiredStartDate = requireDateOnly(input.desiredStartDate, "Début de période souhaitée");
+    const desiredEndDate = requireDateOnly(input.desiredEndDate, "Fin de période souhaitée");
+    if (desiredEndDate < desiredStartDate) throw new Error("La fin de période souhaitée doit être postérieure ou égale au début.");
+    const urgency = assertAllowed(input.urgency, MEDICAL_VISIT_REQUEST_URGENCIES, "Urgence");
+    const constraints = normalizeOptionalString(input.constraints, 2000);
+    const employeeIds = normalizeUniqueEmployeeIds(input.employeeIds);
+    if (employeeIds.length > 350) {
+      throw new Error("Trop de collaborateurs sélectionnés pour une seule transaction. Réduisez la sélection.");
+    }
+
+    const entityRef = adminDb.collection("entities").doc(input.entityId);
+    const requestRef = input.requestId
+      ? entityRef.collection("medicalVisitRequests").doc(input.requestId)
+      : entityRef.collection("medicalVisitRequests").doc();
+    const requestId = requestRef.id;
+
+    await adminDb.runTransaction(async (transaction) => {
+      const requestSnapPromise = input.requestId ? transaction.get(requestRef) : Promise.resolve(null);
+      const employeeRefs = employeeIds.map((employeeId) => entityRef.collection("employees").doc(employeeId));
+      const employeeSnapsPromise = Promise.all(employeeRefs.map((ref) => transaction.get(ref)));
+      const existingParticipantsPromise = input.requestId
+        ? transaction.get(requestRef.collection("participants"))
+        : Promise.resolve(null);
+
+      const [requestSnap, employeeSnaps, existingParticipantsSnap] = await Promise.all([
+        requestSnapPromise,
+        employeeSnapsPromise,
+        existingParticipantsPromise,
+      ]);
+
+      if (requestSnap) {
+        if (!requestSnap.exists) throw new Error("Demande de visites médicales introuvable.");
+        const existingRequest = requestSnap.data() || {};
+        if (existingRequest.entityId !== input.entityId) throw new Error(SAFE_FORBIDDEN_MESSAGE);
+        if (existingRequest.status !== "draft") throw new Error("Seules les demandes en brouillon peuvent être modifiées.");
+      }
+
+      const validatedEmployees = employeeSnaps.map((snap, index) => {
+        const employeeId = employeeIds[index];
+        if (!snap.exists) throw new Error("Collaborateur introuvable.");
+        const employee = snap.data() || {};
+        if (employee.entityId !== input.entityId || employee.employeeId !== employeeId || !isActiveEmployee(employee)) {
+          throw new Error(SAFE_FORBIDDEN_MESSAGE);
+        }
+        return { employeeId, employee };
+      });
+
+      const existingParticipants = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+      existingParticipantsSnap?.docs.forEach((docSnap) => existingParticipants.set(docSnap.id, docSnap));
+
+      const now = FieldValue.serverTimestamp();
+      transaction.set(requestRef, {
+        id: requestId,
+        entityId: input.entityId,
+        visitType,
+        providerType,
+        providerName,
+        providerEmail,
+        medicalCenter,
+        desiredStartDate,
+        desiredEndDate,
+        urgency,
+        constraints,
+        status: "draft",
+        participantCount: employeeIds.length,
+        ...(input.requestId ? {} : { createdAt: now, createdBy: actorUid }),
+        updatedAt: now,
+        updatedBy: actorUid,
+      }, { merge: true });
+
+      for (const { employeeId, employee } of validatedEmployees) {
+        const participantRef = requestRef.collection("participants").doc(employeeId);
+        if (existingParticipants.has(employeeId)) {
+          transaction.update(participantRef, {
+            selectionStatus: "selected",
+            updatedAt: now,
+            updatedBy: actorUid,
+          });
+          continue;
+        }
+
+        transaction.set(participantRef, {
+          employeeId,
+          employeeCodeSnapshot: employee.employeeCode || employeeId,
+          employeeDisplayNameSnapshot: employee.displayName || `${employee.firstName || ""} ${employee.lastName || ""}`.trim() || employeeId,
+          personId: employee.personId || null,
+          contractId: employee.activeContractId || employee.contractId || null,
+          selectionStatus: "selected",
+          assignedSlotId: null,
+          resultingMedicalVisitId: null,
+          notificationStatus: "not_sent",
+          emailStatus: "not_sent",
+          createdAt: now,
+          createdBy: actorUid,
+          updatedAt: now,
+          updatedBy: actorUid,
+        });
+      }
+
+      for (const [employeeId, participantSnap] of existingParticipants) {
+        if (!employeeIds.includes(employeeId)) {
+          transaction.delete(participantSnap.ref);
+        }
+      }
+    });
+
+    await createTrustedAuditLog({
+      actorUid,
+      entityId: input.entityId,
+      action: isEditing ? "medicalVisitRequest.updated" : "medicalVisitRequest.created",
+      resourceType: "medicalVisitRequest",
+      resourceId: requestId,
+      details: { requestId, participantCount: employeeIds.length },
+    }).catch(() => undefined);
+
+    return { success: true, requestId };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Demande de visites médicales impossible à enregistrer." };
+  }
+}
+
+export async function getMedicalVisitRequestsAction(params: {
+  idToken: string;
+  entityId: string;
+}): Promise<MedicalVisitRequestListResult> {
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId"]);
+    await authorizeMedicalAction(params.entityId, params.idToken, MEDICAL_READ_PERMISSION);
+
+    const snap = await adminDb.collection("entities").doc(params.entityId)
+      .collection("medicalVisitRequests")
+      .orderBy("createdAt", "desc")
+      .get();
+
+    return {
+      success: true,
+      requests: snap.docs
+        .map((docSnap) => serializeMedicalVisitRequest(docSnap.id, docSnap.data()))
+        .filter((request) => request.entityId === params.entityId),
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Demandes de visites médicales indisponibles." };
+  }
+}
+
+export async function getMedicalVisitRequestDetailsAction(params: {
+  idToken: string;
+  entityId: string;
+  requestId: string;
+}): Promise<MedicalVisitRequestDetailsResult> {
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "requestId"]);
+    await authorizeMedicalAction(params.entityId, params.idToken, MEDICAL_READ_PERMISSION);
+
+    const requestRef = adminDb.collection("entities").doc(params.entityId).collection("medicalVisitRequests").doc(params.requestId);
+    const [requestSnap, participantsSnap] = await Promise.all([
+      requestRef.get(),
+      requestRef.collection("participants").get(),
+    ]);
+    if (!requestSnap.exists) throw new Error("Demande de visites médicales introuvable.");
+    const request = serializeMedicalVisitRequest(requestSnap.id, requestSnap.data() || {});
+    if (request.entityId !== params.entityId) throw new Error(SAFE_FORBIDDEN_MESSAGE);
+
+    return {
+      success: true,
+      request,
+      participants: participantsSnap.docs.map((docSnap) => serializeMedicalVisitRequestParticipant(docSnap.id, docSnap.data())),
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Détail de demande indisponible." };
+  }
 }
 
 export async function attachMedicalCertificateAction(params: {
@@ -366,6 +660,36 @@ function normalizeOptionalString(value: unknown, maxLength: number) {
   return trimmed || null;
 }
 
+function normalizeEmail(value: unknown) {
+  const email = requireString(value, "Adresse e-mail", 254).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Adresse e-mail invalide.");
+  }
+  return email;
+}
+
+function requireDateOnly(value: unknown, label: string) {
+  if (!isValidDateOnly(value)) throw new Error(`${label} invalide.`);
+  return value as string;
+}
+
+function normalizeUniqueEmployeeIds(value: unknown) {
+  if (!Array.isArray(value)) throw new Error("Collaborateurs requis.");
+  const employeeIds = value.map((item) => {
+    if (typeof item !== "string") throw new Error("Collaborateur invalide.");
+    return item.trim();
+  }).filter(Boolean);
+  if (employeeIds.length === 0) throw new Error("Au moins un collaborateur doit être sélectionné.");
+  const unique = new Set(employeeIds);
+  if (unique.size !== employeeIds.length) throw new Error("Un collaborateur ne peut pas être sélectionné plusieurs fois.");
+  return employeeIds;
+}
+
+function isActiveEmployee(employee: Record<string, any>) {
+  const status = String(employee.status || "").toLowerCase();
+  return status === "active" || status === "actif" || status === "active_contract";
+}
+
 function requireString(value: unknown, label: string, maxLength: number) {
   if (typeof value !== "string") throw new Error(`${label} invalide.`);
   const trimmed = value.trim();
@@ -391,6 +715,55 @@ function assertExactKeys(input: Record<string, unknown>, allowedKeys: string[]) 
 
 function buildDeterministicId(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex").slice(0, 48);
+}
+
+function serializeTimestamp(value: any): string | null {
+  if (!value) return null;
+  if (typeof value.toDate === "function") return value.toDate().toISOString();
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return value;
+  return null;
+}
+
+function serializeMedicalVisitRequest(id: string, data: Record<string, any>): MedicalVisitRequestSummary {
+  return {
+    id,
+    entityId: String(data.entityId || ""),
+    visitType: data.visitType,
+    providerType: data.providerType,
+    providerName: String(data.providerName || ""),
+    providerEmail: String(data.providerEmail || ""),
+    medicalCenter: data.medicalCenter || null,
+    desiredStartDate: String(data.desiredStartDate || ""),
+    desiredEndDate: String(data.desiredEndDate || ""),
+    urgency: data.urgency || "normal",
+    constraints: data.constraints || null,
+    status: data.status || "draft",
+    participantCount: Number(data.participantCount || 0),
+    createdAt: serializeTimestamp(data.createdAt),
+    createdBy: String(data.createdBy || ""),
+    updatedAt: serializeTimestamp(data.updatedAt),
+    updatedBy: String(data.updatedBy || ""),
+  };
+}
+
+function serializeMedicalVisitRequestParticipant(id: string, data: Record<string, any>): MedicalVisitRequestParticipantDto {
+  return {
+    employeeId: String(data.employeeId || id),
+    employeeCodeSnapshot: String(data.employeeCodeSnapshot || id),
+    employeeDisplayNameSnapshot: String(data.employeeDisplayNameSnapshot || id),
+    personId: data.personId || null,
+    contractId: data.contractId || null,
+    selectionStatus: data.selectionStatus || "selected",
+    assignedSlotId: data.assignedSlotId || null,
+    resultingMedicalVisitId: data.resultingMedicalVisitId || null,
+    notificationStatus: data.notificationStatus || "not_sent",
+    emailStatus: data.emailStatus || "not_sent",
+    createdAt: serializeTimestamp(data.createdAt),
+    createdBy: String(data.createdBy || ""),
+    updatedAt: serializeTimestamp(data.updatedAt),
+    updatedBy: String(data.updatedBy || ""),
+  };
 }
 
 async function authorizeMedicalAction(entityId: string, idToken: string, requiredPermission: string | string[]) {
