@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { 
-  Stethoscope, Plus, Search, Eye, Edit, Archive, 
+  Stethoscope, Plus, Search, Eye, Edit, Archive, Mail,
   Loader2, Filter, X, ListFilter, Calendar, 
   AlertTriangle, CheckCircle2, Clock, User, Users,
   Building2, ArrowUpRight, History, MoreVertical,
@@ -40,6 +40,7 @@ import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { MedicalVisitDialog } from "@/components/medical-visits/MedicalVisitDialog";
 import { MedicalVisitRequestDialog } from "@/components/medical-visits/MedicalVisitRequestDialog";
+import { MedicalProviderEmailDialog } from "@/components/medical-visits/MedicalProviderEmailDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -83,6 +84,13 @@ type MedicalVisitRequestSummary = {
   status: string;
   participantCount: number;
   createdAt: string | null;
+  providerRequestSentAt?: string | null;
+  providerRequestSentBy?: string | null;
+  providerRequestSentByName?: string | null;
+  providerRequestSentByDisplayName?: string | null;
+  providerRequestSentRecipient?: string | null;
+  providerRequestSentSubject?: string | null;
+  providerRequestSendCount?: number;
 };
 
 export default function MedicalVisitsRegistryPage() {
@@ -99,6 +107,7 @@ export default function MedicalVisitsRegistryPage() {
   const [isResultMode, setIsResultMode] = useState(false);
   const [isRequestDialogVisible, setIsRequestDialogVisible] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
+  const [providerEmailRequestId, setProviderEmailRequestId] = useState<string | null>(null);
   const [groupedRequests, setGroupedRequests] = useState<MedicalVisitRequestSummary[]>([]);
   const [loadingGroupedRequests, setLoadingGroupedRequests] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
@@ -468,6 +477,16 @@ export default function MedicalVisitsRegistryPage() {
                     </div>
                   </div>
 
+                  {request.providerRequestSentAt && (
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">
+                      <p className="font-black">En attente de réponse du médecin</p>
+                      <p>Destinataire : {request.providerRequestSentRecipient || request.providerEmail}</p>
+                      <p>Envoyé le : {format(parseISO(request.providerRequestSentAt), "dd/MM/yyyy HH:mm")}</p>
+                      <p>Envoyé par : {request.providerRequestSentByDisplayName || request.providerRequestSentByName || request.providerRequestSentBy || "—"}</p>
+                      <p>Nombre d'envois : {request.providerRequestSendCount || 1}</p>
+                    </div>
+                  )}
+
                   {request.status === "draft" && canUpdateMedicalVisits && (
                     <div className="flex flex-wrap gap-2 border-t pt-3">
                       <Button
@@ -482,20 +501,37 @@ export default function MedicalVisitsRegistryPage() {
                         <Edit className="mr-2 h-4 w-4" />
                         Modifier la demande
                       </Button>
-                      {false && (
                       <Button
                         variant="outline"
                         size="sm"
                         className="rounded-xl font-bold"
-                        onClick={() => {
-                          setEditingRequestId(request.id);
-                          setIsRequestDialogVisible(true);
-                        }}
+                        onClick={() => setProviderEmailRequestId(request.id)}
                       >
-                        <Users className="mr-2 h-4 w-4" />
-                        Gérer les employés
+                        <Mail className="mr-2 h-4 w-4" />
+                        Préparer l'e-mail au médecin
                       </Button>
-                      )}
+                    </div>
+                  )}
+                  {request.status === "awaiting_provider_response" && canUpdateMedicalVisits && (
+                    <div className="flex flex-wrap gap-2 border-t pt-3">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => setProviderEmailRequestId(request.id)}
+                      >
+                        <Eye className="mr-2 h-4 w-4" />
+                        Voir l'e-mail envoyé
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => setProviderEmailRequestId(request.id)}
+                      >
+                        <Mail className="mr-2 h-4 w-4" />
+                        Renvoyer l'e-mail
+                      </Button>
                     </div>
                   )}
                 </CardContent>
@@ -730,6 +766,16 @@ export default function MedicalVisitsRegistryPage() {
         requestId={editingRequestId}
         employees={activeEmployees}
         onSaved={loadGroupedRequests}
+      />
+
+      <MedicalProviderEmailDialog
+        open={!!providerEmailRequestId}
+        onOpenChange={(open) => {
+          if (!open) setProviderEmailRequestId(null);
+        }}
+        entityId={entityId}
+        requestId={providerEmailRequestId}
+        onSent={loadGroupedRequests}
       />
 
       <MedicalVisitDialog 

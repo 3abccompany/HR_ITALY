@@ -128,6 +128,13 @@ export interface SendTrainingParticipantInvitationEmailParams extends BuildTrain
   to: string;
 }
 
+export interface SendMedicalProviderAvailabilityRequestEmailParams {
+  entityId: string;
+  to: string;
+  subject: string;
+  body: string;
+}
+
 /**
  * Replaces {{variable}} placeholders in a string.
  */
@@ -1021,6 +1028,45 @@ export async function sendTrainingParticipantInvitationEmail(params: SendTrainin
     };
   } catch (error: any) {
     console.error("[Email Service] Failed to send training participant invitation:", error);
+    throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
+  }
+}
+
+export async function sendMedicalProviderAvailabilityRequestEmail(params: SendMedicalProviderAvailabilityRequestEmailParams) {
+  const { entityId, to, subject, body } = params;
+
+  const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+  const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+  const canSend = source === 'entity' || isGlobalConfigured;
+
+  if (!canSend) {
+    throw new Error("Configuration du service email requise.");
+  }
+
+  const finalSubject = subject.trim();
+  const finalText = body.trim();
+  const finalHtml = renderPlainTextEmailHtml(finalText);
+
+  try {
+    const info = await transporter.sendMail({
+      from,
+      to,
+      replyTo: replyTo || undefined,
+      subject: finalSubject,
+      html: finalHtml,
+      text: finalText,
+    });
+
+    return {
+      success: true as const,
+      messageId: info.messageId || null,
+      from,
+      subject: finalSubject,
+      body: finalText,
+      html: finalHtml,
+    };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send medical provider availability request:", error);
     throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
   }
 }

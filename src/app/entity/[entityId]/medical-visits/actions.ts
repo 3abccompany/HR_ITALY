@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { adminAuth, adminBucket, adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { createTrustedAuditLog } from "@/services/audit.server";
+import { sendMedicalProviderAvailabilityRequestEmail } from "@/services/email.service";
 import type {
   MedicalFitnessStatus,
   MedicalVisitProviderType,
@@ -110,6 +111,13 @@ type MedicalVisitRequestSummary = {
   createdBy: string;
   updatedAt: string | null;
   updatedBy: string;
+  providerRequestSentAt?: string | null;
+  providerRequestSentBy?: string | null;
+  providerRequestSentByName?: string | null;
+  providerRequestSentByDisplayName?: string | null;
+  providerRequestSentRecipient?: string | null;
+  providerRequestSentSubject?: string | null;
+  providerRequestSendCount?: number;
 };
 
 type MedicalVisitRequestParticipantDto = {
@@ -139,6 +147,14 @@ type MedicalVisitRequestListResult =
 
 type MedicalVisitRequestDetailsResult =
   | { success: true; request: MedicalVisitRequestSummary; participants: MedicalVisitRequestParticipantDto[] }
+  | { success: false; error: string };
+
+type MedicalProviderEmailPreviewResult =
+  | { success: true; preview: { recipient: string; subject: string; message: string; summary: string[] } }
+  | { success: false; error: string };
+
+type MedicalProviderEmailSendResult =
+  | { success: true; requestId: string; sendCount: number; alreadySent?: boolean }
   | { success: false; error: string };
 
 type MedicalVisitRequestSaveInput = {
@@ -363,11 +379,13 @@ export async function getMedicalVisitRequestsAction(params: {
       .orderBy("createdAt", "desc")
       .get();
 
+    const requests = snap.docs
+      .map((docSnap) => serializeMedicalVisitRequest(docSnap.id, docSnap.data()))
+      .filter((request) => request.entityId === params.entityId);
+
     return {
       success: true,
-      requests: snap.docs
-        .map((docSnap) => serializeMedicalVisitRequest(docSnap.id, docSnap.data()))
-        .filter((request) => request.entityId === params.entityId),
+      requests: await enrichMedicalVisitRequestSenderNames(params.entityId, requests),
     };
   } catch (error: any) {
     return { success: false, error: error?.message || "Demandes de visites médicales indisponibles." };
@@ -393,13 +411,163 @@ export async function getMedicalVisitRequestDetailsAction(params: {
     const request = serializeMedicalVisitRequest(requestSnap.id, requestSnap.data() || {});
     if (request.entityId !== params.entityId) throw new Error(SAFE_FORBIDDEN_MESSAGE);
 
+    const [enrichedRequest] = await enrichMedicalVisitRequestSenderNames(params.entityId, [request]);
+
     return {
       success: true,
-      request,
+      request: enrichedRequest,
       participants: participantsSnap.docs.map((docSnap) => serializeMedicalVisitRequestParticipant(docSnap.id, docSnap.data())),
     };
   } catch (error: any) {
     return { success: false, error: error?.message || "Détail de demande indisponible." };
+  }
+}
+
+export async function getMedicalProviderEmailPreviewAction(params: {
+  idToken: string;
+  entityId: string;
+  requestId: string;
+}): Promise<MedicalProviderEmailPreviewResult> {
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "requestId"]);
+    await authorizeMedicalAction(params.entityId, params.idToken, MEDICAL_UPDATE_PERMISSION);
+    const { request, participants, entity } = await loadVerifiedMedicalVisitRequestWithParticipants(params.entityId, params.requestId);
+    assertRequestCanEmailProvider(request);
+
+    const rendered = buildMedicalProviderEmailPreview(request, participants, entity);
+    return { success: true, preview: rendered };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Prévisualisation de l'e-mail indisponible." };
+  }
+}
+
+export async function sendMedicalProviderAvailabilityRequestAction(params: {
+  idToken: string;
+  entityId: string;
+  requestId: string;
+  subject: string;
+  message: string;
+}): Promise<MedicalProviderEmailSendResult> {
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "requestId", "subject", "message"]);
+    const { actorUid, user: actorUser } = await authorizeMedicalAction(params.entityId, params.idToken, MEDICAL_UPDATE_PERMISSION);
+    const { requestRef, request, participants, entity } = await loadVerifiedMedicalVisitRequestWithParticipants(params.entityId, params.requestId);
+    assertRequestCanEmailProvider(request);
+
+    const trustedRecipient = normalizeEmail(request.providerEmail);
+    const actorDisplayName = resolveTrustedUserDisplayName(actorUser);
+    const subject = requireString(params.subject, "Objet", 180);
+    const message = requireString(params.message, "Message", 8000);
+    const currentSendCount = Number(request.providerRequestSendCount || 0);
+    const nextSendCount = currentSendCount + 1;
+    const deliveryKey = buildDeterministicId([
+      "medical_provider_availability_request",
+      params.entityId,
+      params.requestId,
+      String(nextSendCount),
+      subject,
+      message,
+    ].join(":"));
+    const emailLogRef = adminDb.collection("entities").doc(params.entityId).collection("emailLogs").doc(deliveryKey);
+    const summary = buildMedicalProviderEmailPreview(request, participants, entity).summary;
+    const logPayload = {
+      id: deliveryKey,
+      entityId: params.entityId,
+      module: "medicalVisits",
+      type: "provider_availability_request",
+      requestId: params.requestId,
+      recipient: trustedRecipient,
+      subject,
+      status: "sending",
+      sentBy: actorUid,
+      sentByName: actorDisplayName,
+      providerName: request.providerName || null,
+      providerType: request.providerType || null,
+      participantCount: participants.length,
+      summary,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    let alreadySent = false;
+    await adminDb.runTransaction(async (transaction) => {
+      const logSnap = await transaction.get(emailLogRef);
+      if (logSnap.exists) {
+        const status = logSnap.data()?.status;
+        if (status === "sent") {
+          alreadySent = true;
+          return;
+        }
+        if (status === "sending") {
+          throw new Error("Un envoi identique est déjà en cours.");
+        }
+      }
+      transaction.set(emailLogRef, logPayload, { merge: true });
+    });
+    if (alreadySent) {
+      return { success: true, requestId: params.requestId, sendCount: currentSendCount || nextSendCount, alreadySent: true };
+    }
+
+    try {
+      const sendResult = await sendMedicalProviderAvailabilityRequestEmail({
+        entityId: params.entityId,
+        to: trustedRecipient,
+        subject,
+        body: message,
+      });
+
+      const now = FieldValue.serverTimestamp();
+      await adminDb.runTransaction(async (transaction) => {
+        const requestSnap = await transaction.get(requestRef);
+        if (!requestSnap.exists) throw new Error("Demande de visites médicales introuvable.");
+        const latestRequest = requestSnap.data() || {};
+        if (latestRequest.entityId !== params.entityId || latestRequest.status === "cancelled") {
+          throw new Error(SAFE_FORBIDDEN_MESSAGE);
+        }
+        transaction.update(requestRef, {
+          status: "awaiting_provider_response",
+          providerRequestSentAt: now,
+          providerRequestSentBy: actorUid,
+          providerRequestSentByName: actorDisplayName,
+          providerRequestSentRecipient: trustedRecipient,
+          providerRequestSentSubject: subject,
+          providerRequestSentBodyText: message,
+          providerRequestSendCount: FieldValue.increment(1),
+          updatedAt: now,
+          updatedBy: actorUid,
+        });
+        transaction.update(emailLogRef, {
+          status: "sent",
+          sentAt: now,
+          messageId: sendResult.messageId || null,
+          from: sendResult.from || null,
+          bodyText: sendResult.body,
+          bodyHtml: sendResult.html,
+          updatedAt: now,
+        });
+      });
+
+      await createTrustedAuditLog({
+        actorUid,
+        entityId: params.entityId,
+        action: "medicalVisitRequest.providerAvailabilityEmailSent",
+        resourceType: "medicalVisitRequest",
+        resourceId: params.requestId,
+        details: { requestId: params.requestId, recipient: trustedRecipient, participantCount: participants.length },
+      }).catch(() => undefined);
+
+      return { success: true, requestId: params.requestId, sendCount: nextSendCount };
+    } catch (sendError: any) {
+      await emailLogRef.set({
+        status: "failed",
+        error: sendError?.message || "Envoi impossible.",
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      throw sendError;
+    }
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Envoi de l'e-mail impossible." };
   }
 }
 
@@ -744,7 +912,44 @@ function serializeMedicalVisitRequest(id: string, data: Record<string, any>): Me
     createdBy: String(data.createdBy || ""),
     updatedAt: serializeTimestamp(data.updatedAt),
     updatedBy: String(data.updatedBy || ""),
+    providerRequestSentAt: serializeTimestamp(data.providerRequestSentAt),
+    providerRequestSentBy: data.providerRequestSentBy || null,
+    providerRequestSentByName: data.providerRequestSentByName || null,
+    providerRequestSentByDisplayName: data.providerRequestSentByName || null,
+    providerRequestSentRecipient: data.providerRequestSentRecipient || null,
+    providerRequestSentSubject: data.providerRequestSentSubject || null,
+    providerRequestSendCount: Number(data.providerRequestSendCount || 0),
   };
+}
+
+async function enrichMedicalVisitRequestSenderNames(entityId: string, requests: MedicalVisitRequestSummary[]) {
+  if (!adminDb || requests.length === 0) return requests;
+  const missingSenderUids = Array.from(new Set(
+    requests
+      .filter((request) => request.providerRequestSentBy && !request.providerRequestSentByName)
+      .map((request) => request.providerRequestSentBy as string)
+  ));
+  const userNameByUid = new Map<string, string>();
+  await Promise.all(missingSenderUids.map(async (uid) => {
+    const [userSnap, membershipSnap] = await Promise.all([
+      adminDb.collection("users").doc(uid).get(),
+      adminDb.collection("memberships").doc(`${uid}_${entityId}`).get(),
+    ]);
+    if (userSnap.exists && userSnap.data()?.status === "active" && membershipSnap.exists && membershipSnap.data()?.status === "active") {
+      userNameByUid.set(uid, resolveTrustedUserDisplayName(userSnap.data() || {}, uid));
+    }
+  }));
+
+  return requests.map((request) => {
+    const storedName = request.providerRequestSentByName?.trim() || "";
+    const derivedName = request.providerRequestSentBy
+      ? userNameByUid.get(request.providerRequestSentBy) || request.providerRequestSentBy
+      : null;
+    return {
+      ...request,
+      providerRequestSentByDisplayName: storedName || derivedName,
+    };
+  });
 }
 
 function serializeMedicalVisitRequestParticipant(id: string, data: Record<string, any>): MedicalVisitRequestParticipantDto {
@@ -763,6 +968,120 @@ function serializeMedicalVisitRequestParticipant(id: string, data: Record<string
     createdBy: String(data.createdBy || ""),
     updatedAt: serializeTimestamp(data.updatedAt),
     updatedBy: String(data.updatedBy || ""),
+  };
+}
+
+async function loadVerifiedMedicalVisitRequestWithParticipants(entityId: string, requestId: string) {
+  if (!adminDb || !requestId) throw new Error("Demande de visites médicales requise.");
+  const entityRef = adminDb.collection("entities").doc(entityId);
+  const requestRef = entityRef.collection("medicalVisitRequests").doc(requestId);
+  const [entitySnap, requestSnap, participantsSnap] = await Promise.all([
+    entityRef.get(),
+    requestRef.get(),
+    requestRef.collection("participants").get(),
+  ]);
+  if (!entitySnap.exists || entitySnap.data()?.status !== "active") throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  if (!requestSnap.exists) throw new Error("Demande de visites médicales introuvable.");
+  const request = requestSnap.data() || {};
+  if (request.entityId !== entityId || request.id !== requestId) throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  const participants = participantsSnap.docs.map((docSnap) => serializeMedicalVisitRequestParticipant(docSnap.id, docSnap.data()));
+  return { requestRef, request, participants, entity: entitySnap.data() || {} };
+}
+
+function assertRequestCanEmailProvider(request: Record<string, any>) {
+  if (request.status === "cancelled") throw new Error("Impossible d'envoyer un e-mail pour une demande annulée.");
+  if (!["draft", "awaiting_provider_response", "provider_request_sent"].includes(String(request.status || ""))) {
+    throw new Error("Cette demande n'est pas dans un état permettant l'envoi au médecin.");
+  }
+  normalizeEmail(request.providerEmail);
+}
+
+function resolveMedicalEntityName(entity?: Record<string, any> | null) {
+  return entity?.nomEntreprise || entity?.raisonSociale || entity?.name || entity?.displayName || "l'entreprise";
+}
+
+function resolveTrustedUserDisplayName(user?: Record<string, any> | null, fallback = "Utilisateur") {
+  const displayName = String(user?.displayName || "").trim();
+  if (displayName) return displayName;
+  const fullName = String(user?.fullName || "").trim();
+  if (fullName) return fullName;
+  const firstLastName = [user?.firstName, user?.lastName]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (firstLastName) return firstLastName;
+  const name = String(user?.name || "").trim();
+  if (name) return name;
+  const email = String(user?.email || "").trim();
+  if (email) return email;
+  return fallback;
+}
+
+function formatMedicalDate(value?: string | null) {
+  if (!value) return "";
+  const [year, month, day] = value.split("-");
+  if (year && month && day) return `${day}/${month}/${year}`;
+  return value;
+}
+
+function buildMedicalProviderEmailPreview(
+  request: Record<string, any>,
+  participants: MedicalVisitRequestParticipantDto[],
+  entity: Record<string, any>
+) {
+  const entityName = resolveMedicalEntityName(entity);
+  const recipient = normalizeEmail(request.providerEmail);
+  const visitType = String(request.visitType || "");
+  const providerName = String(request.providerName || "Docteur / Centre médical");
+  const desiredPeriod = request.desiredStartDate === request.desiredEndDate
+    ? formatMedicalDate(request.desiredStartDate)
+    : `${formatMedicalDate(request.desiredStartDate)} - ${formatMedicalDate(request.desiredEndDate)}`;
+  const urgency = String(request.urgency || "normal");
+  const participantLines = participants.map((participant) => {
+    const code = participant.employeeCodeSnapshot ? ` (${participant.employeeCodeSnapshot})` : "";
+    return `- ${participant.employeeDisplayNameSnapshot}${code}`;
+  });
+  const constraints = String(request.constraints || "").trim();
+  const defaultSubject = `Demande de disponibilités pour visites médicales — ${entityName}`;
+  const summary = [
+    `Destinataire : ${recipient}`,
+    `Prestataire : ${providerName}`,
+    `Type de visite : ${visitType}`,
+    `Période souhaitée : ${desiredPeriod}`,
+    `Urgence : ${urgency}`,
+    `${participants.length} collaborateur${participants.length > 1 ? "s" : ""} concerné${participants.length > 1 ? "s" : ""}`,
+  ];
+  const defaultMessage = [
+    `Bonjour ${providerName},`,
+    "",
+    `Nous souhaitons organiser des visites médicales pour ${participants.length} collaborateur${participants.length > 1 ? "s" : ""} de ${entityName}.`,
+    "",
+    `Type de visite : ${visitType}`,
+    `Période souhaitée : ${desiredPeriod}`,
+    `Urgence : ${urgency}`,
+    constraints ? `Contraintes organisationnelles : ${constraints}` : "",
+    "",
+    "Collaborateurs concernés :",
+    ...participantLines,
+    "",
+    "Pouvez-vous nous transmettre vos disponibilités en précisant, pour chaque créneau proposé :",
+    "- la date ;",
+    "- l'heure ;",
+    "- le lieu ;",
+    "- la capacité éventuelle si plusieurs salariés peuvent être reçus.",
+    "",
+    "Ces informations nous permettront de valider ensuite la planification interne.",
+    "",
+    "Cordialement,",
+    `Service RH — ${entityName}`,
+  ].filter((line) => line !== "").join("\n");
+
+  return {
+    recipient,
+    subject: String(request.providerRequestSentSubject || "").trim() || defaultSubject,
+    message: String(request.providerRequestSentBodyText || "").trim() || defaultMessage,
+    summary,
   };
 }
 
@@ -804,7 +1123,7 @@ async function authorizeMedicalAction(entityId: string, idToken: string, require
     throw new Error(SAFE_FORBIDDEN_MESSAGE);
   }
 
-  return { actorUid };
+  return { actorUid, user: userSnap.data() || {} };
 }
 
 function sanitizeFileName(name: string) {

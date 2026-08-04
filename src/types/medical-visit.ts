@@ -92,6 +92,14 @@ export interface MedicalVisitRequest {
   constraints?: string | null;
   status: MedicalVisitRequestStatus;
   participantCount: number;
+  providerRequestSentAt?: Date | FieldValue | null;
+  providerRequestSentBy?: string | null;
+  providerRequestSentByName?: string | null;
+  providerRequestSentByDisplayName?: string | null;
+  providerRequestSentRecipient?: string | null;
+  providerRequestSentSubject?: string | null;
+  providerRequestSentBodyText?: string | null;
+  providerRequestSendCount?: number;
   providerEmailSentAt?: Date | FieldValue | null;
   providerEmailSentBy?: string | null;
   providerEmailLastRecipient?: string | null;
