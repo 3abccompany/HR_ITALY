@@ -54,8 +54,14 @@ export interface MedicalVisit {
   // Core Visit Data
   visitType: MedicalVisitType;
   visitDate: string; // YYYY-MM-DD
+  visitStartTime?: string | null;
+  visitEndTime?: string | null;
   doctorName: string;
   medicalCenter?: string | null;
+  medicalVisitRequestId?: string | null;
+  medicalVisitRequestParticipantId?: string | null;
+  providerSlotId?: string | null;
+  plannedFromRequest?: boolean;
   
   // Results & Compliance
   fitnessStatus: MedicalFitnessStatus;

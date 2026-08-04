@@ -22,6 +22,7 @@ const DOCUMENT_UPLOAD_PERMISSION = "documents.upload";
 const DOCUMENT_READ_PERMISSION = "documents.read";
 const MAX_CERTIFICATE_FILE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_CERTIFICATE_MIME_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
+const MATERIALIZATION_PARTICIPANT_LIMIT = 240;
 
 const MEDICAL_VISIT_TYPES: MedicalVisitType[] = [
   "preventive",
@@ -124,6 +125,10 @@ type MedicalVisitRequestSummary = {
   slotCount?: number;
   assignedParticipantCount?: number;
   unassignedParticipantCount?: number;
+  individualVisitsCreatedAt?: string | null;
+  individualVisitsCreatedBy?: string | null;
+  individualVisitsCreatedByName?: string | null;
+  individualVisitsCount?: number;
 };
 
 type MedicalVisitRequestParticipantDto = {
@@ -139,6 +144,7 @@ type MedicalVisitRequestParticipantDto = {
   appointmentDurationMinutes: number | null;
   appointmentSequence: number | null;
   resultingMedicalVisitId: string | null;
+  resultingMedicalVisitStatus: "not_created" | "created" | "incoherent";
   notificationStatus: string;
   emailStatus: string;
   createdAt: string | null;
@@ -211,6 +217,18 @@ type MedicalParticipantSlotAssignmentInput = {
 
 type MedicalParticipantSlotAssignmentResult =
   | { success: true; requestId: string; status: MedicalVisitRequestStatus }
+  | { success: false; error: string };
+
+type MedicalVisitMaterializationResult =
+  | {
+      success: true;
+      requestId: string;
+      visitIds: string[];
+      createdCount: number;
+      existingCount: number;
+      materializedAt: string;
+      materializedByName: string;
+    }
   | { success: false; error: string };
 
 type MedicalVisitRequestSaveInput = {
@@ -475,10 +493,12 @@ export async function getMedicalVisitRequestDetailsAction(params: {
 
     const [enrichedRequest] = await enrichMedicalVisitRequestSenderNames(params.entityId, [request]);
 
+    const participants = participantsSnap.docs.map((docSnap) => serializeMedicalVisitRequestParticipant(docSnap.id, docSnap.data()));
+
     return {
       success: true,
       request: enrichedRequest,
-      participants: participantsSnap.docs.map((docSnap) => serializeMedicalVisitRequestParticipant(docSnap.id, docSnap.data())),
+      participants: await enrichMedicalVisitRequestParticipantVisitStatuses(params.entityId, params.requestId, participants),
       slots: slotsSnap.docs.map((docSnap) => serializeMedicalVisitProviderSlot(docSnap.id, docSnap.data())),
     };
   } catch (error: any) {
@@ -969,6 +989,219 @@ export async function assignMedicalVisitParticipantsToSlotsAction(params: {
   }
 }
 
+export async function materializeMedicalVisitsFromRequestAction(params: {
+  idToken: string;
+  entityId: string;
+  requestId: string;
+}): Promise<MedicalVisitMaterializationResult> {
+  const materializedAt = new Date().toISOString();
+  let createdCount = 0;
+  let existingCount = 0;
+  let visitIds: string[] = [];
+  let auditShouldBeCreated = false;
+
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "requestId"]);
+    const { actorUid, user: actorUser } = await authorizeMedicalAction(params.entityId, params.idToken, MEDICAL_CREATE_PERMISSION);
+    const actorDisplayName = resolveTrustedUserDisplayName(actorUser);
+    const entityRef = adminDb.collection("entities").doc(params.entityId);
+    const requestRef = entityRef.collection("medicalVisitRequests").doc(params.requestId);
+
+    await adminDb.runTransaction(async (transaction) => {
+      createdCount = 0;
+      existingCount = 0;
+      visitIds = [];
+      auditShouldBeCreated = false;
+
+      const requestSnap = await transaction.get(requestRef);
+      if (!requestSnap.exists) throw new Error("Demande de visites médicales introuvable.");
+      const request = requestSnap.data() || {};
+      if (request.entityId !== params.entityId || request.id !== params.requestId) throw new Error(SAFE_FORBIDDEN_MESSAGE);
+      if (request.status === "cancelled" || request.status === "completed") {
+        throw new Error("Cette demande ne peut plus être planifiée.");
+      }
+      if (!["assignments_ready", "employees_planned"].includes(String(request.status || ""))) {
+        throw new Error("Toutes les affectations doivent être validées avant de créer les visites individuelles.");
+      }
+
+      const visitType = assertAllowed(request.visitType, MEDICAL_VISIT_TYPES, "Type de visite");
+      const providerName = requireString(request.providerName, "Médecin ou centre", 180);
+      assertAllowed(request.providerType, MEDICAL_VISIT_PROVIDER_TYPES, "Type de prestataire");
+
+      const [participantsSnap, slotsSnap] = await Promise.all([
+        transaction.get(requestRef.collection("participants")),
+        transaction.get(requestRef.collection("slots")),
+      ]);
+      const participants = participantsSnap.docs
+        .map((docSnap) => serializeMedicalVisitRequestParticipant(docSnap.id, docSnap.data()))
+        .filter((participant) => participant.selectionStatus !== "removed");
+      if (participants.length === 0) throw new Error("Aucun collaborateur actif n'est sélectionné.");
+      if (participants.length > MATERIALIZATION_PARTICIPANT_LIMIT) {
+        throw new Error(`Trop de collaborateurs pour une création atomique. Limite sûre : ${MATERIALIZATION_PARTICIPANT_LIMIT}.`);
+      }
+
+      const slots = slotsSnap.docs.map((docSnap) => serializeMedicalVisitProviderSlot(docSnap.id, docSnap.data()));
+      if (slots.length === 0) throw new Error("Aucun créneau médecin n'est enregistré.");
+      const slotById = new Map<string, MedicalVisitProviderSlotDto>();
+      for (const slot of slots) {
+        if (slot.entityId !== params.entityId || slot.requestId !== params.requestId) throw new Error(SAFE_FORBIDDEN_MESSAGE);
+        requireDateOnly(slot.date, "Date du créneau");
+        requireTime(slot.startTime, "Heure de début du créneau");
+        if (slot.endTime) requireTime(slot.endTime, "Heure de fin du créneau");
+        requireString(slot.location, "Lieu du créneau", 240);
+        slotById.set(slot.slotId, slot);
+      }
+
+      const finalAssignments = new Map<string, {
+        slotId: string | null;
+        appointmentStartTime: string | null;
+        appointmentEndTime: string | null;
+      }>();
+      for (const participant of participants) {
+        finalAssignments.set(participant.employeeId, {
+          slotId: participant.assignedSlotId || null,
+          appointmentStartTime: participant.assignedStartTime || null,
+          appointmentEndTime: participant.assignedEndTime || null,
+        });
+      }
+      validateAppointmentAssignments(finalAssignments, slotById);
+      const allFullyAssigned = participants.every((participant) => {
+        const assignment = finalAssignments.get(participant.employeeId);
+        return !!assignment?.slotId && !!assignment.appointmentStartTime && !!assignment.appointmentEndTime;
+      });
+      if (!allFullyAssigned) {
+        throw new Error("Chaque collaborateur doit avoir un créneau et un horaire individuel validés.");
+      }
+
+      const employeeRefs = participants.map((participant) => entityRef.collection("employees").doc(participant.employeeId));
+      const visitRefs = participants.map((participant) => {
+        const visitId = buildDeterministicId(`medical_visit_from_request:${params.entityId}:${params.requestId}:${participant.employeeId}`);
+        return entityRef.collection("medicalVisits").doc(visitId);
+      });
+      const [employeeSnaps, visitSnaps] = await Promise.all([
+        Promise.all(employeeRefs.map((ref) => transaction.get(ref))),
+        Promise.all(visitRefs.map((ref) => transaction.get(ref))),
+      ]);
+
+      const now = FieldValue.serverTimestamp();
+      for (let index = 0; index < participants.length; index += 1) {
+        const participant = participants[index];
+        const assignment = finalAssignments.get(participant.employeeId);
+        if (!assignment?.slotId || !assignment.appointmentStartTime || !assignment.appointmentEndTime) {
+          throw new Error("Affectation individuelle incomplète.");
+        }
+        const slot = slotById.get(assignment.slotId);
+        if (!slot) throw new Error("Créneau inconnu pour cette demande.");
+
+        const employeeSnap = employeeSnaps[index];
+        if (!employeeSnap.exists) throw new Error("Collaborateur introuvable.");
+        const employee = employeeSnap.data() || {};
+        if (employee.entityId !== params.entityId || employee.employeeId !== participant.employeeId || !isActiveEmployee(employee)) {
+          throw new Error(SAFE_FORBIDDEN_MESSAGE);
+        }
+
+        const visitRef = visitRefs[index];
+        const visitId = visitRef.id;
+        const visitSnap = visitSnaps[index];
+        visitIds.push(visitId);
+
+        if (visitSnap.exists) {
+          const existingVisit = visitSnap.data() || {};
+          if (
+            existingVisit.entityId !== params.entityId
+            || existingVisit.employeeId !== participant.employeeId
+            || existingVisit.medicalVisitRequestId !== params.requestId
+            || existingVisit.providerSlotId !== assignment.slotId
+          ) {
+            throw new Error("Collision d'identifiant de visite médicale détectée.");
+          }
+          existingCount += 1;
+        } else {
+          transaction.set(visitRef, {
+            id: visitId,
+            entityId: params.entityId,
+            employeeId: participant.employeeId,
+            personId: employee.personId || participant.personId || null,
+            contractId: employee.activeContractId || employee.pendingContractId || employee.contractId || participant.contractId || null,
+            visitType,
+            visitDate: slot.date,
+            visitStartTime: assignment.appointmentStartTime,
+            visitEndTime: assignment.appointmentEndTime,
+            doctorName: providerName,
+            medicalCenter: slot.location,
+            fitnessStatus: "pending_result",
+            status: "scheduled",
+            medicalVisitRequestId: params.requestId,
+            medicalVisitRequestParticipantId: participant.employeeId,
+            providerSlotId: assignment.slotId,
+            plannedFromRequest: true,
+            documentId: null,
+            nextVisitDate: null,
+            createdAt: now,
+            createdBy: actorUid,
+            updatedAt: now,
+            updatedBy: actorUid,
+          });
+          createdCount += 1;
+          auditShouldBeCreated = true;
+        }
+
+        if (participant.resultingMedicalVisitId !== visitId) {
+          transaction.update(requestRef.collection("participants").doc(participant.employeeId), {
+            resultingMedicalVisitId: visitId,
+            updatedAt: now,
+            updatedBy: actorUid,
+          });
+        }
+      }
+
+      const requestNeedsMaterializationUpdate = request.status !== "employees_planned"
+        || !request.individualVisitsCreatedAt
+        || Number(request.individualVisitsCount || 0) !== participants.length;
+      if (requestNeedsMaterializationUpdate) {
+        transaction.update(requestRef, {
+          status: "employees_planned",
+          individualVisitsCreatedAt: now,
+          individualVisitsCreatedBy: actorUid,
+          individualVisitsCreatedByName: actorDisplayName,
+          individualVisitsCount: participants.length,
+          updatedAt: now,
+          updatedBy: actorUid,
+        });
+      }
+    });
+
+    if (auditShouldBeCreated) {
+      await createTrustedAuditLog({
+        actorUid,
+        entityId: params.entityId,
+        action: "medicalVisitRequest.individualVisitsMaterialized",
+        resourceType: "medicalVisitRequest",
+        resourceId: params.requestId,
+        details: {
+          requestId: params.requestId,
+          createdCount,
+          existingCount,
+          visitCount: visitIds.length,
+        },
+      }).catch(() => undefined);
+    }
+
+    return {
+      success: true,
+      requestId: params.requestId,
+      visitIds,
+      createdCount,
+      existingCount,
+      materializedAt,
+      materializedByName: actorDisplayName,
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Impossible de créer les visites individuelles." };
+  }
+}
+
 export async function attachMedicalCertificateAction(params: {
   idToken: string;
   entityId: string;
@@ -1435,6 +1668,10 @@ function serializeMedicalVisitRequest(id: string, data: Record<string, any>): Me
     slotCount: Number(data.slotCount || 0),
     assignedParticipantCount: Number(data.assignedParticipantCount || 0),
     unassignedParticipantCount: Number(data.unassignedParticipantCount || 0),
+    individualVisitsCreatedAt: serializeTimestamp(data.individualVisitsCreatedAt),
+    individualVisitsCreatedBy: data.individualVisitsCreatedBy || null,
+    individualVisitsCreatedByName: data.individualVisitsCreatedByName || null,
+    individualVisitsCount: Number(data.individualVisitsCount || 0),
   };
 }
 
@@ -1491,6 +1728,44 @@ async function enrichMedicalVisitRequestSenderNames(entityId: string, requests: 
   });
 }
 
+async function enrichMedicalVisitRequestParticipantVisitStatuses(
+  entityId: string,
+  requestId: string,
+  participants: MedicalVisitRequestParticipantDto[]
+): Promise<MedicalVisitRequestParticipantDto[]> {
+  if (!adminDb || participants.length === 0) return participants;
+  const linkedParticipants = participants.filter((participant) => participant.resultingMedicalVisitId);
+  if (linkedParticipants.length === 0) return participants;
+
+  const visitSnaps = await Promise.all(linkedParticipants.map((participant) => (
+    adminDb.collection("entities").doc(entityId)
+      .collection("medicalVisits")
+      .doc(participant.resultingMedicalVisitId as string)
+      .get()
+  )));
+  const statusByEmployee = new Map<string, "created" | "incoherent">();
+  linkedParticipants.forEach((participant, index) => {
+    const visitSnap = visitSnaps[index];
+    if (!visitSnap.exists) {
+      statusByEmployee.set(participant.employeeId, "incoherent");
+      return;
+    }
+    const visit = visitSnap.data() || {};
+    const matches = visit.entityId === entityId
+      && visit.employeeId === participant.employeeId
+      && visit.medicalVisitRequestId === requestId
+      && visit.id === participant.resultingMedicalVisitId;
+    statusByEmployee.set(participant.employeeId, matches ? "created" : "incoherent");
+  });
+
+  return participants.map((participant): MedicalVisitRequestParticipantDto => ({
+    ...participant,
+    resultingMedicalVisitStatus: participant.resultingMedicalVisitId
+      ? statusByEmployee.get(participant.employeeId) || "incoherent"
+      : "not_created",
+  }));
+}
+
 function serializeMedicalVisitRequestParticipant(id: string, data: Record<string, any>): MedicalVisitRequestParticipantDto {
   return {
     employeeId: String(data.employeeId || id),
@@ -1505,6 +1780,7 @@ function serializeMedicalVisitRequestParticipant(id: string, data: Record<string
     appointmentDurationMinutes: Number.isInteger(data.appointmentDurationMinutes) ? Number(data.appointmentDurationMinutes) : null,
     appointmentSequence: Number.isInteger(data.appointmentSequence) ? Number(data.appointmentSequence) : null,
     resultingMedicalVisitId: data.resultingMedicalVisitId || null,
+    resultingMedicalVisitStatus: "not_created",
     notificationStatus: data.notificationStatus || "not_sent",
     emailStatus: data.emailStatus || "not_sent",
     createdAt: serializeTimestamp(data.createdAt),

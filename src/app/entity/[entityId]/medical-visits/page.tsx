@@ -32,8 +32,10 @@ import {
 import {
   archiveMedicalVisitAction,
   attachMedicalCertificateAction,
+  getMedicalVisitRequestDetailsAction,
   getMedicalVisitRequestsAction,
   getMedicalCertificateUrlAction,
+  materializeMedicalVisitsFromRequestAction,
   replaceMedicalCertificateAction,
 } from "@/app/entity/[entityId]/medical-visits/actions";
 import { Employee } from "@/types/employee";
@@ -98,6 +100,36 @@ type MedicalVisitRequestSummary = {
   slotCount?: number;
   assignedParticipantCount?: number;
   unassignedParticipantCount?: number;
+  individualVisitsCreatedAt?: string | null;
+  individualVisitsCreatedBy?: string | null;
+  individualVisitsCreatedByName?: string | null;
+  individualVisitsCount?: number;
+};
+
+type MedicalVisitRequestParticipantDetail = {
+  employeeId: string;
+  employeeCodeSnapshot: string;
+  employeeDisplayNameSnapshot: string;
+  assignedSlotId: string | null;
+  assignedStartTime: string | null;
+  assignedEndTime: string | null;
+  resultingMedicalVisitId: string | null;
+  resultingMedicalVisitStatus: "not_created" | "created" | "incoherent";
+};
+
+type MedicalVisitProviderSlotDetail = {
+  slotId: string;
+  date: string;
+  startTime: string;
+  endTime: string | null;
+  location: string;
+};
+
+type MaterializationResultSummary = {
+  createdCount: number;
+  existingCount: number;
+  materializedAt: string;
+  materializedByName: string;
 };
 
 export default function MedicalVisitsRegistryPage() {
@@ -116,6 +148,12 @@ export default function MedicalVisitsRegistryPage() {
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [providerEmailRequestId, setProviderEmailRequestId] = useState<string | null>(null);
   const [providerSlotsRequestId, setProviderSlotsRequestId] = useState<string | null>(null);
+  const [materializingRequest, setMaterializingRequest] = useState<MedicalVisitRequestSummary | null>(null);
+  const [materializationParticipants, setMaterializationParticipants] = useState<MedicalVisitRequestParticipantDetail[]>([]);
+  const [materializationSlots, setMaterializationSlots] = useState<MedicalVisitProviderSlotDetail[]>([]);
+  const [loadingMaterializationDetails, setLoadingMaterializationDetails] = useState(false);
+  const [isMaterializing, setIsMaterializing] = useState(false);
+  const [materializationResult, setMaterializationResult] = useState<MaterializationResultSummary | null>(null);
   const [groupedRequests, setGroupedRequests] = useState<MedicalVisitRequestSummary[]>([]);
   const [loadingGroupedRequests, setLoadingGroupedRequests] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
@@ -296,6 +334,63 @@ export default function MedicalVisitsRegistryPage() {
       toast({ variant: "destructive", title: "Échec de l'envoi", description: err.message });
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleOpenMaterializationDialog = async (request: MedicalVisitRequestSummary) => {
+    if (!user || !entityId || !canRead) return;
+    setMaterializingRequest(request);
+    setMaterializationParticipants([]);
+    setMaterializationSlots([]);
+    setMaterializationResult(null);
+    setLoadingMaterializationDetails(true);
+    try {
+      const idToken = await user.getIdToken(true);
+      const result = await getMedicalVisitRequestDetailsAction({ idToken, entityId, requestId: request.id });
+      if (!result.success) throw new Error(result.error);
+      setMaterializationParticipants(result.participants as MedicalVisitRequestParticipantDetail[]);
+      setMaterializationSlots(result.slots as MedicalVisitProviderSlotDetail[]);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message || "Détail de la demande indisponible." });
+      setMaterializingRequest(null);
+    } finally {
+      setLoadingMaterializationDetails(false);
+    }
+  };
+
+  const handleMaterializeRequest = async () => {
+    if (!user || !entityId || !materializingRequest || isMaterializing) return;
+    setIsMaterializing(true);
+    try {
+      const idToken = await user.getIdToken(true);
+      const result = await materializeMedicalVisitsFromRequestAction({
+        idToken,
+        entityId,
+        requestId: materializingRequest.id,
+      });
+      if (!result.success) throw new Error(result.error);
+      setMaterializationResult({
+        createdCount: result.createdCount,
+        existingCount: result.existingCount,
+        materializedAt: result.materializedAt,
+        materializedByName: result.materializedByName,
+      });
+      await loadGroupedRequests();
+      setMaterializingRequest(null);
+      setMaterializationParticipants([]);
+      setMaterializationSlots([]);
+      setMaterializationResult(null);
+      const totalVisits = result.createdCount + result.existingCount;
+      toast({
+        title: `${totalVisits} ${totalVisits === 1 ? "visite individuelle créée" : "visites individuelles créées"}.`,
+        description: result.existingCount > 0
+          ? `${result.createdCount} nouvelle(s), ${result.existingCount} déjà existante(s).`
+          : "Les visites sont visibles dans le tableau des visites médicales.",
+      });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Erreur", description: err.message || "Création des visites impossible." });
+    } finally {
+      setIsMaterializing(false);
     }
   };
 
@@ -491,7 +586,7 @@ export default function MedicalVisitsRegistryPage() {
                       { label: "Demande au médecin", done: !!request.providerRequestSentAt || ["awaiting_provider_response", "slots_received", "assignments_ready", "employees_planned", "completed"].includes(request.status) },
                       { label: "Créneaux reçus", done: (request.slotCount || 0) > 0 || ["slots_received", "assignments_ready", "employees_planned", "completed"].includes(request.status) },
                       { label: "Affectation", done: request.status === "assignments_ready" || ["employees_planned", "completed"].includes(request.status) },
-                      { label: "Planification", done: false },
+                      { label: "Planification", done: ["employees_planned", "completed"].includes(request.status) },
                       { label: "Suivi individuel", done: false },
                     ].map((step, index) => (
                       <div
@@ -527,6 +622,22 @@ export default function MedicalVisitsRegistryPage() {
                       {request.providerResponseRecordedByName && (
                         <p>Enregistrée par : {request.providerResponseRecordedByName}</p>
                       )}
+                    </div>
+                  )}
+
+                  {(request.individualVisitsCreatedAt || request.status === "employees_planned") && (
+                    <div className="rounded-2xl border border-primary/10 bg-primary/5 p-3 text-xs text-primary">
+                      <p className="font-black">Visites individuelles créées</p>
+                      <p>{request.individualVisitsCount || request.participantCount} {(request.individualVisitsCount || request.participantCount) === 1 ? "visite individuelle" : "visites individuelles"}</p>
+                      {request.individualVisitsCreatedAt && (
+                        <p>Créées le : {format(parseISO(request.individualVisitsCreatedAt), "dd/MM/yyyy HH:mm")}</p>
+                      )}
+                      {request.individualVisitsCreatedByName && (
+                        <p>Créées par : {request.individualVisitsCreatedByName}</p>
+                      )}
+                      <p className="mt-1 font-bold text-muted-foreground">
+                        La planification source est verrouillée. Les modifications futures se font sur chaque visite individuelle.
+                      </p>
                     </div>
                   )}
 
@@ -597,6 +708,16 @@ export default function MedicalVisitsRegistryPage() {
                         <Calendar className="mr-2 h-4 w-4" />
                         Gérer les créneaux et affectations
                       </Button>
+                      {request.status === "assignments_ready" && canCreate && (
+                        <Button
+                          size="sm"
+                          className="rounded-xl font-bold"
+                          onClick={() => handleOpenMaterializationDialog(request)}
+                        >
+                          <FileCheck className="mr-2 h-4 w-4" />
+                          {"Créer les visites individuelles"}
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
@@ -620,9 +741,9 @@ export default function MedicalVisitsRegistryPage() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[250px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input 
-              className="pl-10 rounded-xl" 
-              placeholder="Rechercher collaborateur, médecin..." 
+            <Input
+              className="pl-10 rounded-xl"
+              placeholder="Rechercher collaborateur, médecin..."
               value={filters.search}
               onChange={(e) => setFilters(p => ({...p, search: e.target.value}))}
             />
@@ -762,7 +883,13 @@ export default function MedicalVisitsRegistryPage() {
                               </span>
                               {isExpired(v.nextVisitDate) && <span className="text-[8px] font-bold text-red-600 uppercase">Échue</span>}
                            </div>
-                         ) : <span className="text-muted-foreground text-xs">—</span>}
+                         ) : v.status === "scheduled" || v.status === "pending_result" ? (
+                           <span className="text-xs font-bold text-muted-foreground">À définir après résultat</span>
+                         ) : v.status === "completed" ? (
+                           <span className="text-xs font-bold text-amber-700">Non renseignée</span>
+                         ) : (
+                           <span className="text-xs text-muted-foreground">Non applicable</span>
+                         )}
                       </TableCell>
                       <TableCell>
                          {getStatusBadge(v.status, isMissingResult)}
@@ -861,6 +988,103 @@ export default function MedicalVisitsRegistryPage() {
         requestId={providerSlotsRequestId}
         onSaved={loadGroupedRequests}
       />
+
+      <Dialog open={!!materializingRequest} onOpenChange={(open) => {
+        if (!open && !isMaterializing) {
+          setMaterializingRequest(null);
+          setMaterializationParticipants([]);
+          setMaterializationSlots([]);
+          setMaterializationResult(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-[760px] rounded-[2rem]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-black text-primary">
+              <FileCheck className="h-6 w-6" />
+              Créer les visites individuelles
+            </DialogTitle>
+            <DialogDescription>
+              Chaque collaborateur recevra une visite médicale indépendante. Aucun e-mail ni notification salarié ne sera envoyé dans ce batch.
+            </DialogDescription>
+          </DialogHeader>
+
+          {loadingMaterializationDetails ? (
+            <div className="flex items-center justify-center rounded-2xl border bg-muted/20 p-8">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+                <div className="rounded-2xl border bg-muted/20 p-3">
+                  <p className="text-xs font-black uppercase text-muted-foreground">Collaborateurs</p>
+                  <p className="text-lg font-black text-primary">{materializationParticipants.length}</p>
+                </div>
+                <div className="rounded-2xl border bg-muted/20 p-3">
+                  <p className="text-xs font-black uppercase text-muted-foreground">Créneaux médecin</p>
+                  <p className="text-lg font-black text-primary">{materializationSlots.length}</p>
+                </div>
+                <div className="rounded-2xl border bg-muted/20 p-3">
+                  <p className="text-xs font-black uppercase text-muted-foreground">Demande</p>
+                  <p className="truncate text-sm font-black text-primary">{materializingRequest?.providerName || "—"}</p>
+                </div>
+              </div>
+
+              <div className="max-h-[45vh] space-y-2 overflow-y-auto pr-1">
+                {materializationParticipants.map((participant) => {
+                  const slot = materializationSlots.find((item) => item.slotId === participant.assignedSlotId);
+                  const visitStatus =
+                    participant.resultingMedicalVisitStatus === "created"
+                      ? "Créée"
+                      : participant.resultingMedicalVisitStatus === "incoherent"
+                        ? "Introuvable/incohérente"
+                        : "Non créée";
+                  return (
+                    <div key={participant.employeeId} className="rounded-2xl border p-3 text-xs">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-primary">{participant.employeeDisplayNameSnapshot}</p>
+                          <p className="font-bold text-muted-foreground">{participant.employeeCodeSnapshot}</p>
+                        </div>
+                        <Badge variant={participant.resultingMedicalVisitStatus === "created" ? "secondary" : "outline"} className="self-start rounded-full font-black">
+                          {visitStatus}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 font-bold text-muted-foreground">
+                        Rendez-vous : {slot ? `${format(parseISO(slot.date), "dd/MM/yyyy")} · ${participant.assignedStartTime || "—"}–${participant.assignedEndTime || "—"} · ${slot.location}` : "Créneau introuvable"}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {materializationResult && (
+                <div className="rounded-2xl border border-green-100 bg-green-50 p-3 text-xs text-green-800">
+                  <p className="font-black">Visites individuelles créées</p>
+                  <p>{materializationResult.createdCount} création(s) · {materializationResult.existingCount} déjà existante(s)</p>
+                  <p>Créées le : {format(parseISO(materializationResult.materializedAt), "dd/MM/yyyy HH:mm")}</p>
+                  <p>Créées par : {materializationResult.materializedByName}</p>
+                  <p className="mt-1 font-bold">Elles sont visibles dans le tableau des visites médicales existant.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="ghost" onClick={() => setMaterializingRequest(null)} disabled={isMaterializing}>
+              Fermer
+            </Button>
+            <Button
+              type="button"
+              onClick={handleMaterializeRequest}
+              disabled={isMaterializing || loadingMaterializationDetails || !!materializationResult}
+              className="rounded-xl font-black"
+            >
+              {isMaterializing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirmer la création
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <MedicalVisitDialog 
         open={isDialogVisible} 

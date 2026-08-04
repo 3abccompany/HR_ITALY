@@ -338,6 +338,9 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
                  <div className="space-y-2">
                     <Label className="text-[10px] uppercase font-black text-primary">Date de prochaine visite</Label>
                     <Input type="date" value={formData.nextVisitDate} onChange={(e) => setFormData(p => ({...p, nextVisitDate: e.target.value}))} className="bg-white rounded-xl h-11" />
+                    <p className="text-[10px] font-medium text-muted-foreground">
+                      Renseignez la date communiquée par le médecin.
+                    </p>
                  </div>
                </div>
 
