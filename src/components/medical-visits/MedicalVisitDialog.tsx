@@ -21,13 +21,14 @@ import {
   FITNESS_STATUS_LABELS
 } from "@/types/medical-visit";
 import { Employee } from "@/types/employee";
-import { linkMedicalVisitCertificateClientSide } from "@/services/medical-visit.service";
 import {
+  attachMedicalCertificateAction,
   createMedicalVisitAction,
+  getMedicalCertificateUrlAction,
+  replaceMedicalCertificateAction,
   updateMedicalVisitResultAction,
   updateMedicalVisitScheduleAction,
 } from "@/app/entity/[entityId]/medical-visits/actions";
-import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
@@ -116,16 +117,20 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
   }, [visitId, db, entityId, open, toast]);
 
   const handleViewDoc = async (docId: string) => {
-    if (!db || !entityId || !docId || !canReadDocuments) return;
+    if (!user || !entityId || !docId || !visitId || !canReadDocuments) return;
     setLoading(true);
     try {
-      const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, docId));
-      if (docSnap.exists()) {
-        const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
-        window.open(url, "_blank", "noopener,noreferrer");
-      } else {
-        throw new Error("Document introuvable.");
+      const idToken = await user.getIdToken(true);
+      const result = await getMedicalCertificateUrlAction({
+        idToken,
+        entityId,
+        visitId,
+        disposition: "view",
+      });
+      if (!result.success) {
+        throw new Error(result.error);
       }
+      window.open(result.url, "_blank", "noopener,noreferrer");
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
     } finally {
@@ -203,26 +208,14 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
       // Handle optional GED upload
       if (selectedFile && activeVisitId && canAttachCertificate) {
         try {
-          const emp = employees.find(e => e.employeeId === formData.employeeId);
-          const docId = await uploadHRDocument(
-            entityId,
-            selectedFile,
-            {
-              title: `Giudizio Idoneità - ${emp?.displayName || 'Employé'} - ${formData.visitDate}`,
-              documentType: "medical_certificate",
-              employeeId: formData.employeeId,
-              personId: formData.personId,
-              relatedModule: "medicalVisits",
-              relatedId: activeVisitId,
-              isSensitive: true,
-              status: "valid"
-            },
-            user.uid,
-            membership?.userDisplayName || "Utilisateur"
-          );
-
-          // Update record with linked document ID
-          await linkMedicalVisitCertificateClientSide(entityId, activeVisitId, docId, user.uid);
+          const formDataFile = new FormData();
+          formDataFile.set("file", selectedFile);
+          const certificateResult = formData.documentId
+            ? await replaceMedicalCertificateAction({ idToken, entityId, visitId: activeVisitId }, formDataFile)
+            : await attachMedicalCertificateAction({ idToken, entityId, visitId: activeVisitId }, formDataFile);
+          if (!certificateResult.success) {
+            throw new Error(certificateResult.error);
+          }
         } catch (uploadErr) {
           console.error("[MedicalVisit] Upload failed:", uploadErr);
           toast({ 

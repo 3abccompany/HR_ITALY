@@ -8,7 +8,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, History, MoreVertical,
   RefreshCcw, FileSignature, FileText, Paperclip,
-  FileCheck, Upload, ShieldCheck
+  FileCheck, Upload, ShieldCheck, Download
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useFirebase, useCollection, useUser } from "@/firebase";
-import { collection, query, orderBy, Query, where, doc, getDoc } from "firebase/firestore";
+import { collection, query, orderBy, Query } from "firebase/firestore";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { 
   MedicalVisit, 
@@ -26,9 +26,12 @@ import {
   MEDICAL_VISIT_TYPE_LABELS,
   FITNESS_STATUS_LABELS 
 } from "@/types/medical-visit";
-import { linkMedicalVisitCertificateClientSide } from "@/services/medical-visit.service";
-import { archiveMedicalVisitAction } from "@/app/entity/[entityId]/medical-visits/actions";
-import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
+import {
+  archiveMedicalVisitAction,
+  attachMedicalCertificateAction,
+  getMedicalCertificateUrlAction,
+  replaceMedicalCertificateAction,
+} from "@/app/entity/[entityId]/medical-visits/actions";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
 import { MedicalVisitDialog } from "@/components/medical-visits/MedicalVisitDialog";
@@ -79,6 +82,7 @@ export default function MedicalVisitsRegistryPage() {
 
   // Late Attachment State
   const [uploadingRequest, setUploadingRequest] = useState<MedicalVisit | null>(null);
+  const [certificateUploadMode, setCertificateUploadMode] = useState<"attach" | "replace">("attach");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -167,17 +171,22 @@ export default function MedicalVisitsRegistryPage() {
     setIsDialogVisible(true);
   };
 
-  const handleViewCertificate = async (docId: string) => {
-    if (!db || !entityId || !docId || !canReadDocuments) return;
-    setViewingDocId(docId);
+  const handleOpenCertificate = async (visit: MedicalVisit, disposition: "view" | "download") => {
+    if (!user || !entityId || !visit.documentId || !canReadDocuments) return;
+    const loadingKey = `${visit.id}:${disposition}`;
+    setViewingDocId(loadingKey);
     try {
-      const docSnap = await getDoc(doc(db, `entities/${entityId}/documents`, docId));
-      if (docSnap.exists()) {
-        const url = await getDocumentDownloadUrl(docSnap.data().storagePath);
-        window.open(url, "_blank", "noopener,noreferrer");
-      } else {
-        throw new Error("Document introuvable dans le registre GED.");
+      const idToken = await user.getIdToken(true);
+      const result = await getMedicalCertificateUrlAction({
+        idToken,
+        entityId,
+        visitId: visit.id,
+        disposition,
+      });
+      if (!result.success) {
+        throw new Error(result.error);
       }
+      window.open(result.url, "_blank", "noopener,noreferrer");
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message || "Impossible d'ouvrir le document." });
     } finally {
@@ -201,27 +210,22 @@ export default function MedicalVisitsRegistryPage() {
 
     setIsUploading(true);
     try {
-      const emp = employeesMap.get(uploadingRequest.employeeId);
-      const docId = await uploadHRDocument(
-        entityId,
-        uploadFile,
-        {
-          title: `Certificat médical - ${emp?.displayName || 'Employé'} - ${uploadingRequest.visitDate}`,
-          documentType: "medical_certificate",
-          employeeId: uploadingRequest.employeeId,
-          personId: uploadingRequest.personId || null,
-          relatedModule: "medicalVisits",
-          relatedId: uploadingRequest.id,
-          isSensitive: true,
-          status: "valid"
-        },
-        user.uid,
-        membership?.userDisplayName || "Utilisateur"
-      );
-
-      await linkMedicalVisitCertificateClientSide(entityId, uploadingRequest.id, docId, user.uid);
+      const idToken = await user.getIdToken(true);
+      const formData = new FormData();
+      formData.set("file", uploadFile);
+      const result = certificateUploadMode === "replace"
+        ? await replaceMedicalCertificateAction({ idToken, entityId, visitId: uploadingRequest.id }, formData)
+        : await attachMedicalCertificateAction({ idToken, entityId, visitId: uploadingRequest.id }, formData);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
       
-      toast({ title: "Document rattaché", description: "Le certificat médical a été lié à la visite." });
+      toast({
+        title: certificateUploadMode === "replace" ? "Certificat remplacé" : "Document rattaché",
+        description: certificateUploadMode === "replace"
+          ? "Le nouveau certificat médical est lié à la visite."
+          : "Le certificat médical a été lié à la visite.",
+      });
       setUploadingRequest(null);
       setUploadFile(null);
     } catch (err: any) {
@@ -398,13 +402,13 @@ export default function MedicalVisitsRegistryPage() {
                          {v.documentId ? (
                            canReadDocuments ? (
                              <button
-                               onClick={() => handleViewCertificate(v.documentId!)}
+                               onClick={() => handleOpenCertificate(v, "view")}
                                disabled={!!viewingDocId}
                                className="flex items-center gap-1.5 text-green-600 font-bold text-[10px] uppercase hover:underline disabled:opacity-50 group"
                              >
                                <FileCheck className="w-3.5 h-3.5" />
                                Certificat joint
-                               {viewingDocId === v.documentId ? (
+                               {viewingDocId === `${v.id}:view` ? (
                                  <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />
                                ) : (
                                  <Eye className="w-2.5 h-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -447,12 +451,35 @@ export default function MedicalVisitsRegistryPage() {
                            </DropdownMenuTrigger>
                            <DropdownMenuContent align="end" className="w-48">
                               {v.documentId && canReadDocuments && (
-                                <DropdownMenuItem onClick={() => handleViewCertificate(v.documentId!)} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
+                                <DropdownMenuItem onClick={() => handleOpenCertificate(v, "view")} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
                                   <Eye className="w-4 h-4" /> Voir certificat
                                 </DropdownMenuItem>
                               )}
+                              {v.documentId && canReadDocuments && (
+                                <DropdownMenuItem onClick={() => handleOpenCertificate(v, "download")} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
+                                  <Download className="w-4 h-4" /> Télécharger certificat
+                                </DropdownMenuItem>
+                              )}
+                              {v.documentId && canAttachCertificate && v.status !== "archived" && (
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setCertificateUploadMode("replace");
+                                    setUploadingRequest(v);
+                                  }}
+                                  className="gap-2 font-bold text-primary"
+                                  disabled={isUploading}
+                                >
+                                  <RefreshCcw className="w-4 h-4" /> Remplacer le certificat
+                                </DropdownMenuItem>
+                              )}
                               {!v.documentId && !isMissingResult && v.fitnessStatus !== 'pending_result' && canAttachCertificate && (
-                                <DropdownMenuItem onClick={() => setUploadingRequest(v)} className="gap-2 font-bold text-primary">
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setCertificateUploadMode("attach");
+                                    setUploadingRequest(v);
+                                  }}
+                                  className="gap-2 font-bold text-primary"
+                                >
                                    <Upload className="w-4 h-4" /> Joindre certificat
                                 </DropdownMenuItem>
                               )}
@@ -503,20 +530,33 @@ export default function MedicalVisitsRegistryPage() {
         if (!open) {
           setUploadingRequest(null);
           setUploadFile(null);
+          setCertificateUploadMode("attach");
         }
       }}>
         <DialogContent className="sm:max-w-[450px] rounded-[2rem]">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-primary flex items-center gap-2">
-              <Paperclip className="w-6 h-6" /> Joindre certificat médical
+              {certificateUploadMode === "replace" ? <RefreshCcw className="w-6 h-6" /> : <Paperclip className="w-6 h-6" />}
+              {certificateUploadMode === "replace" ? "Remplacer le certificat médical" : "Joindre certificat médical"}
             </DialogTitle>
             <DialogDescription>
               Lier le certificat d'aptitude pour la visite du {uploadingRequest && format(parseISO(uploadingRequest.visitDate), "dd/MM/yyyy")}.
             </DialogDescription>
+            {certificateUploadMode === "replace" && (
+              <p className="text-xs font-bold text-primary">
+                Remplacer le certificat actuel par un nouveau fichier.
+              </p>
+            )}
           </DialogHeader>
 
           <form onSubmit={handleExecuteUpload} className="space-y-6 py-4">
              <div className="space-y-4">
+                {certificateUploadMode === "replace" && (
+                  <div className="flex items-center gap-2 rounded-2xl border border-green-100 bg-green-50 px-4 py-3 text-xs font-bold text-green-700">
+                    <FileCheck className="h-4 w-4" />
+                    Certificat actuel joint
+                  </div>
+                )}
                 <div className={cn(
                   "border-2 border-dashed rounded-2xl p-8 transition-all relative flex flex-col items-center justify-center gap-2 text-center cursor-pointer",
                   uploadFile ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:bg-slate-100"
@@ -563,8 +603,10 @@ export default function MedicalVisitsRegistryPage() {
                   disabled={isUploading || !uploadFile || !canAttachCertificate}
                   className="rounded-xl px-8 font-black shadow-lg"
                 >
-                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-                  Lancer l'importation
+                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : (
+                    certificateUploadMode === "replace" ? <RefreshCcw className="w-4 h-4 mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />
+                  )}
+                  {certificateUploadMode === "replace" ? "Remplacer le certificat" : "Lancer l'importation"}
                 </Button>
              </DialogFooter>
           </form>

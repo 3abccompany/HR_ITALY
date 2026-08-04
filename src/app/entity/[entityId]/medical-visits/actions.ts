@@ -1,7 +1,7 @@
 "use server";
 
 import crypto from "crypto";
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { adminAuth, adminBucket, adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { createTrustedAuditLog } from "@/services/audit.server";
 import type { MedicalFitnessStatus, MedicalVisitStatus, MedicalVisitType } from "@/types/medical-visit";
@@ -9,6 +9,11 @@ import type { MedicalFitnessStatus, MedicalVisitStatus, MedicalVisitType } from 
 const SAFE_FORBIDDEN_MESSAGE = "Accès refusé.";
 const MEDICAL_CREATE_PERMISSION = "medicalVisits.create";
 const MEDICAL_UPDATE_PERMISSION = "medicalVisits.update";
+const MEDICAL_READ_PERMISSION = "medicalVisits.read";
+const DOCUMENT_UPLOAD_PERMISSION = "documents.upload";
+const DOCUMENT_READ_PERMISSION = "documents.read";
+const MAX_CERTIFICATE_FILE_SIZE = 10 * 1024 * 1024;
+const ALLOWED_CERTIFICATE_MIME_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
 
 const MEDICAL_VISIT_TYPES: MedicalVisitType[] = [
   "preventive",
@@ -58,6 +63,14 @@ type MedicalVisitMutationResult =
   | { success: true }
   | { success: false; error: string };
 
+type MedicalCertificateMutationResult =
+  | { success: true; documentId: string }
+  | { success: false; error: string };
+
+type MedicalCertificateUrlResult =
+  | { success: true; url: string }
+  | { success: false; error: string };
+
 type MedicalVisitCreateInput = {
   idToken: string;
   entityId: string;
@@ -96,6 +109,255 @@ function isValidDateOnly(value: unknown) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+export async function attachMedicalCertificateAction(params: {
+  idToken: string;
+  entityId: string;
+  visitId: string;
+}, formData: FormData): Promise<MedicalCertificateMutationResult> {
+  let uploadedStoragePath: string | null = null;
+  let createdDocumentPath: string | null = null;
+
+  try {
+    if (!adminDb || !adminBucket) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "visitId"]);
+
+    const { actorUid } = await authorizeMedicalAction(params.entityId, params.idToken, [
+      MEDICAL_UPDATE_PERMISSION,
+      DOCUMENT_UPLOAD_PERMISSION,
+    ]);
+    const { visitRef, visit } = await loadVerifiedVisit(params.entityId, params.visitId);
+    if (visit.status === "archived") throw new Error("Impossible de joindre un certificat à une visite archivée.");
+    if (visit.documentId) throw new Error("Un certificat est déjà joint. Utilisez l'action de remplacement.");
+
+    const { file, buffer, safeFileName } = await extractMedicalCertificateFile(formData);
+    const documentRef = adminDb.collection("entities").doc(params.entityId).collection("documents").doc();
+    const documentId = documentRef.id;
+    const storagePath = `entities/${params.entityId}/documents/${documentId}/${safeFileName}`;
+    uploadedStoragePath = storagePath;
+    createdDocumentPath = documentRef.path;
+
+    await adminBucket.file(storagePath).save(buffer, {
+      metadata: {
+        contentType: file.type,
+        metadata: { entityId: params.entityId, documentId, module: "medicalVisits", visitId: params.visitId },
+      },
+      resumable: false,
+    });
+
+    const now = FieldValue.serverTimestamp();
+    const batch = adminDb.batch();
+    batch.set(documentRef, {
+      id: documentId,
+      entityId: params.entityId,
+      title: `Certificat médical - ${visit.visitDate || params.visitId}`,
+      documentType: "medical_certificate",
+      status: "valid",
+      storagePath,
+      fileName: safeFileName,
+      originalFileName: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      fileSize: file.size,
+      employeeId: visit.employeeId || null,
+      personId: visit.personId || null,
+      relatedModule: "medicalVisits",
+      relatedId: params.visitId,
+      relatedLabel: `Visite médicale - ${visit.visitDate || params.visitId}`,
+      version: 1,
+      rootDocumentId: documentId,
+      isSensitive: true,
+      isRequired: true,
+      uploadedAt: now,
+      uploadedBy: actorUid,
+      uploadedByDisplayName: actorUid,
+      createdAt: now,
+      createdBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid,
+      source: "medical_visit_certificate",
+    });
+    batch.update(visitRef, {
+      documentId,
+      updatedAt: now,
+      updatedBy: actorUid,
+    });
+
+    await batch.commit();
+    uploadedStoragePath = null;
+    createdDocumentPath = null;
+
+    await createTrustedAuditLog({
+      actorUid,
+      entityId: params.entityId,
+      action: "medicalVisit.certificateAttached",
+      resourceType: "medicalVisit",
+      resourceId: params.visitId,
+      details: { visitId: params.visitId, documentId },
+    }).catch(() => undefined);
+
+    return { success: true, documentId };
+  } catch (error: any) {
+    if (uploadedStoragePath && adminBucket) {
+      await adminBucket.file(uploadedStoragePath).delete({ ignoreNotFound: true }).catch(() => undefined);
+    }
+    if (createdDocumentPath && adminDb) {
+      await adminDb.doc(createdDocumentPath).delete().catch(() => undefined);
+    }
+    return { success: false, error: error?.message || "Certificat médical impossible à joindre." };
+  }
+}
+
+export async function replaceMedicalCertificateAction(params: {
+  idToken: string;
+  entityId: string;
+  visitId: string;
+}, formData: FormData): Promise<MedicalCertificateMutationResult> {
+  let uploadedStoragePath: string | null = null;
+  let createdDocumentPath: string | null = null;
+
+  try {
+    if (!adminDb || !adminBucket) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "visitId"]);
+
+    const { actorUid } = await authorizeMedicalAction(params.entityId, params.idToken, [
+      MEDICAL_UPDATE_PERMISSION,
+      DOCUMENT_UPLOAD_PERMISSION,
+    ]);
+    const { visitRef, visit } = await loadVerifiedVisit(params.entityId, params.visitId);
+    if (visit.status === "archived") throw new Error("Impossible de remplacer le certificat d'une visite archivée.");
+
+    const { documentId: oldDocumentId, documentRef: oldDocumentRef, documentData: oldDocument } =
+      await loadVerifiedMedicalCertificateDocument(params.entityId, visit);
+    if (oldDocument.status === "replaced" || oldDocument.status === "archived") {
+      throw new Error("Ce certificat a déjà été remplacé ou archivé.");
+    }
+
+    const { file, buffer, safeFileName } = await extractMedicalCertificateFile(formData);
+    const newDocumentRef = adminDb.collection("entities").doc(params.entityId).collection("documents").doc();
+    const newDocumentId = newDocumentRef.id;
+    const storagePath = `entities/${params.entityId}/documents/${newDocumentId}/${safeFileName}`;
+    uploadedStoragePath = storagePath;
+    createdDocumentPath = newDocumentRef.path;
+
+    await adminBucket.file(storagePath).save(buffer, {
+      metadata: {
+        contentType: file.type,
+        metadata: { entityId: params.entityId, documentId: newDocumentId, module: "medicalVisits", visitId: params.visitId },
+      },
+      resumable: false,
+    });
+
+    const now = FieldValue.serverTimestamp();
+    const rootDocumentId = oldDocument.rootDocumentId || oldDocument.id || oldDocumentId;
+    const version = Number(oldDocument.version || 1) + 1;
+    const batch = adminDb.batch();
+    batch.set(newDocumentRef, {
+      ...oldDocument,
+      id: newDocumentId,
+      entityId: params.entityId,
+      title: `Certificat médical - ${visit.visitDate || params.visitId}`,
+      documentType: "medical_certificate",
+      status: "valid",
+      storagePath,
+      fileName: safeFileName,
+      originalFileName: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      fileSize: file.size,
+      employeeId: visit.employeeId || null,
+      personId: visit.personId || null,
+      relatedModule: "medicalVisits",
+      relatedId: params.visitId,
+      relatedLabel: `Visite médicale - ${visit.visitDate || params.visitId}`,
+      version,
+      replacesId: oldDocumentId,
+      previousDocumentId: oldDocumentId,
+      replacedById: null,
+      rootDocumentId,
+      replacementReason: "Remplacement du certificat médical.",
+      uploadedAt: now,
+      uploadedBy: actorUid,
+      uploadedByDisplayName: actorUid,
+      createdAt: now,
+      createdBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid,
+      source: "medical_visit_certificate",
+      sourceKey: null,
+      isSensitive: true,
+    });
+    batch.update(oldDocumentRef, {
+      status: "replaced",
+      replacedById: newDocumentId,
+      replacedAt: now,
+      replacedBy: actorUid,
+      updatedAt: now,
+      updatedBy: actorUid,
+    });
+    batch.update(visitRef, {
+      documentId: newDocumentId,
+      updatedAt: now,
+      updatedBy: actorUid,
+    });
+
+    await batch.commit();
+    uploadedStoragePath = null;
+    createdDocumentPath = null;
+
+    await createTrustedAuditLog({
+      actorUid,
+      entityId: params.entityId,
+      action: "medicalVisit.certificateReplaced",
+      resourceType: "medicalVisit",
+      resourceId: params.visitId,
+      details: { visitId: params.visitId, oldDocumentId, newDocumentId },
+    }).catch(() => undefined);
+
+    return { success: true, documentId: newDocumentId };
+  } catch (error: any) {
+    if (uploadedStoragePath && adminBucket) {
+      await adminBucket.file(uploadedStoragePath).delete({ ignoreNotFound: true }).catch(() => undefined);
+    }
+    if (createdDocumentPath && adminDb) {
+      await adminDb.doc(createdDocumentPath).delete().catch(() => undefined);
+    }
+    return { success: false, error: error?.message || "Remplacement du certificat médical impossible." };
+  }
+}
+
+export async function getMedicalCertificateUrlAction(params: {
+  idToken: string;
+  entityId: string;
+  visitId: string;
+  disposition: "view" | "download";
+}): Promise<MedicalCertificateUrlResult> {
+  try {
+    if (!adminDb || !adminBucket) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "visitId", "disposition"]);
+    const disposition = assertAllowed(params.disposition, ["view", "download"], "Mode d'ouverture");
+
+    await authorizeMedicalAction(params.entityId, params.idToken, [
+      MEDICAL_READ_PERMISSION,
+      DOCUMENT_READ_PERMISSION,
+    ]);
+    const { visit } = await loadVerifiedVisit(params.entityId, params.visitId);
+    const { documentId, documentData } = await loadVerifiedMedicalCertificateDocument(params.entityId, visit);
+
+    const responseDisposition = disposition === "download" ? "attachment" : "inline";
+    const fileName = sanitizeFileName(documentData.fileName || documentData.originalFileName || `certificat-medical-${documentId}.pdf`);
+    const [url] = await adminBucket.file(documentData.storagePath).getSignedUrl({
+      version: "v4",
+      action: "read",
+      expires: Date.now() + 15 * 60 * 1000,
+      responseDisposition: `${responseDisposition}; filename="${fileName}"`,
+    });
+
+    return { success: true, url };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Certificat médical indisponible." };
+  }
+}
+
 function normalizeOptionalString(value: unknown, maxLength: number) {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") throw new Error("Valeur texte invalide.");
@@ -131,7 +393,7 @@ function buildDeterministicId(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex").slice(0, 48);
 }
 
-async function authorizeMedicalAction(entityId: string, idToken: string, requiredPermission: string) {
+async function authorizeMedicalAction(entityId: string, idToken: string, requiredPermission: string | string[]) {
   if (!entityId || !idToken || !adminAuth || !adminDb) {
     throw new Error(SAFE_FORBIDDEN_MESSAGE);
   }
@@ -160,11 +422,98 @@ async function authorizeMedicalAction(entityId: string, idToken: string, require
 
   const membership = membershipSnap.data();
   const permissions = Array.isArray(membership?.permissions) ? membership.permissions : [];
-  if (!membershipSnap.exists || membership?.status !== "active" || !permissions.includes(requiredPermission)) {
+  const requiredPermissions = Array.isArray(requiredPermission) ? requiredPermission : [requiredPermission];
+  if (
+    !membershipSnap.exists
+    || membership?.status !== "active"
+    || requiredPermissions.some((permission) => !permissions.includes(permission))
+  ) {
     throw new Error(SAFE_FORBIDDEN_MESSAGE);
   }
 
   return { actorUid };
+}
+
+function sanitizeFileName(name: string) {
+  return (name || "certificat-medical").replace(/[^\w.\-]+/g, "_").replace(/_+/g, "_").slice(0, 120);
+}
+
+async function extractMedicalCertificateFile(formData: FormData) {
+  const entries = Array.from(formData.entries());
+  const fileEntries = entries.filter(([, value]) => value instanceof File);
+  if (fileEntries.length !== 1 || fileEntries[0][0] !== "file") {
+    throw new Error("Un seul fichier de certificat médical est requis.");
+  }
+
+  const file = fileEntries[0][1];
+  if (!(file instanceof File)) {
+    throw new Error("Fichier de certificat médical requis.");
+  }
+
+  if (!ALLOWED_CERTIFICATE_MIME_TYPES.includes(file.type)) {
+    throw new Error("Format de fichier non supporté. Veuillez utiliser PDF, PNG ou JPEG.");
+  }
+
+  if (file.size <= 0) {
+    throw new Error("Le fichier est vide.");
+  }
+
+  if (file.size > MAX_CERTIFICATE_FILE_SIZE) {
+    throw new Error("La taille max est de 10 Mo.");
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  if (buffer.length <= 0) {
+    throw new Error("Le fichier est vide.");
+  }
+  if (buffer.length > MAX_CERTIFICATE_FILE_SIZE) {
+    throw new Error("La taille max est de 10 Mo.");
+  }
+
+  return {
+    file,
+    buffer,
+    safeFileName: sanitizeFileName(file.name),
+  };
+}
+
+function isMedicalCertificateStoragePath(storagePath: unknown, entityId: string, documentId: string) {
+  return typeof storagePath === "string" && storagePath.startsWith(`entities/${entityId}/documents/${documentId}/`);
+}
+
+async function loadVerifiedMedicalCertificateDocument(entityId: string, visit: Record<string, any>) {
+  if (!adminDb) throw new Error("Service administrateur indisponible.");
+  const documentId = typeof visit.documentId === "string" ? visit.documentId.trim() : "";
+  if (!documentId) throw new Error("Certificat médical introuvable.");
+
+  const documentRef = adminDb.collection("entities").doc(entityId).collection("documents").doc(documentId);
+  const documentSnap = await documentRef.get();
+  if (!documentSnap.exists) throw new Error("Certificat médical introuvable.");
+
+  const documentData = documentSnap.data() || {};
+  const hasDocumentType = typeof documentData.documentType !== "undefined" && documentData.documentType !== null;
+  const hasRelatedModule = typeof documentData.relatedModule !== "undefined" && documentData.relatedModule !== null;
+  const hasRelatedId = typeof documentData.relatedId !== "undefined" && documentData.relatedId !== null;
+  const hasSensitiveFlag = typeof documentData.isSensitive !== "undefined" && documentData.isSensitive !== null;
+  const hasDocumentEmployee = typeof documentData.employeeId === "string" && documentData.employeeId.trim();
+  const hasDocumentPerson = typeof documentData.personId === "string" && documentData.personId.trim();
+  const visitEmployeeId = typeof visit.employeeId === "string" ? visit.employeeId.trim() : "";
+  const visitPersonId = typeof visit.personId === "string" ? visit.personId.trim() : "";
+
+  if (
+    documentData.entityId !== entityId
+    || (hasDocumentType && documentData.documentType !== "medical_certificate")
+    || (hasRelatedModule && documentData.relatedModule !== "medicalVisits")
+    || (hasRelatedId && documentData.relatedId !== visit.id)
+    || (hasSensitiveFlag && documentData.isSensitive !== true)
+    || (hasDocumentEmployee && visitEmployeeId && documentData.employeeId !== visitEmployeeId)
+    || (hasDocumentPerson && visitPersonId && documentData.personId !== visitPersonId)
+    || !isMedicalCertificateStoragePath(documentData.storagePath, entityId, documentId)
+  ) {
+    throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  }
+
+  return { documentId, documentRef, documentData };
 }
 
 async function loadVerifiedEmployee(entityId: string, employeeId: string) {
