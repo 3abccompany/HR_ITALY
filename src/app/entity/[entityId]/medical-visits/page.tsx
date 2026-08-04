@@ -41,6 +41,7 @@ import { useToast } from "@/hooks/use-toast";
 import { MedicalVisitDialog } from "@/components/medical-visits/MedicalVisitDialog";
 import { MedicalVisitRequestDialog } from "@/components/medical-visits/MedicalVisitRequestDialog";
 import { MedicalProviderEmailDialog } from "@/components/medical-visits/MedicalProviderEmailDialog";
+import { MedicalProviderSlotsDialog } from "@/components/medical-visits/MedicalProviderSlotsDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -91,6 +92,12 @@ type MedicalVisitRequestSummary = {
   providerRequestSentRecipient?: string | null;
   providerRequestSentSubject?: string | null;
   providerRequestSendCount?: number;
+  providerResponseRecordedAt?: string | null;
+  providerResponseRecordedBy?: string | null;
+  providerResponseRecordedByName?: string | null;
+  slotCount?: number;
+  assignedParticipantCount?: number;
+  unassignedParticipantCount?: number;
 };
 
 export default function MedicalVisitsRegistryPage() {
@@ -108,6 +115,7 @@ export default function MedicalVisitsRegistryPage() {
   const [isRequestDialogVisible, setIsRequestDialogVisible] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [providerEmailRequestId, setProviderEmailRequestId] = useState<string | null>(null);
+  const [providerSlotsRequestId, setProviderSlotsRequestId] = useState<string | null>(null);
   const [groupedRequests, setGroupedRequests] = useState<MedicalVisitRequestSummary[]>([]);
   const [loadingGroupedRequests, setLoadingGroupedRequests] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
@@ -477,6 +485,27 @@ export default function MedicalVisitsRegistryPage() {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-3 lg:grid-cols-6">
+                    {[
+                      { label: "Participants et médecin", done: true },
+                      { label: "Demande au médecin", done: !!request.providerRequestSentAt || ["awaiting_provider_response", "slots_received", "assignments_ready", "employees_planned", "completed"].includes(request.status) },
+                      { label: "Créneaux reçus", done: (request.slotCount || 0) > 0 || ["slots_received", "assignments_ready", "employees_planned", "completed"].includes(request.status) },
+                      { label: "Affectation", done: request.status === "assignments_ready" || ["employees_planned", "completed"].includes(request.status) },
+                      { label: "Planification", done: false },
+                      { label: "Suivi individuel", done: false },
+                    ].map((step, index) => (
+                      <div
+                        key={step.label}
+                        className={cn(
+                          "rounded-xl border px-2 py-2 font-black uppercase leading-tight",
+                          step.done ? "border-primary/20 bg-primary/10 text-primary" : "border-muted bg-muted/30 text-muted-foreground"
+                        )}
+                      >
+                        {index + 1}. {step.label}
+                      </div>
+                    ))}
+                  </div>
+
                   {request.providerRequestSentAt && (
                     <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">
                       <p className="font-black">En attente de réponse du médecin</p>
@@ -484,6 +513,20 @@ export default function MedicalVisitsRegistryPage() {
                       <p>Envoyé le : {format(parseISO(request.providerRequestSentAt), "dd/MM/yyyy HH:mm")}</p>
                       <p>Envoyé par : {request.providerRequestSentByDisplayName || request.providerRequestSentByName || request.providerRequestSentBy || "—"}</p>
                       <p>Nombre d'envois : {request.providerRequestSendCount || 1}</p>
+                    </div>
+                  )}
+
+                  {(request.slotCount || request.providerResponseRecordedAt) && (
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-800">
+                      <p className="font-black">{request.slotCount || 0} {(request.slotCount || 0) === 1 ? "créneau reçu" : "créneaux reçus"}</p>
+                      <p>{request.assignedParticipantCount || 0} {(request.assignedParticipantCount || 0) === 1 ? "collaborateur affecté" : "collaborateurs affectés"}</p>
+                      <p>{request.unassignedParticipantCount || 0} {(request.unassignedParticipantCount || 0) === 1 ? "collaborateur sans créneau" : "collaborateurs sans créneau"}</p>
+                      {request.providerResponseRecordedAt && (
+                        <p>Réponse enregistrée le : {format(parseISO(request.providerResponseRecordedAt), "dd/MM/yyyy HH:mm")}</p>
+                      )}
+                      {request.providerResponseRecordedByName && (
+                        <p>Enregistrée par : {request.providerResponseRecordedByName}</p>
+                      )}
                     </div>
                   )}
 
@@ -522,6 +565,37 @@ export default function MedicalVisitsRegistryPage() {
                       >
                         <Eye className="mr-2 h-4 w-4" />
                         Voir l'e-mail envoyé
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => setProviderEmailRequestId(request.id)}
+                      >
+                        <Mail className="mr-2 h-4 w-4" />
+                        Renvoyer l'e-mail
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => setProviderSlotsRequestId(request.id)}
+                      >
+                        <Calendar className="mr-2 h-4 w-4" />
+                        Enregistrer la réponse du médecin
+                      </Button>
+                    </div>
+                  )}
+                  {["slots_received", "assignments_ready"].includes(request.status) && canUpdateMedicalVisits && (
+                    <div className="flex flex-wrap gap-2 border-t pt-3">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => setProviderSlotsRequestId(request.id)}
+                      >
+                        <Calendar className="mr-2 h-4 w-4" />
+                        Gérer les créneaux et affectations
                       </Button>
                       <Button
                         variant="outline"
@@ -776,6 +850,16 @@ export default function MedicalVisitsRegistryPage() {
         entityId={entityId}
         requestId={providerEmailRequestId}
         onSent={loadGroupedRequests}
+      />
+
+      <MedicalProviderSlotsDialog
+        open={!!providerSlotsRequestId}
+        onOpenChange={(open) => {
+          if (!open) setProviderSlotsRequestId(null);
+        }}
+        entityId={entityId}
+        requestId={providerSlotsRequestId}
+        onSaved={loadGroupedRequests}
       />
 
       <MedicalVisitDialog 

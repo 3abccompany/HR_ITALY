@@ -100,10 +100,33 @@ export interface MedicalVisitRequest {
   providerRequestSentSubject?: string | null;
   providerRequestSentBodyText?: string | null;
   providerRequestSendCount?: number;
+  providerResponseRecordedAt?: Date | FieldValue | null;
+  providerResponseRecordedBy?: string | null;
+  providerResponseRecordedByName?: string | null;
+  slotCount?: number;
+  assignedParticipantCount?: number;
+  unassignedParticipantCount?: number;
   providerEmailSentAt?: Date | FieldValue | null;
   providerEmailSentBy?: string | null;
   providerEmailLastRecipient?: string | null;
   providerEmailSendCount?: number;
+  createdAt: Date | FieldValue;
+  createdBy: string;
+  updatedAt: Date | FieldValue;
+  updatedBy: string;
+}
+
+export interface MedicalVisitProviderSlot {
+  id: string;
+  slotId: string;
+  entityId: string;
+  requestId: string;
+  date: string;
+  startTime: string;
+  endTime?: string | null;
+  location: string;
+  capacity?: number | null;
+  instructions?: string | null;
   createdAt: Date | FieldValue;
   createdBy: string;
   updatedAt: Date | FieldValue;
@@ -118,6 +141,10 @@ export interface MedicalVisitRequestParticipant {
   contractId?: string | null;
   selectionStatus: MedicalVisitRequestSelectionStatus;
   assignedSlotId?: string | null;
+  assignedStartTime?: string | null;
+  assignedEndTime?: string | null;
+  appointmentDurationMinutes?: number | null;
+  appointmentSequence?: number | null;
   resultingMedicalVisitId?: string | null;
   notificationStatus?: MedicalVisitRequestNotificationStatus;
   emailStatus?: MedicalVisitRequestEmailStatus;
