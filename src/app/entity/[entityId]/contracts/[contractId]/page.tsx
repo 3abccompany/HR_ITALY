@@ -88,6 +88,7 @@ import {
 import { format, isBefore, startOfDay, addDays } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getLevelsForCcnlAction } from "@/app/actions/ccnl-actions";
+import { getEmployeeSignedContractUrlAction } from "./actions";
 import { sendContractToEmployeeAction } from "@/services/email.service";
 
 type PayrollMode = "monthly" | "hourly" | "actual_worked_hours";
@@ -477,6 +478,7 @@ export default function ContractDetailPage() {
     contract?.signedDocumentFileName ||
     contract?.signedDocumentStoragePath
   );
+  const canPreviewEmployeeSignedDocument = !!(contract?.signedDocumentId || contract?.signedDocumentStoragePath);
 
   const pdfDate = parseSafeDate(contract?.generatedPdfAt);
   const contentDate = parseSafeDate(contract?.contentUpdatedAt);
@@ -560,6 +562,27 @@ export default function ContractDetailPage() {
       window.open(url, "_blank");
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
+    } finally {
+      setLoadingActionId(null);
+    }
+  };
+
+  const handleOpenEmployeeSignedContract = async () => {
+    if (!entityId || !contractId) return;
+    const actionId = "employee-signed-contract";
+    setLoadingActionId(actionId);
+    try {
+      const idToken = await auth.currentUser?.getIdToken(true);
+      if (!idToken) throw new Error("Session utilisateur indisponible. Veuillez vous reconnecter.");
+      const result = await getEmployeeSignedContractUrlAction({ entityId, contractId, idToken });
+      if (!result.success) throw new Error(result.error);
+      window.open(result.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Document indisponible",
+        description: err.message || "Impossible d'ouvrir le document signé.",
+      });
     } finally {
       setLoadingActionId(null);
     }
@@ -1400,7 +1423,7 @@ export default function ContractDetailPage() {
               <CardContent className="p-8">
                 {!!hasSignedDoc ? (
                   <div className="space-y-6">
-                    <div className="flex items-center justify-between gap-6 p-5 bg-white rounded-2xl border shadow-sm">
+                    <div className="flex flex-col gap-4 p-5 bg-white rounded-2xl border shadow-sm sm:flex-row sm:items-center sm:justify-between sm:gap-6">
                       <div className="flex items-center gap-4">
                         <div className="bg-green-100 p-3 rounded-2xl text-green-600"><CheckCircle2 className="w-6 h-6" /></div>
                         <div>
@@ -1408,7 +1431,20 @@ export default function ContractDetailPage() {
                            <p className="text-[10px] text-muted-foreground font-bold uppercase mt-1">Reçu le {formatDateTime(contract.signedDocumentUploadedAt)} par {getActorLabel(contract.signedDocumentUploadedBy)}</p>
                         </div>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2 sm:justify-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleOpenEmployeeSignedContract}
+                          className="rounded-xl font-bold h-9 gap-1.5"
+                          disabled={!!processing || !canPreviewEmployeeSignedDocument || loadingActionId === "employee-signed-contract"}
+                          title={canPreviewEmployeeSignedDocument ? "Visualiser le document signé" : "Document signé indisponible"}
+                          aria-label="Visualiser le document signé"
+                        >
+                          {loadingActionId === "employee-signed-contract" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                          Visualiser le document signé
+                        </Button>
                         {contract.signedDocumentUrl && (
                           <Button variant="ghost" size="sm" asChild className="rounded-xl font-bold">
                             <a href={contract.signedDocumentUrl} target="_blank" rel="noopener noreferrer"><Eye className="w-4 h-4 mr-1.5" /> Voir</a>
