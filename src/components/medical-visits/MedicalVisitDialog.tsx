@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { 
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from "@/components/ui/select";
-import { 
+import {
   MedicalVisit, 
   MedicalVisitType, 
   MedicalFitnessStatus, 
@@ -21,7 +21,12 @@ import {
   FITNESS_STATUS_LABELS
 } from "@/types/medical-visit";
 import { Employee } from "@/types/employee";
-import { createMedicalVisit, updateMedicalVisit } from "@/services/medical-visit.service";
+import { linkMedicalVisitCertificateClientSide } from "@/services/medical-visit.service";
+import {
+  createMedicalVisitAction,
+  updateMedicalVisitResultAction,
+  updateMedicalVisitScheduleAction,
+} from "@/app/entity/[entityId]/medical-visits/actions";
 import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { useUser, useFirebase } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
@@ -140,6 +145,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
 
     setLoading(true);
     try {
+      const idToken = await user.getIdToken(true);
       let finalPayload = { ...formData };
       
       // Auto-complete logic for result entry
@@ -150,9 +156,48 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
       let activeVisitId = visitId;
 
       if (isEditing && visitId) {
-        await updateMedicalVisit(entityId, visitId, finalPayload, user.uid);
+        const result = resultMode
+          ? await updateMedicalVisitResultAction({
+              idToken,
+              entityId,
+              visitId,
+              fitnessStatus: finalPayload.fitnessStatus,
+              nextVisitDate: finalPayload.nextVisitDate || null,
+              status: finalPayload.status,
+              prescriptions: finalPayload.prescriptions,
+              restrictions: finalPayload.restrictions,
+              notes: finalPayload.notes,
+            })
+          : await updateMedicalVisitScheduleAction({
+              idToken,
+              entityId,
+              visitId,
+              visitType: finalPayload.visitType,
+              visitDate: finalPayload.visitDate,
+              doctorName: finalPayload.doctorName,
+              medicalCenter: finalPayload.medicalCenter || null,
+              status: finalPayload.status,
+            });
+
+        if (!result.success) {
+          throw new Error(result.error);
+        }
       } else {
-        activeVisitId = await createMedicalVisit(entityId, finalPayload, user.uid);
+        const result = await createMedicalVisitAction({
+          idToken,
+          entityId,
+          employeeId: finalPayload.employeeId,
+          visitType: finalPayload.visitType,
+          visitDate: finalPayload.visitDate,
+          doctorName: finalPayload.doctorName,
+          medicalCenter: finalPayload.medicalCenter || null,
+          status: finalPayload.status,
+        });
+
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+        activeVisitId = result.visitId;
       }
 
       // Handle optional GED upload
@@ -177,7 +222,7 @@ export function MedicalVisitDialog({ open, onOpenChange, entityId, visitId, resu
           );
 
           // Update record with linked document ID
-          await updateMedicalVisit(entityId, activeVisitId, { documentId: docId }, user.uid);
+          await linkMedicalVisitCertificateClientSide(entityId, activeVisitId, docId, user.uid);
         } catch (uploadErr) {
           console.error("[MedicalVisit] Upload failed:", uploadErr);
           toast({ 

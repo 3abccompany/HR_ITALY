@@ -26,7 +26,8 @@ import {
   MEDICAL_VISIT_TYPE_LABELS,
   FITNESS_STATUS_LABELS 
 } from "@/types/medical-visit";
-import { archiveMedicalVisit, updateMedicalVisit } from "@/services/medical-visit.service";
+import { linkMedicalVisitCertificateClientSide } from "@/services/medical-visit.service";
+import { archiveMedicalVisitAction } from "@/app/entity/[entityId]/medical-visits/actions";
 import { uploadHRDocument, getDocumentDownloadUrl } from "@/services/document.service";
 import { Employee } from "@/types/employee";
 import { useToast } from "@/hooks/use-toast";
@@ -218,7 +219,7 @@ export default function MedicalVisitsRegistryPage() {
         membership?.userDisplayName || "Utilisateur"
       );
 
-      await updateMedicalVisit(entityId, uploadingRequest.id, { documentId: docId }, user.uid);
+      await linkMedicalVisitCertificateClientSide(entityId, uploadingRequest.id, docId, user.uid);
       
       toast({ title: "Document rattaché", description: "Le certificat médical a été lié à la visite." });
       setUploadingRequest(null);
@@ -234,7 +235,11 @@ export default function MedicalVisitsRegistryPage() {
     if (!user) return;
     setLoading(true);
     try {
-      await archiveMedicalVisit(entityId, id, user.uid);
+      const idToken = await user.getIdToken(true);
+      const result = await archiveMedicalVisitAction({ idToken, entityId, visitId: id });
+      if (!result.success) {
+        throw new Error(result.error);
+      }
       toast({ title: "Visite archivée" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Erreur", description: err.message });
