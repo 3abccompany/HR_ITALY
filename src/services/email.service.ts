@@ -10,6 +10,7 @@ import nodemailer from 'nodemailer';
 import { resolveEmailTransportForEntity } from "./email-settings.service";
 import crypto from 'crypto';
 import { buildExternalPublicUrl, getExternalPublicBaseUrl } from "@/lib/url/external-public-url";
+import type { TrainingParticipant, TrainingSession } from "@/types/training";
 
 export interface SendInterviewEmailParams {
   entityId: string;
@@ -83,6 +84,48 @@ export interface SendContractToEmployeeParams {
   companyName: string;
   jobTitle: string;
   storagePath: string;
+}
+
+export interface TrainingTrainerEmailParticipant {
+  employeeDisplayNameSnapshot?: string | null;
+  employeeCodeSnapshot?: string | null;
+}
+
+export interface BuildTrainingTrainerEmailParams {
+  session: TrainingSession;
+  participants: TrainingTrainerEmailParticipant[];
+  entity?: Record<string, any> | null;
+}
+
+export interface SendTrainingTrainerEmailParams extends BuildTrainingTrainerEmailParams {
+  entityId: string;
+  to: string;
+  subjectOverride?: string;
+  bodyOverride?: string;
+}
+
+export interface BuildTrainingTrainerAvailabilityRequestEmailParams {
+  session: TrainingSession;
+  entity?: Record<string, any> | null;
+}
+
+export interface SendTrainingTrainerAvailabilityRequestEmailParams extends BuildTrainingTrainerAvailabilityRequestEmailParams {
+  entityId: string;
+  to: string;
+  subjectOverride?: string;
+  bodyOverride?: string;
+}
+
+export interface BuildTrainingParticipantInvitationEmailParams {
+  session: TrainingSession;
+  participant: TrainingParticipant;
+  entity?: Record<string, any> | null;
+  actionUrl: string;
+}
+
+export interface SendTrainingParticipantInvitationEmailParams extends BuildTrainingParticipantInvitationEmailParams {
+  entityId: string;
+  to: string;
 }
 
 /**
@@ -182,6 +225,208 @@ function escapeHtmlText(value: string): string {
 function renderPlainTextEmailHtml(text: string): string {
   const escapedText = escapeHtmlText(text);
   return `<div style="font-family: sans-serif; white-space: pre-wrap; line-height: 1.5; color: #1F1F66;">${escapedText.replace(/\n/g, '<br>')}</div>`;
+}
+
+function formatTrainingEmailDate(value?: string | null) {
+  if (!value) return "";
+  const [year, month, day] = value.split("-");
+  if (year && month && day) return `${day}/${month}/${year}`;
+  return value;
+}
+
+function resolveTrainingEntityName(entity?: Record<string, any> | null) {
+  return entity?.nomEntreprise || entity?.raisonSociale || entity?.name || entity?.displayName || "";
+}
+
+export async function buildTrainingTrainerEmailContent(params: BuildTrainingTrainerEmailParams) {
+  const { session, participants, entity } = params;
+  const trainerName = session.trainerName?.trim() || "Formateur";
+  const entityName = resolveTrainingEntityName(entity);
+  const subject = `Formation – ${session.title} – ${formatTrainingEmailDate(session.startDate) || session.startDate}`;
+
+  const detailLines = [
+    `Formation : ${session.title}`,
+    session.startDate ? `Date : ${formatTrainingEmailDate(session.startDate)}` : "",
+    session.startTime || session.endTime ? `Horaire : ${[session.startTime, session.endTime].filter(Boolean).join(" – ")}` : "",
+    session.location ? `Lieu : ${session.location}` : "",
+    session.durationHours ? `Durée : ${session.durationHours} h` : "",
+    session.providerName ? `Organisme : ${session.providerName}` : "",
+  ].filter(Boolean);
+
+  const participantLines = participants.length > 0
+    ? participants.map((participant) => {
+        const name = participant.employeeDisplayNameSnapshot?.trim() || "Collaborateur";
+        const code = participant.employeeCodeSnapshot?.trim();
+        return `- ${code ? `${name} – ${code}` : name}`;
+      })
+    : ["Aucun participant assigné"];
+
+  const signature = entityName ? `Service RH – ${entityName}` : "Service RH";
+  const text = [
+    `Bonjour ${trainerName},`,
+    "",
+    "Nous vous confirmons la formation suivante :",
+    "",
+    ...detailLines,
+    "",
+    "Participants :",
+    ...participantLines,
+    "",
+    "Cordialement,",
+    signature,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.5;">
+      <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 20px;">Formation confirmée</h1>
+      </div>
+      <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
+        <p>Bonjour <strong>${escapeHtmlText(trainerName)}</strong>,</p>
+        <p>Nous vous confirmons la formation suivante :</p>
+        <div style="background: #F8FAFC; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #E2E8F0;">
+          <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+            ${detailLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}
+          </ul>
+        </div>
+        <p style="margin-bottom: 8px;"><strong>Participants :</strong></p>
+        <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+          ${participantLines.map((line) => `<li>${escapeHtmlText(line.replace(/^- /, ""))}</li>`).join("")}
+        </ul>
+        <p style="border-top: 1px solid #EEEFF7; padding-top: 20px; margin-top: 30px; font-size: 14px; font-weight: bold;">
+          Cordialement,<br>
+          ${escapeHtmlText(signature)}
+        </p>
+      </div>
+    </div>
+  `;
+
+  return { subject, text, html };
+}
+
+export async function buildTrainingTrainerAvailabilityRequestEmailContent(params: BuildTrainingTrainerAvailabilityRequestEmailParams) {
+  const { session, entity } = params;
+  const trainerName = session.trainerName?.trim() || "Formateur";
+  const entityName = resolveTrainingEntityName(entity);
+  const dateLabel = session.endDate && session.endDate !== session.startDate
+    ? `${formatTrainingEmailDate(session.startDate)} – ${formatTrainingEmailDate(session.endDate)}`
+    : formatTrainingEmailDate(session.startDate) || session.startDate;
+  const timeLabel = [session.startTime, session.endTime].filter(Boolean).join(" – ");
+  const subject = `Demande de disponibilité – ${session.title} – ${dateLabel}`;
+
+  const detailLines = [
+    `Formation : ${session.title}`,
+    dateLabel ? `Date : ${dateLabel}` : "",
+    timeLabel ? `Horaire : ${timeLabel}` : "",
+    session.durationHours ? `Durée : ${session.durationHours} h` : "",
+    session.location ? `Lieu : ${session.location}` : "",
+    session.providerName ? `Organisation / centre : ${session.providerName}` : "",
+  ].filter(Boolean);
+
+  const signature = entityName ? `Service RH – ${entityName}` : "Service RH";
+  const text = [
+    `Bonjour ${trainerName},`,
+    "",
+    "Nous souhaitons vérifier votre disponibilité pour animer la formation suivante :",
+    "",
+    ...detailLines,
+    "",
+    "Pouvez-vous nous confirmer votre disponibilité pour ce créneau ?",
+    "",
+    "Cordialement,",
+    signature,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.5;">
+      <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 20px;">Demande de disponibilité</h1>
+      </div>
+      <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
+        <p>Bonjour <strong>${escapeHtmlText(trainerName)}</strong>,</p>
+        <p>Nous souhaitons vérifier votre disponibilité pour animer la formation suivante :</p>
+        <div style="background: #F8FAFC; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #E2E8F0;">
+          <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+            ${detailLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}
+          </ul>
+        </div>
+        <p>Pouvez-vous nous confirmer votre disponibilité pour ce créneau ?</p>
+        <p style="border-top: 1px solid #EEEFF7; padding-top: 20px; margin-top: 30px; font-size: 14px; font-weight: bold;">
+          Cordialement,<br>
+          ${escapeHtmlText(signature)}
+        </p>
+      </div>
+    </div>
+  `;
+
+  return { subject, text, html };
+}
+
+export async function buildTrainingParticipantInvitationEmailContent(params: BuildTrainingParticipantInvitationEmailParams) {
+  const { session, participant, entity, actionUrl } = params;
+  const employeeName = participant.employeeDisplayNameSnapshot?.trim() || "Collaborateur";
+  const entityName = resolveTrainingEntityName(entity);
+  const dateLabel = session.endDate && session.endDate !== session.startDate
+    ? `${formatTrainingEmailDate(session.startDate)} – ${formatTrainingEmailDate(session.endDate)}`
+    : formatTrainingEmailDate(session.startDate) || session.startDate;
+  const timeLabel = [session.startTime, session.endTime].filter(Boolean).join(" – ");
+  const trainerLabel = session.trainerType === "external"
+    ? session.trainerName?.trim()
+    : session.trainerName?.trim() || "Formateur interne";
+  const locationOrMode = session.location?.trim() || session.deliveryMode || "";
+  const subject = `Nouvelle formation planifiée – ${session.title} – ${dateLabel}`;
+
+  const detailLines = [
+    `Formation : ${session.title}`,
+    dateLabel ? `Date : ${dateLabel}` : "",
+    timeLabel ? `Horaire : ${timeLabel}` : "",
+    session.durationHours ? `Durée : ${session.durationHours} h` : "",
+    locationOrMode ? `Lieu / mode : ${locationOrMode}` : "",
+    trainerLabel ? `Formateur : ${trainerLabel}` : "",
+    session.providerName ? `Organisme : ${session.providerName}` : "",
+  ].filter(Boolean);
+
+  const signature = entityName ? `Service RH – ${entityName}` : "Service RH";
+  const text = [
+    `Bonjour ${employeeName},`,
+    "",
+    "Vous êtes inscrit(e) à la formation suivante :",
+    "",
+    ...detailLines,
+    "",
+    `Vous pouvez consulter votre espace personnel ici : ${actionUrl}`,
+    "",
+    "Cordialement,",
+    signature,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1F1F66; line-height: 1.5;">
+      <div style="background-color: #1F1F66; padding: 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 20px;">Nouvelle formation planifiée</h1>
+      </div>
+      <div style="padding: 30px; border: 1px solid #EEEFF7; border-top: none; background-color: white; border-radius: 0 0 12px 12px;">
+        <p>Bonjour <strong>${escapeHtmlText(employeeName)}</strong>,</p>
+        <p>Vous êtes inscrit(e) à la formation suivante :</p>
+        <div style="background: #F8FAFC; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #E2E8F0;">
+          <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+            ${detailLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}
+          </ul>
+        </div>
+        <p>
+          <a href="${escapeHtmlText(actionUrl)}" style="display: inline-block; background: #1F1F66; color: white; padding: 10px 16px; border-radius: 10px; text-decoration: none; font-weight: bold;">
+            Ouvrir mon espace
+          </a>
+        </p>
+        <p style="border-top: 1px solid #EEEFF7; padding-top: 20px; margin-top: 30px; font-size: 14px; font-weight: bold;">
+          Cordialement,<br>
+          ${escapeHtmlText(signature)}
+        </p>
+      </div>
+    </div>
+  `;
+
+  return { subject, text, html };
 }
 
 /**
@@ -660,5 +905,122 @@ export async function sendContractToEmployeeAction(params: SendContractToEmploye
   } catch (error: any) {
     console.error("[Email Service] Failed to send contract to employee:", error);
     return { success: false, error: error.message };
+  }
+}
+
+export async function sendTrainingTrainerEmail(params: SendTrainingTrainerEmailParams) {
+  const { entityId, to, session, participants, entity, subjectOverride, bodyOverride } = params;
+
+  const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+  const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+  const canSend = source === 'entity' || isGlobalConfigured;
+
+  if (!canSend) {
+    throw new Error("Configuration du service email requise.");
+  }
+
+  const rendered = await buildTrainingTrainerEmailContent({ session, participants, entity });
+  const finalSubject = subjectOverride?.trim() || rendered.subject;
+  const editedBody = bodyOverride?.trim();
+  const finalText = editedBody || rendered.text;
+  const finalHtml = editedBody ? renderPlainTextEmailHtml(editedBody) : rendered.html;
+
+  try {
+    const info = await transporter.sendMail({
+      from,
+      to,
+      replyTo: replyTo || undefined,
+      subject: finalSubject,
+      html: finalHtml,
+      text: finalText,
+    });
+
+    return {
+      success: true as const,
+      messageId: info.messageId || null,
+      from,
+      subject: finalSubject,
+      body: finalText,
+    };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send training trainer email:", error);
+    throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
+  }
+}
+
+export async function sendTrainingTrainerAvailabilityRequestEmail(params: SendTrainingTrainerAvailabilityRequestEmailParams) {
+  const { entityId, to, session, entity, subjectOverride, bodyOverride } = params;
+
+  const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+  const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+  const canSend = source === 'entity' || isGlobalConfigured;
+
+  if (!canSend) {
+    throw new Error("Configuration du service email requise.");
+  }
+
+  const rendered = await buildTrainingTrainerAvailabilityRequestEmailContent({ session, entity });
+  const finalSubject = subjectOverride?.trim() || rendered.subject;
+  const editedBody = bodyOverride?.trim();
+  const finalText = editedBody || rendered.text;
+  const finalHtml = editedBody ? renderPlainTextEmailHtml(editedBody) : rendered.html;
+
+  try {
+    const info = await transporter.sendMail({
+      from,
+      to,
+      replyTo: replyTo || undefined,
+      subject: finalSubject,
+      html: finalHtml,
+      text: finalText,
+    });
+
+    return {
+      success: true as const,
+      messageId: info.messageId || null,
+      from,
+      subject: finalSubject,
+      body: finalText,
+    };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send training trainer availability request:", error);
+    throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
+  }
+}
+
+export async function sendTrainingParticipantInvitationEmail(params: SendTrainingParticipantInvitationEmailParams) {
+  const { entityId, to, session, participant, entity, actionUrl } = params;
+  const emailActionUrl = buildExternalPublicUrl(actionUrl, getExternalPublicBaseUrl());
+
+  const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+  const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+  const canSend = source === 'entity' || isGlobalConfigured;
+
+  if (!canSend) {
+    throw new Error("Configuration du service email requise.");
+  }
+
+  const rendered = await buildTrainingParticipantInvitationEmailContent({ session, participant, entity, actionUrl: emailActionUrl });
+
+  try {
+    const info = await transporter.sendMail({
+      from,
+      to,
+      replyTo: replyTo || undefined,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    });
+
+    return {
+      success: true as const,
+      messageId: info.messageId || null,
+      from,
+      subject: rendered.subject,
+      body: rendered.text,
+    };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send training participant invitation:", error);
+    throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
   }
 }

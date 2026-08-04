@@ -1,6 +1,5 @@
 import { db } from "@/lib/firebase/client";
 import { 
-  collectionGroup,
   collection, 
   doc, 
   setDoc, 
@@ -164,6 +163,10 @@ export type UpdateTrainingSessionInput = Omit<
   | "rejectionReason"
 >;
 
+export type SaveTrainingSessionInput = (CreateTrainingSessionInput | UpdateTrainingSessionInput) & {
+  status?: TrainingSessionStatus;
+};
+
 export async function createTrainingSession(
   entityId: string,
   data: CreateTrainingSessionInput,
@@ -260,6 +263,162 @@ export async function updateTrainingSession(
     resourceId: sessionId,
     details: { changes: Object.keys(data) }
   });
+}
+
+export async function saveTrainingSessionWithParticipants(
+  entityId: string,
+  sessionId: string | null,
+  data: SaveTrainingSessionInput,
+  selectedEmployeeIds: string[],
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  assertNonEmpty(entityId, "Entité requise.");
+  assertNonEmpty(actorUid, "Acteur requis.");
+  assertNonEmpty(data.title, "Titre de formation requis.");
+  assertNonEmpty(data.trainingType, "Type de formation requis.");
+  assertNonEmpty(data.startDate, "Date de début requise.");
+  if (data.status) assertValidSessionStatus(data.status);
+
+  const isCreate = !sessionId;
+  const ref = isCreate
+    ? doc(collection(db, `entities/${entityId}/trainingSessions`))
+    : sessionRef(entityId, sessionId);
+  const resolvedSessionId = ref.id;
+  const selected = Array.from(new Set(selectedEmployeeIds.map((id) => id.trim()).filter(Boolean)));
+  const created: string[] = [];
+  const existing: string[] = [];
+
+  await runTransaction(db, async (transaction) => {
+    let currentSession: TrainingSession | null = null;
+
+    if (!isCreate) {
+      const sessionSnap = await transaction.get(ref);
+      if (!sessionSnap.exists()) throw new Error("Session de formation introuvable.");
+      currentSession = sessionSnap.data() as TrainingSession;
+      if (currentSession.entityId !== entityId) {
+        throw new Error("Session de formation hors entité.");
+      }
+    }
+
+    const employeeSnaps = await Promise.all(selected.map(async (employeeId) => {
+      const employeeRef = doc(db!, `entities/${entityId}/employees`, employeeId);
+      const employeeSnap = await transaction.get(employeeRef);
+      return { employeeId, employeeSnap };
+    }));
+
+    const participantSnaps = await Promise.all(selected.map(async (employeeId) => {
+      const pRef = participantRef(entityId, resolvedSessionId, employeeId);
+      const participantSnap = await transaction.get(pRef);
+      return { employeeId, pRef, participantSnap };
+    }));
+    const participantSnapByEmployeeId = new Map(
+      participantSnaps.map((item) => [item.employeeId, item])
+    );
+
+    for (const { employeeId, employeeSnap } of employeeSnaps) {
+      if (!employeeSnap.exists()) throw new Error("Collaborateur introuvable.");
+      const employee = employeeSnap.data();
+      if (!employee) throw new Error("Collaborateur introuvable.");
+      if (employee.entityId && employee.entityId !== entityId) {
+        throw new Error("Collaborateur hors entité.");
+      }
+    }
+
+    if (isCreate) {
+      const payload: TrainingSession = sanitizePayload({
+        ...data,
+        id: resolvedSessionId,
+        entityId,
+        status: data.status || "draft",
+        approvalStatus: "not_submitted",
+        certificateRequired: data.certificateRequired ?? false,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      }) as TrainingSession;
+
+      transaction.set(ref, payload);
+    } else {
+      const forbiddenKeys = [
+        "entityId",
+        "createdAt",
+        "createdBy",
+        "approvalStatus",
+        "submittedForApprovalAt",
+        "submittedForApprovalBy",
+        "approvedAt",
+        "approvedBy",
+        "rejectedAt",
+        "rejectedBy",
+        "rejectionReason",
+      ];
+
+      for (const key of forbiddenKeys) {
+        if (key in (data as Record<string, unknown>)) {
+          throw new Error("Champ de session de formation non modifiable par cette opération.");
+        }
+      }
+
+      if (!currentSession) throw new Error("Session de formation introuvable.");
+      transaction.update(ref, sanitizePayload({
+        ...data,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      }));
+    }
+
+    for (const { employeeId, employeeSnap } of employeeSnaps) {
+      const participantRead = participantSnapByEmployeeId.get(employeeId);
+      if (!participantRead) throw new Error("Lecture participant introuvable.");
+
+      if (participantRead.participantSnap.exists()) {
+        existing.push(employeeId);
+        continue;
+      }
+
+      const employee = employeeSnap.data();
+      if (!employee) throw new Error("Collaborateur introuvable.");
+      const displayName = buildEmployeeDisplayName(employee);
+      const participant: TrainingParticipant = sanitizePayload({
+        id: employeeId,
+        entityId,
+        sessionId: resolvedSessionId,
+        employeeId,
+        personId: employee.personId ?? null,
+        employeeCodeSnapshot: employee.employeeCode ?? null,
+        employeeDisplayNameSnapshot: displayName || null,
+        participantStatus: "planned",
+        resultStatus: null,
+        certificateDocumentId: null,
+        assignedAt: serverTimestamp(),
+        assignedBy: actorUid,
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+        updatedAt: serverTimestamp(),
+        updatedBy: actorUid,
+      }) as TrainingParticipant;
+
+      transaction.set(participantRead.pRef, participant);
+      created.push(employeeId);
+    }
+  });
+
+  await createAuditLog({
+    userId: actorUid,
+    entityId,
+    action: isCreate ? "trainingSession.created" : "trainingSession.updated",
+    resourceType: "trainingSession",
+    resourceId: resolvedSessionId,
+    details: {
+      changes: Object.keys(data),
+      participantCreated: created,
+      participantExisting: existing,
+    }
+  });
+
+  return { sessionId: resolvedSessionId, created, existing };
 }
 
 export async function getTrainingSession(entityId: string, sessionId: string): Promise<TrainingSession | null> {
@@ -408,6 +567,15 @@ export async function addTrainingParticipants(
       return { employeeId, employeeRef, employeeSnap };
     }));
 
+    const participantSnaps = await Promise.all(uniqueEmployeeIds.map(async (employeeId) => {
+      const pRef = participantRef(entityId, sessionId, employeeId);
+      const participantSnap = await transaction.get(pRef);
+      return { employeeId, pRef, participantSnap };
+    }));
+    const participantSnapByEmployeeId = new Map(
+      participantSnaps.map((item) => [item.employeeId, item])
+    );
+
     for (const { employeeId, employeeSnap } of employeeSnaps) {
       if (!employeeSnap.exists()) throw new Error("Collaborateur introuvable.");
       const employee = employeeSnap.data();
@@ -415,9 +583,10 @@ export async function addTrainingParticipants(
         throw new Error("Collaborateur hors entité.");
       }
 
-      const pRef = participantRef(entityId, sessionId, employeeId);
-      const existingParticipant = await transaction.get(pRef);
-      if (existingParticipant.exists()) {
+      const participantRead = participantSnapByEmployeeId.get(employeeId);
+      if (!participantRead) throw new Error("Lecture participant introuvable.");
+
+      if (participantRead.participantSnap.exists()) {
         existing.push(employeeId);
         continue;
       }
@@ -442,7 +611,7 @@ export async function addTrainingParticipants(
         updatedBy: actorUid,
       }) as TrainingParticipant;
 
-      transaction.set(pRef, participant);
+      transaction.set(participantRead.pRef, participant);
       created.push(employeeId);
     }
   });
@@ -505,6 +674,60 @@ export async function getTrainingParticipants(entityId: string, sessionId: strin
     .filter((participant) => participant.entityId === entityId && participant.sessionId === sessionId);
 }
 
+export async function syncTrainingSessionParticipants(
+  entityId: string,
+  sessionId: string,
+  selectedEmployeeIds: string[],
+  actorUid: string
+) {
+  if (!db) throw new Error("Firestore not initialized");
+  assertNonEmpty(entityId, "Entité requise.");
+  assertNonEmpty(sessionId, "Session de formation requise.");
+  assertNonEmpty(actorUid, "Acteur requis.");
+
+  const selected = Array.from(new Set(selectedEmployeeIds.map((id) => id.trim()).filter(Boolean)));
+  const selectedSet = new Set(selected);
+  const currentParticipants = await getTrainingParticipants(entityId, sessionId);
+  const activeParticipants = currentParticipants.filter((participant) => participant.participantStatus !== "cancelled");
+  const activeParticipantIds = new Set(activeParticipants.map((participant) => participant.employeeId));
+  const toAdd = selected.filter((employeeId) => !activeParticipantIds.has(employeeId));
+  const toCancel = activeParticipants.filter((participant) => !selectedSet.has(participant.employeeId));
+
+  const added: string[] = [];
+  const existing: string[] = [];
+  if (toAdd.length > 0) {
+    const addResult = await addTrainingParticipants(entityId, sessionId, toAdd, actorUid);
+    added.push(...addResult.created);
+    existing.push(...addResult.existing);
+  }
+
+  const cancelled: string[] = [];
+  const skipped: string[] = [];
+  for (const participant of toCancel) {
+    const hasHistoricalOutcome =
+      participant.participantStatus !== "planned" ||
+      !!participant.resultStatus ||
+      !!participant.completedAt ||
+      !!participant.certificateDocumentId;
+
+    if (hasHistoricalOutcome) {
+      skipped.push(participant.employeeId);
+      continue;
+    }
+
+    await cancelTrainingParticipant(
+      entityId,
+      sessionId,
+      participant.employeeId,
+      actorUid,
+      "Retiré de la sélection avant réalisation."
+    );
+    cancelled.push(participant.employeeId);
+  }
+
+  return { added, existing, cancelled, skipped };
+}
+
 export function mapLegacyTrainingToHistoryItem(training: Training): EmployeeTrainingHistoryItem {
   return {
     id: training.id,
@@ -529,47 +752,14 @@ export function mapLegacyTrainingToHistoryItem(training: Training): EmployeeTrai
 
 export async function getEmployeeTrainingHistory(
   entityId: string,
-  employeeId: string
+  employeeId: string,
+  options?: { includeLegacy?: boolean }
 ): Promise<EmployeeTrainingHistoryItem[]> {
   if (!db) throw new Error("Firestore not initialized");
 
-  const canonicalQuery = query(
-    collectionGroup(db, "participants"),
-    where("entityId", "==", entityId),
-    where("employeeId", "==", employeeId)
-  );
-  const canonicalSnap = await getDocs(canonicalQuery);
-
-  const canonicalItems: Array<EmployeeTrainingHistoryItem | null> = await Promise.all(canonicalSnap.docs.map(async (participantDoc) => {
-    const participant = participantDoc.data() as TrainingParticipant;
-    const sRef = sessionRef(entityId, participant.sessionId);
-    const sSnap = await getDoc(sRef);
-    if (!sSnap.exists()) return null;
-    const session = { ...(sSnap.data() as TrainingSession), id: sSnap.id };
-    if (session.entityId !== entityId) return null;
-
-    const historyItem: EmployeeTrainingHistoryItem = {
-      id: `${participant.sessionId}:${participant.employeeId}`,
-      entityId,
-      employeeId,
-      source: "canonical",
-      sessionId: participant.sessionId,
-      participantId: participant.id || participant.employeeId,
-      title: session.title,
-      trainingType: session.trainingType,
-      providerName: session.providerName ?? null,
-      startDate: session.startDate,
-      endDate: session.endDate ?? null,
-      durationHours: session.durationHours ?? null,
-      status: session.status,
-      approvalStatus: session.approvalStatus,
-      participantStatus: participant.participantStatus,
-      resultStatus: participant.resultStatus ?? null,
-      certificateDocumentId: participant.certificateDocumentId ?? null,
-    };
-
-    return historyItem;
-  }));
+  if (options?.includeLegacy === false) {
+    return [];
+  }
 
   const legacyQuery = query(
     collection(db, `entities/${entityId}/trainings`),
@@ -582,7 +772,6 @@ export async function getEmployeeTrainingHistory(
   }));
 
   return [
-    ...canonicalItems.filter((item): item is EmployeeTrainingHistoryItem => item !== null),
     ...legacyItems,
   ];
 }

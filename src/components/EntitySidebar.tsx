@@ -1,6 +1,6 @@
 "use client";
 
-import { type MouseEvent, useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { collection, limit, query, where, type Query } from "firebase/firestore";
@@ -10,7 +10,8 @@ import {
   ShieldCheck, 
   LogOut, 
   ArrowLeftRight,
-  Loader2
+  Loader2,
+  GraduationCap
 } from "lucide-react";
 import { 
   Sidebar, 
@@ -33,6 +34,7 @@ import type { Employee } from "@/types/employee";
 import { cn } from "@/lib/utils";
 
 const MY_SPACE_HREF = "my-space";
+const MY_SPACE_TRAINING_HREF = "my-space/formations";
 
 export function EntitySidebar() {
   const params = useParams();
@@ -48,25 +50,37 @@ export function EntitySidebar() {
   const mySpaceItem = entityMenu.find((item) => item.href === MY_SPACE_HREF);
   const businessMenuItems = entityMenu.filter((item) => item.href !== MY_SPACE_HREF);
   const canReadSelfProfile = hasPermission("self.profile.read");
-  const linkedEmployeeQuery = db && entityId && user && canReadSelfProfile
-    ? (query(
+  const userUid = user?.uid;
+  const linkedEmployeeQuery = useMemo(() => {
+    if (!db || !entityId || !userUid || !canReadSelfProfile) {
+      return null;
+    }
+
+    return query(
         collection(db, `entities/${entityId}/employees`),
-        where("userId", "==", user.uid),
+        where("userId", "==", userUid),
         limit(1)
-      ) as Query<Employee>)
-    : null;
+      ) as Query<Employee>;
+  }, [db, entityId, userUid, canReadSelfProfile]);
   const {
     data: linkedEmployees,
     loading: loadingLinkedEmployee,
     error: linkedEmployeeError,
   } = useCollection<Employee>(linkedEmployeeQuery, "sidebar.my-space-employee");
   const hasLinkedEmployeeProfile = !!linkedEmployees?.[0];
+  const isMySpacePath = pathname?.startsWith(`/entity/${entityId}/my-space`);
   const showMySpace =
     !!mySpaceItem &&
     canReadSelfProfile &&
-    !loadingLinkedEmployee &&
+    !!user &&
     hasLinkedEmployeeProfile &&
     !linkedEmployeeError;
+  const showSelfServiceNavigation =
+    !!mySpaceItem &&
+    canReadSelfProfile &&
+    !!user &&
+    !linkedEmployeeError &&
+    (loadingLinkedEmployee || hasLinkedEmployeeProfile || isMySpacePath);
 
   useEffect(() => {
     if (linkedEmployeeError) {
@@ -138,9 +152,9 @@ export function EntitySidebar() {
           data-size="default"
           onClick={(event) => handleMenuAnchorClick(event, href)}
           className={cn(
-            "peer/menu-button flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-[width,height,padding]",
-            "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground",
-            "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
+            "peer/menu-button flex min-h-11 w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-left text-sm font-medium text-foreground outline-none ring-sidebar-ring transition-[width,height,padding] md:h-8 md:min-h-0 md:gap-2 md:p-2 md:text-sidebar-foreground",
+            "hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 active:bg-accent active:text-accent-foreground md:hover:bg-sidebar-accent md:hover:text-sidebar-accent-foreground md:active:bg-sidebar-accent md:active:text-sidebar-accent-foreground",
+            "data-[active=true]:bg-accent data-[active=true]:font-bold data-[active=true]:text-accent-foreground md:data-[active=true]:bg-sidebar-accent md:data-[active=true]:text-sidebar-accent-foreground",
             "group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0"
           )}
         >
@@ -155,9 +169,40 @@ export function EntitySidebar() {
     );
   };
 
+  const renderMySpaceTrainingLink = () => {
+    const href = `/entity/${entityId}/${MY_SPACE_TRAINING_HREF}`;
+    const isActive = pathname === href;
+    const isLoading = loadingHref === href && !isActive;
+
+    return (
+      <SidebarMenuItem key={MY_SPACE_TRAINING_HREF}>
+        <a href={href}
+          title="Mes formations"
+          data-sidebar="menu-button"
+          data-active={isActive}
+          data-size="default"
+          onClick={(event) => handleMenuAnchorClick(event, href)}
+          className={cn(
+            "peer/menu-button flex min-h-11 w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-left text-sm font-medium text-foreground outline-none ring-sidebar-ring transition-[width,height,padding] md:h-8 md:min-h-0 md:gap-2 md:p-2 md:text-sidebar-foreground",
+            "hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 active:bg-accent active:text-accent-foreground md:hover:bg-sidebar-accent md:hover:text-sidebar-accent-foreground md:active:bg-sidebar-accent md:active:text-sidebar-accent-foreground",
+            "data-[active=true]:bg-accent data-[active=true]:font-bold data-[active=true]:text-accent-foreground md:data-[active=true]:bg-sidebar-accent md:data-[active=true]:text-sidebar-accent-foreground",
+            "group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0"
+          )}
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <GraduationCap className="w-4 h-4" aria-hidden="true" />
+          )}
+          <span>Mes formations</span>
+        </a>
+      </SidebarMenuItem>
+    );
+  };
+
   return (
-    <Sidebar collapsible="icon" className="border-r">
-      <SidebarHeader className="border-b h-16 flex flex-col justify-center px-4 gap-0.5">
+    <Sidebar collapsible="icon" className="border-r border-border bg-background text-foreground md:bg-sidebar md:text-sidebar-foreground">
+      <SidebarHeader className="border-b border-border h-16 flex flex-col justify-center px-4 pr-12 md:pr-4 gap-0.5 bg-background md:bg-sidebar">
         <div className="flex items-center gap-2 font-headline font-bold text-primary">
           <div className="bg-primary p-1 rounded-lg shrink-0">
             <Building className="w-4 h-4 text-white" />
@@ -169,9 +214,9 @@ export function EntitySidebar() {
         </p>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="px-2 py-3">
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation Métier</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-muted-foreground md:text-sidebar-foreground/70 font-black uppercase tracking-widest">Navigation Métier</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {businessMenuItems.map((item) => {
@@ -185,19 +230,20 @@ export function EntitySidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {showMySpace && mySpaceItem && (
+        {showSelfServiceNavigation && mySpaceItem && (
           <SidebarGroup>
-            <SidebarGroupLabel>Espace personnel</SidebarGroupLabel>
+            <SidebarGroupLabel className="text-muted-foreground md:text-sidebar-foreground/70 font-black uppercase tracking-widest">Espace personnel</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {renderNavigationLink(mySpaceItem)}
+                {showMySpace || isMySpacePath ? renderNavigationLink(mySpaceItem) : null}
+                {renderMySpaceTrainingLink()}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
       </SidebarContent>
 
-      <SidebarFooter className="p-2 border-t space-y-1">
+      <SidebarFooter className="p-3 border-t border-border space-y-2 bg-background md:bg-sidebar">
         <div className="px-2 py-3 flex items-center gap-3 bg-secondary/30 rounded-lg group-data-[collapsible=icon]:p-1 group-data-[collapsible=icon]:justify-center transition-all">
           <div className="bg-primary/10 p-1.5 rounded-md shrink-0">
             <UserCircle className="w-5 h-5 text-primary" />
@@ -216,6 +262,7 @@ export function EntitySidebar() {
             <SidebarMenuButton
               asChild
               tooltip="Changer d'entreprise"
+              className="min-h-11 md:min-h-0 md:h-8 text-foreground md:text-sidebar-foreground"
             >
               <a href="/select-entity">
                 <ArrowLeftRight className="w-4 h-4" />
@@ -224,7 +271,7 @@ export function EntitySidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={handleLogout} className="text-destructive hover:text-destructive hover:bg-destructive/10" tooltip="Déconnexion">
+            <SidebarMenuButton onClick={handleLogout} className="min-h-11 md:min-h-0 md:h-8 text-destructive hover:text-destructive hover:bg-destructive/10" tooltip="Déconnexion">
               <LogOut className="w-4 h-4" />
               <span>Déconnexion</span>
             </SidebarMenuButton>

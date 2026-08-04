@@ -147,7 +147,11 @@ export function NotificationBell() {
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[380px] p-0 rounded-2xl shadow-2xl border-primary/5 overflow-hidden">
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        className="w-[calc(100vw-1rem)] max-w-[380px] p-0 rounded-2xl shadow-2xl border-primary/5 overflow-hidden"
+      >
         <div className="bg-primary/5 p-4 border-b flex items-center justify-between">
            <DropdownMenuLabel className="p-0 font-black text-xs uppercase tracking-widest text-primary">Notifications</DropdownMenuLabel>
            {unreadCount > 0 && (
@@ -157,7 +161,7 @@ export function NotificationBell() {
            )}
         </div>
         
-        <ScrollArea className="max-h-[400px]">
+        <ScrollArea className="max-h-[calc(100vh-8rem)] sm:max-h-[400px]">
            <div className="flex flex-col">
               {loading ? (
                 <div className="p-12 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-primary/20" /></div>
@@ -180,12 +184,12 @@ export function NotificationBell() {
                      </div>
                      <div className="flex-1 min-w-0 space-y-0.5">
                         <div className="flex items-center justify-between gap-2">
-                           <p className="font-bold text-xs text-slate-900 truncate pr-2">{n.title}</p>
+                           <p className="font-bold text-xs text-slate-900 pr-2 leading-snug break-words">{n.title}</p>
                            <span className="text-[9px] font-bold text-muted-foreground uppercase whitespace-nowrap opacity-60">
                              {formatTimeAgo(n.createdAt)}
                            </span>
                         </div>
-                        <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{n.message}</p>
+                        <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed break-words">{n.message}</p>
                      </div>
                   </button>
                 ))

@@ -78,6 +78,86 @@ service cloud.firestore {
       return status in ['planned', 'attended', 'absent', 'completed', 'not_completed', 'cancelled'];
     }
 
+    function isValidTrainingResultStatus(status) {
+      return status == null || status in ['passed', 'failed', 'attended', 'not_attended', 'not_required'];
+    }
+
+    function isCoherentTrainingParticipantResult(participantStatus, resultStatus) {
+      return (
+        (participantStatus == 'planned' && resultStatus == null)
+        || (participantStatus == 'absent' && resultStatus == 'not_attended')
+        || (participantStatus == 'cancelled' && resultStatus == 'not_required')
+        || (participantStatus == 'attended' && (resultStatus == null || resultStatus in ['attended', 'passed', 'failed', 'not_required']))
+        || (participantStatus == 'completed' && resultStatus in ['passed', 'failed', 'attended', 'not_required'])
+        || (participantStatus == 'not_completed' && resultStatus in ['failed', 'not_required'])
+      );
+    }
+
+    function hasNoTrainingCompletionMetadata(data) {
+      return !data.keys().hasAny(['completedAt', 'completedBy']);
+    }
+
+    function hasNoTrainingCancellationMetadata(data) {
+      return !data.keys().hasAny(['cancelledAt', 'cancelledBy', 'cancellationReason']);
+    }
+
+    function hasValidTrainingCancellationReason(data) {
+      return !data.keys().hasAny(['cancellationReason'])
+        || (data.cancellationReason is string && data.cancellationReason.matches('.*\\S.*'));
+    }
+
+    function isCoherentTrainingCompletionMetadata() {
+      return (
+        (
+          request.resource.data.participantStatus == 'completed'
+          && (
+            (
+              resource.data.participantStatus != 'completed'
+              && request.resource.data.completedAt == request.time
+              && request.resource.data.completedBy == request.auth.uid
+            )
+            || (
+              resource.data.participantStatus == 'completed'
+              && request.resource.data.completedAt == resource.data.completedAt
+              && request.resource.data.completedBy == resource.data.completedBy
+            )
+          )
+          && hasNoTrainingCancellationMetadata(request.resource.data)
+        )
+        || (
+          request.resource.data.participantStatus != 'completed'
+          && hasNoTrainingCompletionMetadata(request.resource.data)
+        )
+      );
+    }
+
+    function isCoherentTrainingCancellationMetadata() {
+      return (
+        (
+          request.resource.data.participantStatus == 'cancelled'
+          && request.resource.data.resultStatus == 'not_required'
+          && (
+            (
+              resource.data.participantStatus != 'cancelled'
+              && request.resource.data.cancelledAt == request.time
+              && request.resource.data.cancelledBy == request.auth.uid
+            )
+            || (
+              resource.data.participantStatus == 'cancelled'
+              && request.resource.data.cancelledAt == resource.data.cancelledAt
+              && request.resource.data.cancelledBy == resource.data.cancelledBy
+            )
+          )
+          && hasNoTrainingCompletionMetadata(request.resource.data)
+          && hasValidTrainingCancellationReason(request.resource.data)
+        )
+        || (
+          request.resource.data.participantStatus != 'cancelled'
+          && hasNoTrainingCancellationMetadata(request.resource.data)
+        )
+      );
+    }
+
     // --- Public Collection Group Rules ---
     
     match /{path=**}/applicationForms/{formId} {
@@ -427,8 +507,7 @@ service cloud.firestore {
         match /participants/{employeeId} {
           allow read: if hasPermission(entityId, 'training.read') || isPlatformAdmin();
           allow create: if (hasPermission(entityId, 'training.update') || isPlatformAdmin())
-                        && exists(/databases/$(database)/documents/entities/$(entityId)/trainingSessions/$(sessionId))
-                        && get(/databases/$(database)/documents/entities/$(entityId)/trainingSessions/$(sessionId)).data.entityId == entityId
+                        && getAfter(/databases/$(database)/documents/entities/$(entityId)/trainingSessions/$(sessionId)).data.entityId == entityId
                         && exists(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId))
                         && request.resource.data.entityId == entityId
                         && request.resource.data.sessionId == sessionId
@@ -443,10 +522,36 @@ service cloud.firestore {
                         && request.resource.data.sessionId == sessionId
                         && request.resource.data.employeeId == employeeId
                         && request.resource.data.id == resource.data.id
+                        && request.resource.data.personId == resource.data.personId
+                        && request.resource.data.employeeCodeSnapshot == resource.data.employeeCodeSnapshot
+                        && request.resource.data.employeeDisplayNameSnapshot == resource.data.employeeDisplayNameSnapshot
+                        && request.resource.data.assignedAt == resource.data.assignedAt
+                        && request.resource.data.assignedBy == resource.data.assignedBy
+                        && request.resource.data.certificateDocumentId == resource.data.certificateDocumentId
                         && request.resource.data.createdAt == resource.data.createdAt
                         && request.resource.data.createdBy == resource.data.createdBy
                         && exists(/databases/$(database)/documents/entities/$(entityId)/employees/$(employeeId))
-                        && isValidTrainingParticipantStatus(request.resource.data.participantStatus);
+                        && get(/databases/$(database)/documents/entities/$(entityId)/trainingSessions/$(sessionId)).data.entityId == entityId
+                        && get(/databases/$(database)/documents/entities/$(entityId)/trainingSessions/$(sessionId)).data.status in ['scheduled', 'in_progress', 'completed']
+                        && isValidTrainingParticipantStatus(request.resource.data.participantStatus)
+                        && isValidTrainingResultStatus(request.resource.data.resultStatus)
+                        && isCoherentTrainingParticipantResult(request.resource.data.participantStatus, request.resource.data.resultStatus)
+                        && request.resource.data.updatedBy == request.auth.uid
+                        && request.resource.data.updatedAt == request.time
+                        && isCoherentTrainingCompletionMetadata()
+                        && isCoherentTrainingCancellationMetadata()
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                          'participantStatus',
+                          'resultStatus',
+                          'resultNotes',
+                          'updatedAt',
+                          'updatedBy',
+                          'completedAt',
+                          'completedBy',
+                          'cancelledAt',
+                          'cancelledBy',
+                          'cancellationReason'
+                        ]);
           allow delete: if false;
         }
       }

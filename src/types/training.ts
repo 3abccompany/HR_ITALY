@@ -47,7 +47,18 @@ export type TrainingApprovalStatus =
 
 export type TrainingTrainerType = "internal" | "external";
 
+export type TrainingTrainerAvailabilityStatus =
+  | "not_contacted"
+  | "awaiting_response"
+  | "available"
+  | "unavailable";
+
 export type TrainingDeliveryMode = "classroom" | "online" | "blended" | "on_the_job";
+
+export type TrainingRenewalMode =
+  | "none"
+  | "periodic"
+  | "event_triggered";
 
 export type TrainingParticipantStatus =
   | "planned"
@@ -56,6 +67,11 @@ export type TrainingParticipantStatus =
   | "completed"
   | "not_completed"
   | "cancelled";
+
+export type TrainingAttendanceResponseStatus =
+  | "pending"
+  | "confirmed"
+  | "declined";
 
 export interface Training {
   id: string;
@@ -152,6 +168,35 @@ export interface TrainingSession {
 
   archivedAt?: Date | FieldValue | null;
   archivedBy?: string | null;
+
+  trainerEmailSentAt?: Date | FieldValue | null;
+  trainerEmailSentBy?: string | null;
+  trainerEmailLastRecipient?: string | null;
+  trainerEmailSendCount?: number;
+
+  trainerAvailabilityStatus?: TrainingTrainerAvailabilityStatus | null;
+  trainerAvailabilityRequestedAt?: Date | FieldValue | null;
+  trainerAvailabilityRequestedBy?: string | null;
+  trainerAvailabilityRecipient?: string | null;
+  trainerAvailabilityRequestedFor?: {
+    trainerEmail?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    location?: string | null;
+  } | null;
+  trainerAvailabilityResponseAt?: Date | FieldValue | null;
+  trainerAvailabilityResponseBy?: string | null;
+  trainerAvailabilityResponseNote?: string | null;
+
+  renewalMode?: TrainingRenewalMode | null;
+  renewalRequired?: boolean | null;
+  renewalPeriodMonths?: number | null;
+  validityWarningDays?: number | null;
+  renewalPolicySourceId?: string | null;
+  renewalPolicyLabelSnapshot?: string | null;
+  renewalPolicyLegalNoteSnapshot?: string | null;
 }
 
 export interface TrainingParticipant {
@@ -167,8 +212,15 @@ export interface TrainingParticipant {
 
   participantStatus: TrainingParticipantStatus;
   resultStatus?: TrainingResultStatus | null;
+  resultNotes?: string | null;
 
   certificateDocumentId?: string | null;
+
+  attendanceResponseStatus?: TrainingAttendanceResponseStatus | null;
+  attendanceRespondedAt?: Date | FieldValue | null;
+  attendanceRespondedBy?: string | null;
+  attendanceDeclineReason?: string | null;
+  attendanceResponseUpdatedAt?: Date | FieldValue | null;
 
   assignedAt: Date | FieldValue;
   assignedBy: string;
@@ -179,6 +231,15 @@ export interface TrainingParticipant {
   cancelledAt?: Date | FieldValue | null;
   cancelledBy?: string | null;
   cancellationReason?: string | null;
+
+  validityRequired?: boolean | null;
+  validityStartDate?: string | null; // YYYY-MM-DD
+  validityEndDate?: string | null; // YYYY-MM-DD
+  validitySource?: "participant_completion" | null;
+  renewalModeSnapshot?: TrainingRenewalMode | null;
+  renewalPeriodMonthsSnapshot?: number | null;
+  validityWarningDaysSnapshot?: number | null;
+  renewedBySessionId?: string | null;
 
   createdAt: Date | FieldValue;
   createdBy: string;
@@ -208,6 +269,17 @@ export interface EmployeeTrainingHistoryItem {
   participantStatus?: TrainingParticipantStatus | null;
   resultStatus?: TrainingResultStatus | null;
   certificateDocumentId?: string | null;
+  renewalMode?: TrainingRenewalMode | null;
+  renewalRequired?: boolean | null;
+  renewalPeriodMonths?: number | null;
+  validityRequired?: boolean | null;
+  validityStartDate?: string | null;
+  validityEndDate?: string | null;
+  validitySource?: "participant_completion" | null;
+  renewalModeSnapshot?: TrainingRenewalMode | null;
+  renewalPeriodMonthsSnapshot?: number | null;
+  validityWarningDaysSnapshot?: number | null;
+  renewedBySessionId?: string | null;
 }
 
 export const TRAINING_TYPE_LABELS: Record<TrainingType, string> = {

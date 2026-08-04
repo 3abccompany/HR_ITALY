@@ -10,7 +10,7 @@ import {
   History, Send, CheckCircle2, XCircle, Ban,
   Save, AlertCircle, Upload, FileText,
   FileSignature, Download, Eye, ChevronRight,
-  FileCheck
+  FileCheck, GraduationCap
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -391,9 +391,9 @@ export default function MySpacePage() {
   }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-12 pb-32">
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-        <div className="space-y-1">
+    <div className="px-4 py-6 sm:p-8 max-w-5xl mx-auto space-y-8 sm:space-y-12 pb-32 overflow-x-hidden">
+      <header className="flex min-w-0 flex-col sm:flex-row sm:items-center justify-between gap-6">
+        <div className="space-y-1 min-w-0">
           <div className="flex items-center gap-3">
             <div className="bg-primary p-2 rounded-xl text-white shadow-lg shadow-primary/20">
               <UserCircle className="w-6 h-6" />
@@ -402,30 +402,30 @@ export default function MySpacePage() {
           </div>
           <p className="text-muted-foreground text-sm font-medium">Bienvenue dans votre portail RH personnel chez {entity?.nomEntreprise}.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <Button onClick={() => setIsFormOpen(true)} className="rounded-xl font-bold gap-2 shadow-lg shadow-primary/10">
              <Plus className="w-4 h-4" /> Nouvelle demande
           </Button>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-12">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+        <div className="lg:col-span-2 min-w-0 space-y-8 sm:space-y-12">
           
           {/* Main Leave Balances */}
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
-             <CardHeader className="bg-primary/5 border-b py-6 px-8 flex flex-row items-center justify-between">
+             <CardHeader className="bg-primary/5 border-b py-6 px-4 sm:px-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
                    <Plane className="w-4 h-4" /> Solde Congés {currentYear}
                 </CardTitle>
                 <Badge variant="outline" className="bg-white border-primary/10 font-bold uppercase text-[10px]">Ferie (Congés)</Badge>
              </CardHeader>
-             <CardContent className="p-8">
+             <CardContent className="p-4 sm:p-8">
                 {loadingBalance ? (
                    <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-primary/20" /></div>
                 ) : balance?.counters?.paid_leave ? (
                    <div className="space-y-8">
-                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <div className="grid grid-cols-1 min-[430px]:grid-cols-2 md:grid-cols-5 gap-4">
                         <BalanceStat label="Report N-1" value={balance.counters.paid_leave.carriedOver} unit="j" />
                         <BalanceStat label={`Acquis ${currentYear}`} value={balance.counters.paid_leave.accrued} unit="j" />
                         <BalanceStat label="Déjà Pris" value={balance.counters.paid_leave.used} unit="j" color="red" />
@@ -438,7 +438,7 @@ export default function MySpacePage() {
                       </div>
 
                       {balance.counters.paid_leave.pending > 0 && (
-                        <div className="p-4 bg-orange-50/50 rounded-2xl border border-orange-100 flex items-center justify-between animate-in fade-in slide-in-from-top-2">
+                        <div className="p-4 bg-orange-50/50 rounded-2xl border border-orange-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between animate-in fade-in slide-in-from-top-2">
                            <div className="flex items-center gap-3">
                               <Info className="w-4 h-4 text-orange-600" />
                               <p className="text-xs font-bold text-orange-800 uppercase tracking-tight">Disponible si demandes en attente acceptées</p>
@@ -478,13 +478,14 @@ export default function MySpacePage() {
 
           {/* Mes Contrats Section */}
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
-             <CardHeader className="bg-secondary/10 border-b py-6 px-8">
+             <CardHeader className="bg-secondary/10 border-b py-6 px-4 sm:px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
                    <FileSignature className="w-4 h-4" /> Mes Contrats
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-0">
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[640px]">
                    <TableHeader className="bg-slate-50/50">
                       <TableRow>
                         <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest">Type & Période</TableHead>
@@ -547,18 +548,20 @@ export default function MySpacePage() {
                       )}
                    </TableBody>
                 </Table>
+                </div>
              </CardContent>
           </Card>
 
           {/* Request History */}
           <Card className="rounded-[2rem] border-primary/10 shadow-xl shadow-primary/5 overflow-hidden bg-white">
-             <CardHeader className="bg-secondary/10 border-b py-6 px-8">
+             <CardHeader className="bg-secondary/10 border-b py-6 px-4 sm:px-8">
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
                    <History className="w-4 h-4" /> Mes Demandes d'Absence
                 </CardTitle>
              </CardHeader>
              <CardContent className="p-0">
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[720px]">
                    <TableHeader className="bg-slate-50/50">
                       <TableRow>
                         <TableHead className="pl-8 text-[10px] font-black uppercase tracking-widest">Type & Période</TableHead>
@@ -618,19 +621,20 @@ export default function MySpacePage() {
                       )}
                    </TableBody>
                 </Table>
+                </div>
              </CardContent>
           </Card>
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
           <Card className="rounded-[2rem] border-primary/5 bg-white shadow-xl shadow-primary/5 overflow-hidden">
-            <CardHeader className="bg-primary/5 border-b py-6 px-8">
+            <CardHeader className="bg-primary/5 border-b py-6 px-4 sm:px-8">
               <CardTitle className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2">
                 <User className="w-4 h-4" /> Mon Profil
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-8 space-y-6">
+            <CardContent className="p-4 sm:p-8 space-y-6">
               {employee ? (
                 <div className="space-y-4">
                   <DetailItem label="Nom Complet" value={employee.displayName} icon={User} />
@@ -650,8 +654,30 @@ export default function MySpacePage() {
             </CardContent>
           </Card>
 
+          <Card className="rounded-[2rem] border-primary/10 bg-white shadow-xl shadow-primary/5 overflow-hidden">
+            <CardContent className="p-4 sm:p-8 flex flex-col items-center text-center space-y-4">
+              <div className="bg-primary/5 p-4 rounded-full text-primary">
+                <GraduationCap className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm uppercase tracking-widest text-primary">Mes formations</h4>
+                <div className="text-[10px] text-muted-foreground leading-relaxed font-medium space-y-1">
+                  <p>Formations à venir</p>
+                  <p>Formations en cours</p>
+                  <p>Formations terminées</p>
+                  <p>Validités à renouveler</p>
+                </div>
+              </div>
+              <Button asChild className="rounded-xl font-black gap-2 w-full">
+                <a href={`/entity/${entityId}/my-space/formations`}>
+                  Voir mes formations <ChevronRight className="w-4 h-4" />
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="rounded-[2rem] border-primary/10 bg-primary/95 text-white overflow-hidden shadow-lg">
-             <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
+             <CardContent className="p-4 sm:p-8 flex flex-col items-center text-center space-y-4">
                 <div className="bg-white/10 p-4 rounded-full">
                   <FolderOpen className="w-8 h-8 text-white" />
                 </div>

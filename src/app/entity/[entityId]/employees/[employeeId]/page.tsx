@@ -58,9 +58,21 @@ import {
   MEDICAL_VISIT_TYPE_LABELS,
   FITNESS_STATUS_LABELS 
 } from "@/types/medical-visit";
-import { Training, TRAINING_TYPE_LABELS } from "@/types/training";
+import {
+  EmployeeTrainingHistoryItem,
+  Training,
+  TrainingParticipantStatus,
+  TrainingResultStatus,
+  TrainingSessionStatus,
+} from "@/types/training";
 import { SafetyDpiAssignment, SAFETY_DPI_STATUS_LABELS } from "@/types/safety-dpi";
 import { getDocumentDownloadUrl } from "@/services/document.service";
+import {
+  deriveTrainingParticipantValidityState,
+  formatTrainingValidityExpiryLabel,
+  formatTrainingValidityStateLabel,
+  type TrainingValidityState,
+} from "@/services/training-validity.service";
 import { useActiveMembership } from "@/hooks/use-active-membership";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -68,6 +80,7 @@ import { format, isBefore, addDays, startOfDay, differenceInDays, parseISO } fro
 import { fr } from "date-fns/locale";
 import { PersonTimeline } from "@/components/persons/PersonTimeline";
 import { inviteEmployeeToEmployeeSpace } from "@/services/employee-account.service";
+import { getEmployeeTrainingCertificateUrlAction, getEmployeeTrainingHistoryAction } from "./actions";
 import { PreHireDossier } from "@/types/pre-hire-dossier";
 import React from "react";
 
@@ -238,6 +251,96 @@ function getTrainingDeadlineBadge(training: Training) {
   return <Badge className="bg-green-600 text-white border-none text-[10px] font-black uppercase">À jour</Badge>;
 }
 
+const TRAINING_SESSION_STATUS_LABELS: Record<TrainingSessionStatus, string> = {
+  draft: "Brouillon",
+  scheduled: "Planifiée",
+  in_progress: "En cours",
+  completed: "Terminée",
+  cancelled: "Annulée",
+  archived: "Archivée",
+};
+
+const TRAINING_PARTICIPANT_STATUS_LABELS: Record<TrainingParticipantStatus, string> = {
+  planned: "Planifiée",
+  attended: "Présent",
+  absent: "Absent",
+  completed: "Terminée",
+  not_completed: "Non terminée",
+  cancelled: "Annulée",
+};
+
+const TRAINING_RESULT_STATUS_LABELS: Record<TrainingResultStatus, string> = {
+  passed: "Réussi",
+  failed: "Échoué",
+  attended: "Participation validée",
+  not_attended: "Non présenté",
+  not_required: "Non requis",
+};
+
+function getTrainingHistoryDateLabel(item: EmployeeTrainingHistoryItem) {
+  const startLabel = formatDateSafe(item.startDate);
+  if (!item.endDate || item.endDate === item.startDate) return startLabel;
+  return `${startLabel} – ${formatDateSafe(item.endDate)}`;
+}
+
+function getTrainingSessionStatusLabel(status: EmployeeTrainingHistoryItem["status"]) {
+  if (status in TRAINING_SESSION_STATUS_LABELS) {
+    return TRAINING_SESSION_STATUS_LABELS[status as TrainingSessionStatus];
+  }
+  return "—";
+}
+
+function getTrainingParticipantStatusLabel(status?: TrainingParticipantStatus | null) {
+  return status ? TRAINING_PARTICIPANT_STATUS_LABELS[status] : "—";
+}
+
+function getTrainingResultStatusLabel(status?: TrainingResultStatus | null) {
+  return status ? TRAINING_RESULT_STATUS_LABELS[status] : "À renseigner";
+}
+
+function getTrainingValidityState(item: EmployeeTrainingHistoryItem) {
+  return deriveTrainingParticipantValidityState({
+    participantStatus: item.participantStatus || "planned",
+    resultStatus: item.resultStatus ?? null,
+    validityRequired: item.validityRequired ?? null,
+    validityStartDate: item.validityStartDate ?? null,
+    validityEndDate: item.validityEndDate ?? null,
+    renewalModeSnapshot: item.renewalModeSnapshot ?? null,
+    validityWarningDaysSnapshot: item.validityWarningDaysSnapshot ?? null,
+    renewedBySessionId: item.renewedBySessionId ?? null,
+  }, {
+    renewalMode: item.renewalMode ?? null,
+    renewalRequired: item.renewalRequired ?? null,
+  });
+}
+
+function getTrainingValidityBadge(item: EmployeeTrainingHistoryItem) {
+  const state = getTrainingValidityState(item);
+  const classes: Record<TrainingValidityState, string> = {
+    non_applicable: "bg-slate-50 text-slate-500 border-slate-200",
+    pending_result: "bg-blue-50 text-blue-700 border-blue-200",
+    awaiting_final_validation: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    not_acquired: "bg-red-50 text-red-700 border-red-200",
+    policy_missing: "bg-amber-50 text-amber-700 border-amber-200",
+    not_recorded: "bg-amber-50 text-amber-700 border-amber-200",
+    valid: "bg-green-50 text-green-700 border-green-200",
+    renewal_due: "bg-orange-50 text-orange-700 border-orange-200",
+    expired: "bg-red-50 text-red-700 border-red-200",
+    renewed: "bg-blue-50 text-blue-700 border-blue-200",
+  };
+  return <Badge variant="outline" className={cn("text-[10px] font-black whitespace-nowrap", classes[state])}>{formatTrainingValidityStateLabel(state)}</Badge>;
+}
+
+function getTrainingValidityExpiryLabel(item: EmployeeTrainingHistoryItem) {
+  const state = getTrainingValidityState(item);
+  return formatTrainingValidityExpiryLabel({
+    participant: item,
+    state,
+    sessionPolicy: item,
+    formatDate: formatDateSafe,
+  });
+}
+
 /**
  * Renders a compliance badge for safety assignments.
  */
@@ -275,6 +378,7 @@ export default function Employee360HubPage() {
 
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
+  const [trainingCertificateLoadingId, setTrainingCertificateLoadingId] = useState<string | null>(null);
 
   // --- 1. STRICT PERMISSION READINESS ---
   const permissionsReady = 
@@ -441,38 +545,66 @@ export default function Employee360HubPage() {
     })[0];
   }, [medicalVisits]);
 
-  // --- 2D. Training Sub-Query (Simplified) ---
-  const trainingsQuery = useMemo(() => {
-    if (!db || !entityId || !employeeId || !canReadTraining) return null;
-    return query(
-      collection(db, `entities/${entityId}/trainings`),
-      where("employeeId", "==", employeeId)
-    ) as Query<Training>;
-  }, [db, entityId, employeeId, canReadTraining]);
+  // --- 2D. Canonical Training History ---
+  const [trainingHistory, setTrainingHistory] = useState<EmployeeTrainingHistoryItem[]>([]);
+  const [loadingTrainingHistory, setLoadingTrainingHistory] = useState(false);
+  const [trainingHistoryError, setTrainingHistoryError] = useState<string | null>(null);
 
-  const { data: trainings, loading: loadingTrainings } = useCollection<Training>(trainingsQuery, "employee360.trainings");
+  useEffect(() => {
+    let cancelled = false;
 
-  const featuredTraining = useMemo(() => {
-    if (!trainings || trainings.length === 0) return null;
-    const today = startOfDay(new Date());
-    const threshold = addDays(today, 30);
-    const sorted = [...trainings].sort((a, b) => {
-      const getPriority = (t: Training) => {
-        const expiry = parseSafeDate(t.expiryDate);
-        if (expiry && isBefore(expiry, today)) return 0;
-        if (expiry && isBefore(expiry, threshold)) return 1;
-        if (t.status === 'planned') return 2;
-        return 3;
-      };
-      const prioA = getPriority(a);
-      const prioB = getPriority(b);
-      if (prioA !== prioB) return prioA - prioB;
-      const dateA = parseSafeDate(a.courseDate || a.startDate)?.getTime() || 0;
-      const dateB = parseSafeDate(b.courseDate || b.startDate)?.getTime() || 0;
-      return dateB - dateA;
-    });
-    return sorted[0];
-  }, [trainings]);
+    async function loadTrainingHistory() {
+      if (!entityId || !employeeId || !canReadTraining) {
+        setTrainingHistory([]);
+        setTrainingHistoryError(null);
+        setLoadingTrainingHistory(false);
+        return;
+      }
+
+      setLoadingTrainingHistory(true);
+      setTrainingHistoryError(null);
+
+      try {
+        const currentUser = authInstance.currentUser;
+        if (!currentUser) {
+          throw new Error("Session utilisateur requise.");
+        }
+
+        const idToken = await currentUser.getIdToken(true);
+        const result = await getEmployeeTrainingHistoryAction({ idToken, entityId, employeeId });
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+
+        const items = result.history;
+        const sorted = [...items].sort((a, b) => {
+          const dateA = parseSafeDate(a.startDate)?.getTime() || 0;
+          const dateB = parseSafeDate(b.startDate)?.getTime() || 0;
+          return dateB - dateA;
+        });
+
+        if (!cancelled) {
+          setTrainingHistory(sorted);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to load canonical employee training history", error);
+          setTrainingHistory([]);
+          setTrainingHistoryError("Impossible de charger l'historique des formations.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingTrainingHistory(false);
+        }
+      }
+    }
+
+    loadTrainingHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authInstance, entityId, employeeId, canReadTraining]);
 
   // --- 2E. Safety Assignments Sub-Query (Simplified) ---
   const safetyQuery = useMemo(() => {
@@ -526,6 +658,39 @@ export default function Employee360HubPage() {
       toast({ variant: "destructive", title: "Erreur", description: "Impossible d'ouvrir le document." });
     } finally {
       setLoadingActionId(null);
+    }
+  };
+
+  const handleOpenTrainingCertificate = async (item: EmployeeTrainingHistoryItem, download = false) => {
+    if (!item.certificateDocumentId || !item.sessionId) return;
+    const currentUser = authInstance.currentUser;
+    if (!currentUser) {
+      toast({ variant: "destructive", title: "Session requise", description: "Veuillez vous reconnecter." });
+      return;
+    }
+
+    const actionId = `${item.id}:${download ? "download" : "view"}`;
+    setTrainingCertificateLoadingId(actionId);
+    try {
+      const idToken = await currentUser.getIdToken(true);
+      const result = await getEmployeeTrainingCertificateUrlAction({
+        idToken,
+        entityId,
+        employeeId,
+        sessionId: item.sessionId,
+        documentId: item.certificateDocumentId,
+        download,
+      });
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      window.open(result.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Document indisponible", description: err.message || "Impossible d'ouvrir l'attestation." });
+    } finally {
+      setTrainingCertificateLoadingId(null);
     }
   };
 
@@ -1108,63 +1273,107 @@ export default function Employee360HubPage() {
                 </Card>
               )}
 
-              {loadingTrainings ? (
-                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
-                   <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
-                </Card>
-              ) : featuredTraining ? (
-                <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex flex-col group hover:shadow-md transition-all">
-                   <div className="flex items-start justify-between mb-4">
-                      <div className="bg-primary/5 p-3 rounded-2xl text-primary"><GraduationCap className="w-6 h-6" /></div>
-                      {getTrainingDeadlineBadge(featuredTraining)}
-                   </div>
-                   <div className="space-y-4 flex-1">
-                      <div className="space-y-1">
-                         <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Formation prioritaire</p>
-                         <h4 className="text-sm font-bold text-slate-800 line-clamp-1" title={featuredTraining.title}>{featuredTraining.title}</h4>
-                         <Badge variant="outline" className="text-[8px] h-4 px-1.5 font-bold uppercase border-primary/10 mt-1">
-                           {TRAINING_TYPE_LABELS[featuredTraining.trainingType]}
-                         </Badge>
-                      </div>
+              <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex flex-col min-h-[220px] md:col-span-2">
+                 <div className="flex items-start justify-between gap-4 mb-4">
+                    <div className="flex items-center gap-3">
+                       <div className="bg-primary/5 p-3 rounded-2xl text-primary"><GraduationCap className="w-6 h-6" /></div>
+                       <div>
+                          <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Formations</p>
+                          <h4 className="text-sm font-bold text-slate-800">Historique des formations</h4>
+                       </div>
+                    </div>
+                    <Badge variant="outline" className="rounded-full text-[10px] font-black uppercase border-primary/10">
+                      {trainingHistory.length} formation{trainingHistory.length > 1 ? "s" : ""}
+                    </Badge>
+                 </div>
 
-                      <div className="grid grid-cols-2 gap-4">
-                         <div className="space-y-0.5">
-                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Session</p>
-                            <p className="text-xs font-bold text-slate-700">{formatDateSafe(featuredTraining.courseDate || featuredTraining.startDate)}</p>
-                         </div>
-                         <div className="space-y-0.5">
-                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Recyclage</p>
-                            <p className="text-xs font-bold text-slate-700">{featuredTraining.expiryDate ? formatDateSafe(featuredTraining.expiryDate) : "Permanent"}</p>
-                         </div>
-                      </div>
-                      
-                      {featuredTraining.provider && (
-                         <div className="space-y-0.5">
-                            <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Organisme</p>
-                            <p className="text-xs font-medium text-slate-500 truncate" title={featuredTraining.provider}>{featuredTraining.provider}</p>
-                         </div>
-                      )}
+                 {loadingTrainingHistory ? (
+                   <div className="flex flex-1 items-center justify-center min-h-[120px]">
+                      <Loader2 className="w-6 h-6 animate-spin text-primary/20" />
                    </div>
-                   <Button variant="ghost" size="sm" asChild className="mt-6 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
-                      <a href={`/entity/${entityId}/training?search=${encodeURIComponent(employee.displayName)}`}>
-                         Dossier formations <ChevronRight className="w-4 h-4" />
-                      </a>
-                   </Button>
-                </Card>
-              ) : (
-                <Card className="p-6 rounded-[2rem] border border-dashed border-slate-200 bg-slate-50/30 flex flex-col items-center justify-center text-center space-y-3 min-h-[220px]">
-                   <div className="bg-white p-3 rounded-2xl shadow-sm text-slate-300"><GraduationCap className="w-6 h-6" /></div>
-                   <div className="space-y-1">
-                      <p className="text-xs font-bold text-slate-500">Aucune formation</p>
-                      <p className="text-[10px] text-slate-400">Dossier formation vide</p>
+                 ) : trainingHistoryError ? (
+                   <div className="rounded-2xl border border-red-100 bg-red-50/70 p-4 text-xs font-semibold text-red-700">
+                      {trainingHistoryError}
                    </div>
-                   {hasPermission("training.create") && (
-                     <Button variant="outline" size="sm" asChild className="h-7 rounded-lg text-[9px] font-black uppercase bg-white">
-                        <a href={`/entity/${entityId}/training`}>Ajouter</a>
-                     </Button>
-                   )}
-                </Card>
-              )}
+                 ) : trainingHistory.length > 0 ? (
+                   <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-slate-50/80">
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Formation</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Date</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Statut de la session</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Participation</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Résultat</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Validité</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Échéance</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Attestation</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {trainingHistory.map((item) => (
+                            <TableRow key={item.id}>
+                              <TableCell className="text-xs font-bold text-slate-800 min-w-[160px]">{item.title}</TableCell>
+                              <TableCell className="text-xs font-semibold text-slate-600 whitespace-nowrap">{getTrainingHistoryDateLabel(item)}</TableCell>
+                              <TableCell className="text-xs font-semibold text-slate-600 whitespace-nowrap">{getTrainingSessionStatusLabel(item.status)}</TableCell>
+                              <TableCell className="text-xs font-semibold text-slate-600 whitespace-nowrap">{getTrainingParticipantStatusLabel(item.participantStatus)}</TableCell>
+                              <TableCell className="text-xs font-semibold text-slate-600 whitespace-nowrap">{getTrainingResultStatusLabel(item.resultStatus)}</TableCell>
+                              <TableCell className="text-xs font-semibold text-slate-600 whitespace-nowrap">{getTrainingValidityBadge(item)}</TableCell>
+                              <TableCell className="text-xs font-semibold text-slate-600 whitespace-nowrap">{getTrainingValidityExpiryLabel(item)}</TableCell>
+                              <TableCell className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+                                {item.certificateDocumentId ? (
+                                  <div className="flex flex-col gap-2">
+                                    <span className="inline-flex items-center gap-1.5 text-green-700 font-bold text-[10px] uppercase">
+                                      <FileCheck className="w-3.5 h-3.5" /> Jointe
+                                    </span>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        aria-label="Visualiser l’attestation"
+                                        title="Visualiser l’attestation"
+                                        disabled={!canReadDocs || trainingCertificateLoadingId === `${item.id}:view`}
+                                        onClick={() => handleOpenTrainingCertificate(item, false)}
+                                        className="h-7 w-7 rounded-lg p-0"
+                                      >
+                                        {trainingCertificateLoadingId === `${item.id}:view` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        aria-label="Télécharger l’attestation"
+                                        title="Télécharger l’attestation"
+                                        disabled={!canReadDocs || trainingCertificateLoadingId === `${item.id}:download`}
+                                        onClick={() => handleOpenTrainingCertificate(item, true)}
+                                        className="h-7 w-7 rounded-lg p-0"
+                                      >
+                                        {trainingCertificateLoadingId === `${item.id}:download` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  "Non jointe"
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                   </div>
+                 ) : (
+                   <div className="flex flex-1 flex-col items-center justify-center text-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/30 p-6 min-h-[120px]">
+                      <p className="text-xs font-bold text-slate-500">Aucune formation affectée à cet employé.</p>
+                   </div>
+                 )}
+
+                 <Button variant="ghost" size="sm" asChild className="mt-4 w-full rounded-xl text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/5 gap-2">
+                    <a href={`/entity/${entityId}/training?search=${encodeURIComponent(employee.displayName)}`}>
+                       Ouvrir le module Formation <ChevronRight className="w-4 h-4" />
+                    </a>
+                 </Button>
+              </Card>
 
               {loadingSafety ? (
                 <Card className="p-6 rounded-[2rem] border border-primary/5 bg-white shadow-sm flex items-center justify-center min-h-[220px]">
