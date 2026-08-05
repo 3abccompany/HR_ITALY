@@ -10,7 +10,7 @@ import {
   History, Send, CheckCircle2, XCircle, Ban,
   Save, AlertCircle, Upload, FileText,
   FileSignature, Download, Eye, ChevronRight,
-  FileCheck, GraduationCap
+  FileCheck, GraduationCap, Stethoscope
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +64,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
+import { getMyMedicalVisitsAction, type MyMedicalVisitItem } from "./medical-visits/actions";
 
 /**
  * Robust date parser for mixed formats.
@@ -139,6 +140,9 @@ export default function MySpacePage() {
   const [myContracts, setMyContracts] = useState<any[]>([]);
   const [loadingContracts, setLoadingContracts] = useState(true);
   const [contractsError, setContractsError] = useState<string | null>(null);
+  const [myMedicalVisits, setMyMedicalVisits] = useState<MyMedicalVisitItem[]>([]);
+  const [loadingMedicalVisits, setLoadingMedicalVisits] = useState(true);
+  const [medicalVisitsError, setMedicalVisitsError] = useState<string | null>(null);
 
   // Contract Upload State
   const [isContractUploadOpen, setIsContractUploadOpen] = useState(false);
@@ -215,6 +219,40 @@ export default function MySpacePage() {
     loadContracts();
   }, [user, entityId, employee, auth, membershipLoading, loadingEmployee]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMedicalVisits() {
+      if (!user || !entityId) {
+        if (!membershipLoading) setLoadingMedicalVisits(false);
+        return;
+      }
+
+      setLoadingMedicalVisits(true);
+      setMedicalVisitsError(null);
+      try {
+        const idToken = await auth.currentUser?.getIdToken(true);
+        if (!idToken) throw new Error("Session utilisateur indisponible. Veuillez vous reconnecter.");
+        const result = await getMyMedicalVisitsAction({ entityId, idToken });
+        if (!result.success) throw new Error(result.error);
+        if (!cancelled) setMyMedicalVisits(result.visits);
+      } catch (err: any) {
+        if (!cancelled) {
+          setMyMedicalVisits([]);
+          setMedicalVisitsError(err.message || "Visites médicales temporairement indisponibles.");
+        }
+      } finally {
+        if (!cancelled) setLoadingMedicalVisits(false);
+      }
+    }
+
+    loadMedicalVisits();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, entityId, membershipLoading, user]);
+
   // --- Memory Sorting ---
 
   const sortedRequests = useMemo(() => {
@@ -225,6 +263,22 @@ export default function MySpacePage() {
       return dateB - dateA;
     });
   }, [requests]);
+
+  const nextMedicalVisit = useMemo(() => {
+    const now = Date.now();
+    return myMedicalVisits
+      .filter((visit) => visit.status === "scheduled")
+      .filter((visit) => (Date.parse(`${visit.visitDate || ""}T${visit.visitStartTime || "00:00"}`) || 0) >= now)
+      .sort((a, b) => {
+        const dateA = `${a.visitDate || ""}T${a.visitStartTime || "00:00"}`;
+        const dateB = `${b.visitDate || ""}T${b.visitStartTime || "00:00"}`;
+        return dateA.localeCompare(dateB);
+      })[0] || null;
+  }, [myMedicalVisits]);
+
+  const nextMedicalVisitLabel = nextMedicalVisit
+    ? `${format(parseISO(nextMedicalVisit.visitDate), "dd/MM/yyyy")} · ${nextMedicalVisit.visitStartTime || ""}${nextMedicalVisit.visitEndTime ? `–${nextMedicalVisit.visitEndTime}` : ""}`
+    : "Aucune visite planifiée";
 
   const isHourly = ["rol_permission", "ex_holiday_permission"].includes(requestForm.requestType);
 
@@ -671,6 +725,35 @@ export default function MySpacePage() {
               <Button asChild className="rounded-xl font-black gap-2 w-full">
                 <a href={`/entity/${entityId}/my-space/formations`}>
                   Voir mes formations <ChevronRight className="w-4 h-4" />
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-[2rem] border-primary/10 bg-white shadow-xl shadow-primary/5 overflow-hidden">
+            <CardContent className="p-4 sm:p-8 flex flex-col items-center text-center space-y-4">
+              <div className="bg-primary/5 p-4 rounded-full text-primary">
+                <Stethoscope className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm uppercase tracking-widest text-primary">Mes visites médicales</h4>
+                <div className="text-[10px] text-muted-foreground leading-relaxed font-medium space-y-1">
+                  {loadingMedicalVisits ? (
+                    <p>Chargement de vos rendez-vous...</p>
+                  ) : medicalVisitsError ? (
+                    <p>Visites temporairement indisponibles</p>
+                  ) : (
+                    <>
+                      <p>{nextMedicalVisitLabel}</p>
+                      {nextMedicalVisit?.location && <p>{nextMedicalVisit.location}</p>}
+                      {nextMedicalVisit && <p>Planifiée</p>}
+                    </>
+                  )}
+                </div>
+              </div>
+              <Button asChild className="rounded-xl font-black gap-2 w-full">
+                <a href={`/entity/${entityId}/my-space/medical-visits`}>
+                  Voir mes visites médicales <ChevronRight className="w-4 h-4" />
                 </a>
               </Button>
             </CardContent>

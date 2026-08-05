@@ -4,7 +4,11 @@ import crypto from "crypto";
 import { adminAuth, adminBucket, adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { createTrustedAuditLog } from "@/services/audit.server";
-import { sendMedicalProviderAvailabilityRequestEmail } from "@/services/email.service";
+import {
+  sendMedicalEmployeeVisitInvitationEmail,
+  sendMedicalProviderAvailabilityRequestEmail,
+} from "@/services/email.service";
+import { MEDICAL_VISIT_TYPE_LABELS } from "@/types/medical-visit";
 import type {
   MedicalFitnessStatus,
   MedicalVisitProviderType,
@@ -129,6 +133,16 @@ type MedicalVisitRequestSummary = {
   individualVisitsCreatedBy?: string | null;
   individualVisitsCreatedByName?: string | null;
   individualVisitsCount?: number;
+  employeeInvitationsLastSentAt?: string | null;
+  employeeInvitationsLastSentBy?: string | null;
+  employeeInvitationsLastSentByName?: string | null;
+  employeeInvitationAttemptCount?: number;
+  employeeNotificationSentCount?: number;
+  employeeEmailSentCount?: number;
+  employeeManualContactCount?: number;
+  employeeInvitationEligibleCount?: number;
+  employeeInvitationSkippedCount?: number;
+  employeeInvitationFailureCount?: number;
 };
 
 type MedicalVisitRequestParticipantDto = {
@@ -146,7 +160,18 @@ type MedicalVisitRequestParticipantDto = {
   resultingMedicalVisitId: string | null;
   resultingMedicalVisitStatus: "not_created" | "created" | "incoherent";
   notificationStatus: string;
+  notificationSentAt: string | null;
+  notificationRecipientUid: string | null;
+  notificationId: string | null;
   emailStatus: string;
+  emailSentAt: string | null;
+  emailRecipient: string | null;
+  emailLogId: string | null;
+  invitationLastAttemptAt: string | null;
+  invitationLastAttemptBy: string | null;
+  invitationLastAttemptByName: string | null;
+  invitationErrorCode: string | null;
+  invitationSendCount: number;
   createdAt: string | null;
   createdBy: string;
   updatedAt: string | null;
@@ -228,6 +253,95 @@ type MedicalVisitMaterializationResult =
       existingCount: number;
       materializedAt: string;
       materializedByName: string;
+    }
+  | { success: false; error: string };
+
+type MedicalEmployeeInvitationClassification =
+  | "notification_and_email"
+  | "notification_only"
+  | "email_only"
+  | "manual_contact_required";
+
+type MedicalEmployeeInvitationChannelStatus =
+  | "planned"
+  | "sent"
+  | "already_sent"
+  | "failed"
+  | "skipped"
+  | "not_applicable";
+
+type MedicalEmployeeInvitationEligibilityStatus =
+  | "eligible"
+  | "skipped_visit_completed"
+  | "skipped_visit_cancelled"
+  | "skipped_visit_archived"
+  | "skipped_visit_pending_result"
+  | "skipped_visit_ineligible_status";
+
+type MedicalEmployeeInvitationPreviewRow = {
+  employeeId: string;
+  employeeCodeSnapshot: string;
+  employeeDisplayNameSnapshot: string;
+  medicalVisitId: string;
+  visitDate: string;
+  visitDateLabel: string;
+  visitStartTime: string;
+  visitEndTime: string;
+  providerName: string;
+  location: string;
+  instructions: string | null;
+  hasActiveAccount: boolean;
+  hasValidEmail: boolean;
+  emailRecipient: string | null;
+  classification: MedicalEmployeeInvitationClassification;
+  classificationLabel: string;
+  eligibilityStatus: MedicalEmployeeInvitationEligibilityStatus;
+  eligibilityLabel: string;
+  eligible: boolean;
+  notificationStatus: string;
+  emailStatus: string;
+  sampleMessage: string;
+};
+
+type MedicalEmployeeInvitationPreviewResult =
+  | {
+      success: true;
+      requestId: string;
+      rows: MedicalEmployeeInvitationPreviewRow[];
+      summary: {
+        notificationAndEmail: number;
+        notificationOnly: number;
+        emailOnly: number;
+        manualContactRequired: number;
+        eligibleCount: number;
+        skippedCount: number;
+      };
+    }
+  | { success: false; error: string };
+
+type MedicalEmployeeInvitationSendResultRow = MedicalEmployeeInvitationPreviewRow & {
+  notificationDeliveryStatus: MedicalEmployeeInvitationChannelStatus;
+  emailDeliveryStatus: MedicalEmployeeInvitationChannelStatus;
+  deliveryResultStatus: string;
+  notificationId: string | null;
+  emailLogId: string | null;
+  error: string | null;
+};
+
+type MedicalEmployeeInvitationSendResult =
+  | {
+      success: true;
+      requestId: string;
+      rows: MedicalEmployeeInvitationSendResultRow[];
+      summary: {
+        processedCount: number;
+        notificationSentCount: number;
+        emailSentCount: number;
+        manualContactCount: number;
+        eligibleCount: number;
+        skippedCount: number;
+        failureCount: number;
+      };
     }
   | { success: false; error: string };
 
@@ -1202,6 +1316,294 @@ export async function materializeMedicalVisitsFromRequestAction(params: {
   }
 }
 
+export async function getMedicalEmployeeInvitationsPreviewAction(params: {
+  idToken: string;
+  entityId: string;
+  requestId: string;
+}): Promise<MedicalEmployeeInvitationPreviewResult> {
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "requestId"]);
+    await authorizeMedicalAction(params.entityId, params.idToken, MEDICAL_UPDATE_PERMISSION);
+    const plan = await loadVerifiedMedicalEmployeeInvitationPlan(params.entityId, params.requestId);
+    const rows = plan.rows.map(toMedicalEmployeeInvitationPreviewRow);
+    return { success: true, requestId: params.requestId, rows, summary: summarizeInvitationPreview(rows) };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Prévisualisation des convocations indisponible." };
+  }
+}
+
+export async function sendMedicalEmployeeInvitationsAction(params: {
+  idToken: string;
+  entityId: string;
+  requestId: string;
+  resendMode?: "retry_failed_or_unsent" | "full_resend";
+}): Promise<MedicalEmployeeInvitationSendResult> {
+  try {
+    if (!adminDb) throw new Error("Service administrateur indisponible.");
+    assertExactKeys(params as Record<string, unknown>, ["idToken", "entityId", "requestId", "resendMode"]);
+    const resendMode = params.resendMode === "full_resend" ? "full_resend" : "retry_failed_or_unsent";
+    const { actorUid, user: actorUser } = await authorizeMedicalAction(params.entityId, params.idToken, MEDICAL_UPDATE_PERMISSION);
+    const actorDisplayName = resolveTrustedUserDisplayName(actorUser);
+    const plan = await loadVerifiedMedicalEmployeeInvitationPlan(params.entityId, params.requestId);
+    const requestRef = adminDb.collection("entities").doc(params.entityId).collection("medicalVisitRequests").doc(params.requestId);
+    const rows: MedicalEmployeeInvitationSendResultRow[] = [];
+    if (!plan.rows.some((item) => item.eligible)) {
+      throw new Error("Aucune visite planifiée ne peut être notifiée.");
+    }
+
+    for (const item of plan.rows) {
+      const preview = toMedicalEmployeeInvitationPreviewRow(item);
+      if (!item.eligible) {
+        rows.push({
+          ...preview,
+          notificationDeliveryStatus: "skipped",
+          emailDeliveryStatus: "skipped",
+          deliveryResultStatus: item.eligibilityStatus,
+          notificationId: null,
+          emailLogId: null,
+          error: null,
+        });
+        continue;
+      }
+      const attemptNumber = Number(item.participant.invitationSendCount || 0) + 1;
+      const notificationId = buildDeterministicId([
+        "medical_employee_invitation_notification",
+        params.entityId,
+        params.requestId,
+        item.employeeId,
+        item.medicalVisitId,
+      ].join(":"));
+      const ordinaryEmailLogId = buildDeterministicId([
+        "medical_employee_invitation_email",
+        params.entityId,
+        params.requestId,
+        item.employeeId,
+        item.medicalVisitId,
+      ].join(":"));
+      const emailLogId = resendMode === "full_resend"
+        ? buildDeterministicId([
+            "medical_employee_invitation_email_full_resend",
+            params.entityId,
+            params.requestId,
+            item.employeeId,
+            item.medicalVisitId,
+            String(attemptNumber),
+          ].join(":"))
+        : ordinaryEmailLogId;
+      let notificationDeliveryStatus: MedicalEmployeeInvitationChannelStatus = "not_applicable";
+      let emailDeliveryStatus: MedicalEmployeeInvitationChannelStatus = "not_applicable";
+      let error: string | null = null;
+
+      const participantRef = requestRef.collection("participants").doc(item.employeeId);
+      const participantUpdate: Record<string, any> = {
+        invitationLastAttemptAt: FieldValue.serverTimestamp(),
+        invitationLastAttemptBy: actorUid,
+        invitationLastAttemptByName: actorDisplayName,
+        invitationSendCount: FieldValue.increment(1),
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid,
+      };
+
+      if (item.recipientUid) {
+        try {
+          const notificationRef = adminDb.collection("entities").doc(params.entityId).collection("notifications").doc(notificationId);
+          if (resendMode !== "full_resend" && item.participant.notificationStatus === "sent") {
+            notificationDeliveryStatus = "already_sent";
+          } else {
+            const notificationSnap = await notificationRef.get();
+            if (notificationSnap.exists) {
+              notificationDeliveryStatus = "already_sent";
+            } else {
+              await notificationRef.set({
+                id: notificationId,
+                entityId: params.entityId,
+                targetUid: item.recipientUid,
+                audience: "employee",
+                category: "medical",
+                severity: "info",
+                title: "Visite médicale planifiée",
+                message: `Votre visite médicale est planifiée le ${item.visitDateLabel} de ${item.visitStartTime} à ${item.visitEndTime}, à ${item.location}.`,
+                sourceModule: "medicalVisits",
+                sourceId: item.medicalVisitId,
+                actionUrl: `/entity/${params.entityId}/my-space/medical-visits`,
+                dedupKey: `medical_employee_invitation:${params.requestId}:${item.employeeId}:${item.medicalVisitId}`,
+                status: "unread",
+                createdAt: FieldValue.serverTimestamp(),
+                createdBy: actorUid,
+              });
+              notificationDeliveryStatus = "sent";
+            }
+          }
+          participantUpdate.notificationStatus = "sent";
+          participantUpdate.notificationSentAt = FieldValue.serverTimestamp();
+          participantUpdate.notificationRecipientUid = item.recipientUid;
+          participantUpdate.notificationId = notificationId;
+        } catch (notificationError: any) {
+          notificationDeliveryStatus = "failed";
+          participantUpdate.notificationStatus = "failed";
+          error = notificationError?.message || "Notification impossible.";
+        }
+      } else {
+        participantUpdate.notificationStatus = "not_applicable";
+      }
+
+      if (item.emailRecipient) {
+        try {
+          const emailLogRef = adminDb.collection("entities").doc(params.entityId).collection("emailLogs").doc(emailLogId);
+          let shouldSendEmail = true;
+          if (resendMode !== "full_resend" && item.participant.emailStatus === "sent") {
+            shouldSendEmail = false;
+          } else {
+            await adminDb.runTransaction(async (transaction) => {
+              const logSnap = await transaction.get(emailLogRef);
+              if (logSnap.exists) {
+                const status = logSnap.data()?.status;
+                if (status === "sent") {
+                  shouldSendEmail = false;
+                  return;
+                }
+                if (status === "sending") {
+                  throw new Error("Une convocation identique est déjà en cours d'envoi.");
+                }
+              }
+              transaction.set(emailLogRef, {
+                id: emailLogId,
+                entityId: params.entityId,
+                module: "medicalVisits",
+                type: "employee_medical_visit_invitation",
+                requestId: params.requestId,
+                medicalVisitId: item.medicalVisitId,
+                employeeId: item.employeeId,
+                recipient: item.emailRecipient,
+                status: "sending",
+                sentBy: actorUid,
+                sentByName: actorDisplayName,
+                providerName: item.providerName,
+                visitDate: item.visitDate,
+                visitStartTime: item.visitStartTime,
+                visitEndTime: item.visitEndTime,
+                createdAt: FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp(),
+              }, { merge: true });
+            });
+          }
+
+          if (shouldSendEmail) {
+            const sendResult = await sendMedicalEmployeeVisitInvitationEmail({
+              entityId: params.entityId,
+              to: item.emailRecipient,
+              employeeName: item.employeeDisplayNameSnapshot,
+              entityName: plan.entityName,
+              visitTypeLabel: item.visitTypeLabel,
+              visitDateLabel: item.visitDateLabel,
+              visitStartTime: item.visitStartTime,
+              visitEndTime: item.visitEndTime,
+              providerName: item.providerName,
+              location: item.location,
+              instructions: item.instructions,
+              actionUrl: `/entity/${params.entityId}/my-space/medical-visits`,
+            });
+            await emailLogRef.set({
+              subject: sendResult.subject,
+              bodyText: sendResult.body,
+              bodyHtml: sendResult.html,
+              messageId: sendResult.messageId || null,
+              from: sendResult.from || null,
+              status: "sent",
+              sentAt: FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+            emailDeliveryStatus = "sent";
+          } else {
+            emailDeliveryStatus = "already_sent";
+          }
+          participantUpdate.emailStatus = "sent";
+          participantUpdate.emailSentAt = FieldValue.serverTimestamp();
+          participantUpdate.emailRecipient = item.emailRecipient;
+          participantUpdate.emailLogId = emailLogId;
+        } catch (emailError: any) {
+          emailDeliveryStatus = "failed";
+          participantUpdate.emailStatus = "failed";
+          participantUpdate.emailRecipient = item.emailRecipient;
+          participantUpdate.emailLogId = emailLogId;
+          await adminDb.collection("entities").doc(params.entityId).collection("emailLogs").doc(emailLogId).set({
+            id: emailLogId,
+            entityId: params.entityId,
+            module: "medicalVisits",
+            type: "employee_medical_visit_invitation",
+            requestId: params.requestId,
+            medicalVisitId: item.medicalVisitId,
+            employeeId: item.employeeId,
+            recipient: item.emailRecipient,
+            status: "failed",
+            error: emailError?.message || "Envoi impossible.",
+            sentBy: actorUid,
+            sentByName: actorDisplayName,
+            updatedAt: FieldValue.serverTimestamp(),
+          }, { merge: true });
+          error = [error, emailError?.message || "E-mail impossible."].filter(Boolean).join(" / ");
+        }
+      } else {
+        participantUpdate.emailStatus = "not_applicable";
+      }
+
+      participantUpdate.invitationErrorCode = error ? "delivery_failed" : null;
+      await participantRef.set(participantUpdate, { merge: true });
+
+      rows.push({
+        ...preview,
+        notificationDeliveryStatus,
+        emailDeliveryStatus,
+        deliveryResultStatus: resolveInvitationDeliveryResultStatus(preview, notificationDeliveryStatus, emailDeliveryStatus),
+        notificationId: item.recipientUid ? notificationId : null,
+        emailLogId: item.emailRecipient ? emailLogId : null,
+        error,
+      });
+    }
+
+    const summary = summarizeInvitationSend(rows);
+    await requestRef.set({
+      status: "employees_planned",
+      employeeInvitationsLastSentAt: FieldValue.serverTimestamp(),
+      employeeInvitationsLastSentBy: actorUid,
+      employeeInvitationsLastSentByName: actorDisplayName,
+      employeeInvitationAttemptCount: FieldValue.increment(1),
+      employeeNotificationSentCount: summary.notificationSentCount,
+      employeeEmailSentCount: summary.emailSentCount,
+      employeeManualContactCount: summary.manualContactCount,
+      employeeInvitationEligibleCount: summary.eligibleCount,
+      employeeInvitationSkippedCount: summary.skippedCount,
+      employeeInvitationFailureCount: summary.failureCount,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid,
+    }, { merge: true });
+
+    await createTrustedAuditLog({
+      actorUid,
+      entityId: params.entityId,
+      action: "medicalVisitRequest.employeeInvitationsSent",
+      resourceType: "medicalVisitRequest",
+      resourceId: params.requestId,
+      details: {
+        requestId: params.requestId,
+        resendMode,
+        processedCount: summary.processedCount,
+        notificationSentCount: summary.notificationSentCount,
+        emailSentCount: summary.emailSentCount,
+        manualContactCount: summary.manualContactCount,
+        eligibleCount: summary.eligibleCount,
+        skippedCount: summary.skippedCount,
+        failureCount: summary.failureCount,
+      },
+    }).catch(() => undefined);
+
+    return { success: true, requestId: params.requestId, rows, summary };
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Envoi des convocations impossible." };
+  }
+}
+
 export async function attachMedicalCertificateAction(params: {
   idToken: string;
   entityId: string;
@@ -1566,6 +1968,283 @@ function buildAppointmentSequenceByEmployee(
   return sequenceByEmployee;
 }
 
+type MedicalEmployeeInvitationPlanRow = {
+  employeeId: string;
+  employeeCodeSnapshot: string;
+  employeeDisplayNameSnapshot: string;
+  medicalVisitId: string;
+  visitTypeLabel: string;
+  visitDate: string;
+  visitDateLabel: string;
+  visitStartTime: string;
+  visitEndTime: string;
+  providerName: string;
+  location: string;
+  instructions: string | null;
+  recipientUid: string | null;
+  emailRecipient: string | null;
+  classification: MedicalEmployeeInvitationClassification;
+  eligibilityStatus: MedicalEmployeeInvitationEligibilityStatus;
+  eligibilityLabel: string;
+  eligible: boolean;
+  participant: MedicalVisitRequestParticipantDto;
+};
+
+async function loadVerifiedMedicalEmployeeInvitationPlan(entityId: string, requestId: string) {
+  if (!adminDb) throw new Error("Service administrateur indisponible.");
+  const entityRef = adminDb.collection("entities").doc(entityId);
+  const requestRef = entityRef.collection("medicalVisitRequests").doc(requestId);
+  const [entitySnap, requestSnap, participantsSnap, slotsSnap] = await Promise.all([
+    entityRef.get(),
+    requestRef.get(),
+    requestRef.collection("participants").get(),
+    requestRef.collection("slots").get(),
+  ]);
+  if (!entitySnap.exists || entitySnap.data()?.status !== "active") throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  if (!requestSnap.exists) throw new Error("Demande de visites médicales introuvable.");
+  const request = requestSnap.data() || {};
+  if (request.entityId !== entityId || request.id !== requestId) throw new Error(SAFE_FORBIDDEN_MESSAGE);
+  if (request.status !== "employees_planned") {
+    throw new Error("Les visites individuelles doivent être créées avant d'envoyer les convocations.");
+  }
+  const providerName = requireString(request.providerName, "Médecin ou centre", 180);
+  const activeParticipants = participantsSnap.docs
+    .map((docSnap) => serializeMedicalVisitRequestParticipant(docSnap.id, docSnap.data()))
+    .filter((participant) => participant.selectionStatus !== "removed");
+  if (activeParticipants.length === 0) throw new Error("Aucun collaborateur actif n'est sélectionné.");
+
+  const slots = slotsSnap.docs.map((docSnap) => serializeMedicalVisitProviderSlot(docSnap.id, docSnap.data()));
+  const slotById = new Map(slots.map((slot) => [slot.slotId, slot]));
+  const visitRefs = activeParticipants.map((participant) => {
+    if (!participant.resultingMedicalVisitId) throw new Error("Toutes les visites individuelles doivent être créées.");
+    return entityRef.collection("medicalVisits").doc(participant.resultingMedicalVisitId);
+  });
+  const employeeRefs = activeParticipants.map((participant) => entityRef.collection("employees").doc(participant.employeeId));
+  const [visitSnaps, employeeSnaps] = await Promise.all([
+    Promise.all(visitRefs.map((ref) => ref.get())),
+    Promise.all(employeeRefs.map((ref) => ref.get())),
+  ]);
+
+  const rows: MedicalEmployeeInvitationPlanRow[] = [];
+  for (let index = 0; index < activeParticipants.length; index += 1) {
+    const participant = activeParticipants[index];
+    const visitSnap = visitSnaps[index];
+    const employeeSnap = employeeSnaps[index];
+    if (!visitSnap.exists) throw new Error("Une visite individuelle liée est introuvable.");
+    if (!employeeSnap.exists) throw new Error("Collaborateur introuvable.");
+    const visit = visitSnap.data() || {};
+    const employee = employeeSnap.data() || {};
+    if (employee.entityId !== entityId || employee.employeeId !== participant.employeeId || !isActiveEmployee(employee)) {
+      throw new Error(SAFE_FORBIDDEN_MESSAGE);
+    }
+    if (
+      visit.entityId !== entityId
+      || visit.employeeId !== participant.employeeId
+      || visit.medicalVisitRequestId !== requestId
+      || visit.id !== participant.resultingMedicalVisitId
+    ) {
+      throw new Error("Lien de visite individuelle incohérent.");
+    }
+    const eligibilityStatus = resolveVisitInvitationEligibilityStatus(visit.status);
+    const eligible = eligibilityStatus === "eligible";
+    const visitDate = String(visit.visitDate || "");
+    const visitStartTime = String(visit.visitStartTime || "");
+    const visitEndTime = String(visit.visitEndTime || "");
+    const location = String(visit.medicalCenter || "");
+    if (eligible) {
+      requireDateOnly(visitDate, "Date de visite");
+      requireTime(visitStartTime, "Heure de début");
+      requireTime(visitEndTime, "Heure de fin");
+      if (visitEndTime <= visitStartTime) throw new Error("Horaire de visite incohérent.");
+      requireString(location, "Lieu", 240);
+    }
+    const slot = visit.providerSlotId ? slotById.get(String(visit.providerSlotId)) : null;
+    if (!slot || slot.entityId !== entityId || slot.requestId !== requestId) {
+      throw new Error("Créneau médecin lié introuvable.");
+    }
+    const recipientUid = await resolveActiveEmployeeAccountUid(entityId, employee);
+    const emailRecipient = normalizeOptionalEmail(employee.email);
+    const classification = resolveInvitationClassification(!!recipientUid, !!emailRecipient);
+    const medicalVisitId = participant.resultingMedicalVisitId;
+    if (!medicalVisitId) throw new Error("Toutes les visites individuelles doivent être créées.");
+    rows.push({
+      employeeId: participant.employeeId,
+      employeeCodeSnapshot: participant.employeeCodeSnapshot,
+      employeeDisplayNameSnapshot: participant.employeeDisplayNameSnapshot,
+      medicalVisitId,
+      visitTypeLabel: MEDICAL_VISIT_TYPE_LABELS[visit.visitType as MedicalVisitType] || String(visit.visitType || request.visitType || "Visite médicale"),
+      visitDate,
+      visitDateLabel: formatMedicalDate(visitDate),
+      visitStartTime,
+      visitEndTime,
+      providerName,
+      location,
+      instructions: slot.instructions || null,
+      recipientUid,
+      emailRecipient,
+      classification,
+      eligibilityStatus,
+      eligibilityLabel: getVisitInvitationEligibilityLabel(eligibilityStatus),
+      eligible,
+      participant,
+    });
+  }
+
+  if (!rows.some((row) => row.eligible)) {
+    throw new Error("Aucune visite planifiée ne peut être notifiée.");
+  }
+
+  return {
+    entityName: resolveMedicalEntityName(entitySnap.data() || {}),
+    request,
+    rows,
+  };
+}
+
+async function resolveActiveEmployeeAccountUid(entityId: string, employee: Record<string, any>) {
+  if (!adminDb) return null;
+  const uid = String(employee.userId || "").trim();
+  if (!uid) return null;
+  const [userSnap, membershipSnap] = await Promise.all([
+    adminDb.collection("users").doc(uid).get(),
+    adminDb.collection("memberships").doc(`${uid}_${entityId}`).get(),
+  ]);
+  if (!userSnap.exists || userSnap.data()?.status !== "active") return null;
+  if (!membershipSnap.exists || membershipSnap.data()?.status !== "active") return null;
+  return uid;
+}
+
+function normalizeOptionalEmail(value: unknown) {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  if (!email) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+function resolveInvitationClassification(hasActiveAccount: boolean, hasValidEmail: boolean): MedicalEmployeeInvitationClassification {
+  if (hasActiveAccount && hasValidEmail) return "notification_and_email";
+  if (hasActiveAccount) return "notification_only";
+  if (hasValidEmail) return "email_only";
+  return "manual_contact_required";
+}
+
+function resolveVisitInvitationEligibilityStatus(status: unknown): MedicalEmployeeInvitationEligibilityStatus {
+  switch (String(status || "")) {
+    case "scheduled":
+      return "eligible";
+    case "completed":
+      return "skipped_visit_completed";
+    case "cancelled":
+      return "skipped_visit_cancelled";
+    case "archived":
+      return "skipped_visit_archived";
+    case "pending_result":
+      return "skipped_visit_pending_result";
+    default:
+      return "skipped_visit_ineligible_status";
+  }
+}
+
+function getVisitInvitationEligibilityLabel(status: MedicalEmployeeInvitationEligibilityStatus) {
+  switch (status) {
+    case "eligible":
+      return "Éligible — visite planifiée";
+    case "skipped_visit_completed":
+      return "Non éligible — visite déjà terminée";
+    case "skipped_visit_cancelled":
+      return "Non éligible — visite annulée";
+    case "skipped_visit_archived":
+      return "Non éligible — visite archivée";
+    case "skipped_visit_pending_result":
+      return "Non éligible — résultat en attente";
+    default:
+      return "Non éligible — statut de visite incompatible";
+  }
+}
+
+function getInvitationClassificationLabel(classification: MedicalEmployeeInvitationClassification) {
+  switch (classification) {
+    case "notification_and_email":
+      return "Notification + e-mail";
+    case "notification_only":
+      return "Notification uniquement";
+    case "email_only":
+      return "E-mail uniquement";
+    default:
+      return "Contact manuel requis";
+  }
+}
+
+function toMedicalEmployeeInvitationPreviewRow(item: MedicalEmployeeInvitationPlanRow): MedicalEmployeeInvitationPreviewRow {
+  return {
+    employeeId: item.employeeId,
+    employeeCodeSnapshot: item.employeeCodeSnapshot,
+    employeeDisplayNameSnapshot: item.employeeDisplayNameSnapshot,
+    medicalVisitId: item.medicalVisitId,
+    visitDate: item.visitDate,
+    visitDateLabel: item.visitDateLabel,
+    visitStartTime: item.visitStartTime,
+    visitEndTime: item.visitEndTime,
+    providerName: item.providerName,
+    location: item.location,
+    instructions: item.instructions,
+    hasActiveAccount: !!item.recipientUid,
+    hasValidEmail: !!item.emailRecipient,
+    emailRecipient: item.emailRecipient,
+    classification: item.classification,
+    classificationLabel: getInvitationClassificationLabel(item.classification),
+    eligibilityStatus: item.eligibilityStatus,
+    eligibilityLabel: item.eligibilityLabel,
+    eligible: item.eligible,
+    notificationStatus: item.participant.notificationStatus,
+    emailStatus: item.participant.emailStatus,
+    sampleMessage: `Bonjour ${item.employeeDisplayNameSnapshot}, votre visite médicale est planifiée le ${item.visitDateLabel} de ${item.visitStartTime} à ${item.visitEndTime}, à ${item.location}.`,
+  };
+}
+
+function summarizeInvitationPreview(rows: MedicalEmployeeInvitationPreviewRow[]) {
+  const eligibleRows = rows.filter((row) => row.eligible);
+  return {
+    notificationAndEmail: eligibleRows.filter((row) => row.classification === "notification_and_email").length,
+    notificationOnly: eligibleRows.filter((row) => row.classification === "notification_only").length,
+    emailOnly: eligibleRows.filter((row) => row.classification === "email_only").length,
+    manualContactRequired: eligibleRows.filter((row) => row.classification === "manual_contact_required").length,
+    eligibleCount: eligibleRows.length,
+    skippedCount: rows.length - eligibleRows.length,
+  };
+}
+
+function summarizeInvitationSend(rows: MedicalEmployeeInvitationSendResultRow[]) {
+  const channelSucceeded = (status: MedicalEmployeeInvitationChannelStatus) => status === "sent" || status === "already_sent";
+  const eligibleRows = rows.filter((row) => row.eligible);
+  return {
+    processedCount: rows.length,
+    notificationSentCount: eligibleRows.filter((row) => channelSucceeded(row.notificationDeliveryStatus)).length,
+    emailSentCount: eligibleRows.filter((row) => channelSucceeded(row.emailDeliveryStatus)).length,
+    manualContactCount: eligibleRows.filter((row) => row.classification === "manual_contact_required").length,
+    eligibleCount: eligibleRows.length,
+    skippedCount: rows.length - eligibleRows.length,
+    failureCount: eligibleRows.filter((row) => row.notificationDeliveryStatus === "failed" || row.emailDeliveryStatus === "failed").length,
+  };
+}
+
+function resolveInvitationDeliveryResultStatus(
+  row: MedicalEmployeeInvitationPreviewRow,
+  notificationStatus: MedicalEmployeeInvitationChannelStatus,
+  emailStatus: MedicalEmployeeInvitationChannelStatus
+) {
+  if (!row.eligible) return row.eligibilityStatus;
+  if (notificationStatus === "failed" || emailStatus === "failed") {
+    const oneChannelSucceeded = notificationStatus === "sent"
+      || notificationStatus === "already_sent"
+      || emailStatus === "sent"
+      || emailStatus === "already_sent";
+    return oneChannelSucceeded ? "partially_sent" : "failed";
+  }
+  if (row.classification === "manual_contact_required") return "manual_contact_required";
+  return "sent";
+}
+
 function normalizeEmail(value: unknown) {
   const email = requireString(value, "Adresse e-mail", 254).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -1672,6 +2351,16 @@ function serializeMedicalVisitRequest(id: string, data: Record<string, any>): Me
     individualVisitsCreatedBy: data.individualVisitsCreatedBy || null,
     individualVisitsCreatedByName: data.individualVisitsCreatedByName || null,
     individualVisitsCount: Number(data.individualVisitsCount || 0),
+    employeeInvitationsLastSentAt: serializeTimestamp(data.employeeInvitationsLastSentAt),
+    employeeInvitationsLastSentBy: data.employeeInvitationsLastSentBy || null,
+    employeeInvitationsLastSentByName: data.employeeInvitationsLastSentByName || null,
+    employeeInvitationAttemptCount: Number(data.employeeInvitationAttemptCount || 0),
+    employeeNotificationSentCount: Number(data.employeeNotificationSentCount || 0),
+    employeeEmailSentCount: Number(data.employeeEmailSentCount || 0),
+    employeeManualContactCount: Number(data.employeeManualContactCount || 0),
+    employeeInvitationEligibleCount: Number(data.employeeInvitationEligibleCount || 0),
+    employeeInvitationSkippedCount: Number(data.employeeInvitationSkippedCount || 0),
+    employeeInvitationFailureCount: Number(data.employeeInvitationFailureCount || 0),
   };
 }
 
@@ -1782,7 +2471,18 @@ function serializeMedicalVisitRequestParticipant(id: string, data: Record<string
     resultingMedicalVisitId: data.resultingMedicalVisitId || null,
     resultingMedicalVisitStatus: "not_created",
     notificationStatus: data.notificationStatus || "not_sent",
+    notificationSentAt: serializeTimestamp(data.notificationSentAt),
+    notificationRecipientUid: data.notificationRecipientUid || null,
+    notificationId: data.notificationId || null,
     emailStatus: data.emailStatus || "not_sent",
+    emailSentAt: serializeTimestamp(data.emailSentAt),
+    emailRecipient: data.emailRecipient || null,
+    emailLogId: data.emailLogId || null,
+    invitationLastAttemptAt: serializeTimestamp(data.invitationLastAttemptAt),
+    invitationLastAttemptBy: data.invitationLastAttemptBy || null,
+    invitationLastAttemptByName: data.invitationLastAttemptByName || null,
+    invitationErrorCode: data.invitationErrorCode || null,
+    invitationSendCount: Number(data.invitationSendCount || 0),
     createdAt: serializeTimestamp(data.createdAt),
     createdBy: String(data.createdBy || ""),
     updatedAt: serializeTimestamp(data.updatedAt),

@@ -135,6 +135,21 @@ export interface SendMedicalProviderAvailabilityRequestEmailParams {
   body: string;
 }
 
+export interface SendMedicalEmployeeVisitInvitationEmailParams {
+  entityId: string;
+  to: string;
+  employeeName: string;
+  entityName: string;
+  visitTypeLabel: string;
+  visitDateLabel: string;
+  visitStartTime: string;
+  visitEndTime: string;
+  providerName: string;
+  location: string;
+  instructions?: string | null;
+  actionUrl: string;
+}
+
 /**
  * Replaces {{variable}} placeholders in a string.
  */
@@ -1067,6 +1082,77 @@ export async function sendMedicalProviderAvailabilityRequestEmail(params: SendMe
     };
   } catch (error: any) {
     console.error("[Email Service] Failed to send medical provider availability request:", error);
+    throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
+  }
+}
+
+export async function sendMedicalEmployeeVisitInvitationEmail(params: SendMedicalEmployeeVisitInvitationEmailParams) {
+  const {
+    entityId,
+    to,
+    employeeName,
+    entityName,
+    visitTypeLabel,
+    visitDateLabel,
+    visitStartTime,
+    visitEndTime,
+    providerName,
+    location,
+    instructions,
+    actionUrl,
+  } = params;
+  const emailActionUrl = buildExternalPublicUrl(actionUrl, getExternalPublicBaseUrl());
+
+  const { transporter, from, replyTo, source } = await resolveEmailTransportForEntity(entityId);
+  const isGlobalConfigured = !!(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+  const canSend = source === 'entity' || isGlobalConfigured;
+
+  if (!canSend) {
+    throw new Error("Configuration du service email requise.");
+  }
+
+  const subject = `Convocation à une visite médicale — ${visitDateLabel}`;
+  const bodyLines = [
+    `Bonjour ${employeeName},`,
+    "",
+    `Votre visite médicale est planifiée par ${entityName}.`,
+    "",
+    `Type de visite : ${visitTypeLabel}`,
+    `Date : ${visitDateLabel}`,
+    `Horaire : ${visitStartTime} - ${visitEndTime}`,
+    `Médecin / centre : ${providerName}`,
+    `Lieu : ${location}`,
+    instructions ? `Instructions : ${instructions}` : "",
+    "",
+    "Merci de vous présenter à l'heure indiquée.",
+    "",
+    `Votre espace salarié : ${emailActionUrl}`,
+    "",
+    "Cordialement,",
+    `Service RH — ${entityName}`,
+  ].filter((line) => line !== "").join("\n");
+  const html = renderPlainTextEmailHtml(bodyLines);
+
+  try {
+    const info = await transporter.sendMail({
+      from,
+      to,
+      replyTo: replyTo || undefined,
+      subject,
+      html,
+      text: bodyLines,
+    });
+
+    return {
+      success: true as const,
+      messageId: info.messageId || null,
+      from,
+      subject,
+      body: bodyLines,
+      html,
+    };
+  } catch (error: any) {
+    console.error("[Email Service] Failed to send medical employee invitation:", error);
     throw new Error(`Erreur lors de l'envoi de l'email : ${error.message}`);
   }
 }

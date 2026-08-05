@@ -11,7 +11,8 @@ import {
   LogOut, 
   ArrowLeftRight,
   Loader2,
-  GraduationCap
+  GraduationCap,
+  Stethoscope
 } from "lucide-react";
 import { 
   Sidebar, 
@@ -35,6 +36,7 @@ import { cn } from "@/lib/utils";
 
 const MY_SPACE_HREF = "my-space";
 const MY_SPACE_TRAINING_HREF = "my-space/formations";
+const MY_SPACE_MEDICAL_VISITS_HREF = "my-space/medical-visits";
 
 export function EntitySidebar() {
   const params = useParams();
@@ -200,6 +202,37 @@ export function EntitySidebar() {
     );
   };
 
+  const renderMySpaceMedicalVisitsLink = () => {
+    const href = `/entity/${entityId}/${MY_SPACE_MEDICAL_VISITS_HREF}`;
+    const isActive = pathname === href;
+    const isLoading = loadingHref === href && !isActive;
+
+    return (
+      <SidebarMenuItem key={MY_SPACE_MEDICAL_VISITS_HREF}>
+        <a href={href}
+          title="Mes visites médicales"
+          data-sidebar="menu-button"
+          data-active={isActive}
+          data-size="default"
+          onClick={(event) => handleMenuAnchorClick(event, href)}
+          className={cn(
+            "peer/menu-button flex min-h-11 w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-left text-sm font-medium text-foreground outline-none ring-sidebar-ring transition-[width,height,padding] md:h-8 md:min-h-0 md:gap-2 md:p-2 md:text-sidebar-foreground",
+            "hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 active:bg-accent active:text-accent-foreground md:hover:bg-sidebar-accent md:hover:text-sidebar-accent-foreground md:active:bg-sidebar-accent md:active:text-sidebar-accent-foreground",
+            "data-[active=true]:bg-accent data-[active=true]:font-bold data-[active=true]:text-accent-foreground md:data-[active=true]:bg-sidebar-accent md:data-[active=true]:text-sidebar-accent-foreground",
+            "group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0"
+          )}
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Stethoscope className="w-4 h-4" aria-hidden="true" />
+          )}
+          <span>Mes visites médicales</span>
+        </a>
+      </SidebarMenuItem>
+    );
+  };
+
   return (
     <Sidebar collapsible="icon" className="border-r border-border bg-background text-foreground md:bg-sidebar md:text-sidebar-foreground">
       <SidebarHeader className="border-b border-border h-16 flex flex-col justify-center px-4 pr-12 md:pr-4 gap-0.5 bg-background md:bg-sidebar">
@@ -237,6 +270,7 @@ export function EntitySidebar() {
               <SidebarMenu>
                 {showMySpace || isMySpacePath ? renderNavigationLink(mySpaceItem) : null}
                 {renderMySpaceTrainingLink()}
+                {renderMySpaceMedicalVisitsLink()}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

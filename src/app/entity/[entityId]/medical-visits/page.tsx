@@ -8,7 +8,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, User, Users,
   Building2, ArrowUpRight, History, MoreVertical,
   RefreshCcw, FileSignature, FileText, Paperclip,
-  FileCheck, Upload, ShieldCheck, Download
+  FileCheck, Upload, ShieldCheck, Download, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,7 @@ import { MedicalVisitDialog } from "@/components/medical-visits/MedicalVisitDial
 import { MedicalVisitRequestDialog } from "@/components/medical-visits/MedicalVisitRequestDialog";
 import { MedicalProviderEmailDialog } from "@/components/medical-visits/MedicalProviderEmailDialog";
 import { MedicalProviderSlotsDialog } from "@/components/medical-visits/MedicalProviderSlotsDialog";
+import { MedicalEmployeeInvitationsDialog } from "@/components/medical-visits/MedicalEmployeeInvitationsDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,6 +74,19 @@ const initialFilters = {
   deadlineStatus: "all"
 };
 
+const REQUEST_PAGE_SIZE = 10;
+const visitPageSizeOptions = [10, 25, 50];
+
+const requestStatusFilterOptions = [
+  { value: "all", label: "Toutes" },
+  { value: "draft", label: "Brouillon" },
+  { value: "awaiting_provider_response", label: "En attente du médecin" },
+  { value: "slots_received", label: "Créneaux reçus" },
+  { value: "assignments_ready", label: "Affectation prête" },
+  { value: "employees_planned", label: "Employés planifiés" },
+  { value: "closed", label: "Terminées/annulées" },
+];
+
 type MedicalVisitRequestSummary = {
   id: string;
   visitType: MedicalVisitType;
@@ -87,6 +101,7 @@ type MedicalVisitRequestSummary = {
   status: string;
   participantCount: number;
   createdAt: string | null;
+  updatedAt?: string | null;
   providerRequestSentAt?: string | null;
   providerRequestSentBy?: string | null;
   providerRequestSentByName?: string | null;
@@ -104,6 +119,16 @@ type MedicalVisitRequestSummary = {
   individualVisitsCreatedBy?: string | null;
   individualVisitsCreatedByName?: string | null;
   individualVisitsCount?: number;
+  employeeInvitationsLastSentAt?: string | null;
+  employeeInvitationsLastSentBy?: string | null;
+  employeeInvitationsLastSentByName?: string | null;
+  employeeInvitationAttemptCount?: number;
+  employeeNotificationSentCount?: number;
+  employeeEmailSentCount?: number;
+  employeeManualContactCount?: number;
+  employeeInvitationEligibleCount?: number;
+  employeeInvitationSkippedCount?: number;
+  employeeInvitationFailureCount?: number;
 };
 
 type MedicalVisitRequestParticipantDetail = {
@@ -132,6 +157,93 @@ type MaterializationResultSummary = {
   materializedByName: string;
 };
 
+function getRequestPriority(request: MedicalVisitRequestSummary) {
+  if (request.status === "draft" || request.status === "slots_received" || request.status === "assignments_ready") return 1;
+  if (request.status === "awaiting_provider_response" || request.status === "provider_request_sent") return 2;
+  if (request.status === "employees_planned") return 3;
+  if (request.status === "completed" || request.status === "cancelled") return 4;
+  return 5;
+}
+
+function getRequestUpdatedTime(request: MedicalVisitRequestSummary) {
+  return Date.parse(request.updatedAt || request.employeeInvitationsLastSentAt || request.individualVisitsCreatedAt || request.providerResponseRecordedAt || request.providerRequestSentAt || request.createdAt || "") || 0;
+}
+
+function getRequestCurrentStep(request: MedicalVisitRequestSummary) {
+  if (request.status === "draft") return "Préparer l'e-mail au médecin";
+  if (request.status === "awaiting_provider_response" || request.status === "provider_request_sent") return "Attente réponse médecin";
+  if (request.status === "slots_received") return "Affecter les collaborateurs";
+  if (request.status === "assignments_ready") return "Créer les visites individuelles";
+  if (request.status === "employees_planned") return (request.employeeInvitationAttemptCount || 0) > 0 ? "Convocations collaborateurs" : "Notifier les collaborateurs";
+  if (request.status === "completed") return "Terminée";
+  if (request.status === "cancelled") return "Annulée";
+  return "Suivi de la demande";
+}
+
+function requestStatusMatchesFilter(request: MedicalVisitRequestSummary, filter: string) {
+  if (filter === "all") return true;
+  if (filter === "closed") return request.status === "completed" || request.status === "cancelled";
+  if (filter === "awaiting_provider_response") return request.status === "awaiting_provider_response" || request.status === "provider_request_sent";
+  return request.status === filter;
+}
+
+function getRequestAccentClass(status: string) {
+  if (status === "draft") return "border-slate-200 bg-white";
+  if (status === "awaiting_provider_response" || status === "provider_request_sent") return "border-blue-100 bg-white";
+  if (status === "slots_received") return "border-cyan-100 bg-white";
+  if (status === "assignments_ready") return "border-amber-100 bg-white";
+  if (status === "employees_planned") return "border-indigo-100 bg-white";
+  if (status === "completed") return "border-emerald-100 bg-white";
+  if (status === "cancelled") return "border-red-100 bg-white";
+  return "border-slate-200 bg-white";
+}
+
+function getRequestStatusBadgeClass(status: string) {
+  if (status === "draft") return "border-slate-200 bg-slate-100 text-slate-700";
+  if (status === "awaiting_provider_response" || status === "provider_request_sent") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (status === "slots_received") return "border-cyan-200 bg-cyan-50 text-cyan-700";
+  if (status === "assignments_ready") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (status === "employees_planned") return "border-indigo-200 bg-indigo-50 text-indigo-700";
+  if (status === "completed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "cancelled") return "border-red-200 bg-red-50 text-red-700";
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function getRequestHeaderAccentClass(status: string) {
+  if (status === "draft") return "bg-slate-300";
+  if (status === "awaiting_provider_response" || status === "provider_request_sent") return "bg-blue-400";
+  if (status === "slots_received") return "bg-cyan-400";
+  if (status === "assignments_ready") return "bg-amber-400";
+  if (status === "employees_planned") return "bg-indigo-400";
+  if (status === "completed") return "bg-emerald-400";
+  if (status === "cancelled") return "bg-red-300";
+  return "bg-slate-300";
+}
+
+function buildPaginationPages(currentPage: number, totalPages: number) {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const pages = new Set([1, totalPages, currentPage, currentPage - 1, currentPage + 1]);
+  if (currentPage <= 3) {
+    pages.add(2);
+    pages.add(3);
+    pages.add(4);
+  }
+  if (currentPage >= totalPages - 2) {
+    pages.add(totalPages - 1);
+    pages.add(totalPages - 2);
+    pages.add(totalPages - 3);
+  }
+  return Array.from(pages)
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b)
+    .reduce<Array<number | "ellipsis">>((acc, page) => {
+      const previous = acc[acc.length - 1];
+      if (typeof previous === "number" && page - previous > 1) acc.push("ellipsis");
+      acc.push(page);
+      return acc;
+    }, []);
+}
+
 export default function MedicalVisitsRegistryPage() {
   const params = useParams();
   const entityId = params.entityId as string;
@@ -148,6 +260,7 @@ export default function MedicalVisitsRegistryPage() {
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [providerEmailRequestId, setProviderEmailRequestId] = useState<string | null>(null);
   const [providerSlotsRequestId, setProviderSlotsRequestId] = useState<string | null>(null);
+  const [employeeInvitationsRequestId, setEmployeeInvitationsRequestId] = useState<string | null>(null);
   const [materializingRequest, setMaterializingRequest] = useState<MedicalVisitRequestSummary | null>(null);
   const [materializationParticipants, setMaterializationParticipants] = useState<MedicalVisitRequestParticipantDetail[]>([]);
   const [materializationSlots, setMaterializationSlots] = useState<MedicalVisitProviderSlotDetail[]>([]);
@@ -156,7 +269,13 @@ export default function MedicalVisitsRegistryPage() {
   const [materializationResult, setMaterializationResult] = useState<MaterializationResultSummary | null>(null);
   const [groupedRequests, setGroupedRequests] = useState<MedicalVisitRequestSummary[]>([]);
   const [loadingGroupedRequests, setLoadingGroupedRequests] = useState(false);
+  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
+  const [requestSearch, setRequestSearch] = useState("");
+  const [requestStatusFilter, setRequestStatusFilter] = useState("all");
+  const [visibleRequestCount, setVisibleRequestCount] = useState(REQUEST_PAGE_SIZE);
   const [filters, setFilters] = useState(initialFilters);
+  const [visitPage, setVisitPage] = useState(1);
+  const [visitPageSize, setVisitPageSize] = useState(10);
   const [loading, setLoading] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
@@ -260,6 +379,68 @@ export default function MedicalVisitsRegistryPage() {
       return true;
     });
   }, [visits, filters, employeesMap]);
+
+  const sortedFilteredVisits = useMemo(() => {
+    return [...filteredVisits].sort((a, b) => {
+      const dateA = `${a.visitDate || ""}T${a.visitStartTime || "00:00"}`;
+      const dateB = `${b.visitDate || ""}T${b.visitStartTime || "00:00"}`;
+      return dateB.localeCompare(dateA);
+    });
+  }, [filteredVisits]);
+
+  const totalVisitPages = Math.max(1, Math.ceil(sortedFilteredVisits.length / visitPageSize));
+  const safeVisitPage = Math.min(visitPage, totalVisitPages);
+  const visitRangeStart = sortedFilteredVisits.length === 0 ? 0 : (safeVisitPage - 1) * visitPageSize + 1;
+  const visitRangeEnd = Math.min(safeVisitPage * visitPageSize, sortedFilteredVisits.length);
+  const paginatedVisits = useMemo(() => {
+    const start = (safeVisitPage - 1) * visitPageSize;
+    return sortedFilteredVisits.slice(start, start + visitPageSize);
+  }, [safeVisitPage, sortedFilteredVisits, visitPageSize]);
+  const paginationPages = useMemo(() => buildPaginationPages(safeVisitPage, totalVisitPages), [safeVisitPage, totalVisitPages]);
+
+  useEffect(() => {
+    setVisitPage(1);
+  }, [filters.search, filters.visitType, filters.fitnessStatus, filters.status, filters.deadlineStatus, visitPageSize]);
+
+  useEffect(() => {
+    if (visitPage > totalVisitPages) {
+      setVisitPage(totalVisitPages);
+    }
+  }, [totalVisitPages, visitPage]);
+
+  const filteredGroupedRequests = useMemo(() => {
+    const normalizedSearch = requestSearch.trim().toLowerCase();
+    return [...groupedRequests]
+      .filter((request) => {
+        if (!requestStatusMatchesFilter(request, requestStatusFilter)) return false;
+        if (!normalizedSearch) return true;
+        const searchTarget = [
+          MEDICAL_VISIT_TYPE_LABELS[request.visitType],
+          request.providerName,
+          request.medicalCenter,
+          MEDICAL_VISIT_REQUEST_STATUS_LABELS[request.status as keyof typeof MEDICAL_VISIT_REQUEST_STATUS_LABELS],
+          request.providerEmail,
+          request.constraints,
+        ].filter(Boolean).join(" ").toLowerCase();
+        return searchTarget.includes(normalizedSearch);
+      })
+      .sort((a, b) => getRequestPriority(a) - getRequestPriority(b) || getRequestUpdatedTime(b) - getRequestUpdatedTime(a));
+  }, [groupedRequests, requestSearch, requestStatusFilter]);
+
+  const visibleGroupedRequests = useMemo(
+    () => filteredGroupedRequests.slice(0, visibleRequestCount),
+    [filteredGroupedRequests, visibleRequestCount]
+  );
+
+  useEffect(() => {
+    setVisibleRequestCount(REQUEST_PAGE_SIZE);
+  }, [requestSearch, requestStatusFilter]);
+
+  useEffect(() => {
+    if (expandedRequestId && !groupedRequests.some((request) => request.id === expandedRequestId)) {
+      setExpandedRequestId(null);
+    }
+  }, [expandedRequestId, groupedRequests]);
 
   const handleEdit = (v: MedicalVisit) => {
     setEditingId(v.id);
@@ -528,6 +709,36 @@ export default function MedicalVisitsRegistryPage() {
           </Button>
         </div>
 
+        <Card className="rounded-[2rem] border-primary/10 bg-white shadow-sm">
+          <CardContent className="space-y-3 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="relative min-w-0 flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={requestSearch}
+                  onChange={(event) => setRequestSearch(event.target.value)}
+                  placeholder="Rechercher une demande, un médecin, un centre..."
+                  className="rounded-xl pl-10"
+                />
+              </div>
+              <Select value={requestStatusFilter} onValueChange={setRequestStatusFilter}>
+                <SelectTrigger className="w-full rounded-xl lg:w-[240px]">
+                  <SelectValue placeholder="Statut de demande" />
+                </SelectTrigger>
+                <SelectContent>
+                  {requestStatusFilterOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-2 text-xs font-bold text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <p>{filteredGroupedRequests.length} demande{filteredGroupedRequests.length > 1 ? "s" : ""} trouvée{filteredGroupedRequests.length > 1 ? "s" : ""}</p>
+              <p>Filtres des demandes groupées — séparés du tableau des visites individuelles.</p>
+            </div>
+          </CardContent>
+        </Card>
+
         {loadingGroupedRequests ? (
           <Card className="rounded-[2rem] border-primary/10 p-8 text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
@@ -537,14 +748,62 @@ export default function MedicalVisitsRegistryPage() {
             <Users className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
             <p className="text-sm font-bold text-muted-foreground">Aucune demande groupée enregistrée.</p>
           </Card>
+        ) : filteredGroupedRequests.length === 0 ? (
+          <Card className="rounded-[2rem] border-dashed border-primary/20 bg-muted/20 p-8 text-center">
+            <Search className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm font-bold text-muted-foreground">Aucune demande ne correspond aux filtres.</p>
+          </Card>
         ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {groupedRequests.map((request) => (
-              <Card key={request.id} className="rounded-[2rem] border-primary/10 shadow-sm">
-                <CardContent className="space-y-4 p-5">
+          <div className="space-y-3">
+            {visibleGroupedRequests.map((request) => {
+              const isExpanded = expandedRequestId === request.id;
+              const periodLabel = `${format(parseISO(request.desiredStartDate), "dd/MM/yyyy")}–${format(parseISO(request.desiredEndDate), "dd/MM/yyyy")}`;
+              const currentStep = getRequestCurrentStep(request);
+              return (
+              <Card key={request.id} className={cn("overflow-hidden rounded-[2rem] border shadow-sm transition-colors", getRequestAccentClass(request.status))}>
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  onClick={() => setExpandedRequestId(isExpanded ? null : request.id)}
+                  className="flex w-full flex-col gap-3 p-4 text-left transition-colors hover:bg-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:flex-row sm:items-center sm:justify-between sm:p-5"
+                >
+                  <div className="flex min-w-0 gap-3">
+                    <span aria-hidden="true" className={cn("mt-1 h-12 w-1 rounded-full", getRequestHeaderAccentClass(request.status))} />
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className={cn("rounded-full border px-3 py-1 font-black", getRequestStatusBadgeClass(request.status))}>
+                        {MEDICAL_VISIT_REQUEST_STATUS_LABELS[request.status as keyof typeof MEDICAL_VISIT_REQUEST_STATUS_LABELS] || "Brouillon"}
+                      </Badge>
+                      <h3 className="min-w-0 text-base font-black text-primary sm:text-lg">
+                        {MEDICAL_VISIT_TYPE_LABELS[request.visitType]}
+                      </h3>
+                    </div>
+                    <div className="flex flex-col gap-1 text-sm font-bold text-slate-700 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                      <span className="truncate">{request.providerName || request.medicalCenter || "Prestataire non renseigné"}</span>
+                      <span className="hidden text-muted-foreground sm:inline">·</span>
+                      <span>{request.participantCount} {request.participantCount === 1 ? "collaborateur" : "collaborateurs"}</span>
+                      <span className="hidden text-muted-foreground sm:inline">·</span>
+                      <span>{periodLabel}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs font-bold text-muted-foreground">
+                      <span>Étape actuelle : {currentStep}</span>
+                      {(request.employeeInvitationAttemptCount || 0) > 0 && (
+                        <span>{request.employeeEmailSentCount || 0} e-mails · {request.employeeNotificationSentCount || 0} notifications</span>
+                      )}
+                      {(request.slotCount || 0) > 0 && (
+                        <span>{request.slotCount} {(request.slotCount || 0) === 1 ? "créneau" : "créneaux"}</span>
+                      )}
+                    </div>
+                  </div>
+                  </div>
+                  <ChevronDown className={cn("h-5 w-5 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+                </button>
+
+                {isExpanded && (
+                <CardContent className="space-y-4 border-t bg-white/80 p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
-                      <Badge variant="secondary" className="mb-2 rounded-full font-black">
+                      <Badge variant="outline" className={cn("mb-2 rounded-full border px-3 py-1 font-black", getRequestStatusBadgeClass(request.status))}>
                         {MEDICAL_VISIT_REQUEST_STATUS_LABELS[request.status as keyof typeof MEDICAL_VISIT_REQUEST_STATUS_LABELS] || "Brouillon"}
                       </Badge>
                       <h3 className="truncate text-base font-black text-primary">{MEDICAL_VISIT_TYPE_LABELS[request.visitType]}</h3>
@@ -641,6 +900,25 @@ export default function MedicalVisitsRegistryPage() {
                     </div>
                   )}
 
+                  {(request.employeeInvitationsLastSentAt || (request.employeeInvitationAttemptCount || 0) > 0) && (
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-900">
+                      <p className="font-black">Convocations collaborateurs</p>
+                      <p>{request.employeeInvitationEligibleCount || 0} visite{(request.employeeInvitationEligibleCount || 0) > 1 ? "s" : ""} éligible{(request.employeeInvitationEligibleCount || 0) > 1 ? "s" : ""}</p>
+                      <p>{request.participantCount} {(request.participantCount || 0) === 1 ? "convocation traitée" : "convocations traitées"}</p>
+                      <p>{request.employeeEmailSentCount || 0} e-mail{(request.employeeEmailSentCount || 0) > 1 ? "s" : ""} envoyé{(request.employeeEmailSentCount || 0) > 1 ? "s" : ""}</p>
+                      <p>{request.employeeNotificationSentCount || 0} notification{(request.employeeNotificationSentCount || 0) > 1 ? "s" : ""} créée{(request.employeeNotificationSentCount || 0) > 1 ? "s" : ""}</p>
+                      <p>{request.employeeManualContactCount || 0} contact{(request.employeeManualContactCount || 0) > 1 ? "s" : ""} manuel{(request.employeeManualContactCount || 0) > 1 ? "s" : ""} requis</p>
+                      <p>{request.employeeInvitationSkippedCount || 0} visite{(request.employeeInvitationSkippedCount || 0) > 1 ? "s" : ""} ignorée{(request.employeeInvitationSkippedCount || 0) > 1 ? "s" : ""}</p>
+                      <p>{request.employeeInvitationFailureCount || 0} échec{(request.employeeInvitationFailureCount || 0) > 1 ? "s" : ""} retryable{(request.employeeInvitationFailureCount || 0) > 1 ? "s" : ""}</p>
+                      {request.employeeInvitationsLastSentAt && (
+                        <p>Dernier envoi : {format(parseISO(request.employeeInvitationsLastSentAt), "dd/MM/yyyy HH:mm")}</p>
+                      )}
+                      {request.employeeInvitationsLastSentByName && (
+                        <p>Envoyé par : {request.employeeInvitationsLastSentByName}</p>
+                      )}
+                    </div>
+                  )}
+
                   {request.status === "draft" && canUpdateMedicalVisits && (
                     <div className="flex flex-wrap gap-2 border-t pt-3">
                       <Button
@@ -729,15 +1007,46 @@ export default function MedicalVisitsRegistryPage() {
                       </Button>
                     </div>
                   )}
+                  {request.status === "employees_planned" && canUpdateMedicalVisits && (request.individualVisitsCount || 0) >= request.participantCount && (
+                    <div className="flex flex-wrap gap-2 border-t pt-3">
+                      <Button
+                        size="sm"
+                        className="rounded-xl font-bold"
+                        onClick={() => setEmployeeInvitationsRequestId(request.id)}
+                      >
+                        <Mail className="mr-2 h-4 w-4" />
+                        {(request.employeeInvitationAttemptCount || 0) > 0 ? "Renvoyer les invitations" : "Notifier les collaborateurs"}
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
+                )}
               </Card>
-            ))}
+              );
+            })}
+            {visibleGroupedRequests.length < filteredGroupedRequests.length && (
+              <div className="flex justify-center pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-xl font-bold"
+                  onClick={() => setVisibleRequestCount((count) => count + REQUEST_PAGE_SIZE)}
+                >
+                  Afficher plus
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </section>
 
-      <div className="space-y-4">
+      <section className="space-y-4 border-t border-primary/10 pt-8">
+        <div className="space-y-1">
+          <h2 className="text-xl font-black text-primary">Visites médicales individuelles</h2>
+          <p className="text-sm text-muted-foreground">Suivi opérationnel des rendez-vous créés pour chaque collaborateur.</p>
+        </div>
         {/* Filters */}
+        <div className="rounded-[2rem] border border-primary/10 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[250px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -783,14 +1092,35 @@ export default function MedicalVisitsRegistryPage() {
              <X className="w-3.5 h-3.5 mr-1" /> Réinitialiser
           </Button>
         </div>
+        <div className="mt-3 flex flex-col gap-3 text-xs font-bold text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            {sortedFilteredVisits.length === 0
+              ? "0 visite trouvée"
+              : `Affichage de ${visitRangeStart} à ${visitRangeEnd} sur ${sortedFilteredVisits.length} visite${sortedFilteredVisits.length > 1 ? "s" : ""}`}
+          </p>
+          <div className="flex items-center gap-2">
+            <span>Par page</span>
+            <Select value={String(visitPageSize)} onValueChange={(value) => setVisitPageSize(Number(value))}>
+              <SelectTrigger className="h-9 w-[90px] rounded-xl">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {visitPageSizeOptions.map((size) => (
+                  <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        </div>
 
         {/* Table */}
-        <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem]">
+        <Card className="hidden overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] md:block">
           <Table>
-            <TableHeader className="bg-secondary/20">
+            <TableHeader className="sticky top-0 z-10 border-b bg-secondary/95 backdrop-blur supports-[backdrop-filter]:bg-secondary/80">
               <TableRow>
-                <TableHead className="pl-6">Employé</TableHead>
-                <TableHead>Type & Date</TableHead>
+                <TableHead className="pl-6 font-black uppercase tracking-widest text-primary">Employé</TableHead>
+                <TableHead className="font-black uppercase tracking-widest text-primary">Type & Date</TableHead>
                 <TableHead>Jugement d'aptitude</TableHead>
                 <TableHead>Certificat (GED)</TableHead>
                 <TableHead>Médecin</TableHead>
@@ -802,7 +1132,7 @@ export default function MedicalVisitsRegistryPage() {
             <TableBody>
               {loadingVisits ? (
                 <TableRow><TableCell colSpan={8} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-              ) : filteredVisits.length === 0 ? (
+              ) : sortedFilteredVisits.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-20 text-muted-foreground">
                     <div className="flex flex-col items-center gap-3">
@@ -812,7 +1142,7 @@ export default function MedicalVisitsRegistryPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredVisits.map((v) => {
+                paginatedVisits.map((v) => {
                   const emp = employeesMap.get(v.employeeId);
                   const collaboratorName = emp?.displayName || (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
                   const collaboratorCode = emp?.employeeCode || (employeeDirectorySuccessfullyLoaded ? v.employeeId.slice(0, 8) : "—");
@@ -821,7 +1151,7 @@ export default function MedicalVisitsRegistryPage() {
                   const isMissingResult = isPast && v.fitnessStatus === 'pending_result' && v.status !== 'cancelled' && v.status !== 'archived';
 
                   return (
-                    <TableRow key={v.id} className="hover:bg-muted/50 transition-colors">
+                    <TableRow key={v.id} className="align-middle transition-colors hover:bg-muted/50">
                       <TableCell className="pl-6">
                         <div className="flex flex-col">
                            <span className="font-bold text-slate-900">{collaboratorName}</span>
@@ -955,7 +1285,175 @@ export default function MedicalVisitsRegistryPage() {
             </TableBody>
           </Table>
         </Card>
-      </div>
+        <div className="space-y-3 md:hidden">
+          {loadingVisits ? (
+            <Card className="rounded-[2rem] border-primary/10 p-8 text-center">
+              <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+            </Card>
+          ) : sortedFilteredVisits.length === 0 ? (
+            <Card className="rounded-[2rem] border-dashed border-primary/20 bg-muted/20 p-8 text-center">
+              <ListFilter className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
+              <p className="text-sm font-bold text-muted-foreground">Aucune visite trouvée.</p>
+            </Card>
+          ) : (
+            paginatedVisits.map((v) => {
+              const emp = employeesMap.get(v.employeeId);
+              const collaboratorName = emp?.displayName || (employeeDirectorySuccessfullyLoaded ? "Employé inconnu" : "Collaborateur non renseigné");
+              const collaboratorCode = emp?.employeeCode || (employeeDirectorySuccessfullyLoaded ? v.employeeId.slice(0, 8) : "—");
+              const visitDate = parseISO(v.visitDate);
+              const isPast = isBefore(visitDate, startOfDay(new Date()));
+              const isMissingResult = isPast && v.fitnessStatus === "pending_result" && v.status !== "cancelled" && v.status !== "archived";
+
+              return (
+                <Card key={v.id} className="rounded-[2rem] border-primary/10 bg-white shadow-sm">
+                  <CardContent className="space-y-4 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-black text-primary">{collaboratorName}</p>
+                        <p className="text-[10px] font-mono font-bold uppercase text-muted-foreground">{collaboratorCode}</p>
+                      </div>
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"><MoreVertical className="w-4 h-4" /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          {v.documentId && canReadDocuments && (
+                            <DropdownMenuItem onClick={() => handleOpenCertificate(v, "view")} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
+                              <Eye className="w-4 h-4" /> Voir certificat
+                            </DropdownMenuItem>
+                          )}
+                          {v.documentId && canReadDocuments && (
+                            <DropdownMenuItem onClick={() => handleOpenCertificate(v, "download")} className="gap-2 font-bold text-primary" disabled={!!viewingDocId}>
+                              <Download className="w-4 h-4" /> Télécharger certificat
+                            </DropdownMenuItem>
+                          )}
+                          {v.documentId && canAttachCertificate && v.status !== "archived" && (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setCertificateUploadMode("replace");
+                                setUploadingRequest(v);
+                              }}
+                              className="gap-2 font-bold text-primary"
+                              disabled={isUploading}
+                            >
+                              <RefreshCcw className="w-4 h-4" /> Remplacer le certificat
+                            </DropdownMenuItem>
+                          )}
+                          {!v.documentId && !isMissingResult && v.fitnessStatus !== "pending_result" && canAttachCertificate && (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setCertificateUploadMode("attach");
+                                setUploadingRequest(v);
+                              }}
+                              className="gap-2 font-bold text-primary"
+                            >
+                              <Upload className="w-4 h-4" /> Joindre certificat
+                            </DropdownMenuItem>
+                          )}
+                          {v.fitnessStatus === "pending_result" && !isTerminal(v.status) && (
+                            <DropdownMenuItem onClick={() => handleEnterResult(v)} className="gap-2 font-bold text-primary">
+                              <FileSignature className="w-4 h-4" /> Saisir le résultat
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem onClick={() => handleEdit(v)} className="gap-2">
+                            <Edit className="w-4 h-4" /> Modifier
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => handleArchive(v.id)} className="gap-2 text-destructive">
+                            <Archive className="w-4 h-4" /> Archiver
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 text-sm">
+                      <div className="rounded-2xl bg-muted/30 p-3">
+                        <p className="text-[10px] font-black uppercase text-muted-foreground">Type & date</p>
+                        <p className="font-bold text-primary">{MEDICAL_VISIT_TYPE_LABELS[v.visitType]}</p>
+                        <p className="text-xs font-bold text-muted-foreground">{format(visitDate, "dd/MM/yyyy")}</p>
+                      </div>
+                      <div className="rounded-2xl bg-muted/30 p-3">
+                        <p className="text-[10px] font-black uppercase text-muted-foreground">Médecin / centre</p>
+                        <p className="font-bold text-slate-800">{v.doctorName}</p>
+                        <p className="break-words text-xs font-bold text-muted-foreground">{v.medicalCenter || "Centre non renseigné"}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <p className="font-black uppercase text-muted-foreground">Jugement</p>
+                        {getFitnessBadge(v.fitnessStatus, isMissingResult)}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-black uppercase text-muted-foreground">Statut</p>
+                        {getStatusBadge(v.status, isMissingResult)}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-black uppercase text-muted-foreground">Échéance</p>
+                        {v.nextVisitDate ? (
+                          <p className={cn("font-black", getDeadlineColor(v.nextVisitDate))}>{format(parseISO(v.nextVisitDate), "dd/MM/yyyy")}</p>
+                        ) : v.status === "scheduled" || v.status === "pending_result" ? (
+                          <p className="font-bold text-muted-foreground">À définir après résultat</p>
+                        ) : v.status === "completed" ? (
+                          <p className="font-bold text-amber-700">Non renseignée</p>
+                        ) : (
+                          <p className="text-muted-foreground">Non applicable</p>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-black uppercase text-muted-foreground">Certificat</p>
+                        <p className={cn("font-bold", v.documentId ? "text-green-700" : "text-muted-foreground")}>
+                          {v.documentId ? "Certificat joint" : "Non joint"}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </div>
+
+        {sortedFilteredVisits.length > 0 && (
+          <div className="flex flex-col gap-3 rounded-[2rem] border border-primary/10 bg-white p-4 text-sm shadow-sm lg:flex-row lg:items-center lg:justify-between">
+            <p className="font-bold text-muted-foreground">
+              {visitRangeStart}–{visitRangeEnd} sur {sortedFilteredVisits.length} visite{sortedFilteredVisits.length > 1 ? "s" : ""}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setVisitPage(1)} disabled={safeVisitPage === 1}>
+                Première
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setVisitPage((page) => Math.max(1, page - 1))} disabled={safeVisitPage === 1}>
+                Précédente
+              </Button>
+              <div className="flex flex-wrap items-center gap-1">
+                {paginationPages.map((page, index) => page === "ellipsis" ? (
+                  <span key={`ellipsis-${index}`} className="px-2 text-muted-foreground">…</span>
+                ) : (
+                  <Button
+                    key={page}
+                    type="button"
+                    variant={page === safeVisitPage ? "default" : "outline"}
+                    size="sm"
+                    className="h-9 w-9 rounded-xl p-0"
+                    aria-label={`Page ${page}`}
+                    aria-current={page === safeVisitPage ? "page" : undefined}
+                    onClick={() => setVisitPage(page)}
+                  >
+                    {page}
+                  </Button>
+                ))}
+              </div>
+              <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setVisitPage((page) => Math.min(totalVisitPages, page + 1))} disabled={safeVisitPage === totalVisitPages}>
+                Suivante
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setVisitPage(totalVisitPages)} disabled={safeVisitPage === totalVisitPages}>
+                Dernière
+              </Button>
+            </div>
+          </div>
+        )}
+      </section>
 
       <MedicalVisitRequestDialog
         open={isRequestDialogVisible}
@@ -987,6 +1485,16 @@ export default function MedicalVisitsRegistryPage() {
         entityId={entityId}
         requestId={providerSlotsRequestId}
         onSaved={loadGroupedRequests}
+      />
+
+      <MedicalEmployeeInvitationsDialog
+        open={!!employeeInvitationsRequestId}
+        onOpenChange={(open) => {
+          if (!open) setEmployeeInvitationsRequestId(null);
+        }}
+        entityId={entityId}
+        requestId={employeeInvitationsRequestId}
+        onSent={loadGroupedRequests}
       />
 
       <Dialog open={!!materializingRequest} onOpenChange={(open) => {
