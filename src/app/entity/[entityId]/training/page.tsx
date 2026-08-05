@@ -8,7 +8,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, User, 
   Building2, ArrowUpRight, ArrowRight, History, MoreVertical,
   RefreshCcw, FileSignature, XCircle, FileCheck, Paperclip, Upload,
-  ShieldCheck, Mail, Send, Download
+  ShieldCheck, Mail, Send, Download, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,6 +126,17 @@ const initialParticipantRegisterFilters = {
   validityStatus: "all",
 };
 
+const initialSessionListFilters = {
+  search: "",
+  trainingType: "all",
+  status: "all",
+  approvalStatus: "all",
+  availabilityStatus: "all",
+  dateCategory: "all",
+};
+
+const SESSION_PAGE_SIZE_OPTIONS = [10, 25, 50];
+
 const TRAINING_CERTIFICATE_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const TRAINING_CERTIFICATE_ALLOWED_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
 
@@ -235,6 +246,10 @@ export default function TrainingsRegistryPage() {
   const [availabilityResponseSaving, setAvailabilityResponseSaving] = useState(false);
   const [participantRegisterFilters, setParticipantRegisterFilters] = useState(initialParticipantRegisterFilters);
   const [participantRegisterPagination, setParticipantRegisterPagination] = useState({ page: 1, pageSize: 10 });
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
+  const [sessionListFilters, setSessionListFilters] = useState(initialSessionListFilters);
+  const [sessionPage, setSessionPage] = useState(1);
+  const [sessionPageSize, setSessionPageSize] = useState(10);
   const [editingParticipantResult, setEditingParticipantResult] = useState<ParticipantRegisterRow | null>(null);
   const [participantResultForm, setParticipantResultForm] = useState<{
     participantStatus: TrainingParticipant["participantStatus"];
@@ -395,6 +410,88 @@ export default function TrainingsRegistryPage() {
     };
   }, [trainingSessions, activeParticipantsBySessionId]);
 
+  const trainingSessionSummaryKpis = useMemo(() => {
+    const sessions = trainingSessions || [];
+    const today = startOfDay(new Date());
+    return {
+      total: sessions.length,
+      approvalPending: sessions.filter((session) => session.approvalStatus === "pending").length,
+      awaitingResponse: sessions.filter((session) => (
+        getTrainerAvailabilityStatus(session) === "awaiting_response"
+        || (activeParticipantsBySessionId.get(session.id) || []).some((participant) => (participant.attendanceResponseStatus || "pending") === "pending")
+      )).length,
+      upcoming: sessions.filter((session) => {
+        const date = parseDateOnly(session.startDate || "");
+        return !!date && !isBefore(date, today) && !["completed", "cancelled", "archived"].includes(session.status);
+      }).length,
+      completed: sessions.filter((session) => session.status === "completed").length,
+    };
+  }, [trainingSessions, activeParticipantsBySessionId]);
+
+  const filteredSortedTrainingSessions = useMemo(() => {
+    const search = sessionListFilters.search.trim().toLowerCase();
+    return [...(trainingSessions || [])]
+      .filter((session) => {
+        const participants = activeParticipantsBySessionId.get(session.id) || [];
+        const participantNames = participants.map((participant) => (
+          `${participant.employeeDisplayNameSnapshot || ""} ${participant.employeeCodeSnapshot || ""}`
+        )).join(" ");
+        const searchTarget = [
+          session.title,
+          TRAINING_TYPE_LABELS[session.trainingType],
+          formatSessionTrainerDisplay(session),
+          session.location,
+          participantNames,
+        ].filter(Boolean).join(" ").toLowerCase();
+
+        if (search && !searchTarget.includes(search)) return false;
+        if (sessionListFilters.trainingType !== "all" && session.trainingType !== sessionListFilters.trainingType) return false;
+        if (sessionListFilters.status !== "all" && session.status !== sessionListFilters.status) return false;
+        if (sessionListFilters.approvalStatus !== "all" && session.approvalStatus !== sessionListFilters.approvalStatus) return false;
+        if (sessionListFilters.availabilityStatus !== "all" && getTrainerAvailabilityStatus(session) !== sessionListFilters.availabilityStatus) return false;
+        if (sessionListFilters.dateCategory !== "all" && getSessionDateCategory(session) !== sessionListFilters.dateCategory) return false;
+        return true;
+      })
+      .sort((a, b) => (
+        getTrainingSessionOperationalPriority(a, activeParticipantsBySessionId.get(a.id) || [])
+        - getTrainingSessionOperationalPriority(b, activeParticipantsBySessionId.get(b.id) || [])
+        || getTrainingSessionDateSortValue(a) - getTrainingSessionDateSortValue(b)
+        || getTrainingSessionUpdatedSortValue(b) - getTrainingSessionUpdatedSortValue(a)
+      ));
+  }, [activeParticipantsBySessionId, formatSessionTrainerDisplay, sessionListFilters, trainingSessions]);
+
+  const totalSessionPages = Math.max(1, Math.ceil(filteredSortedTrainingSessions.length / sessionPageSize));
+  const safeSessionPage = Math.min(sessionPage, totalSessionPages);
+  const sessionRangeStart = filteredSortedTrainingSessions.length === 0 ? 0 : (safeSessionPage - 1) * sessionPageSize + 1;
+  const sessionRangeEnd = Math.min(safeSessionPage * sessionPageSize, filteredSortedTrainingSessions.length);
+  const paginatedTrainingSessions = useMemo(() => {
+    const start = (safeSessionPage - 1) * sessionPageSize;
+    return filteredSortedTrainingSessions.slice(start, start + sessionPageSize);
+  }, [filteredSortedTrainingSessions, safeSessionPage, sessionPageSize]);
+  const sessionPaginationPages = useMemo(() => buildCompactPaginationPages(safeSessionPage, totalSessionPages), [safeSessionPage, totalSessionPages]);
+
+  useEffect(() => {
+    setSessionPage(1);
+  }, [
+    sessionListFilters.search,
+    sessionListFilters.trainingType,
+    sessionListFilters.status,
+    sessionListFilters.approvalStatus,
+    sessionListFilters.availabilityStatus,
+    sessionListFilters.dateCategory,
+    sessionPageSize,
+  ]);
+
+  useEffect(() => {
+    if (sessionPage > totalSessionPages) setSessionPage(totalSessionPages);
+  }, [sessionPage, totalSessionPages]);
+
+  useEffect(() => {
+    if (expandedSessionId && !filteredSortedTrainingSessions.some((session) => session.id === expandedSessionId)) {
+      setExpandedSessionId(null);
+    }
+  }, [expandedSessionId, filteredSortedTrainingSessions]);
+
   const participantRegisterRows = useMemo<ParticipantRegisterRow[]>(() => {
     return (trainingSessions || []).flatMap((session) => {
       const participants = activeParticipantsBySessionId.get(session.id) || [];
@@ -454,6 +551,10 @@ export default function TrainingsRegistryPage() {
     const start = (participantRegisterCurrentPage - 1) * participantRegisterPagination.pageSize;
     return filteredParticipantRegisterRows.slice(start, start + participantRegisterPagination.pageSize);
   }, [filteredParticipantRegisterRows, participantRegisterCurrentPage, participantRegisterPagination.pageSize]);
+  const participantRegisterPaginationPages = useMemo(
+    () => buildCompactPaginationPages(participantRegisterCurrentPage, participantRegisterTotalPages),
+    [participantRegisterCurrentPage, participantRegisterTotalPages]
+  );
   const participantRegisterRangeStart = participantRegisterTotalResults === 0
     ? 0
     : (participantRegisterCurrentPage - 1) * participantRegisterPagination.pageSize + 1;
@@ -1326,15 +1427,112 @@ export default function TrainingsRegistryPage() {
          <StatCard title="Non renseignées" value={participantValidityKpis.notRecorded} icon={Clock} color="blue" />
       </div>
 
-      <Card className="border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem] overflow-hidden">
-        <CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-primary/[0.03] border-b">
-          <div>
-            <CardTitle className="text-lg font-black text-primary flex items-center gap-2">
-              <GraduationCap className="w-5 h-5 text-accent" /> Sessions de formation
-            </CardTitle>
-            <p className="text-xs text-muted-foreground font-medium mt-1">
-              Créez une formation, sélectionnez les participants, puis gérez l'approbation et l'envoi au formateur.
-            </p>
+      <Card className="overflow-hidden rounded-[2rem] border-primary/10 bg-slate-50/70 shadow-xl shadow-primary/5">
+        <CardHeader className="space-y-5 border-b border-primary/10 bg-gradient-to-br from-primary/[0.06] via-slate-50 to-white">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div>
+              <CardTitle className="text-lg font-black text-primary flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-accent" /> Sessions de formation
+              </CardTitle>
+              <p className="text-xs text-muted-foreground font-medium mt-1">
+                Créez une formation, sélectionnez les participants, puis gérez l'approbation et l'envoi au formateur.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-primary/10 bg-white/80 px-4 py-2 text-xs font-bold text-muted-foreground shadow-sm md:text-right">
+              {filteredSortedTrainingSessions.length === 0
+                ? "0 session trouvée"
+                : `Affichage de ${sessionRangeStart} à ${sessionRangeEnd} sur ${filteredSortedTrainingSessions.length} session${filteredSortedTrainingSessions.length > 1 ? "s" : ""}`}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <div className="rounded-2xl border border-blue-100 bg-white/90 p-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase text-muted-foreground">Total des sessions</p>
+              <p className="text-xl font-black text-primary">{trainingSessionSummaryKpis.total}</p>
+            </div>
+            <div className="rounded-2xl border border-amber-100 bg-amber-50/70 p-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase text-amber-800">À valider</p>
+              <p className="text-xl font-black text-amber-800">{trainingSessionSummaryKpis.approvalPending}</p>
+            </div>
+            <div className="rounded-2xl border border-cyan-100 bg-cyan-50/70 p-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase text-cyan-800">En attente de réponse</p>
+              <p className="text-xl font-black text-cyan-800">{trainingSessionSummaryKpis.awaitingResponse}</p>
+            </div>
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase text-indigo-800">À venir</p>
+              <p className="text-xl font-black text-indigo-800">{trainingSessionSummaryKpis.upcoming}</p>
+            </div>
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase text-emerald-800">Terminées</p>
+              <p className="text-xl font-black text-emerald-800">{trainingSessionSummaryKpis.completed}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 rounded-[1.75rem] border border-primary/10 bg-white/75 p-3 shadow-sm xl:grid-cols-[minmax(220px,1fr)_repeat(5,minmax(150px,auto))_auto]">
+            <div className="relative min-w-0">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-10 rounded-xl border-primary/10 bg-white pl-10 text-xs font-bold shadow-sm"
+                placeholder="Rechercher titre, formateur, participant, lieu..."
+                value={sessionListFilters.search}
+                onChange={(e) => setSessionListFilters((p) => ({ ...p, search: e.target.value }))}
+              />
+            </div>
+            <Select value={sessionListFilters.trainingType} onValueChange={(value) => setSessionListFilters((p) => ({ ...p, trainingType: value }))}>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Type" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous les types</SelectItem>
+                {Object.entries(TRAINING_TYPE_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={sessionListFilters.status} onValueChange={(value) => setSessionListFilters((p) => ({ ...p, status: value }))}>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Statut" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous statuts</SelectItem>
+                {(["draft", "scheduled", "in_progress", "completed", "cancelled", "archived"] as TrainingSessionStatus[]).map((status) => (
+                  <SelectItem key={status} value={status}>{getSessionStatusLabel(status)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={sessionListFilters.approvalStatus} onValueChange={(value) => setSessionListFilters((p) => ({ ...p, approvalStatus: value }))}>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Approbation" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Approbation</SelectItem>
+                {(["not_submitted", "pending", "approved", "rejected"] as TrainingSession["approvalStatus"][]).map((status) => (
+                  <SelectItem key={status} value={status}>{getApprovalStatusLabel(status)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={sessionListFilters.availabilityStatus} onValueChange={(value) => setSessionListFilters((p) => ({ ...p, availabilityStatus: value }))}>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Disponibilité" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Disponibilité</SelectItem>
+                {(["not_required", "not_contacted", "awaiting_response", "available", "unavailable", "historically_bypassed"] as ReturnType<typeof getTrainerAvailabilityStatus>[]).map((status) => (
+                  <SelectItem key={status} value={status}>{getTrainerAvailabilityLabelFromStatus(status)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={sessionListFilters.dateCategory} onValueChange={(value) => setSessionListFilters((p) => ({ ...p, dateCategory: value }))}>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Date" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Toutes dates</SelectItem>
+                <SelectItem value="upcoming">À venir</SelectItem>
+                <SelectItem value="today">Aujourd'hui</SelectItem>
+                <SelectItem value="past">Passées</SelectItem>
+                <SelectItem value="undated">Sans date</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-10 rounded-xl text-xs font-black text-primary hover:bg-primary/5"
+              onClick={() => {
+                setSessionListFilters(initialSessionListFilters);
+                setSessionPage(1);
+              }}
+            >
+              Réinitialiser
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -1344,9 +1542,14 @@ export default function TrainingsRegistryPage() {
             <div className="py-12 text-center text-muted-foreground">
               <p className="text-xs font-bold uppercase tracking-widest">Aucune session de formation créée.</p>
             </div>
+          ) : filteredSortedTrainingSessions.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">
+              <Search className="mx-auto mb-3 h-8 w-8 opacity-30" />
+              <p className="text-xs font-bold uppercase tracking-widest">Aucune session ne correspond aux filtres.</p>
+            </div>
           ) : (
-            <div className="divide-y">
-              {trainingSessions.map((session) => {
+            <div className="space-y-3 bg-slate-50/70 p-4">
+              {paginatedTrainingSessions.map((session) => {
                 const isExternal = session.trainerType === "external";
                 const canSendTrainerEmail = isExternal
                   && !!session.trainerName?.trim()
@@ -1359,49 +1562,98 @@ export default function TrainingsRegistryPage() {
                 const availabilityStatus = getTrainerAvailabilityStatus(session);
                 const availabilitySnapshotCurrent = isTrainerAvailabilitySnapshotCurrent(session);
                 const lifecycleAction = getLifecycleAction(session);
+                const isExpanded = expandedSessionId === session.id;
+                const nextAction = getTrainingSessionNextAction(session, participants, canApprove);
                 return (
-                  <div key={session.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/70 transition-colors">
-                    <div className="min-w-0 space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-black text-primary truncate">{session.title}</span>
-                        <Badge variant="outline" className="text-[10px] font-black">{TRAINING_TYPE_LABELS[session.trainingType]}</Badge>
-                        <Badge variant="secondary" className="text-[10px] font-black">{getSessionStatusLabel(session.status)}</Badge>
-                        <Badge className={cn("text-[10px] font-black border-none", session.approvalStatus === "approved" ? "bg-green-600" : session.approvalStatus === "pending" ? "bg-orange-500" : session.approvalStatus === "rejected" ? "bg-red-600" : "bg-slate-500")}>
-                          {getApprovalStatusLabel(session.approvalStatus)}
-                        </Badge>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {formatSessionCardSchedule(session)}</span>
-                        {session.location && <span>{session.location}</span>}
-                        <span className="flex items-center gap-1">
-                          <User className="w-3 h-3" />
-                          {formatSessionTrainerDisplay(session)}
-                        </span>
-                        {session.trainerEmailSentAt && (
-                          <span className="text-green-700 font-bold">Dernier envoi enregistré</span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                        <span className="font-black text-primary">Participants : {participants.length}</span>
-                        {participants.length > 0 && (
-                          <span className="truncate max-w-full">{formatParticipantPreview(participants)}</span>
-                        )}
-                      </div>
-                      {participants.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-muted-foreground">
-                          <span>{attendanceResponseCounts.confirmed} confirmés</span>
-                          <span>{attendanceResponseCounts.declined} indisponibles</span>
-                          <span>{attendanceResponseCounts.pending} sans réponse</span>
+                  <div key={session.id} className="overflow-hidden rounded-[2rem] border border-primary/10 bg-white shadow-md shadow-slate-200/60">
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      onClick={() => setExpandedSessionId(isExpanded ? null : session.id)}
+                      className="flex w-full flex-col gap-3 border-b border-transparent bg-gradient-to-r from-white via-slate-50/80 to-white p-4 text-left transition-colors hover:from-slate-50 hover:to-primary/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:flex-row sm:items-center sm:justify-between sm:p-5"
+                    >
+                      <div className="min-w-0 space-y-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {getTrainingSessionStatusBadge(session.status)}
+                          <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-black text-slate-700">{TRAINING_TYPE_LABELS[session.trainingType]}</Badge>
+                          {getTrainingApprovalStatusBadge(session.approvalStatus)}
+                          <h3 className="min-w-0 text-lg font-black leading-tight text-primary sm:text-xl">{session.title}</h3>
                         </div>
-                      )}
-                      <TrainingWorkflowStepper session={session} />
-                      {session.trainerType === "external" && session.approvalStatus === "approved" && session.status === "draft" && session.trainerAvailabilityStatus === "available" && !availabilitySnapshotCurrent && (
-                        <p className="text-[11px] font-bold text-orange-700">
-                          Les informations de la session ont changé. Une nouvelle confirmation du formateur est nécessaire.
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-2 justify-end">
+                        <div className="flex flex-col gap-1 rounded-2xl border border-slate-200 bg-white/85 px-3 py-2 text-xs font-bold text-slate-700 shadow-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatSessionDateRange(session)}</span>
+                          <span className="hidden text-muted-foreground sm:inline">·</span>
+                          <span>{formatSessionCardTimeRange(session) || formatSessionDayCount(session) || "Horaire non renseigné"}</span>
+                          {session.location && <><span className="hidden text-muted-foreground sm:inline">·</span><span className="break-words">{session.location}</span></>}
+                          <span className="hidden text-muted-foreground sm:inline">·</span>
+                          <span>{formatSessionTrainerDisplay(session)}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                          <span className="rounded-full bg-primary/10 px-3 py-1 text-primary">{participants.length} {participants.length === 1 ? "participant" : "participants"}</span>
+                          <span className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{attendanceResponseCounts.confirmed} confirmé{attendanceResponseCounts.confirmed > 1 ? "s" : ""}</span>
+                          <span className="rounded-full border border-red-100 bg-red-50 px-3 py-1 text-red-700">{attendanceResponseCounts.declined} indisponible{attendanceResponseCounts.declined > 1 ? "s" : ""}</span>
+                          <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-slate-600">{attendanceResponseCounts.pending} sans réponse</span>
+                        </div>
+                        <p className="inline-flex w-fit rounded-full border border-primary/10 bg-primary/5 px-3 py-1.5 text-xs font-black text-primary">Prochaine action : {nextAction}</p>
+                      </div>
+                      <ChevronDown className={cn("h-5 w-5 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+                    </button>
+
+                    {isExpanded && (
+                      <div className="space-y-5 border-t border-primary/10 bg-gradient-to-br from-slate-50 via-white to-primary/[0.02] p-5">
+                        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
+                          <div className="space-y-4 rounded-[1.75rem] border border-slate-200 bg-white/85 p-4 shadow-sm">
+                            <div>
+                              <h4 className="text-sm font-black text-primary">Détails de la session</h4>
+                              <div className="mt-3 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                                  <p className="font-black uppercase text-muted-foreground">Calendrier</p>
+                                  <p className="font-bold text-slate-800">{formatSessionCardSchedule(session)}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                                  <p className="font-black uppercase text-muted-foreground">Lieu</p>
+                                  <p className="font-bold text-slate-800">{session.location || "Lieu non renseigné"}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                                  <p className="font-black uppercase text-muted-foreground">Formateur</p>
+                                  <p className="font-bold text-slate-800">{formatSessionTrainerDisplay(session)}</p>
+                                  <p className="text-muted-foreground">{session.trainerType === "external" ? "Externe" : "Interne"}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                                  <p className="font-black uppercase text-muted-foreground">Disponibilité</p>
+                                  <p className="font-bold text-slate-800">{getTrainerAvailabilityLabel(session)}</p>
+                                </div>
+                              </div>
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-black text-primary">Workflow</h4>
+                              <TrainingWorkflowStepper session={session} />
+                            </div>
+                            {session.trainerType === "external" && session.approvalStatus === "approved" && session.status === "draft" && session.trainerAvailabilityStatus === "available" && !availabilitySnapshotCurrent && (
+                              <p className="rounded-2xl border border-orange-200 bg-orange-50 p-3 text-[11px] font-bold text-orange-700">
+                                Les informations de la session ont changé. Une nouvelle confirmation du formateur est nécessaire.
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-3 rounded-[1.75rem] border border-primary/10 bg-white/90 p-4 shadow-sm">
+                            <h4 className="text-sm font-black text-primary">Participants</h4>
+                            <div className="rounded-2xl border border-primary/10 bg-primary/[0.03] p-3">
+                              <p className="text-xs font-black text-primary">{participants.length} {participants.length === 1 ? "participant" : "participants"}</p>
+                              {participants.length > 0 ? (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {participants.map((participant) => (
+                                    <Badge key={participant.employeeId} variant="outline" className="rounded-full border-slate-200 bg-white px-3 py-1 text-[10px] font-bold shadow-sm">
+                                      {participant.employeeDisplayNameSnapshot || participant.employeeCodeSnapshot || participant.employeeId}
+                                      <span className="ml-1 text-muted-foreground">· {getAttendanceResponseLabel(participant.attendanceResponseStatus)}</span>
+                                    </Badge>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-2 text-xs font-bold text-muted-foreground">Aucun participant actif.</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 rounded-[1.5rem] border border-primary/10 bg-white/80 p-3 shadow-sm">
                       {canUpdate && (session.approvalStatus === "not_submitted" || session.approvalStatus === "rejected") && (
                         <Button size="sm" variant="outline" className="rounded-xl text-xs font-bold" disabled={isActionLoading} onClick={() => handleSubmitApproval(session)}>
                           {isActionLoading ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : null}
@@ -1504,17 +1756,70 @@ export default function TrainingsRegistryPage() {
                           <Edit className="w-3 h-3" /> Modifier
                         </Button>
                       )}
-                    </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
+              {filteredSortedTrainingSessions.length > 0 && (
+                <div className="flex flex-col gap-3 rounded-[2rem] border border-primary/10 bg-gradient-to-r from-white via-slate-50 to-white p-4 text-sm shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="font-bold text-muted-foreground">
+                      {sessionRangeStart}–{sessionRangeEnd} sur {filteredSortedTrainingSessions.length} session{filteredSortedTrainingSessions.length > 1 ? "s" : ""}
+                    </p>
+                    <Select value={String(sessionPageSize)} onValueChange={(value) => setSessionPageSize(Number(value))}>
+                      <SelectTrigger className="h-9 w-[140px] rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SESSION_PAGE_SIZE_OPTIONS.map((size) => (
+                          <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" variant="outline" size="sm" className="rounded-xl bg-white" onClick={() => setSessionPage(1)} disabled={safeSessionPage === 1}>
+                      Première
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" className="rounded-xl bg-white" onClick={() => setSessionPage((page) => Math.max(1, page - 1))} disabled={safeSessionPage === 1}>
+                      Précédente
+                    </Button>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {sessionPaginationPages.map((page, index) => page === "ellipsis" ? (
+                        <span key={`session-ellipsis-${index}`} className="px-2 text-muted-foreground">…</span>
+                      ) : (
+                        <Button
+                          key={page}
+                          type="button"
+                          variant={page === safeSessionPage ? "default" : "outline"}
+                          size="sm"
+                          className="h-9 w-9 rounded-xl p-0"
+                          aria-label={`Page ${page}`}
+                          aria-current={page === safeSessionPage ? "page" : undefined}
+                          onClick={() => setSessionPage(page)}
+                        >
+                          {page}
+                        </Button>
+                      ))}
+                    </div>
+                    <Button type="button" variant="outline" size="sm" className="rounded-xl bg-white" onClick={() => setSessionPage((page) => Math.min(totalSessionPages, page + 1))} disabled={safeSessionPage === totalSessionPages}>
+                      Suivante
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" className="rounded-xl bg-white" onClick={() => setSessionPage(totalSessionPages)} disabled={safeSessionPage === totalSessionPages}>
+                      Dernière
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
       </Card>
 
       <Card className="overflow-hidden border-primary/10 shadow-xl shadow-primary/5 rounded-[2rem]">
-        <CardHeader className="bg-primary/[0.03] border-b">
+        <CardHeader className="space-y-5 bg-gradient-to-br from-primary/[0.04] via-slate-50 to-white border-b">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
               <CardTitle className="text-lg font-black text-primary flex items-center gap-2">
@@ -1524,19 +1829,22 @@ export default function TrainingsRegistryPage() {
                 Une ligne par participant de session, avec participation, résultat individuel et attestation.
               </p>
             </div>
+            <div className="rounded-2xl border border-primary/10 bg-white/80 px-4 py-2 text-xs font-bold text-muted-foreground shadow-sm md:text-right">
+              {participantRegisterTotalResults} participation{participantRegisterTotalResults === 1 ? "" : "s"} trouvée{participantRegisterTotalResults === 1 ? "" : "s"}
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3 pt-4">
-            <div className="relative flex-1 min-w-full sm:min-w-[250px]">
+          <div className="grid grid-cols-1 gap-3 rounded-[1.75rem] border border-primary/10 bg-white/75 p-3 shadow-sm xl:grid-cols-[minmax(220px,1fr)_repeat(4,minmax(150px,auto))_auto]">
+            <div className="relative min-w-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                className="pl-10 rounded-xl bg-white"
+                className="h-10 rounded-xl border-primary/10 bg-white pl-10 text-xs font-bold shadow-sm"
                 placeholder="Rechercher employé, matricule, formation..."
                 value={participantRegisterFilters.search}
                 onChange={(e) => setParticipantRegisterFilters((p) => ({ ...p, search: e.target.value }))}
               />
             </div>
             <Select value={participantRegisterFilters.sessionId} onValueChange={(value) => setParticipantRegisterFilters((p) => ({ ...p, sessionId: value }))}>
-              <SelectTrigger className="w-[220px] rounded-xl bg-white"><SelectValue placeholder="Formation" /></SelectTrigger>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Formation" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Toutes les formations</SelectItem>
                 {(trainingSessions || []).map((session) => (
@@ -1545,7 +1853,7 @@ export default function TrainingsRegistryPage() {
               </SelectContent>
             </Select>
             <Select value={participantRegisterFilters.participantStatus} onValueChange={(value) => setParticipantRegisterFilters((p) => ({ ...p, participantStatus: value }))}>
-              <SelectTrigger className="w-[190px] rounded-xl bg-white"><SelectValue placeholder="Participation" /></SelectTrigger>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Participation" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Toutes participations</SelectItem>
                 <SelectItem value="planned">Planifiée</SelectItem>
@@ -1557,7 +1865,7 @@ export default function TrainingsRegistryPage() {
               </SelectContent>
             </Select>
             <Select value={participantRegisterFilters.resultStatus} onValueChange={(value) => setParticipantRegisterFilters((p) => ({ ...p, resultStatus: value }))}>
-              <SelectTrigger className="w-[180px] rounded-xl bg-white"><SelectValue placeholder="Résultat" /></SelectTrigger>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Résultat" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tous les résultats</SelectItem>
                 <SelectItem value="none">À renseigner</SelectItem>
@@ -1569,7 +1877,7 @@ export default function TrainingsRegistryPage() {
               </SelectContent>
             </Select>
             <Select value={participantRegisterFilters.validityStatus} onValueChange={(value) => setParticipantRegisterFilters((p) => ({ ...p, validityStatus: value }))}>
-              <SelectTrigger className="w-[220px] rounded-xl bg-white"><SelectValue placeholder="Validité" /></SelectTrigger>
+              <SelectTrigger className="h-10 rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm"><SelectValue placeholder="Validité" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Toutes les validités</SelectItem>
                 <SelectItem value="valid">Valide</SelectItem>
@@ -1580,6 +1888,14 @@ export default function TrainingsRegistryPage() {
                 <SelectItem value="not_recorded">Validité non renseignée</SelectItem>
               </SelectContent>
             </Select>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-10 rounded-xl text-xs font-black text-primary hover:bg-primary/5"
+              onClick={() => setParticipantRegisterFilters(initialParticipantRegisterFilters)}
+            >
+              Réinitialiser
+            </Button>
           </div>
         </CardHeader>
         <div className="overflow-x-auto">
@@ -1710,62 +2026,94 @@ export default function TrainingsRegistryPage() {
         </Table>
         </div>
         {participantRegisterTotalResults > 0 && (
-          <div className="flex flex-col gap-3 border-t bg-white px-6 py-4 text-xs font-bold text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              {participantRegisterRangeStart}–{participantRegisterRangeEnd} sur {participantRegisterTotalResults} participations
-            </div>
+          <div className="flex flex-col gap-3 border-t border-primary/10 bg-gradient-to-r from-white via-slate-50 to-white px-6 py-4 text-sm shadow-sm lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <span>Lignes par page</span>
-                <Select
-                  value={String(participantRegisterPagination.pageSize)}
-                  onValueChange={(value) => setParticipantRegisterPagination((current) => ({
-                    ...current,
-                    page: 1,
-                    pageSize: Number(value),
-                  }))}
-                >
-                  <SelectTrigger className="h-8 w-[86px] rounded-xl bg-white">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[10, 25, 50, 100].map((pageSize) => (
-                      <SelectItem key={pageSize} value={String(pageSize)}>{pageSize}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <p className="font-bold text-muted-foreground">
+                {participantRegisterRangeStart}–{participantRegisterRangeEnd} sur {participantRegisterTotalResults} participation{participantRegisterTotalResults === 1 ? "" : "s"}
+              </p>
+              <Select
+                value={String(participantRegisterPagination.pageSize)}
+                onValueChange={(value) => setParticipantRegisterPagination((current) => ({
+                  ...current,
+                  page: 1,
+                  pageSize: Number(value),
+                }))}
+              >
+                <SelectTrigger className="h-9 w-[140px] rounded-xl border-primary/10 bg-white text-xs font-bold shadow-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[10, 25, 50, 100].map((pageSize) => (
+                    <SelectItem key={pageSize} value={String(pageSize)}>{pageSize} / page</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-xl bg-white"
+                disabled={participantRegisterCurrentPage <= 1}
+                onClick={() => setParticipantRegisterPagination((current) => ({ ...current, page: 1 }))}
+              >
+                Première
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-xl bg-white"
+                disabled={participantRegisterCurrentPage <= 1}
+                onClick={() => setParticipantRegisterPagination((current) => ({
+                  ...current,
+                  page: Math.max(1, current.page - 1),
+                }))}
+              >
+                Précédente
+              </Button>
+              <div className="flex flex-wrap items-center gap-1">
+                {participantRegisterPaginationPages.map((page, index) => page === "ellipsis" ? (
+                  <span key={`participant-ellipsis-${index}`} className="px-2 text-muted-foreground">…</span>
+                ) : (
+                  <Button
+                    key={page}
+                    type="button"
+                    variant={page === participantRegisterCurrentPage ? "default" : "outline"}
+                    size="sm"
+                    className="h-9 w-9 rounded-xl p-0"
+                    aria-label={`Page ${page}`}
+                    aria-current={page === participantRegisterCurrentPage ? "page" : undefined}
+                    onClick={() => setParticipantRegisterPagination((current) => ({ ...current, page }))}
+                  >
+                    {page}
+                  </Button>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 rounded-xl text-xs font-bold"
-                  disabled={participantRegisterCurrentPage <= 1}
-                  onClick={() => setParticipantRegisterPagination((current) => ({
-                    ...current,
-                    page: Math.max(1, current.page - 1),
-                  }))}
-                >
-                  Précédent
-                </Button>
-                <span className="min-w-[90px] text-center">
-                  Page {participantRegisterCurrentPage} sur {participantRegisterTotalPages}
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 rounded-xl text-xs font-bold"
-                  disabled={participantRegisterCurrentPage >= participantRegisterTotalPages}
-                  onClick={() => setParticipantRegisterPagination((current) => ({
-                    ...current,
-                    page: Math.min(participantRegisterTotalPages, current.page + 1),
-                  }))}
-                >
-                  Suivant
-                </Button>
-              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-xl bg-white"
+                disabled={participantRegisterCurrentPage >= participantRegisterTotalPages}
+                onClick={() => setParticipantRegisterPagination((current) => ({
+                  ...current,
+                  page: Math.min(participantRegisterTotalPages, current.page + 1),
+                }))}
+              >
+                Suivante
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-xl bg-white"
+                disabled={participantRegisterCurrentPage >= participantRegisterTotalPages}
+                onClick={() => setParticipantRegisterPagination((current) => ({ ...current, page: participantRegisterTotalPages }))}
+              >
+                Dernière
+              </Button>
             </div>
           </div>
         )}
@@ -3014,6 +3362,134 @@ function StatCard({ title, value, icon: Icon, color }: any) {
   );
 }
 
+function buildCompactPaginationPages(currentPage: number, totalPages: number) {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const pages = new Set([1, totalPages, currentPage, currentPage - 1, currentPage + 1]);
+  if (currentPage <= 3) {
+    pages.add(2);
+    pages.add(3);
+    pages.add(4);
+  }
+  if (currentPage >= totalPages - 2) {
+    pages.add(totalPages - 1);
+    pages.add(totalPages - 2);
+    pages.add(totalPages - 3);
+  }
+  return Array.from(pages)
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b)
+    .reduce<Array<number | "ellipsis">>((acc, page) => {
+      const previous = acc[acc.length - 1];
+      if (typeof previous === "number" && page - previous > 1) acc.push("ellipsis");
+      acc.push(page);
+      return acc;
+    }, []);
+}
+
+function getTrainingSessionStatusBadge(status: TrainingSessionStatus) {
+  const classes: Record<TrainingSessionStatus, string> = {
+    draft: "border-slate-300 bg-slate-100 text-slate-800 shadow-sm",
+    scheduled: "border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm",
+    in_progress: "border-violet-200 bg-violet-50 text-violet-800 shadow-sm",
+    completed: "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm",
+    cancelled: "border-red-200 bg-red-50 text-red-800 shadow-sm",
+    archived: "border-slate-200 bg-slate-50 text-slate-600 shadow-sm",
+  };
+  return (
+    <Badge variant="outline" className={cn("rounded-full border px-3 py-1 text-[10px] font-black", classes[status] || "border-slate-200 bg-slate-50 text-slate-700")}>
+      {getSessionStatusLabel(status)}
+    </Badge>
+  );
+}
+
+function getTrainingApprovalStatusBadge(status: TrainingSession["approvalStatus"]) {
+  const classes: Record<TrainingSession["approvalStatus"], string> = {
+    not_submitted: "border-slate-200 bg-white text-slate-700 shadow-sm",
+    pending: "border-amber-200 bg-amber-50 text-amber-900 shadow-sm",
+    approved: "border-blue-200 bg-blue-50 text-blue-800 shadow-sm",
+    rejected: "border-red-200 bg-red-50 text-red-800 shadow-sm",
+  };
+  return (
+    <Badge variant="outline" className={cn("rounded-full border px-3 py-1 text-[10px] font-black", classes[status] || "border-slate-200 bg-slate-50 text-slate-700")}>
+      {getApprovalStatusLabel(status)}
+    </Badge>
+  );
+}
+
+function getAttendanceResponseLabel(status?: TrainingAttendanceResponseStatus | null) {
+  const labels: Record<TrainingAttendanceResponseStatus, string> = {
+    pending: "sans réponse",
+    confirmed: "confirmé",
+    declined: "indisponible",
+  };
+  return labels[status || "pending"];
+}
+
+function getTrainerAvailabilityLabelFromStatus(status: ReturnType<typeof getTrainerAvailabilityStatus>) {
+  const labels: Record<ReturnType<typeof getTrainerAvailabilityStatus>, string> = {
+    not_required: "Non requise",
+    not_contacted: "Demande non envoyée",
+    awaiting_response: "En attente de réponse",
+    available: "Formateur disponible",
+    unavailable: "Formateur indisponible",
+    historically_bypassed: "Historique",
+  };
+  return labels[status];
+}
+
+function getSessionDateCategory(session: TrainingSession) {
+  if (!session.startDate) return "undated";
+  const date = parseDateOnly(session.startDate);
+  if (!date) return "undated";
+  const today = startOfDay(new Date());
+  if (date.getTime() === today.getTime()) return "today";
+  return isBefore(date, today) ? "past" : "upcoming";
+}
+
+function getTrainingSessionOperationalPriority(session: TrainingSession, participants: TrainingParticipant[]) {
+  const availabilityStatus = getTrainerAvailabilityStatus(session);
+  const hasPendingParticipants = participants.some((participant) => (participant.attendanceResponseStatus || "pending") === "pending");
+  if (session.approvalStatus === "not_submitted" || session.approvalStatus === "rejected") return 1;
+  if (session.approvalStatus === "pending") return 2;
+  if (availabilityStatus === "awaiting_response" || hasPendingParticipants) return 3;
+  if (session.status === "scheduled") return 4;
+  if (session.status === "in_progress") return 5;
+  if (session.status === "completed" || session.status === "cancelled" || session.status === "archived") return 6;
+  return 7;
+}
+
+function getTrainingSessionDateSortValue(session: TrainingSession) {
+  const date = parseDateOnly(session.startDate || "");
+  return date ? date.getTime() : Number.MAX_SAFE_INTEGER;
+}
+
+function getTrainingSessionUpdatedSortValue(session: TrainingSession) {
+  const value = (session as any).updatedAt || (session as any).createdAt;
+  if (!value) return 0;
+  if (typeof value.toDate === "function") return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") return Date.parse(value) || 0;
+  return 0;
+}
+
+function getTrainingSessionNextAction(session: TrainingSession, participants: TrainingParticipant[], canApprove: boolean) {
+  const availabilityStatus = getTrainerAvailabilityStatus(session);
+  const availabilitySnapshotCurrent = isTrainerAvailabilitySnapshotCurrent(session);
+  const lifecycleAction = getLifecycleAction(session);
+  if (session.approvalStatus === "not_submitted" || session.approvalStatus === "rejected") return "Soumettre pour approbation";
+  if (session.approvalStatus === "pending") return canApprove ? "Approuver ou rejeter" : "En attente d'approbation";
+  if (session.trainerType === "external" && session.approvalStatus === "approved" && session.status === "draft") {
+    if (availabilityStatus === "not_contacted") return "Envoyer la demande de disponibilité";
+    if (availabilityStatus === "awaiting_response") return "Enregistrer la réponse du formateur";
+    if (availabilityStatus === "unavailable" || (availabilityStatus === "available" && !availabilitySnapshotCurrent)) return "Renvoyer la demande de disponibilité";
+  }
+  if (lifecycleAction) return lifecycleAction.label;
+  if (session.status === "scheduled" && participants.length > 0) return "Notifier les participants";
+  if (session.status === "completed") return "Clôturée";
+  if (session.status === "cancelled" || session.status === "archived") return getSessionStatusLabel(session.status);
+  return "Suivi de la session";
+}
+
 function TrainingWorkflowStepper({ session }: { session: TrainingSession }) {
   const availabilityStatus = getTrainerAvailabilityStatus(session);
   const approvalState =
@@ -3050,17 +3526,17 @@ function TrainingWorkflowStepper({ session }: { session: TrainingSession }) {
   ] as const;
 
   return (
-    <div className="flex flex-wrap gap-1.5 pt-1">
+    <div className="flex flex-wrap gap-2 pt-2">
       {steps.map((step) => (
         <span
           key={step.label}
           className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-tight",
-            step.state === "done" && "bg-green-50 text-green-700 border-green-200",
-            step.state === "active" && "bg-blue-50 text-blue-700 border-blue-200",
-            step.state === "blocked" && "bg-red-50 text-red-700 border-red-200",
-            step.state === "skipped" && "bg-slate-50 text-slate-500 border-slate-200",
-            step.state === "future" && "bg-white text-slate-400 border-slate-200"
+            "inline-flex min-h-10 items-center gap-1.5 rounded-2xl border px-3 py-2 text-[10px] font-black uppercase tracking-tight shadow-sm",
+            step.state === "done" && "border-emerald-200 bg-emerald-50 text-emerald-800",
+            step.state === "active" && "border-blue-300 bg-blue-50 text-blue-900 ring-2 ring-blue-100",
+            step.state === "blocked" && "border-red-200 bg-red-50 text-red-800",
+            step.state === "skipped" && "border-slate-200 bg-slate-50 text-slate-500",
+            step.state === "future" && "border-slate-200 bg-white/80 text-slate-500 opacity-80"
           )}
           title={step.detail}
         >
