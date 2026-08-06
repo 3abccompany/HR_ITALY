@@ -43,11 +43,12 @@ export const MVP_ROLES: RoleDefinition[] = [
         "worksites", "employees", "contracts", "documents", 
         "attendances", "leaveRequests", "reports", "holidays",
         "employmentRequests", "consultants", "emailSettings", "medicalVisits",
-        "training", "safety", "payroll", "mealTickets", "reimbursements"
+        "training", "safety", "payroll", "employeeFinance", "mealTickets", "reimbursements"
       ];
       return MVP_PERMISSIONS
         .filter(p => p.scope === "entity" && hrModules.includes(p.module))
         .filter(p => p.action !== "archive") // companyHR can't archive by default based on Milestone 7L correction
+        .filter(p => p.module !== "employeeFinance" || ["read", "create", "update", "submit"].includes(p.action))
         .map(p => p.code);
     }
   },

@@ -27,6 +27,7 @@ import {
   Bell,
   CalendarDays,
   Euro,
+  HandCoins,
   Utensils,
   Car
 } from "lucide-react";
@@ -59,6 +60,7 @@ export const entityMenu: MenuItem[] = [
   { label: "Employés", href: "employees", permission: "employees.read", icon: UserCheck },
   { label: "Contrats", href: "contracts", permission: "contracts.read", icon: FileText },
   { label: "Synthèse économique", href: "payroll", permission: "payroll.read", icon: Euro },
+  { label: "Avances, prêts & dettes", href: "employee-finance", permission: "employeeFinance.read", icon: HandCoins },
   { label: "Buoni pasto", href: "meal-tickets", permission: "mealTickets.read", icon: Utensils },
   { label: "Remboursements km", href: "kilometer-reimbursements", permission: "reimbursements.read", icon: Car },
   { label: "Documents", href: "documents", permission: "documents.read", icon: FolderOpen },

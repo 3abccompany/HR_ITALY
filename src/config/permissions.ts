@@ -140,6 +140,26 @@ export const MVP_PERMISSIONS: PermissionDefinition[] = [
   { code: "payroll.export", module: "payroll", action: "export", label: "Exporter une synthèse économique", description: "Générer un fichier pour le cabinet de paie.", scope: "entity" },
   { code: "payroll.lock", module: "payroll", action: "lock", label: "Verrouiller une période de rémunération", description: "Empêcher toute modification sur un mois clôturé.", scope: "entity" },
 
+  // --- Employee Finance / Finance employés ---
+  { code: "employeeFinance.read", module: "employeeFinance", action: "read", label: "Voir la finance employés", description: "Consultation des demandes financières employés.", scope: "entity" },
+  { code: "employeeFinance.create", module: "employeeFinance", action: "create", label: "Créer une demande financière", description: "Création de demandes d'avance, prêt interne ou dette employé.", scope: "entity" },
+  { code: "employeeFinance.update", module: "employeeFinance", action: "update", label: "Modifier une demande financière", description: "Mise à jour des brouillons de demandes financières.", scope: "entity" },
+  { code: "employeeFinance.submit", module: "employeeFinance", action: "submit", label: "Soumettre une demande financière", description: "Soumission d'un brouillon de demande financière.", scope: "entity" },
+  { code: "employeeFinance.review", module: "employeeFinance", action: "review", label: "Analyser une demande financière", description: "Analyse interne des demandes financières employés.", scope: "entity" },
+  { code: "employeeFinance.approve", module: "employeeFinance", action: "approve", label: "Approuver une demande financière", description: "Validation d'une demande financière employé.", scope: "entity" },
+  { code: "employeeFinance.reject", module: "employeeFinance", action: "reject", label: "Rejeter une demande financière", description: "Rejet motivé d'une demande financière employé.", scope: "entity" },
+  { code: "employeeFinance.generateDocument", module: "employeeFinance", action: "generateDocument", label: "Générer l'accord financier", description: "Génération des documents d'accord de prêt ou dette.", scope: "entity" },
+  { code: "employeeFinance.uploadSignedDocument", module: "employeeFinance", action: "uploadSignedDocument", label: "Téléverser l'accord signé", description: "Ajout d'un accord financier signé.", scope: "entity" },
+  { code: "employeeFinance.disburse", module: "employeeFinance", action: "disburse", label: "Enregistrer le décaissement", description: "Enregistrement du paiement effectif d'une demande financière.", scope: "entity" },
+  { code: "employeeFinance.manageSchedule", module: "employeeFinance", action: "manageSchedule", label: "Gérer l'échéancier", description: "Création et modification des échéanciers de remboursement.", scope: "entity" },
+  { code: "employeeFinance.recordPayment", module: "employeeFinance", action: "recordPayment", label: "Enregistrer un remboursement", description: "Saisie d'un remboursement externe ou manuel.", scope: "entity" },
+  { code: "employeeFinance.validatePayment", module: "employeeFinance", action: "validatePayment", label: "Valider un remboursement", description: "Validation des remboursements financiers employés.", scope: "entity" },
+  { code: "employeeFinance.suspend", module: "employeeFinance", action: "suspend", label: "Suspendre un remboursement", description: "Suspension temporaire d'un échéancier financier.", scope: "entity" },
+  { code: "employeeFinance.settle", module: "employeeFinance", action: "settle", label: "Solder une demande financière", description: "Clôture d'une demande financière entièrement remboursée.", scope: "entity" },
+  { code: "employeeFinance.archive", module: "employeeFinance", action: "archive", label: "Archiver une demande financière", description: "Archivage d'une demande financière employé.", scope: "entity" },
+  { code: "employeeFinance.export", module: "employeeFinance", action: "export", label: "Exporter la finance employés", description: "Export des demandes et soldes financiers employés.", scope: "entity" },
+  { code: "employeeFinance.sensitive.read", module: "employeeFinance", action: "sensitive.read", label: "Voir les données financières sensibles", description: "Accès aux informations financières sensibles des employés.", scope: "entity" },
+
   // --- Meal Tickets / Buoni Pasto ---
   { code: "mealTickets.read", module: "mealTickets", action: "read", label: "Voir les buoni pasto", description: "Consultation des politiques et previews mensuelles buoni pasto.", scope: "entity" },
   { code: "mealTickets.manage", module: "mealTickets", action: "manage", label: "Gérer les buoni pasto", description: "Configuration des politiques buoni pasto.", scope: "entity" },

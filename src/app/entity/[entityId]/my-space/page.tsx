@@ -10,7 +10,7 @@ import {
   History, Send, CheckCircle2, XCircle, Ban,
   Save, AlertCircle, Upload, FileText,
   FileSignature, Download, Eye, ChevronRight,
-  FileCheck, GraduationCap, Stethoscope
+  FileCheck, GraduationCap, Stethoscope, HandCoins
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -754,6 +754,27 @@ export default function MySpacePage() {
               <Button asChild className="rounded-xl font-black gap-2 w-full">
                 <a href={`/entity/${entityId}/my-space/medical-visits`}>
                   Voir mes visites médicales <ChevronRight className="w-4 h-4" />
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-[2rem] border-primary/10 bg-white shadow-xl shadow-primary/5 overflow-hidden">
+            <CardContent className="p-4 sm:p-8 flex flex-col items-center text-center space-y-4">
+              <div className="bg-primary/5 p-4 rounded-full text-primary">
+                <HandCoins className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm uppercase tracking-widest text-primary">Mes avances, prêts et dettes</h4>
+                <div className="text-[10px] text-muted-foreground leading-relaxed font-medium space-y-1">
+                  <p>Avances sur salaire</p>
+                  <p>Prêts internes</p>
+                  <p>Dettes employé</p>
+                </div>
+              </div>
+              <Button asChild className="rounded-xl font-black gap-2 w-full">
+                <a href={`/entity/${entityId}/my-space/employee-finance`}>
+                  Voir mes demandes <ChevronRight className="w-4 h-4" />
                 </a>
               </Button>
             </CardContent>
